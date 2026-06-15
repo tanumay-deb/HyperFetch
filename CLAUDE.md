@@ -86,9 +86,8 @@ by default via `utils.VERIFY_TLS`; filenames are confined to the chosen folder
 
 ## Gotchas
 
-- **`pytest.ini` sets `testpaths = tests`** — only `tests/` runs by default. The
-  root-level `test_core.py`, `test_comprehensive.py`, `test_e2e.py` are legacy and are
-  NOT part of the suite; add new tests under `tests/`.
+- **`pytest.ini` sets `testpaths = tests`** — only `tests/` runs by default; add new
+  tests under `tests/`.
 - **Lazy imports must be declared to PyInstaller.** `hls` and `cryptography` are imported
   inside functions (not at module top) and are listed in `HyperFetch.spec`'s
   `hiddenimports` / `collect_all`. If you add a lazily-imported module, update the spec or
