@@ -52,10 +52,21 @@ def test_filters(win):
     win.refresh()
     assert win.table.rowCount() == 5
     win._set_filter("Active")
-    assert win.table.rowCount() == 3       # downloading + paused + queued
+    assert win.table.rowCount() == 2       # downloading + queued
+    win._set_filter("Paused")
+    assert win.table.rowCount() == 1       # paused (no longer hidden under Active)
     win._set_filter("Done")
     assert win.table.rowCount() == 2       # completed + error
     win._set_filter("All")
+
+
+def test_multiselect_pause(win):
+    for i in range(3):
+        win.queue.tasks.append(_fake_task(i, T.QUEUED))
+    win.refresh()
+    win.table.selectAll()
+    win.on_pause()
+    assert sum(1 for t in win.queue.tasks if t.status == T.PAUSED) == 3
 
 
 def test_userrole_and_get_task(win):
@@ -79,9 +90,23 @@ def test_speed_cell_populates(win):
 def test_settings_dialog_roundtrip(qapp):
     import main
     dlg = main.SettingsDialog(None, "C:/dl", 3, 8, verify_tls=False, pair_token="TKN")
-    d, conc, segs, verify = dlg.values()
+    d, conc, segs, verify, theme = dlg.values()
     assert conc == 3 and segs == 8 and verify is False
+    assert theme == "dark"
     assert dlg.token_edit.text() == "TKN"
+
+
+def test_light_theme_builds(qapp):
+    import main
+    main.apply_theme("light")
+    try:
+        qss = main.build_qss()
+        assert isinstance(qss, str) and main.BG == main.LIGHT["bg"]
+        g = main.SpeedGraphWidget(max_points=20)
+        g.add_value(5)
+        g.grab()                       # paintEvent under light palette must not raise
+    finally:
+        main.apply_theme("dark")       # restore default for other tests
 
 
 def test_hover_color_defined():

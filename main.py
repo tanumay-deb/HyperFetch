@@ -26,7 +26,7 @@ import utils
 from queue_manager import QueueManager
 from api_server import run_server, PORT
 
-APP_VERSION = "1.0.2"
+APP_VERSION = "1.1.0"
 
 
 def resource_path(*parts):
@@ -38,16 +38,29 @@ def resource_path(*parts):
 SEGMENTS = 8
 MAX_CONCURRENT = 3
 
-ACCENT = "#6366f1"          # indigo
-ACCENT_2 = "#8b5cf6"        # violet
-BG = "#0b1220"              # window background
-SURFACE = "#111a2e"         # cards / table
-SURFACE_2 = "#1a2540"       # hover / inputs
-BORDER = "#243352"
-HOVER = "#223054"
-TEXT = "#e5e9f5"
-MUTED = "#8b97b8"
+# ---------------------------------------------------------------- theme palettes
+DARK = dict(
+    accent="#6366f1", accent2="#8b5cf6",
+    bg="#0b1220", surface="#111a2e", surface2="#1a2540",
+    border="#243352", hover="#223054", pressed="#1b2747",
+    alt="#141e36", sel="#26335c",
+    text="#e5e9f5", muted="#8b97b8",
+)
+LIGHT = dict(
+    accent="#6366f1", accent2="#8b5cf6",
+    bg="#eef1f7", surface="#ffffff", surface2="#f3f5fb",
+    border="#d7dce8", hover="#e9edf6", pressed="#dfe4f1",
+    alt="#f6f8fc", sel="#dde6fb",
+    text="#1a2236", muted="#5d6b8a",
+)
 
+# Active palette name + flattened color globals. apply_theme() reassigns these so
+# custom-painted widgets (which read them at paint time) follow a theme switch.
+THEME = "dark"
+ACCENT = ACCENT_2 = BG = SURFACE = SURFACE_2 = ""
+BORDER = HOVER = PRESSED = ALT = SEL = TEXT = MUTED = ""
+
+# status pill colours read well on both palettes, so they stay theme-independent
 STATUS_COLORS = {
     T.DOWNLOADING: "#34d399",
     T.COMPLETED:   "#38bdf8",
@@ -57,7 +70,26 @@ STATUS_COLORS = {
     T.CANCELLED:   "#64748b",
 }
 
-QSS = f"""
+
+def palette_for(name):
+    return LIGHT if name == "light" else DARK
+
+
+def apply_theme(name):
+    """Switch the active palette by reassigning the module-level colour globals."""
+    global THEME, ACCENT, ACCENT_2, BG, SURFACE, SURFACE_2
+    global BORDER, HOVER, PRESSED, ALT, SEL, TEXT, MUTED
+    THEME = "light" if name == "light" else "dark"
+    p = palette_for(THEME)
+    ACCENT, ACCENT_2 = p["accent"], p["accent2"]
+    BG, SURFACE, SURFACE_2 = p["bg"], p["surface"], p["surface2"]
+    BORDER, HOVER, PRESSED = p["border"], p["hover"], p["pressed"]
+    ALT, SEL = p["alt"], p["sel"]
+    TEXT, MUTED = p["text"], p["muted"]
+
+def build_qss():
+    """Build the app stylesheet from the active palette."""
+    return f"""
 QWidget {{
     background: {BG};
     color: {TEXT};
@@ -74,8 +106,8 @@ QPushButton {{
     font-weight: 600;
     color: {TEXT};
 }}
-QPushButton:hover {{ background: #223054; border-color: {ACCENT}; }}
-QPushButton:pressed {{ background: #1b2747; }}
+QPushButton:hover {{ background: {HOVER}; border-color: {ACCENT}; }}
+QPushButton:pressed {{ background: {PRESSED}; }}
 QPushButton:disabled {{ color: {MUTED}; border-color: {BORDER}; background: {SURFACE}; }}
 
 QPushButton#primary {{
@@ -129,14 +161,14 @@ QLineEdit::placeholder {{ color: {MUTED}; }}
 /* ---------- table ---------- */
 QTableWidget {{
     background: {SURFACE};
-    alternate-background-color: #141e36;
+    alternate-background-color: {ALT};
     border: 1px solid {BORDER};
     border-radius: 12px;
     gridline-color: transparent;
     outline: none;
 }}
 QTableWidget::item {{ padding: 0 10px; border: none; }}
-QTableWidget::item:selected {{ background: #26335c; color: {TEXT}; }}
+QTableWidget::item:selected {{ background: {SEL}; color: {TEXT}; }}
 QHeaderView::section {{
     background: {SURFACE};
     color: {MUTED};
@@ -193,6 +225,9 @@ QSplitter::handle:hover {{
     background: {ACCENT};
 }}
 """
+
+
+apply_theme("dark")   # default; DownloadApp re-applies the saved choice at startup
 
 
 def human_size(n):
@@ -391,8 +426,10 @@ class FileInfoDialog(QDialog):
 
         # ---- action buttons: Add / Download ............ Cancel ----
         brow = QHBoxLayout()
-        self.btn_later = QPushButton("Add")
+        self.btn_later = QPushButton("Download Later")
+        self.btn_later.setToolTip("Add to the list but don't start yet")
         self.btn_now = QPushButton("⬇  Download")
+        self.btn_now.setToolTip("Start downloading now")
         self.btn_now.setObjectName("primary")
         btn_cancel = QPushButton("Cancel")
         self.btn_later.clicked.connect(lambda: self._done("later"))
@@ -733,7 +770,7 @@ class PropertiesDialog(QDialog):
 
 class SettingsDialog(QDialog):
     def __init__(self, parent, save_dir, max_concurrent, segments,
-                 verify_tls=True, pair_token=""):
+                 verify_tls=True, pair_token="", theme="dark"):
         super().__init__(parent)
         self.setWindowTitle("Settings")
         self.setMinimumWidth(480)
@@ -770,8 +807,25 @@ class SettingsDialog(QDialog):
         grid.setColumnStretch(2, 1)
         lay.addLayout(grid)
 
-        note = _muted_label("New values apply to downloads started afterwards.")
+        note = _muted_label("More connections download large files faster — 8 is a "
+                            "good default. New values apply to downloads started afterwards.")
+        note.setWordWrap(True)
         lay.addWidget(note)
+
+        # ---- appearance section ----
+        sep_a = QFrame()
+        sep_a.setFrameShape(QFrame.HLine)
+        sep_a.setStyleSheet(f"color: {BORDER};")
+        lay.addWidget(sep_a)
+        lay.addWidget(QLabel("🎨  Appearance"))
+        arow = QHBoxLayout()
+        arow.addWidget(_muted_label("Theme"))
+        self.theme_combo = QComboBox()
+        self.theme_combo.addItems(["Dark", "Light"])
+        self.theme_combo.setCurrentText("Light" if theme == "light" else "Dark")
+        arow.addWidget(self.theme_combo)
+        arow.addStretch()
+        lay.addLayout(arow)
 
         # ---- security section ----
         sep = QFrame()
@@ -821,14 +875,15 @@ class SettingsDialog(QDialog):
             self.dir_edit.setText(d)
 
     def values(self):
+        theme = "light" if self.theme_combo.currentText() == "Light" else "dark"
         return (self.dir_edit.text().strip(), self.concurrent.value(),
-                self.segments.value(), self.verify_chk.isChecked())
+                self.segments.value(), self.verify_chk.isChecked(), theme)
 
 
 # ====================================================================== main app
 class DownloadApp(QWidget):
     COLS = ["File", "Size", "Progress", "Speed", "Status"]
-    FILTERS = ["All", "Active", "Done"]
+    FILTERS = ["All", "Active", "Paused", "Done"]
 
     def __init__(self):
         super().__init__()
@@ -854,6 +909,8 @@ class DownloadApp(QWidget):
         self._save_tick = 0
         self._completed_seen = None   # seeded on first refresh; tracks done IDs
         self._complete_popup = None   # the live "Download Completed" popup
+        self._flash_text = ""         # transient status-bar message
+        self._flash_until = 0.0
 
         self._build_ui()
         self._load_state()
@@ -876,6 +933,8 @@ class DownloadApp(QWidget):
         # security
         self.verify_tls = bool(s.get("verify_tls", True))
         utils.VERIFY_TLS = self.verify_tls
+        self.theme = s.get("theme", "dark")
+        apply_theme(self.theme)
         self.pair_token = utils.get_or_create_token()
 
     def _save_settings(self):
@@ -885,6 +944,7 @@ class DownloadApp(QWidget):
             "segments": self.segments,
             "global_speed_limit": getattr(self, "global_speed_limit", 0),
             "verify_tls": getattr(self, "verify_tls", True),
+            "theme": getattr(self, "theme", "dark"),
         })
 
     def _load_state(self):
@@ -902,7 +962,7 @@ class DownloadApp(QWidget):
 
     # ---------------------------------------------------------------- UI
     def _build_ui(self):
-        self.setStyleSheet(QSS)
+        self.setStyleSheet(build_qss())
         root = QVBoxLayout(self)
         root.setContentsMargins(24, 20, 24, 14)
         root.setSpacing(14)
@@ -986,6 +1046,9 @@ class DownloadApp(QWidget):
         sep.setStyleSheet(f"color: {BORDER};")
         bar.addWidget(sep)
 
+        self.btn_more = QPushButton("⋯")
+        self.btn_more.setObjectName("ghost")
+        self.btn_more.setToolTip("Bulk actions — pause / resume / cancel / clear all")
         self.btn_clear = QPushButton("🗑")
         self.btn_clear.setObjectName("ghost")
         self.btn_clear.setToolTip("Clear finished downloads from the list")
@@ -995,6 +1058,7 @@ class DownloadApp(QWidget):
         self.btn_settings = QPushButton("⚙")
         self.btn_settings.setObjectName("ghost")
         self.btn_settings.setToolTip("Settings")
+        bar.addWidget(self.btn_more)
         bar.addWidget(self.btn_clear)
         bar.addWidget(self.btn_open)
         bar.addWidget(self.btn_settings)
@@ -1004,7 +1068,7 @@ class DownloadApp(QWidget):
         self.table = QTableWidget(0, len(self.COLS))
         self.table.setHorizontalHeaderLabels(self.COLS)
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
-        self.table.setSelectionMode(QAbstractItemView.SingleSelection)
+        self.table.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.table.setAlternatingRowColors(True)
         self.table.setShowGrid(False)
@@ -1021,6 +1085,7 @@ class DownloadApp(QWidget):
         self.table.cellDoubleClicked.connect(self.on_row_double_clicked)
         self.table.setContextMenuPolicy(Qt.CustomContextMenu)
         self.table.customContextMenuRequested.connect(self._on_context_menu)
+        self.table.itemSelectionChanged.connect(self._update_action_buttons)
         bottom_layout.addWidget(self.table)
         
         splitter.addWidget(bottom_widget)
@@ -1042,9 +1107,11 @@ class DownloadApp(QWidget):
         self.btn_pause.clicked.connect(self.on_pause)
         self.btn_resume.clicked.connect(self.on_resume)
         self.btn_cancel.clicked.connect(self.on_cancel)
+        self.btn_more.clicked.connect(self._show_bulk_menu)
         self.btn_clear.clicked.connect(self.on_clear)
         self.btn_open.clicked.connect(self.on_open)
         self.btn_settings.clicked.connect(self.on_settings)
+        self._update_action_buttons()
 
     def resizeEvent(self, e):
         super().resizeEvent(e)
@@ -1069,19 +1136,40 @@ class DownloadApp(QWidget):
     def _visible_tasks(self):
         tasks = list(self.queue.tasks)
         if self._filter == "Active":
-            keep = (T.DOWNLOADING, T.QUEUED, T.PAUSED)
+            keep = (T.DOWNLOADING, T.QUEUED)
             return [t for t in tasks if t.status in keep]
+        if self._filter == "Paused":
+            return [t for t in tasks if t.status == T.PAUSED]
         if self._filter == "Done":
             keep = (T.COMPLETED, T.ERROR, T.CANCELLED)
             return [t for t in tasks if t.status in keep]
         return tasks
 
-    def _selected_task(self):
-        row = self.table.currentRow()
+    def _selected_tasks(self):
+        """Tasks for every selected row (multi-select aware)."""
+        model = self.table.selectionModel()
+        rows = {idx.row() for idx in model.selectedRows()} if model else set()
+        out = []
         for tid, r in self._rows.items():
-            if r == row:
-                return next((t for t in self.queue.tasks if t.id == tid), None)
-        return None
+            if r in rows:
+                t = next((x for x in self.queue.tasks if x.id == tid), None)
+                if t:
+                    out.append(t)
+        return out
+
+    def _update_action_buttons(self):
+        """Enable Pause/Resume/Cancel only when the selection has a valid target."""
+        ts = self._selected_tasks()
+        self.btn_pause.setEnabled(any(t.status in (T.DOWNLOADING, T.QUEUED) for t in ts))
+        self.btn_resume.setEnabled(any(t.status in (T.PAUSED, T.ERROR) for t in ts))
+        self.btn_cancel.setEnabled(
+            any(t.status in (T.DOWNLOADING, T.QUEUED, T.PAUSED) for t in ts))
+
+    def _flash(self, msg, secs=2.5):
+        """Show a transient one-line message in the status bar."""
+        self._flash_text = msg
+        self._flash_until = time.time() + secs
+        self.status_lbl.setText(self._status_text())
 
     # ---------------------------------------------------------------- dialogs
     def _show_file_info(self, url="", suggested="", headers=None):
@@ -1141,19 +1229,111 @@ class DownloadApp(QWidget):
         self._show_file_info()
 
     def on_pause(self):
-        t = self._selected_task()
-        if t:
+        ts = [t for t in self._selected_tasks()
+              if t.status in (T.DOWNLOADING, T.QUEUED)]
+        if not ts:
+            self._flash("Select a downloading or queued item to pause.")
+            return
+        for t in ts:
             self.queue.pause_task(t)
+        self._flash(f"Paused {len(ts)} download(s).")
+        self.refresh()
 
     def on_resume(self):
-        t = self._selected_task()
-        if t:
+        ts = [t for t in self._selected_tasks()
+              if t.status in (T.PAUSED, T.ERROR)]
+        if not ts:
+            self._flash("Select a paused or errored item to resume.")
+            return
+        for t in ts:
             self.queue.resume_task(t)
+        self._flash(f"Resumed {len(ts)} download(s).")
+        self.refresh()
 
     def on_cancel(self):
-        t = self._selected_task()
-        if t:
+        ts = [t for t in self._selected_tasks()
+              if t.status in (T.DOWNLOADING, T.QUEUED, T.PAUSED)]
+        if not ts:
+            self._flash("Select an active item to cancel.")
+            return
+        for t in ts:
             self.queue.cancel_task(t)
+        self._flash(f"Cancelled {len(ts)} download(s).")
+        self.refresh()
+
+    # ---- bulk actions (overflow menu) ----
+    def _show_bulk_menu(self):
+        menu = QMenu(self)
+        menu.setStyleSheet(
+            f"QMenu {{ background: {SURFACE}; color: {TEXT}; border: 1px solid {BORDER}; }}"
+            f"QMenu::item:selected {{ background: {HOVER}; }}")
+        menu.addAction("⏸  Pause all", self._pause_all)
+        menu.addAction("▶  Resume all", self._resume_all)
+        menu.addAction("✕  Cancel all", self._cancel_all)
+        menu.addSeparator()
+        menu.addAction("🗑  Clear all", self._clear_all)
+        menu.exec(self.btn_more.mapToGlobal(self.btn_more.rect().bottomLeft()))
+
+    def _pause_all(self):
+        ts = [t for t in self.queue.tasks if t.status in (T.DOWNLOADING, T.QUEUED)]
+        for t in ts:
+            self.queue.pause_task(t)
+        self._flash(f"Paused {len(ts)} download(s)." if ts else "Nothing to pause.")
+        self.refresh()
+
+    def _resume_all(self):
+        ts = [t for t in self.queue.tasks if t.status in (T.PAUSED, T.ERROR)]
+        for t in ts:
+            self.queue.resume_task(t)
+        self._flash(f"Resumed {len(ts)} download(s)." if ts else "Nothing to resume.")
+        self.refresh()
+
+    def _cancel_all(self):
+        ts = [t for t in self.queue.tasks
+              if t.status in (T.DOWNLOADING, T.QUEUED, T.PAUSED)]
+        if not ts:
+            self._flash("Nothing to cancel.")
+            return
+        if QMessageBox.question(
+                self, "Cancel all", f"Cancel {len(ts)} active download(s)?",
+                QMessageBox.Yes | QMessageBox.No, QMessageBox.No) != QMessageBox.Yes:
+            return
+        for t in ts:
+            self.queue.cancel_task(t)
+        self._flash(f"Cancelled {len(ts)} download(s).")
+        self.refresh()
+
+    def _clear_all(self):
+        if not self.queue.tasks:
+            return
+        if QMessageBox.question(
+                self, "Clear all",
+                "Remove ALL downloads from the list? Active ones are cancelled.",
+                QMessageBox.Yes | QMessageBox.No, QMessageBox.No) != QMessageBox.Yes:
+            return
+        self.queue.clear_all()
+        self._save_state()
+        self._flash("Cleared all downloads.")
+        self.refresh()
+
+    def _move_task(self, task, where):
+        self.queue.move(task, where)
+        self.refresh()
+
+    def _apply_theme(self, name):
+        """Switch palette at runtime and repaint everything."""
+        apply_theme(name)
+        self.theme = THEME
+        self.setStyleSheet(build_qss())
+        # one-shot inline styles on persistent header/footer widgets
+        self.subtitle.setStyleSheet(f"color: {MUTED}; font-size: 12px;")
+        self.total_speed.setStyleSheet(
+            f"font-size: 18px; font-weight: 700; color: {STATUS_COLORS[T.DOWNLOADING]};")
+        self.status_lbl.setStyleSheet(f"color: {MUTED}; font-size: 12px;")
+        self.empty.setStyleSheet(
+            f"color: {MUTED}; font-size: 14px; background: transparent;")
+        self.speed_graph.update()
+        self.refresh()
 
     def on_clear(self):
         self.queue.remove_finished()
@@ -1168,10 +1348,11 @@ class DownloadApp(QWidget):
 
     def on_settings(self):
         dlg = SettingsDialog(self, self.save_dir, self.max_concurrent, self.segments,
-                             verify_tls=self.verify_tls, pair_token=self.pair_token)
+                             verify_tls=self.verify_tls, pair_token=self.pair_token,
+                             theme=self.theme)
         if dlg.exec() != QDialog.Accepted:
             return
-        d, conc, segs, verify = dlg.values()
+        d, conc, segs, verify, theme = dlg.values()
         if os.path.isdir(d):
             self.save_dir = d
         self.max_concurrent = conc
@@ -1180,6 +1361,8 @@ class DownloadApp(QWidget):
         self.queue.segments = segs
         self.verify_tls = verify
         utils.VERIFY_TLS = verify
+        if theme != self.theme:
+            self._apply_theme(theme)
         self._save_settings()
 
     def on_row_double_clicked(self, row, _col):
@@ -1234,6 +1417,13 @@ class DownloadApp(QWidget):
             
             act.triggered.connect(lambda checked=False, val=bps, task=t: self._set_task_limit(task, val))
             
+        if t.status == T.QUEUED:
+            menu.addSeparator()
+            menu.addAction("⬆  Move to top", lambda: self._move_task(t, "top"))
+            menu.addAction("↑  Move up", lambda: self._move_task(t, "up"))
+            menu.addAction("↓  Move down", lambda: self._move_task(t, "down"))
+            menu.addAction("⬇  Move to bottom", lambda: self._move_task(t, "bottom"))
+
         menu.exec(self.table.viewport().mapToGlobal(pos))
 
     def _set_task_limit(self, task, bps):
@@ -1297,6 +1487,7 @@ class DownloadApp(QWidget):
         self.total_speed.setText(f"↓ {human_speed(total_bps)}" if total_bps > 0 else "")
         self.subtitle.setText(self._subtitle_text())
         self.status_lbl.setText(self._status_text())
+        self._update_action_buttons()
 
         self._check_completions()
 
@@ -1376,6 +1567,8 @@ class DownloadApp(QWidget):
         return f"{active} active · {queued} queued · {done} completed"
 
     def _status_text(self):
+        if time.time() < getattr(self, "_flash_until", 0):
+            return self._flash_text
         srv = f"Browser bridge: http://127.0.0.1:{PORT}" if not self._server_err \
             else f"Server ERROR: {self._server_err}"
         return (f"Save to: {self.save_dir}    |    {srv}"

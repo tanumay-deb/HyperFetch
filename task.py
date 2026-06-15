@@ -16,6 +16,7 @@ ERROR = "Error"
 CANCELLED = "Cancelled"
 
 _id_counter = itertools.count(1)
+_seq_counter = itertools.count(1)   # monotonic insertion order for FIFO tie-breaks
 
 
 class Segment:
@@ -46,7 +47,7 @@ class DownloadTask:
     def __init__(self, url, save_path, filename="", total_size=0,
                  segments=None, downloaded=0, supports_range=True,
                  status=QUEUED, error="", task_id=None, speed_limit=0,
-                 headers=None):
+                 headers=None, priority=0):
         self.id = task_id or uuid.uuid4().hex
         self.url = url
         self.save_path = save_path
@@ -60,6 +61,10 @@ class DownloadTask:
         self.segments: List[Segment] = segments or []
         self.status = status
         self.error = error
+
+        # queue ordering: lower priority value runs first; seq breaks ties FIFO
+        self.priority = priority
+        self.seq = next(_seq_counter)
 
         # HLS segment progress (0 when not an HLS download)
         self.seg_total = 0
@@ -76,8 +81,8 @@ class DownloadTask:
 
     # ---- priority queue ordering: lower priority value first, then FIFO ----
     def __lt__(self, other):
-        # Fallback to id-based ordering if needed for consistency
-        return self.id < getattr(other, "id", "")
+        return (self.priority, self.seq) < (
+            getattr(other, "priority", 0), getattr(other, "seq", 0))
 
     # ---- control API used by the GUI buttons ----
     def request_pause(self):
@@ -130,6 +135,7 @@ class DownloadTask:
             "status": self.status,
             "error": self.error,
             "speed_limit": self.speed_limit,
+            "priority": self.priority,
             # never write cookies/auth to disk; keep only safe headers (Referer/UA)
             "headers": utils.strip_sensitive(self.headers)
         }
@@ -154,5 +160,5 @@ class DownloadTask:
             supports_range=d.get("supports_range", True),
             status=status, error=d.get("error", ""),
             task_id=d.get("id"), speed_limit=d.get("speed_limit", 0),
-            headers=d.get("headers") or {}
+            headers=d.get("headers") or {}, priority=d.get("priority", 0)
         )

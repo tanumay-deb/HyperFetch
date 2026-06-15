@@ -34,6 +34,8 @@ class QueueManager:
                 self.tasks.append(task)
             if start:
                 task.status = T.QUEUED
+                # newly queued / resumed tasks go to the end of the pending order
+                task.priority = max((t.priority for t in self._heap), default=-1) + 1
                 heapq.heappush(self._heap, task)
             self.cond.notify()
         return task
@@ -43,6 +45,38 @@ class QueueManager:
         with self.cond:
             self.tasks = [t for t in self.tasks
                           if t.status not in (T.COMPLETED, T.CANCELLED, T.ERROR)]
+
+    def clear_all(self):
+        """Cancel everything (incl. in-flight) and empty the visible list."""
+        with self.cond:
+            for t in self.tasks:
+                t.request_cancel()
+            self._heap.clear()
+            self.tasks = []
+            self.cond.notify_all()
+
+    def move(self, task, where):
+        """Reorder a QUEUED task within the pending order.
+
+        ``where`` is ``'top'`` | ``'up'`` | ``'down'`` | ``'bottom'``. Only
+        affects tasks still waiting in the heap for a free slot; running,
+        paused and finished tasks are untouched.
+        """
+        with self.cond:
+            if task not in self._heap:
+                return
+            ordered = sorted(self._heap)          # current queue order
+            i = ordered.index(task)
+            n = len(ordered)
+            j = {"top": 0, "bottom": n - 1,
+                 "up": max(0, i - 1), "down": min(n - 1, i + 1)}.get(where, i)
+            if j == i:
+                return
+            ordered.insert(j, ordered.pop(i))
+            for rank, t in enumerate(ordered):    # 0..n-1 → new add appends after
+                t.priority = rank
+            heapq.heapify(self._heap)
+            self.cond.notify()
 
     def get_task(self, task_id):
         """Look a task up by its id (used by the context menu)."""
