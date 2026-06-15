@@ -24,7 +24,7 @@ def test_token_required_when_set(client_factory):
     c, _ = client_factory(token="secret123")
     assert c.post("/download", json={"url": "https://x/a.zip"}).status_code == 401
     ok = c.post("/download", json={"url": "https://x/a.zip"},
-                headers={"X-SDM-Token": "secret123"})
+                headers={"X-HyperFetch-Token": "secret123"})
     assert ok.status_code == 200
 
 
@@ -37,7 +37,7 @@ def test_token_accepted_in_body(client_factory):
 def test_wrong_token_rejected(client_factory):
     c, _ = client_factory(token="secret123")
     r = c.post("/download", json={"url": "https://x/a.zip"},
-               headers={"X-SDM-Token": "nope"})
+               headers={"X-HyperFetch-Token": "nope"})
     assert r.status_code == 401
 
 

@@ -28,7 +28,7 @@ def test_segmented_download_integrity(file_server, tmp_path):
     assert t.status == T.COMPLETED
     assert os.path.getsize(dst) == len(data)
     assert open(dst, "rb").read() == data
-    assert not os.path.exists(dst + ".sdm")
+    assert not os.path.exists(dst + ".hfdownload")
 
 
 def test_single_vs_multi_segment_md5(file_server, tmp_path):
@@ -108,7 +108,7 @@ def test_cancel_removes_partfile(file_server, tmp_path):
     t.request_cancel()
     Downloader(t, segments=8).run()
     assert t.status == T.CANCELLED
-    assert not os.path.exists(dst + ".sdm")
+    assert not os.path.exists(dst + ".hfdownload")
 
 
 def test_disk_space_guard(tmp_path, monkeypatch):

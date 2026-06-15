@@ -26,7 +26,7 @@ function sendToApp(url, filename, referrer, done) {
     const cookieStr = (cookies || []).map((c) => `${c.name}=${c.value}`).join("; ");
     fetch(APP, {
       method: "POST",
-      headers: { "Content-Type": "application/json", "X-SDM-Token": pairToken },
+      headers: { "Content-Type": "application/json", "X-HyperFetch-Token": pairToken },
       body: JSON.stringify({
         url,
         filename: filename || "",

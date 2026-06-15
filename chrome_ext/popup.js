@@ -64,7 +64,7 @@ testBtn.addEventListener("click", () => {
   chrome.storage.local.get({ token: "" }, (v) => {
     fetch(`${APP}/download`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", "X-SDM-Token": v.token },
+      headers: { "Content-Type": "application/json", "X-HyperFetch-Token": v.token },
       body: JSON.stringify({
         url: "https://proof.ovh.net/files/10Mb.dat",
         filename: "10Mb.dat",

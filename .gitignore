@@ -20,7 +20,7 @@ chrome_ext/test/out.txt
 package-lock.json
 
 # Download manager runtime files
-*.sdm
+*.hfdownload
 *.part*
 
 # OS / editor

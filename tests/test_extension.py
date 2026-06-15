@@ -47,7 +47,7 @@ def test_popup_ids_wired():
 
 def test_background_sends_token_header():
     bg = _read("background.js")
-    assert "X-SDM-Token" in bg
+    assert "X-HyperFetch-Token" in bg
     assert "chrome.cookies.getAll" in bg   # cookie forwarding present
 
 

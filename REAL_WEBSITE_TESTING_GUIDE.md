@@ -31,7 +31,7 @@ python.exe api_server.py
 **Website:** https://www.html5rocks.com/en/tutorials/video/basics/
 
 **Expected Result:**
-- Purple "SDM" button appears on video player
+- Purple "HyperFetch" button appears on video player
 - Button positioned in top-right corner
 - Video plays normally
 
@@ -109,7 +109,7 @@ Suggestion: Use youtube-dl or similar tool
 
 **Expected Result:**
 - Multiple video players detected
-- Each gets purple SDM button
+- Each gets purple HyperFetch button
 - All buttons functional
 - Each can be downloaded independently
 

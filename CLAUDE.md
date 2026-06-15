@@ -47,7 +47,7 @@ Data/control flow for a download:
 3. `QueueManager` (`queue_manager.py`) — `Condition`-based scheduler thread, priority
    heap, bounded `max_concurrent`. Runs each task in its own thread via `Downloader.run()`.
 4. `Downloader` (`downloader.py`) probes size/range support, splits into N `Segment`s,
-   spawns one thread per segment writing into a pre-allocated `{path}.sdm` temp file,
+   spawns one thread per segment writing into a pre-allocated `{path}.hfdownload` temp file,
    then renames to the final path on success. HLS URLs are delegated to
    `hls.HlsDownloader` instead (segment fetch + AES-128 decrypt + concat to `.ts`).
 
@@ -72,14 +72,14 @@ Rate limiting is a token bucket (`utils.RateLimiter`): a per-task limiter plus a
 Settings and download state live in `%APPDATA%\HyperFetch\`
 (`settings.json`, `downloads.json`, `pair_token`). Key rule in `task.from_dict`: any
 task that was `DOWNLOADING`/`QUEUED` at shutdown is restored as `PAUSED` and resumable
-from the bytes already in its `.sdm` file — never auto-restarted. Cookies/auth headers
+from the bytes already in its `.hfdownload` file — never auto-restarted. Cookies/auth headers
 are stripped (`utils.strip_sensitive`) before writing to disk and live only in memory.
 
 ### Security model (localhost-only)
 
 Three layers gate `/download`, do not weaken them casually: (1) server bound to
 `127.0.0.1`; (2) CORS allows only `chrome-extension://` / `moz-extension://` origins so
-website JS fails preflight; (3) a per-install pairing token (`X-SDM-Token`, constant-time
+website JS fails preflight; (3) a per-install pairing token (`X-HyperFetch-Token`, constant-time
 compared). `/ping` is intentionally open (connection status only). TLS verification is on
 by default via `utils.VERIFY_TLS`; filenames are confined to the chosen folder
 (`utils.safe_filename` / `unique_path`).
@@ -96,7 +96,7 @@ by default via `utils.VERIFY_TLS`; filenames are confined to the chosen folder
 - **`edge_ext/` mirrors `chrome_ext/` but has diverged** — when changing extension
   behavior, check whether the same change belongs in both. `chrome_ext/` is the one CI
   syntax-checks and tests.
-- **`.sdm` = in-progress temp file, `.part*` = legacy**; both are gitignored and cleaned
+- **`.hfdownload` = in-progress temp file, `.part*` = legacy**; both are gitignored and cleaned
   on completion/cancel.
 - The GUI is a single large `DownloadApp` `QWidget` in `main.py` with inline dark-theme
   QSS at the top of the file; dialogs (`FileInfoDialog`, `PropertiesDialog`,

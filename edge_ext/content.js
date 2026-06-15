@@ -74,7 +74,7 @@ function updatePanel() {
   
   if (!panelContainer) {
     panelContainer = document.createElement("div");
-    panelContainer.id = "sdm-media-sniffer-root";
+    panelContainer.id = "hyperfetch-media-sniffer-root";
     
     // Attach Shadow DOM to prevent host page CSS conflicts
     panelRoot = panelContainer.attachShadow({mode: 'closed'});
@@ -178,7 +178,7 @@ function updatePanel() {
     item.innerHTML = `
       <div class="filename">${media.filename}${badge}</div>
       <div class="meta">${sizeTxt} • ${media.mime || 'unknown'}</div>
-      <button class="btn-download">Download with SDM</button>
+      <button class="btn-download">Download with HyperFetch</button>
     `;
     item.querySelector(".btn-download").onclick = (e) => {
       e.preventDefault();
@@ -222,12 +222,12 @@ function ensureVideoOverlay(video) {
   const downloadUrl = getRuntimeDownloadUrl(video);
   if (!downloadUrl || downloadUrl.startsWith('blob:') || downloadUrl.startsWith('data:')) return;
 
-  if (video.dataset.sdmOverlayAttached === downloadUrl) return;
+  if (video.dataset.hyperfetchOverlayAttached === downloadUrl) return;
 
   const btn = document.createElement('button');
   btn.type = 'button';
-  btn.textContent = 'SDM';
-  btn.setAttribute('aria-label', 'Download with SDM');
+  btn.textContent = 'HyperFetch';
+  btn.setAttribute('aria-label', 'Download with HyperFetch');
   btn.style.cssText = [
     'position: absolute',
     'top: 8px',
@@ -258,7 +258,7 @@ function ensureVideoOverlay(video) {
   }
 
   video.appendChild(btn);
-  video.dataset.sdmOverlayAttached = downloadUrl;
+  video.dataset.hyperfetchOverlayAttached = downloadUrl;
 }
 
 function sniffRuntimeMedia() {
@@ -317,7 +317,7 @@ function scanDom() {
     try {
       ensureVideoOverlay(v);
     } catch (e) {
-      console.error('SDM overlay error:', e);
+      console.error('HyperFetch overlay error:', e);
     }
   });
 

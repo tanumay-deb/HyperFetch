@@ -195,7 +195,7 @@ class HlsDownloader:
             self.t.save_path = self.t.save_path[:-5] + ".ts"
             self.t.filename = os.path.basename(self.t.save_path)
         os.makedirs(os.path.dirname(self.t.save_path) or ".", exist_ok=True)
-        temp_path = self.t.save_path + ".sdm"
+        temp_path = self.t.save_path + ".hfdownload"
 
         try:
             text = self._fetch_text(self.t.url)

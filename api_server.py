@@ -4,7 +4,7 @@ Security model (localhost-only desktop app):
 - Bound to 127.0.0.1 — not reachable off-machine.
 - CORS allows only ``chrome-extension://`` / ``moz-extension://`` origins, so a
   website's JS cannot drive downloads (its cross-origin JSON POST fails preflight).
-- ``/download`` additionally requires the pairing token (``X-SDM-Token`` header
+- ``/download`` additionally requires the pairing token (``X-HyperFetch-Token`` header
   or ``token`` body field) so other local processes / extensions can't queue
   downloads. The user copies the token from the app into the extension once.
 
@@ -29,16 +29,16 @@ def create_app(queue, save_dir, pending=None, token=None):
     # Only browser-extension origins may call cross-origin. Websites use http(s)
     # origins and are rejected at preflight.
     CORS(app, origins=[r"chrome-extension://*", r"moz-extension://*"],
-         allow_headers=["Content-Type", "X-SDM-Token"])
+         allow_headers=["Content-Type", "X-HyperFetch-Token"])
     logging.getLogger("werkzeug").setLevel(logging.ERROR)
 
-    app.config["SDM_TOKEN"] = token
+    app.config["HYPERFETCH_TOKEN"] = token
 
     def _authorized(data):
-        expected = app.config.get("SDM_TOKEN")
+        expected = app.config.get("HYPERFETCH_TOKEN")
         if not expected:
             return True  # token disabled (e.g. headless/tests)
-        presented = request.headers.get("X-SDM-Token") or (data or {}).get("token")
+        presented = request.headers.get("X-HyperFetch-Token") or (data or {}).get("token")
         # constant-time compare
         import hmac
         return bool(presented) and hmac.compare_digest(str(presented), str(expected))
@@ -46,7 +46,7 @@ def create_app(queue, save_dir, pending=None, token=None):
     @app.route("/ping", methods=["GET"])
     def ping():
         # open (no token) so the popup can show connection status; reveals nothing
-        return jsonify({"status": "ok", "needsToken": bool(app.config.get("SDM_TOKEN"))})
+        return jsonify({"status": "ok", "needsToken": bool(app.config.get("HYPERFETCH_TOKEN"))})
 
     @app.route("/download", methods=["POST"])
     def download():

@@ -4,7 +4,7 @@ Tests:
   1. Task model: creation, serialization, deserialization, speed limit
   2. Utils: categories, rate limiter, filename sanitization
   3. API server: endpoint routing, category integration
-  4. Downloader: pre-allocation (.sdm), download completion, speed throttling
+  4. Downloader: pre-allocation (.hfdownload), download completion, speed throttling
 """
 import os
 import sys
@@ -154,7 +154,7 @@ from api_server import create_app
 from collections import deque
 
 q = QueueManager(max_concurrent=1, segments=2)
-test_dir = tempfile.mkdtemp(prefix="sdm_test_")
+test_dir = tempfile.mkdtemp(prefix="hf_test_")
 pending = deque()
 
 app = create_app(q, test_dir, pending=pending)
@@ -201,9 +201,9 @@ print("=" * 60)
 
 # Use a small publicly available test file
 TEST_URL = "https://www.google.com/robots.txt"
-test_dir2 = tempfile.mkdtemp(prefix="sdm_dl_test_")
+test_dir2 = tempfile.mkdtemp(prefix="hf_dl_test_")
 save_path = os.path.join(test_dir2, "robots.txt")
-sdm_path = save_path + ".sdm"
+hf_path = save_path + ".hfdownload"
 
 # 4.1 Basic download test
 dt = T.DownloadTask(TEST_URL, save_path, filename="robots.txt")
@@ -212,7 +212,7 @@ dl.run()
 
 test("Download completed", dt.status == T.COMPLETED, f"status={dt.status}, error={dt.error}")
 test("Final file exists", os.path.exists(save_path))
-test(".sdm file cleaned up", not os.path.exists(sdm_path))
+test(".hfdownload file cleaned up", not os.path.exists(hf_path))
 if os.path.exists(save_path):
     fsize = os.path.getsize(save_path)
     test(f"File has content ({fsize} bytes)", fsize > 0)
@@ -225,7 +225,7 @@ dt2.request_cancel()
 dl2 = Downloader(dt2, segments=1)
 dl2.run()
 test("Cancelled download status", dt2.status == T.CANCELLED)
-test("Cancelled .sdm cleaned", not os.path.exists(save_path2 + ".sdm"))
+test("Cancelled .hfdownload cleaned", not os.path.exists(save_path2 + ".hfdownload"))
 
 # 4.3 Speed limiter integration (verify limiter is called without crashing)
 save_path3 = os.path.join(test_dir2, "throttled.txt")

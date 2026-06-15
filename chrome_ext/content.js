@@ -82,7 +82,7 @@ function updatePanel() {
   
   if (!panelContainer) {
     panelContainer = document.createElement("div");
-    panelContainer.id = "sdm-media-sniffer-root";
+    panelContainer.id = "hyperfetch-media-sniffer-root";
     
     // Attach Shadow DOM to prevent host page CSS conflicts
     panelRoot = panelContainer.attachShadow({mode: 'closed'});
@@ -186,7 +186,7 @@ function updatePanel() {
     item.innerHTML = `
       <div class="filename">${media.filename}${badge}</div>
       <div class="meta">${sizeTxt} • ${media.mime || 'unknown'}</div>
-      <button class="btn-download">Download with SDM</button>
+      <button class="btn-download">Download with HyperFetch</button>
     `;
     item.querySelector(".btn-download").onclick = (e) => {
       e.preventDefault();
@@ -324,7 +324,7 @@ function getVideoDownload(video) {
 
 function createOverlay(video) {
   const host = document.createElement('div');
-  host.className = 'sdm-video-badge';
+  host.className = 'hyperfetch-video-badge';
   host.style.cssText =
     'position:fixed;z-index:2147483647;margin:0;padding:0;border:0;' +
     'background:transparent;pointer-events:none;display:none;';
@@ -471,7 +471,7 @@ function scanDom() {
     syncOverlays();
     scheduleReposition();
   } catch (e) {
-    console.error('SDM overlay error:', e);
+    console.error('HyperFetch overlay error:', e);
   }
 
   document.querySelectorAll('video, audio').forEach(v => {

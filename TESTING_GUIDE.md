@@ -60,7 +60,7 @@ python.exe test_comprehensive.py
    - Multi-segment downloading
    - Speed throttling enforcement
    - Cancellation handling
-   - Temporary .sdm file cleanup
+   - Temporary .hfdownload file cleanup
 
 5. **TEST GROUP 5: Queue Manager** (7 tests)
    - Task enqueueing
@@ -109,7 +109,7 @@ python.exe test_comprehensive.py
 - Speed throttling (100 KB/s)
 - Cancellation mid-download
 - Multi-segment (4 segments)
-- .sdm cleanup
+- .hfdownload cleanup
 
 **PART 6: HLS Stream Detection** (7 tests)
 - Direct m3u8 URL detection
@@ -204,7 +204,7 @@ pip install flask flask-cors requests urllib3
 
 ### "PermissionError: File exists"
 **Cause:** Test temp directory already exists  
-**Solution:** Delete `C:\Users\Deb_Laptop\AppData\Local\Temp\sdm_test_*` directories
+**Solution:** Delete `C:\Users\Deb_Laptop\AppData\Local\Temp\hf_test_*` directories
 
 ### Tests hang or timeout
 **Cause:** Download taking too long  

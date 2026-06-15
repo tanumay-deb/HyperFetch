@@ -231,7 +231,7 @@ print("=" * 80)
 initial_pass = pass_count
 
 # Create temp directory for downloads
-test_dir = tempfile.mkdtemp(prefix="sdm_test_")
+test_dir = tempfile.mkdtemp(prefix="hf_test_")
 print(f"[DIR] Test directory: {test_dir}")
 
 # Test 5.1: Download small file (1MB)
@@ -311,10 +311,10 @@ try:
 except Exception as e:
     test("Multi-segment download completed", False, str(e))
 
-# Test 5.5: .sdm temp file cleanup
+# Test 5.5: .hfdownload temp file cleanup
 print("\n[DL] Test 5.5: Temp file cleanup...")
-sdm_files_before = len([f for f in os.listdir(test_dir) if f.endswith('.sdm')])
-test(".sdm cleanup after completion", sdm_files_before == 0)
+hf_files_before = len([f for f in os.listdir(test_dir) if f.endswith('.hfdownload')])
+test(".hfdownload cleanup after completion", hf_files_before == 0)
 
 # Clean up test downloads
 print(f"\n[CLEAN] Cleaning up test files...")

@@ -104,7 +104,7 @@ def test_cancel_midstream(hls_server, tmp_path):
     t.request_cancel()
     Downloader(t).run()
     assert t.status == T.CANCELLED
-    assert not os.path.exists(t.save_path + ".sdm")
+    assert not os.path.exists(t.save_path + ".hfdownload")
 
 
 def test_live_stream_errors_clearly(hls_server, tmp_path):

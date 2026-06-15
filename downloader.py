@@ -144,7 +144,7 @@ class Downloader:
 
     def _build_segments(self):
         """Create segments, pre-allocating the file if total size is known."""
-        temp_path = self.t.save_path + ".sdm"
+        temp_path = self.t.save_path + ".hfdownload"
 
         if self.t.total_size > 0:
             self._check_disk_space(temp_path, self.t.total_size)
@@ -169,8 +169,8 @@ class Downloader:
 
     # ------------------------------------------------------------- workers
     def _worker(self, seg):
-        """Stream one segment, writing directly to the pre-allocated .sdm file."""
-        temp_path = self.t.save_path + ".sdm"
+        """Stream one segment, writing directly to the pre-allocated .hfdownload file."""
+        temp_path = self.t.save_path + ".hfdownload"
         attempts = 0
 
         while not self.t.pause_requested:
@@ -259,7 +259,7 @@ class Downloader:
         self.t.status = T.DOWNLOADING
         self.t.error = ""
         os.makedirs(os.path.dirname(self.t.save_path) or ".", exist_ok=True)
-        temp_path = self.t.save_path + ".sdm"
+        temp_path = self.t.save_path + ".hfdownload"
 
         try:
             if not self.t.segments:

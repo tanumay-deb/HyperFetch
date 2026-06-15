@@ -182,13 +182,13 @@ GRAND TOTAL:
 ### Downloader (13 tests)
 - [x] Single file download (1MB)
 - [x] File existence after download
-- [x] .sdm temp file cleanup
+- [x] .hfdownload temp file cleanup
 - [x] File content/size verification
 - [x] Download matches source
 - [x] Speed limiting (100KB/s)
 - [x] Throttle accuracy (within 10%)
 - [x] Cancellation stops transfer
-- [x] Cancelled .sdm cleanup
+- [x] Cancelled .hfdownload cleanup
 - [x] Multi-segment download (4 segments)
 - [x] Segment coordination
 - [x] Pause/resume capability
@@ -411,7 +411,7 @@ GRAND TOTAL:
 | Task state transition | <1ms | <10ms | ✅ Pass |
 | Speed throttling accuracy | ±10% | ±15% | ✅ Pass |
 | Concurrent 10 tasks | <5s | <10s | ✅ Pass |
-| .sdm cleanup | <100ms | <500ms | ✅ Pass |
+| .hfdownload cleanup | <100ms | <500ms | ✅ Pass |
 
 ---
 

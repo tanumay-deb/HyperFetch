@@ -1,5 +1,5 @@
 {
-  "name": "sdm-extension-tests",
+  "name": "hyperfetch-extension-tests",
   "version": "1.0.0",
   "private": true,
   "description": "jsdom behavior tests for the HyperFetch content script",

@@ -53,7 +53,7 @@ function mkVideo(win, { src = '', current = '', w = 640, h = 360, top = 100, lef
   return v;
 }
 
-const badges = (win) => win.document.querySelectorAll('.sdm-video-badge');
+const badges = (win) => win.document.querySelectorAll('.hyperfetch-video-badge');
 
 let passed = 0;
 async function test(name, fn) {

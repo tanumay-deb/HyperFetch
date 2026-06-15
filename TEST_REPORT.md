@@ -228,7 +228,7 @@ All 59 tests from the existing test_e2e.py pass:
 - Multi-segment downloading
 - Speed throttling
 - Cancellation
-- .sdm temp file cleanup
+- .hfdownload temp file cleanup
 
 ### TEST GROUP 5: Queue Manager (7 tests) ✅
 - Task enqueueing
@@ -269,7 +269,7 @@ All 59 tests from the existing test_e2e.py pass:
 - ✅ Real-time m3u8 playlist parsing
 - ✅ AES-128 segment decryption (HLS support)
 - ✅ Concurrent download scheduling
-- ✅ Temporary .sdm file pre-allocation
+- ✅ Temporary .hfdownload file pre-allocation
 
 ### Integration
 - ✅ Browser extension messaging protocol

@@ -24,7 +24,7 @@ Use this checklist to verify the HyperFetch works correctly on real websites.
 - [ ] File appears in desktop app
 - [ ] Download completes successfully
 - [ ] File opens/extracts correctly
-- [ ] No .sdm temp files remain
+- [ ] No .hfdownload temp files remain
 
 ### 2. Speed Limiting
 **Test URL:** http://proof.ovh.net/files/10Mb.dat
@@ -55,7 +55,7 @@ Use this checklist to verify the HyperFetch works correctly on real websites.
 - [ ] Click Cancel button
 - [ ] File transfer stops immediately
 - [ ] Task shows "CANCELLED" status
-- [ ] Temp .sdm file is deleted
+- [ ] Temp .hfdownload file is deleted
 - [ ] Can start new download afterward
 
 ---
@@ -98,7 +98,7 @@ Use this checklist to verify the HyperFetch works correctly on real websites.
 **Test URL:** https://missav.ws/en/gana-3191 (or similar HLS site)
 
 - [ ] Page loads with video player
-- [ ] "SDM" button appears in top-right corner of video
+- [ ] "HyperFetch" button appears in top-right corner of video
 - [ ] Button has gradient background (purple)
 - [ ] Click button → Download starts
 - [ ] Media panel shows detected HLS stream
@@ -119,7 +119,7 @@ Use this checklist to verify the HyperFetch works correctly on real websites.
 - [ ] Purple panel appears top-right with "Download Media (N)"
 - [ ] Shows detected HLS/DASH streams
 - [ ] Shows file size and MIME type
-- [ ] "Download with SDM" button on each item
+- [ ] "Download with HyperFetch" button on each item
 - [ ] Panel can be hidden/shown by clicking toggle
 
 ---
@@ -243,7 +243,7 @@ Use this checklist to verify the HyperFetch works correctly on real websites.
 ### 22. Desktop App UI
 **Action:** Open desktop app window
 
-- [ ] Window shows SDM logo/title
+- [ ] Window shows HyperFetch logo/title
 - [ ] Download list visible
 - [ ] Speed/progress indicators work
 - [ ] Buttons responsive (Pause, Cancel, Open)
@@ -308,9 +308,9 @@ Use this checklist to verify the HyperFetch works correctly on real websites.
 ### 28. Temp File Cleanup
 **Action:** Monitor temp directory during downloads
 
-- [ ] .sdm files created in Downloads folder
-- [ ] After completion, .sdm deleted automatically
-- [ ] After cancellation, .sdm deleted automatically
+- [ ] .hfdownload files created in Downloads folder
+- [ ] After completion, .hfdownload deleted automatically
+- [ ] After cancellation, .hfdownload deleted automatically
 - [ ] No orphaned temp files
 
 ### 29. Log Cleanliness

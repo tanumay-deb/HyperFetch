@@ -7,7 +7,7 @@ from downloader import Downloader
 def test_core():
     url = "http://speedtest.tele2.net/1MB.zip"
     save_path = os.path.abspath("test_1MB.zip")
-    temp_path = save_path + ".sdm"
+    temp_path = save_path + ".hfdownload"
     
     # Cleanup before test
     if os.path.exists(save_path):
@@ -24,21 +24,21 @@ def test_core():
     print("Instantiating Downloader...")
     dl = Downloader(task)
     
-    print("Running downloader in a background thread to check for .sdm file...")
+    print("Running downloader in a background thread to check for .hfdownload file...")
     dl_thread = threading.Thread(target=dl.run)
     dl_thread.start()
     
-    # Assert .sdm file is created during download
-    sdm_created = False
+    # Assert .hfdownload file is created during download
+    hf_created = False
     for _ in range(50):
         if os.path.exists(temp_path):
-            sdm_created = True
+            hf_created = True
             break
         time.sleep(0.1)
         
     try:
-        assert sdm_created, "The .sdm file was not created during the download."
-        print("Assertion passed: .sdm file was created.")
+        assert hf_created, "The .hfdownload file was not created during the download."
+        print("Assertion passed: .hfdownload file was created.")
     except AssertionError as e:
         task.request_cancel()
         dl_thread.join()
