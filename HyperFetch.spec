@@ -1,5 +1,5 @@
 # -*- mode: python ; coding: utf-8 -*-
-"""PyInstaller build spec for Smart Download Manager (onedir, windowed)."""
+"""PyInstaller build spec for HyperFetch (onedir, windowed)."""
 from PyInstaller.utils.hooks import collect_all, collect_submodules
 
 # cryptography is imported lazily inside hls.py -> pull it in explicitly
@@ -32,7 +32,7 @@ exe = EXE(
     a.scripts,
     [],
     exclude_binaries=True,
-    name='SmartDownloadManager',
+    name='HyperFetch',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
@@ -47,5 +47,5 @@ coll = COLLECT(
     a.datas,
     strip=False,
     upx=False,
-    name='SmartDownloadManager',
+    name='HyperFetch',
 )

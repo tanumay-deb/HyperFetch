@@ -1,10 +1,10 @@
-; Inno Setup script for Smart Download Manager.
-; Build with: iscc installer.iss   (after build.ps1 has produced dist\SmartDownloadManager)
+; Inno Setup script for HyperFetch.
+; Build with: iscc installer.iss   (after build.ps1 has produced dist\HyperFetch)
 
-#define AppName "Smart Download Manager"
-#define AppVersion "1.0.0"
-#define AppPublisher "Smart Download Manager"
-#define AppExe "SmartDownloadManager.exe"
+#define AppName "HyperFetch"
+#define AppVersion "1.0.1"
+#define AppPublisher "HyperFetch"
+#define AppExe "HyperFetch.exe"
 
 [Setup]
 AppId={{8F3C1A92-5D44-4E27-9C61-2B7A0E5F1D33}
@@ -15,7 +15,7 @@ DefaultDirName={autopf}\{#AppName}
 DefaultGroupName={#AppName}
 UninstallDisplayIcon={app}\{#AppExe}
 OutputDir=dist\installer
-OutputBaseFilename=SmartDownloadManager-{#AppVersion}-setup
+OutputBaseFilename=HyperFetch-{#AppVersion}-setup
 SetupIconFile=assets\icon.ico
 Compression=lzma2
 SolidCompression=yes
@@ -32,7 +32,7 @@ Name: "startup"; Description: "Start {#AppName} when Windows starts"; GroupDescr
 
 [Files]
 ; the whole PyInstaller onedir tree
-Source: "dist\SmartDownloadManager\*"; DestDir: "{app}"; Flags: recursesubdirs createallsubdirs ignoreversion
+Source: "dist\HyperFetch\*"; DestDir: "{app}"; Flags: recursesubdirs createallsubdirs ignoreversion
 
 [Icons]
 Name: "{group}\{#AppName}"; Filename: "{app}\{#AppExe}"

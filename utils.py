@@ -17,7 +17,15 @@ SENSITIVE_HEADERS = {"cookie", "authorization", "proxy-authorization"}
 def app_data_dir():
     """Per-user folder for settings + persisted download state."""
     base = os.environ.get("APPDATA") or os.path.expanduser("~")
-    d = os.path.join(base, "SmartDownloadManager")
+    d = os.path.join(base, "HyperFetch")
+    if not os.path.isdir(d):
+        # one-time migration from the pre-rebrand folder name
+        legacy = os.path.join(base, "SmartDownloadManager")
+        if os.path.isdir(legacy):
+            try:
+                os.rename(legacy, d)
+            except OSError:
+                return legacy            # old data still in use; keep using it
     os.makedirs(d, exist_ok=True)
     return d
 

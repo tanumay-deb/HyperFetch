@@ -1,23 +1,23 @@
 # Chrome Web Store submission notes
 
 Copy/paste material and reviewer justifications for publishing the
-"Smart Download Manager" extension. The desktop app must be installed
+"HyperFetch" extension. The desktop app must be installed
 separately (the extension is a thin bridge to it).
 
 ---
 
 ## Store listing copy
 
-**Name:** Smart Download Manager
+**Name:** HyperFetch
 
 **Summary (132 chars max):**
-Send browser downloads and streaming videos to the Smart Download Manager
+Send browser downloads and streaming videos to the HyperFetch
 desktop app for fast multi-connection downloading.
 
 **Category:** Productivity
 
 **Description:**
-Smart Download Manager speeds up your downloads by handing them to the companion
+HyperFetch speeds up your downloads by handing them to the companion
 desktop app, which downloads each file over multiple connections at once. It can
 also grab HLS streaming videos (`.m3u8`) and save them as a single playable file.
 
@@ -28,7 +28,7 @@ Features:
 - Works with login-gated downloads by forwarding your session for that one request
 - Pause / resume / queue, all managed in the desktop app
 
-Requires the free Smart Download Manager desktop app (link in the app/readme).
+Requires the free HyperFetch desktop app (link in the app/readme).
 Everything runs locally on your computer — no accounts, no servers, no tracking.
 
 ---

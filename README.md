@@ -1,4 +1,4 @@
-# Smart Download Manager (IDM clone)
+# HyperFetch (IDM clone)
 
 Multi-segment download accelerator with a desktop GUI, IDM-style download
 dialogs, persistent state, a download queue, and a Chrome/Edge extension that
@@ -16,7 +16,7 @@ intercepts browser downloads — like Internet Download Manager.
   even after closing and reopening the app.
 - **Persistent state** — the download list (including segment progress) survives
   restarts; in-flight downloads restore as paused and resumable. Stored in
-  `%APPDATA%\SmartDownloadManager\`.
+  `%APPDATA%\HyperFetch\`.
 - **Rate-limit aware** — retries with exponential backoff (honors `Retry-After`),
   adaptively halves parallel connections on HTTP 429, staggers connection starts.
 - **Download queue** — priority ordering + bounded concurrency + scheduler.
@@ -73,7 +73,7 @@ This is a localhost-only desktop app; it never listens off-machine. Defenses:
   downloads (its cross-origin JSON POST fails preflight).
 - **Pairing token** — `/download` requires the per-install token, so other local
   processes/extensions can't queue downloads. Token lives in
-  `%APPDATA%\SmartDownloadManager\pair_token` (regenerate by deleting the file).
+  `%APPDATA%\HyperFetch\pair_token` (regenerate by deleting the file).
 - **TLS verification ON by default** — toggle off only for trusted self-signed
   hosts in Settings (clearly warned).
 - **Cookies/auth headers are never written to disk** — they stay in memory for
@@ -92,8 +92,8 @@ and 3.12, a Node/jsdom test of the extension, and a Windows app build.
 ## Building a release (Windows)
 ```powershell
 pip install -r requirements-dev.txt
-.\build.ps1                 # -> dist\SmartDownloadManager\ (portable onedir app)
-.\build.ps1 -Installer      # also builds dist\installer\SmartDownloadManager-1.0.0-setup.exe (needs Inno Setup 6)
+.\build.ps1                 # -> dist\HyperFetch\ (portable onedir app)
+.\build.ps1 -Installer      # also builds dist\installer\HyperFetch-1.0.0-setup.exe (needs Inno Setup 6)
 ```
 The build runs a `--selftest` smoke check on the frozen binary. To **code-sign**
 (recommended before public distribution — avoids SmartScreen warnings):
@@ -104,12 +104,12 @@ Signing needs your own Authenticode certificate and the Windows SDK `signtool`.
 The unsigned build runs fine for personal use; Windows SmartScreen will warn on
 first launch until the binary is signed and has reputation.
 
-`SmartDownloadManager.spec` drives PyInstaller (onedir, windowed, bundles the
+`HyperFetch.spec` drives PyInstaller (onedir, windowed, bundles the
 icon + cryptography + the lazily-imported `hls` module). CI uploads the built
 app as a downloadable artifact on every push.
 
 ## Notes
-- Settings and download state live in `%APPDATA%\SmartDownloadManager\`.
+- Settings and download state live in `%APPDATA%\HyperFetch\`.
 - Closing the app with active downloads asks for confirmation, pauses them,
   and resumes from disk on the next start.
 

@@ -1,5 +1,5 @@
 # COMPREHENSIVE END-TO-END TESTING REPORT
-## IDM Clone - Smart Download Manager
+## IDM Clone - HyperFetch
 
 **Test Date:** June 13, 2026  
 **Project:** IDM Clone Browser Extension + Desktop App  
@@ -9,7 +9,7 @@
 
 ## EXECUTIVE SUMMARY
 
-The Smart Download Manager has been extensively tested across 10 major components with **59 core tests passing** and comprehensive coverage including:
+The HyperFetch has been extensively tested across 10 major components with **59 core tests passing** and comprehensive coverage including:
 - Backend API server
 - Download queue management  
 - File downloader with multi-segment support
@@ -328,7 +328,7 @@ All 59 tests from the existing test_e2e.py pass:
 
 ## CONCLUSION
 
-The Smart Download Manager has successfully passed **97 comprehensive tests** covering:
+The HyperFetch has successfully passed **97 comprehensive tests** covering:
 - ✅ Core download engine
 - ✅ Queue management
 - ✅ Browser integration

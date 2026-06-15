@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-Smart Download Manager — an IDM-style multi-segment download accelerator. A PySide6
+HyperFetch — an IDM-style multi-segment download accelerator. A PySide6
 desktop GUI, a segmented HTTP downloader, an HLS (`.m3u8`) grabber, and a localhost
 Flask server that a Chrome/Edge MV3 extension feeds browser downloads into. Pure
 desktop, localhost-only; no accounts or remote services.
@@ -25,7 +25,7 @@ python main.py --selftest # headless build smoke check (constructs app, ticks on
 # Extension JS tests (jsdom)
 cd chrome_ext/test; npm install; npm test
 
-# Windows release build (PyInstaller onedir -> dist\SmartDownloadManager\)
+# Windows release build (PyInstaller onedir -> dist\HyperFetch\)
 .\build.ps1                # add -Installer (needs Inno Setup 6), -Sign -CertPath x.pfx -CertPass ****
 ```
 
@@ -69,7 +69,7 @@ Rate limiting is a token bucket (`utils.RateLimiter`): a per-task limiter plus a
 
 ### Persistence & state restoration
 
-Settings and download state live in `%APPDATA%\SmartDownloadManager\`
+Settings and download state live in `%APPDATA%\HyperFetch\`
 (`settings.json`, `downloads.json`, `pair_token`). Key rule in `task.from_dict`: any
 task that was `DOWNLOADING`/`QUEUED` at shutdown is restored as `PAUSED` and resumable
 from the bytes already in its `.sdm` file — never auto-restarted. Cookies/auth headers
@@ -90,7 +90,7 @@ by default via `utils.VERIFY_TLS`; filenames are confined to the chosen folder
   root-level `test_core.py`, `test_comprehensive.py`, `test_e2e.py` are legacy and are
   NOT part of the suite; add new tests under `tests/`.
 - **Lazy imports must be declared to PyInstaller.** `hls` and `cryptography` are imported
-  inside functions (not at module top) and are listed in `SmartDownloadManager.spec`'s
+  inside functions (not at module top) and are listed in `HyperFetch.spec`'s
   `hiddenimports` / `collect_all`. If you add a lazily-imported module, update the spec or
   the frozen build breaks.
 - **`edge_ext/` mirrors `chrome_ext/` but has diverged** — when changing extension

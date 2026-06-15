@@ -1,6 +1,6 @@
 # Disclaimer & acceptable use
 
-Smart Download Manager is a general-purpose download tool. Read this before
+HyperFetch is a general-purpose download tool. Read this before
 using or distributing it.
 
 ## Intended use

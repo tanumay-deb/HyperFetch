@@ -1,5 +1,5 @@
 """
-Comprehensive End-to-End Testing Suite for Smart Download Manager
+Comprehensive End-to-End Testing Suite for HyperFetch
 Tests all major components: API, downloader, queue, HLS support, extensions
 """
 import os

@@ -11,7 +11,7 @@ build/
 dist/
 *.spec
 # ...but keep the hand-maintained PyInstaller specs (canonical build descriptors)
-!SmartDownloadManager.spec
+!HyperFetch.spec
 !api_server.spec
 
 # Node / extension tests

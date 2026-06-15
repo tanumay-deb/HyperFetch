@@ -21,7 +21,7 @@ import utils
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-HEADERS = {"User-Agent": "Mozilla/5.0 (SmartDownloadManager)"}
+HEADERS = {"User-Agent": "Mozilla/5.0 (HyperFetch)"}
 TIMEOUT = 20
 SEG_RETRIES = 3
 PARALLEL = 6          # concurrent segment downloads

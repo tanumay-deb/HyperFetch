@@ -1,6 +1,6 @@
 # TESTING GUIDE FOR IDM CLONE
 
-This document explains how to run the comprehensive test suite for the Smart Download Manager.
+This document explains how to run the comprehensive test suite for the HyperFetch.
 
 ## Quick Start
 

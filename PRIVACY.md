@@ -1,15 +1,15 @@
-# Privacy Policy — Smart Download Manager
+# Privacy Policy — HyperFetch
 
 **Last updated: 2026-06-13**
 
-Smart Download Manager is a desktop download accelerator plus a companion
+HyperFetch is a desktop download accelerator plus a companion
 browser extension. This policy explains exactly what the software does with
 your data. The short version: **everything stays on your computer. There are no
 remote servers, no accounts, no analytics, and no tracking.**
 
 ## Who this covers
-- The **desktop app** (`SmartDownloadManager.exe` / `main.py`).
-- The **browser extension** ("Smart Download Manager").
+- The **desktop app** (`HyperFetch.exe` / `main.py`).
+- The **browser extension** ("HyperFetch").
 
 ## What data is processed
 
@@ -19,7 +19,7 @@ remote servers, no accounts, no analytics, and no tracking.**
 | Cookies for the download URL's site | So logged-in / paid downloads work (e.g. Google Drive) | Attached to that one download request only; **never stored, never sent anywhere else** |
 | Page title / filename | To name the saved file | Stays local |
 | The pairing token | To authorize the extension ↔ app link | Stored locally only |
-| App settings + download list | To resume downloads and remember preferences | Stored locally in `%APPDATA%\SmartDownloadManager\` |
+| App settings + download list | To resume downloads and remember preferences | Stored locally in `%APPDATA%\HyperFetch\` |
 
 ## What the software does **not** do
 - **No remote servers.** The app's only network listener is bound to
@@ -48,7 +48,7 @@ anywhere except for the download you explicitly start.
 
 ## Data retention and deletion
 - Settings, the download list, and the pairing token live in
-  `%APPDATA%\SmartDownloadManager\`. Delete that folder to remove all app data.
+  `%APPDATA%\HyperFetch\`. Delete that folder to remove all app data.
 - Extension settings live in the browser's local extension storage. Remove the
   extension to clear them.
 

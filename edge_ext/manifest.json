@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
-  "name": "Smart Download Manager",
-  "description": "Sends downloads to the Smart Download Manager desktop app for accelerated multi-segment downloading.",
+  "name": "HyperFetch",
+  "description": "Sends downloads to the HyperFetch desktop app for accelerated multi-segment downloading.",
   "version": "1.1.0",
   "permissions": [
     "downloads",

@@ -1,4 +1,4 @@
-"""End-to-end test suite for Smart Download Manager.
+"""End-to-end test suite for HyperFetch.
 
 Tests:
   1. Task model: creation, serialization, deserialization, speed limit

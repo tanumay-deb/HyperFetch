@@ -1,6 +1,6 @@
 # MANUAL TESTING CHECKLIST
 
-Use this checklist to verify the Smart Download Manager works correctly on real websites.
+Use this checklist to verify the HyperFetch works correctly on real websites.
 
 ## Pre-Testing Setup
 

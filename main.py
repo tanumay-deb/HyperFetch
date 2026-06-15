@@ -1,4 +1,4 @@
-"""Smart Download Manager - IDM-style GUI.
+"""HyperFetch - IDM-style GUI.
 
 Multi-segment downloads with a live queue, pause/resume/cancel, IDM-style
 file-info dialogs, persistent state, and an embedded Flask server so the
@@ -26,7 +26,7 @@ import utils
 from queue_manager import QueueManager
 from api_server import run_server, PORT
 
-APP_VERSION = "1.0.0"
+APP_VERSION = "1.0.1"
 
 
 def resource_path(*parts):
@@ -832,7 +832,7 @@ class DownloadApp(QWidget):
 
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Smart Download Manager")
+        self.setWindowTitle("HyperFetch")
         self.setMinimumSize(900, 540)
         for ic in (resource_path("assets", "icon.ico"),
                    resource_path("assets", "icon.png")):
@@ -918,7 +918,7 @@ class DownloadApp(QWidget):
         head = QHBoxLayout()
         title_box = QVBoxLayout()
         title_box.setSpacing(2)
-        title = QLabel("⚡ Smart Download Manager")
+        title = QLabel("⚡ HyperFetch")
         title.setStyleSheet("font-size: 21px; font-weight: 800;")
         self.subtitle = QLabel("")
         self.subtitle.setStyleSheet(f"color: {MUTED}; font-size: 12px;")
@@ -1418,7 +1418,7 @@ def _self_test():
 
 if __name__ == "__main__":
     if "--version" in sys.argv:
-        print(f"Smart Download Manager {APP_VERSION}")
+        print(f"HyperFetch {APP_VERSION}")
         sys.exit(0)
     if "--selftest" in sys.argv:
         _self_test()

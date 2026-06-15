@@ -1,5 +1,5 @@
 <#
-  Build script for Smart Download Manager (Windows).
+  Build script for HyperFetch (Windows).
 
   Usage:
     .\build.ps1                      # build the onedir app into dist\
@@ -30,10 +30,10 @@ Write-Host "==> Cleaning previous build" -ForegroundColor Cyan
 Remove-Item -Recurse -Force build, dist -ErrorAction SilentlyContinue
 
 Write-Host "==> Building with PyInstaller" -ForegroundColor Cyan
-python -m PyInstaller --noconfirm --clean SmartDownloadManager.spec
+python -m PyInstaller --noconfirm --clean HyperFetch.spec
 if ($LASTEXITCODE -ne 0) { throw "PyInstaller build failed" }
 
-$exe = "dist\SmartDownloadManager\SmartDownloadManager.exe"
+$exe = "dist\HyperFetch\HyperFetch.exe"
 
 Write-Host "==> Smoke-testing the frozen binary" -ForegroundColor Cyan
 & $exe --selftest

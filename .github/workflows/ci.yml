@@ -80,11 +80,11 @@ jobs:
       - name: Build
         run: |
           python -c "from PIL import Image; Image.open('assets/icon.png').convert('RGBA').save('assets/icon.ico', sizes=[(16,16),(32,32),(48,48),(64,64),(128,128),(256,256)])"
-          python -m PyInstaller --noconfirm --clean SmartDownloadManager.spec
+          python -m PyInstaller --noconfirm --clean HyperFetch.spec
       - name: Smoke-test the frozen binary
-        run: dist\SmartDownloadManager\SmartDownloadManager.exe --selftest
+        run: dist\HyperFetch\HyperFetch.exe --selftest
       - name: Upload app artifact
         uses: actions/upload-artifact@v4
         with:
-          name: SmartDownloadManager-windows
-          path: dist/SmartDownloadManager
+          name: HyperFetch-windows
+          path: dist/HyperFetch

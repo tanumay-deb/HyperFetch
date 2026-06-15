@@ -18,7 +18,7 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 CHUNK = 65536          # 64 KiB read size
 DEFAULT_SEGMENTS = 8   # parallel connections when the server supports ranges
-HEADERS = {"User-Agent": "Mozilla/5.0 (SmartDownloadManager)"}
+HEADERS = {"User-Agent": "Mozilla/5.0 (HyperFetch)"}
 CONNECT_TIMEOUT = 15
 MAX_RETRIES = 5        # per-segment attempts before the task errors
 STAGGER = 0.15         # delay between segment thread starts (rate-limit friendly)
