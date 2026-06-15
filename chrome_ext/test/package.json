@@ -1,0 +1,12 @@
+{
+  "name": "sdm-extension-tests",
+  "version": "1.0.0",
+  "private": true,
+  "description": "jsdom behavior tests for the Smart Download Manager content script",
+  "scripts": {
+    "test": "node overlay.test.js"
+  },
+  "devDependencies": {
+    "jsdom": "^29.1.1"
+  }
+}

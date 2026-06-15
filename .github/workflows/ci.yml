@@ -1,0 +1,90 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+jobs:
+  test:
+    name: test (${{ matrix.os }} / py${{ matrix.python }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+        python: ["3.10", "3.12"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest
+
+      # PySide6 needs a few X libs to import on headless Linux
+      - name: Install Qt runtime libs (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libegl1 libgl1 libxkbcommon0 libdbus-1-3
+
+      - name: Run test suite
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: pytest -ra
+
+  lint-js:
+    name: extension syntax (node)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Syntax-check extension scripts
+        run: |
+          node --check chrome_ext/background.js
+          node --check chrome_ext/content.js
+          node --check chrome_ext/popup.js
+      - name: Validate manifest JSON
+        run: node -e "JSON.parse(require('fs').readFileSync('chrome_ext/manifest.json','utf8'))"
+      - name: Content-script behavior tests (jsdom)
+        working-directory: chrome_ext/test
+        run: |
+          npm install
+          npm test
+
+  package:
+    name: build Windows app
+    runs-on: windows-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install build deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pyinstaller pillow
+      - name: Build
+        run: |
+          python -c "from PIL import Image; Image.open('assets/icon.png').convert('RGBA').save('assets/icon.ico', sizes=[(16,16),(32,32),(48,48),(64,64),(128,128),(256,256)])"
+          python -m PyInstaller --noconfirm --clean SmartDownloadManager.spec
+      - name: Smoke-test the frozen binary
+        run: dist\SmartDownloadManager\SmartDownloadManager.exe --selftest
+      - name: Upload app artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: SmartDownloadManager-windows
+          path: dist/SmartDownloadManager

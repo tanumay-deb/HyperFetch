@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  body {
+    width: 280px; margin: 0;
+    background: #0b1220; color: #e5e9f5;
+    font-family: 'Segoe UI', sans-serif; font-size: 13px;
+  }
+  header { display: flex; align-items: center; gap: 8px; padding: 14px 16px 10px; }
+  header .logo { font-size: 18px; }
+  header h1 { font-size: 14px; margin: 0; font-weight: 700; }
+  .card {
+    background: #111a2e; border: 1px solid #243352; border-radius: 10px;
+    margin: 0 12px 10px; padding: 11px 14px;
+  }
+  .row { display: flex; justify-content: space-between; align-items: center; }
+  .muted { color: #8b97b8; font-size: 12px; font-weight: 600; }
+  .dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    display: inline-block; margin-right: 6px;
+  }
+  .dot.on { background: #34d399; }
+  .dot.off { background: #f87171; }
+  #status { font-weight: 600; font-size: 12px; }
+
+  .switch { position: relative; width: 36px; height: 20px; display: inline-block; }
+  .switch input { display: none; }
+  .slider {
+    position: absolute; inset: 0; background: #243352;
+    border-radius: 10px; transition: .2s; cursor: pointer;
+  }
+  .slider:before {
+    content: ""; position: absolute; width: 14px; height: 14px;
+    left: 3px; top: 3px; background: #8b97b8; border-radius: 50%; transition: .2s;
+  }
+  input:checked + .slider { background: linear-gradient(90deg, #6366f1, #8b5cf6); }
+  input:checked + .slider:before { transform: translateX(16px); background: white; }
+
+  button {
+    width: calc(100% - 24px); margin: 0 12px 12px;
+    background: linear-gradient(135deg, #6366f1, #8b5cf6);
+    color: white; border: none; border-radius: 9px;
+    padding: 9px; font-weight: 600; font-size: 13px; cursor: pointer;
+  }
+  button:hover { filter: brightness(1.12); }
+  button:disabled { background: #243352; color: #8b97b8; cursor: default; }
+  #msg { text-align: center; color: #34d399; font-size: 11px; min-height: 14px; margin: -6px 0 6px; }
+  footer { text-align: center; color: #8b97b8; font-size: 10px; padding: 0 0 10px; }
+</style>
+</head>
+<body>
+  <header><span class="logo">⚡</span><h1>Smart Download Manager</h1></header>
+
+  <div class="card row">
+    <span class="muted">App connection</span>
+    <span id="status"><span class="dot off"></span>checking…</span>
+  </div>
+
+  <div class="card row">
+    <span class="muted">Capture downloads</span>
+    <label class="switch">
+      <input type="checkbox" id="enabled">
+      <span class="slider"></span>
+    </label>
+  </div>
+
+  <button id="test">Send test download</button>
+  <div id="msg"></div>
+
+  <footer>bridge 127.0.0.1:5000 · v1.1.0</footer>
+  <script src="popup.js"></script>
+</body>
+</html>

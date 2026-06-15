@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+*.egg-info/
+.venv/
+venv/
+
+# Build artifacts
+build/
+dist/
+*.spec
+# ...but keep the hand-maintained PyInstaller specs (canonical build descriptors)
+!SmartDownloadManager.spec
+!api_server.spec
+
+# Node / extension tests
+node_modules/
+chrome_ext/test/out.txt
+package-lock.json
+
+# Download manager runtime files
+*.sdm
+*.part*
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

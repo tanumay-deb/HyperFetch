@@ -1,0 +1,104 @@
+# Chrome Web Store submission notes
+
+Copy/paste material and reviewer justifications for publishing the
+"Smart Download Manager" extension. The desktop app must be installed
+separately (the extension is a thin bridge to it).
+
+---
+
+## Store listing copy
+
+**Name:** Smart Download Manager
+
+**Summary (132 chars max):**
+Send browser downloads and streaming videos to the Smart Download Manager
+desktop app for fast multi-connection downloading.
+
+**Category:** Productivity
+
+**Description:**
+Smart Download Manager speeds up your downloads by handing them to the companion
+desktop app, which downloads each file over multiple connections at once. It can
+also grab HLS streaming videos (`.m3u8`) and save them as a single playable file.
+
+Features:
+- Multi-connection (segmented) downloading for big files
+- One-click "Download" badge on videos, plus a media panel for streams
+- Saves files using the real video/page title
+- Works with login-gated downloads by forwarding your session for that one request
+- Pause / resume / queue, all managed in the desktop app
+
+Requires the free Smart Download Manager desktop app (link in the app/readme).
+Everything runs locally on your computer — no accounts, no servers, no tracking.
+
+---
+
+## Single purpose (required field)
+
+> The extension's single purpose is to detect downloadable files and videos in
+> the browser and forward them to the user's locally installed Smart Download
+> Manager desktop application for accelerated downloading.
+
+---
+
+## Permission justifications (paste into the dashboard)
+
+**`downloads`**
+> Used to detect when the browser starts a download and to cancel the browser's
+> copy once the desktop app accepts it, so the file isn't downloaded twice.
+
+**`storage`**
+> Stores the user's local preferences: the capture on/off toggle and the pairing
+> token used to authenticate with the local desktop app. No browsing data.
+
+**`webRequest`**
+> Used to observe response Content-Type/URL of media responses so the extension
+> can offer to download streaming videos (HLS `.m3u8`/DASH manifests). It is
+> observational only — the extension does not block, redirect, or modify any
+> request.
+
+**`cookies`**
+> Read only to attach the user's existing session cookies to a download the user
+> explicitly initiates, so that login-gated or paid downloads (e.g. files behind
+> a sign-in) succeed. Cookies are sent only to the user's local app for that one
+> download and are never stored or transmitted elsewhere.
+
+**Host permission `<all_urls>`**
+> A download manager must work on whatever site the user is on, so the content
+> script (download badge) and the media detector need to run on all sites. The
+> extension does not read or transmit page content; it only acts on downloads
+> the user starts. Connections are limited to `http://127.0.0.1:5000` (the local
+> app) and the download's own URL.
+
+**Host permission `http://127.0.0.1:5000/*`**
+> The fixed local address of the companion desktop app the extension sends
+> downloads to.
+
+---
+
+## Data use disclosures (Privacy practices tab)
+
+- **Does the item collect or use data?** Yes — only as needed to function.
+- **Personally identifiable / authentication info:** session cookies are read to
+  authorize a user-initiated download. **Not** stored, **not** sold, **not**
+  transferred to third parties; sent only to the user's own local application.
+- **Web history / activity:** not collected.
+- **Analytics / telemetry:** none.
+- Certify: data is **not** sold, **not** used for unrelated purposes, **not**
+  used for creditworthiness/lending.
+- **Privacy policy URL:** host `PRIVACY.md` (e.g. on GitHub Pages) and paste the
+  link here. Required because the extension handles authentication cookies.
+
+---
+
+## Reviewer notes / known friction
+- The `cookies` + `<all_urls>` + `webRequest` combination triggers extra review.
+  All three are core to the single purpose (forward authenticated downloads from
+  any site); none is used for data collection. The justifications above map each
+  permission to that purpose.
+- **Lower-friction alternative if review pushes back:** ship the extension
+  unlisted / self-hosted (developer mode "Load unpacked"), or move `cookies` and
+  host access behind `optional_permissions` requested at runtime per-site. This
+  reduces the up-front warning surface at the cost of an extra click per new site.
+- The desktop app is required for the extension to do anything; without it the
+  extension's requests simply fail and the browser keeps the download.

@@ -1,0 +1,293 @@
+"""Minimal HLS (.m3u8) video grabber.
+
+Web video is usually delivered as an HLS playlist: a small text manifest that
+lists many short .ts/.m4s segments. Downloading the .m3u8 itself just saves the
+text, not the video — you have to fetch every segment and join them. This module
+does that: master->variant selection, AES-128 decryption, raw concat into one
+.ts file (plays in VLC / most players without ffmpeg), with pause/cancel/progress.
+"""
+import os
+import time
+import struct
+import threading
+import urllib.parse
+from concurrent.futures import ThreadPoolExecutor
+
+import requests
+import urllib3
+
+import task as T
+import utils
+
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+HEADERS = {"User-Agent": "Mozilla/5.0 (SmartDownloadManager)"}
+TIMEOUT = 20
+SEG_RETRIES = 3
+PARALLEL = 6          # concurrent segment downloads
+
+
+def is_hls(url="", filename="", ctype=""):
+    u = (url or "").split("?")[0].lower()
+    f = (filename or "").lower()
+    c = (ctype or "").lower()
+    return (u.endswith(".m3u8") or f.endswith(".m3u8")
+            or "mpegurl" in c)
+
+
+def _get(session, url, headers, **kw):
+    last = None
+    for _ in range(SEG_RETRIES):
+        try:
+            r = session.get(url, headers=headers, timeout=TIMEOUT,
+                            verify=utils.VERIFY_TLS, allow_redirects=True, **kw)
+            r.raise_for_status()
+            return r
+        except requests.RequestException as e:
+            last = e
+            time.sleep(1)
+    raise last
+
+
+class HlsDownloader:
+    def __init__(self, dtask: "T.DownloadTask"):
+        self.t = dtask
+        self.headers = {**HEADERS, **(getattr(dtask, "headers", None) or {})}
+        self.session = requests.Session()       # used for playlist/key fetches
+        self._tls = threading.local()            # per-thread session for segments
+
+    def _seg_session(self):
+        s = getattr(self._tls, "s", None)
+        if s is None:
+            s = requests.Session()
+            self._tls.s = s
+        return s
+
+    # ----------------------------------------------------------- playlist parse
+    def _fetch_text(self, url):
+        return _get(self.session, url, self.headers).text
+
+    def _is_master(self, text):
+        return "#EXT-X-STREAM-INF" in text
+
+    def _pick_variant(self, text, base_url):
+        """From a master playlist choose the highest-bandwidth variant URL."""
+        best_bw, best_url = -1, None
+        lines = text.splitlines()
+        for i, line in enumerate(lines):
+            if line.startswith("#EXT-X-STREAM-INF"):
+                bw = 0
+                for attr in line.split(":", 1)[-1].split(","):
+                    if attr.strip().upper().startswith("BANDWIDTH="):
+                        try:
+                            bw = int(attr.split("=", 1)[1])
+                        except ValueError:
+                            bw = 0
+                # the next non-comment line is the variant URI
+                for j in range(i + 1, len(lines)):
+                    cand = lines[j].strip()
+                    if cand and not cand.startswith("#"):
+                        if bw > best_bw:
+                            best_bw, best_url = bw, urllib.parse.urljoin(base_url, cand)
+                        break
+        return best_url
+
+    def _parse_media(self, text, base_url):
+        """Return (segments, key_info). segments = list of (url, seq)."""
+        segments = []
+        key = None  # {"method","uri","iv"}
+        seq = 0
+        for line in text.splitlines():
+            line = line.strip()
+            if line.startswith("#EXT-X-MEDIA-SEQUENCE"):
+                try:
+                    seq = int(line.split(":", 1)[1])
+                except ValueError:
+                    seq = 0
+            elif line.startswith("#EXT-X-KEY"):
+                key = self._parse_key(line, base_url)
+            elif line and not line.startswith("#"):
+                segments.append((urllib.parse.urljoin(base_url, line), seq, key))
+                seq += 1
+        return segments
+
+    def _parse_key(self, line, base_url):
+        attrs = {}
+        body = line.split(":", 1)[1]
+        # split on commas not inside quotes
+        for part in self._split_attrs(body):
+            if "=" in part:
+                k, v = part.split("=", 1)
+                attrs[k.strip().upper()] = v.strip().strip('"')
+        method = attrs.get("METHOD", "NONE")
+        if method == "NONE":
+            return None
+        uri = urllib.parse.urljoin(base_url, attrs.get("URI", ""))
+        iv = attrs.get("IV")
+        return {"method": method, "uri": uri, "iv": iv, "keybytes": None}
+
+    @staticmethod
+    def _split_attrs(s):
+        out, cur, q = [], "", False
+        for ch in s:
+            if ch == '"':
+                q = not q
+            if ch == "," and not q:
+                out.append(cur)
+                cur = ""
+            else:
+                cur += ch
+        if cur:
+            out.append(cur)
+        return out
+
+    # ----------------------------------------------------------- decryption
+    def _decrypt(self, data, key, seq):
+        if not key or key["method"] != "AES-128":
+            if key and key["method"] not in ("NONE", "AES-128"):
+                raise RuntimeError(f"unsupported HLS encryption: {key['method']}")
+            return data
+        from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+        if key["keybytes"] is None:
+            key["keybytes"] = _get(self.session, key["uri"], self.headers).content
+        if key.get("iv"):
+            iv_hex = key["iv"][2:] if key["iv"].lower().startswith("0x") else key["iv"]
+            iv = bytes.fromhex(iv_hex.rjust(32, "0"))
+        else:
+            iv = struct.pack(">QQ", 0, seq)  # default IV = media sequence number
+        dec = Cipher(algorithms.AES(key["keybytes"]), modes.CBC(iv)).decryptor()
+        out = dec.update(data) + dec.finalize()
+        # strip PKCS7 padding
+        if out:
+            pad = out[-1]
+            if 0 < pad <= 16:
+                out = out[:-pad]
+        return out
+
+    # ----------------------------------------------------------- segments
+    def _prefetch_keys(self, segments):
+        """Resolve every distinct AES key once, before parallel downloading."""
+        seen = set()
+        for _, _, key in segments:
+            if not key or key["method"] != "AES-128":
+                if key and key["method"] not in ("NONE", "AES-128"):
+                    raise RuntimeError(f"unsupported HLS encryption: {key['method']}")
+                continue
+            if id(key) in seen:
+                continue
+            seen.add(id(key))
+            if key.get("keybytes") is None:
+                key["keybytes"] = _get(self.session, key["uri"], self.headers).content
+
+    def _fetch_segment(self, url, seq, key):
+        """Download + decrypt one segment (runs on a worker thread)."""
+        data = _get(self._seg_session(), url, self.headers).content
+        return self._decrypt(data, key, seq)
+
+    # ----------------------------------------------------------- run
+    def run(self):
+        self.t.status = T.DOWNLOADING
+        self.t.error = ""
+        self.t.supports_range = False
+
+        # output as .ts (concatenated transport stream)
+        if self.t.save_path.lower().endswith(".m3u8"):
+            self.t.save_path = self.t.save_path[:-5] + ".ts"
+            self.t.filename = os.path.basename(self.t.save_path)
+        os.makedirs(os.path.dirname(self.t.save_path) or ".", exist_ok=True)
+        temp_path = self.t.save_path + ".sdm"
+
+        try:
+            text = self._fetch_text(self.t.url)
+            base = self.t.url
+            if self._is_master(text):
+                variant = self._pick_variant(text, base)
+                if not variant:
+                    raise RuntimeError("no playable variant in master playlist")
+                base = variant
+                text = self._fetch_text(variant)
+            segments = self._parse_media(text, base)
+        except (requests.RequestException, RuntimeError) as e:
+            self.t.status = T.ERROR
+            self.t.error = f"HLS parse failed: {e}"
+            return
+
+        if not segments:
+            self.t.status = T.ERROR
+            self.t.error = "HLS playlist had no segments (live stream or DRM?)"
+            return
+
+        total = len(segments)
+        self.t.seg_total = total
+
+        # Pre-fetch distinct decryption keys once (avoids a race when several
+        # segment threads would otherwise fetch the same key concurrently).
+        try:
+            self._prefetch_keys(segments)
+        except (requests.RequestException, RuntimeError) as e:
+            self.t.status = T.ERROR
+            self.t.error = f"HLS key fetch failed: {e}"
+            return
+
+        done = 0
+        downloaded = 0
+        workers = max(1, min(PARALLEL, total))
+        try:
+            with open(temp_path, "wb") as f, \
+                    ThreadPoolExecutor(max_workers=workers) as ex:
+                # download in ordered batches: fetch `workers` segments at once,
+                # then write them to disk in playlist order. Bounds memory to one
+                # batch and keeps pause/cancel latency to a single batch.
+                for start in range(0, total, workers):
+                    if self.t.cancel_requested:
+                        break
+                    if self.t.pause_requested:
+                        self.t.status = T.PAUSED
+                        return
+                    batch = segments[start:start + workers]
+                    futures = [ex.submit(self._fetch_segment, u, seq, key)
+                               for (u, seq, key) in batch]
+                    for i, fut in enumerate(futures):
+                        try:
+                            data = fut.result()
+                        except (requests.RequestException, RuntimeError) as e:
+                            self.t.status = T.ERROR
+                            self.t.error = f"segment {start+i+1}/{total} failed: {e}"
+                            return
+                        f.write(data)
+                        downloaded += len(data)
+                        done += 1
+                        self.t.seg_done = done
+                        self.t.downloaded = downloaded
+                        # estimate total size from average segment so far -> live %
+                        self.t.total_size = int(downloaded / done * total)
+        except OSError as e:
+            self.t.status = T.ERROR
+            self.t.error = f"disk error: {e}"
+            return
+
+        if self.t.cancel_requested or self.t.pause_requested:
+            if self.t.cancel_requested:
+                self._rm(temp_path)
+                self.t.status = T.CANCELLED
+            else:
+                self.t.status = T.PAUSED
+            return
+
+        # finalize
+        try:
+            if os.path.exists(self.t.save_path):
+                os.remove(self.t.save_path)
+            os.rename(temp_path, self.t.save_path)
+        except OSError:
+            pass
+        self.t.total_size = downloaded
+        self.t.downloaded = downloaded
+        self.t.status = T.COMPLETED
+
+    @staticmethod
+    def _rm(path):
+        try:
+            os.remove(path)
+        except OSError:
+            pass

@@ -1,0 +1,505 @@
+// Intercept clicks on direct file links and hand them to the local app.
+// Keep FILE_RE in sync with background.js.
+const FILE_RE = /\.(zip|rar|7z|exe|msi|dmg|pkg|iso|img|bin|dat|deb|rpm|appimage|pdf|mp4|mkv|webm|avi|mov|mp3|m4a|flac|wav|ogg|docx|xlsx|pptx|epub|apk|tar|gz|bz2|xz|zst)(\?.*)?$/i;
+
+let captureEnabled = true;
+chrome.storage.local.get({ enabled: true }, (v) => { captureEnabled = v.enabled; });
+chrome.storage.onChanged.addListener((ch) => {
+  if (ch.enabled) {
+    captureEnabled = ch.enabled.newValue;
+    // reflect the toggle on the download badges right away
+    if (typeof scheduleReposition === 'function') scheduleReposition();
+  }
+});
+
+document.addEventListener("click", function (e) {
+  if (!captureEnabled) return;
+
+  const link = e.target.closest("a");
+  if (!link || !link.href) return;
+
+  const url = link.href;
+  if (!FILE_RE.test(url)) return;
+
+  e.preventDefault();  // stop the browser's own download
+  sendToApp(url);
+});
+
+function sendToApp(url, suggestedName = null) {
+  const filename = suggestedName || url.split("/").pop().split("?")[0];
+  // route via the background worker so the browser's cookies for this URL
+  // are attached (needed for Google Drive and other login-gated downloads)
+  chrome.runtime.sendMessage({ type: "DOWNLOAD_URL", url, filename }, (res) => {
+    if (res && res.unpaired) {
+      showToast("Pair the extension first — open its popup and paste the app token");
+      return;
+    }
+    if (chrome.runtime.lastError || !res || !res.ok) {
+      // app offline -> fall back to a normal browser download
+      showToast("App offline — downloading in browser");
+      window.location.href = url;
+    } else {
+      showToast("Sent to Download Manager");
+    }
+  });
+}
+
+function showToast(msg) {
+  const toast = document.createElement("div");
+  toast.textContent = msg;
+  toast.style.cssText = `
+    position: fixed; bottom: 20px; right: 20px;
+    background: linear-gradient(135deg, #6366f1, #8b5cf6);
+    color: white; padding: 12px 18px; border-radius: 10px;
+    font: 600 13px 'Segoe UI', sans-serif; z-index: 2147483647;
+    box-shadow: 0 4px 16px rgba(0,0,0,.45);
+  `;
+  document.body.appendChild(toast);
+  setTimeout(() => toast.remove(), 3000);
+}
+
+// --- Media Sniffer UI ---
+const sniffedMedia = new Map();
+let panelRoot = null;
+let panelContainer = null;
+
+chrome.runtime.onMessage.addListener((msg) => {
+  if (msg.type === "SNIFFED_MEDIA") {
+    addSniffedMedia(msg);
+  }
+});
+
+function formatSize(bytes) {
+  if (!bytes) return "Unknown size";
+  const units = ['B', 'KB', 'MB', 'GB'];
+  let i = 0;
+  while (bytes >= 1024 && i < units.length - 1) { bytes /= 1024; i++; }
+  return `${bytes.toFixed(1)} ${units[i]}`;
+}
+
+function updatePanel() {
+  if (sniffedMedia.size === 0) return;
+  
+  if (!panelContainer) {
+    panelContainer = document.createElement("div");
+    panelContainer.id = "sdm-media-sniffer-root";
+    
+    // Attach Shadow DOM to prevent host page CSS conflicts
+    panelRoot = panelContainer.attachShadow({mode: 'closed'});
+    
+    const style = document.createElement("style");
+    style.textContent = `
+      #wrapper {
+        position: fixed; top: 20px; right: 20px;
+        z-index: 2147483647;
+        font-family: 'Segoe UI', system-ui, sans-serif;
+      }
+      #toggle {
+        background: linear-gradient(135deg, #6366f1, #8b5cf6);
+        color: white; border: none; border-radius: 20px;
+        padding: 10px 16px; font-weight: bold; cursor: pointer;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+        display: flex; align-items: center; gap: 8px;
+        transition: transform 0.2s; font-size: 13px;
+      }
+      #toggle:hover { transform: scale(1.05); }
+      #list-container {
+        display: none; background: #111a2e;
+        border: 1px solid #243352; border-radius: 12px;
+        margin-bottom: 10px; width: 320px; max-height: 400px;
+        overflow-y: auto; box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+        color: #e5e9f5; flex-direction: column;
+      }
+      .header {
+        padding: 12px 16px; background: #1a2540;
+        border-bottom: 1px solid #243352; font-weight: 600;
+        border-radius: 12px 12px 0 0; display: flex;
+        justify-content: space-between; align-items: center; font-size: 14px;
+      }
+      .close-btn { 
+        cursor: pointer; color: #8b97b8; background: none; 
+        border: none; font-size: 18px; padding: 0; 
+      }
+      .close-btn:hover { color: white; }
+      .item {
+        padding: 12px 16px; border-bottom: 1px solid #243352;
+        display: flex; flex-direction: column; gap: 6px;
+      }
+      .item:last-child { border-bottom: none; }
+      .filename { font-weight: 600; font-size: 13px; word-break: break-all; }
+      .meta { font-size: 11px; color: #8b97b8; }
+      .btn-download {
+        background: #243352; color: white; border: none;
+        padding: 6px 12px; border-radius: 6px; cursor: pointer;
+        font-size: 12px; font-weight: bold; align-self: flex-start;
+      }
+      .btn-download:hover { background: #6366f1; }
+      ::-webkit-scrollbar { width: 8px; }
+      ::-webkit-scrollbar-thumb { background: #243352; border-radius: 4px; }
+      ::-webkit-scrollbar-thumb:hover { background: #6366f1; }
+    `;
+    panelRoot.appendChild(style);
+    
+    const wrapper = document.createElement("div");
+    wrapper.id = "wrapper";
+    
+    const listContainer = document.createElement("div");
+    listContainer.id = "list-container";
+    
+    const header = document.createElement("div");
+    header.className = "header";
+    header.innerHTML = `<span>Media Found</span><button class="close-btn">&times;</button>`;
+    header.querySelector(".close-btn").onclick = () => {
+      listContainer.style.display = "none";
+    };
+    listContainer.appendChild(header);
+    
+    const itemsDiv = document.createElement("div");
+    itemsDiv.id = "items";
+    listContainer.appendChild(itemsDiv);
+    
+    const toggle = document.createElement("button");
+    toggle.id = "toggle";
+    toggle.onclick = () => {
+      listContainer.style.display = listContainer.style.display === "flex" ? "none" : "flex";
+    };
+    
+    wrapper.appendChild(listContainer);
+    wrapper.appendChild(toggle);
+    panelRoot.appendChild(wrapper);
+    document.body.appendChild(panelContainer);
+  }
+  
+  const toggle = panelRoot.getElementById("toggle");
+  toggle.innerHTML = `<span>⬇️ Download Media (${sniffedMedia.size})</span>`;
+  
+  const itemsDiv = panelRoot.getElementById("items");
+  itemsDiv.innerHTML = "";
+  
+  Array.from(sniffedMedia.values()).reverse().forEach(media => {
+    const item = document.createElement("div");
+    item.className = "item";
+    const badge = media.kind === "hls"
+      ? '<span style="background:#6366f1;color:#fff;border-radius:4px;padding:1px 6px;font-size:10px;margin-left:6px;">STREAM</span>'
+      : '';
+    const sizeTxt = media.kind === "hls" ? "Video stream" : formatSize(media.size);
+    item.innerHTML = `
+      <div class="filename">${media.filename}${badge}</div>
+      <div class="meta">${sizeTxt} • ${media.mime || 'unknown'}</div>
+      <button class="btn-download">Download with SDM</button>
+    `;
+    item.querySelector(".btn-download").onclick = (e) => {
+      e.preventDefault();
+      sendToApp(media.url, media.filename);
+    };
+    itemsDiv.appendChild(item);
+  });
+}
+
+function addSniffedMedia(media) {
+  if (sniffedMedia.has(media.url)) return;
+  // generic stream names (master.m3u8, index.m3u8…) -> use the page title
+  if (!media.filename || isGenericName(media.filename)) {
+    media.filename = buildName(sanitizeName(document.title), media.url, media.kind);
+  }
+  sniffedMedia.set(media.url, media);
+  updatePanel();
+  // a sniffed stream can make a blob/MSE <video> downloadable -> attach a badge
+  try { syncOverlays(); scheduleReposition(); } catch (e) { /* ignore */ }
+}
+
+function filenameFromUrl(url) {
+  return (url || '').split('?')[0].split('/').pop() || 'media_file';
+}
+
+// ---- name the saved file after the actual video title, not the URL ----
+function sanitizeName(s) {
+  return (s || '')
+    .replace(/[<>:"/\\|?*\x00-\x1f]/g, ' ')  // illegal filename chars
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/[. ]+$/, '')                    // no trailing dot/space
+    .slice(0, 120);
+}
+
+function extFromUrl(url) {
+  const m = (url || '').split('?')[0].match(/\.([a-z0-9]{2,5})$/i);
+  return m ? m[1].toLowerCase() : '';
+}
+
+// Generic stream filenames carry no information — treat them as "no name".
+function isGenericName(name) {
+  return /^(master|index|playlist|chunklist|prog_index|media|video|stream|manifest)\.?/i
+    .test((name || '').trim());
+}
+
+// Best human title for a video element: element hints -> nearby heading ->
+// page og:title / <title>.
+function videoTitle(video) {
+  const attrs = [
+    video.getAttribute && video.getAttribute('title'),
+    video.getAttribute && video.getAttribute('aria-label'),
+    video.getAttribute && video.getAttribute('data-title'),
+  ];
+  for (const a of attrs) {
+    const c = sanitizeName(a);
+    if (c) return c;
+  }
+  // climb a few ancestors looking for a caption/heading/title element
+  let el = video;
+  for (let depth = 0; el && depth < 5; depth++, el = el.parentElement) {
+    const cap = el.querySelector &&
+      el.querySelector('figcaption, h1, h2, [itemprop="name"], [class*="title" i]');
+    if (cap) {
+      const c = sanitizeName(cap.textContent);
+      if (c && c.length > 1) return c;
+    }
+  }
+  const meta = document.querySelector(
+    'meta[property="og:title"], meta[name="og:title"], meta[name="twitter:title"]');
+  const metaTitle = sanitizeName(meta && meta.getAttribute('content'));
+  if (metaTitle) return metaTitle;
+  return sanitizeName(document.title);
+}
+
+// Build the saved filename: <title>.<ext>. HLS stays .m3u8 so the app rewrites
+// it to .ts; direct files keep their real extension.
+function buildName(title, url, kind) {
+  const ext = kind === 'hls' ? 'm3u8' : (extFromUrl(url) || 'mp4');
+  let base = sanitizeName(title);
+  if (!base) {
+    const fromUrl = filenameFromUrl(url).replace(/\.[a-z0-9]+$/i, '');
+    base = isGenericName(fromUrl) ? '' : sanitizeName(fromUrl);
+  }
+  if (!base) base = 'video';
+  base = base.replace(new RegExp('\\.' + ext + '$', 'i'), '');  // avoid double ext
+  return base + '.' + ext;
+}
+
+// ===================================================================
+//  Per-element download badge
+//  A floating "Download" button pinned to the TOP-RIGHT corner of every
+//  downloadable <video>. It must NOT be a child of <video> (children of a
+//  <video> are fallback content and never render). Instead each badge is a
+//  position:fixed shadow-DOM host tracked to the video's bounding rect, so it
+//  works for blob:/MSE players too (via a network-sniffed stream) and follows
+//  scroll / resize / fullscreen.
+// ===================================================================
+const videoOverlays = new Map();   // HTMLVideoElement -> { host, btn }
+const MIN_W = 120, MIN_H = 68;     // skip tiny thumbnails / tracking pixels
+
+// Pick the best network-sniffed stream for a blob/MSE video (prefer HLS, newest).
+function bestSniffedStream() {
+  const arr = Array.from(sniffedMedia.values());
+  let fallback = null;
+  for (let i = arr.length - 1; i >= 0; i--) {
+    const m = arr[i];
+    if (!m.url || m.url.startsWith('blob:') || m.url.startsWith('data:')) continue;
+    if (m.kind === 'hls') return m;
+    if (!fallback) fallback = m;
+  }
+  return fallback;
+}
+
+// Resolve what a video element would download, or null if nothing grabbable.
+// The saved filename is the video's title (from the page), not the URL.
+function getVideoDownload(video) {
+  const title = videoTitle(video);
+  const cands = [video.currentSrc, video.src];
+  video.querySelectorAll('source').forEach((s) => cands.push(s.src));
+  for (const u of cands) {
+    if (u && /^https?:/i.test(u)) {
+      const kind = /\.m3u8(\?.*)?$/i.test(u) ? 'hls' : 'file';
+      return { url: u, kind, filename: buildName(title, u, kind) };
+    }
+  }
+  // MSE / blob element with no direct file -> fall back to a sniffed stream
+  const src = video.currentSrc || video.src || '';
+  if (!src || src.startsWith('blob:') || src.startsWith('mediasource:')) {
+    const s = bestSniffedStream();
+    if (s) return { url: s.url, kind: s.kind, filename: buildName(title, s.url, s.kind) };
+  }
+  return null;
+}
+
+function createOverlay(video) {
+  const host = document.createElement('div');
+  host.className = 'sdm-video-badge';
+  host.style.cssText =
+    'position:fixed;z-index:2147483647;margin:0;padding:0;border:0;' +
+    'background:transparent;pointer-events:none;display:none;';
+  const shadow = host.attachShadow({ mode: 'closed' });
+  const style = document.createElement('style');
+  style.textContent = `
+    .btn{pointer-events:auto;display:inline-flex;align-items:center;gap:6px;
+      border:none;border-radius:999px;padding:7px 12px;cursor:pointer;
+      background:linear-gradient(135deg,#6366f1,#8b5cf6);color:#fff;
+      font:700 12px/1 'Segoe UI',system-ui,sans-serif;
+      box-shadow:0 4px 14px rgba(0,0,0,.45);opacity:.9;
+      transition:opacity .15s,transform .15s;white-space:nowrap;}
+    .btn:hover{opacity:1;transform:scale(1.05);}
+    .ico{font-size:13px;line-height:1;}
+  `;
+  const btn = document.createElement('button');
+  btn.className = 'btn';
+  btn.type = 'button';
+  btn.innerHTML = '<span class="ico">⬇</span><span class="lbl">Download</span>';
+  btn.addEventListener('click', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const dl = getVideoDownload(video);
+    if (!dl) return;
+    sendToApp(dl.url, dl.filename);
+    const lbl = btn.querySelector('.lbl');
+    if (lbl) { lbl.textContent = 'Sent ✓'; setTimeout(() => { lbl.textContent = 'Download'; }, 2000); }
+  });
+  shadow.appendChild(style);
+  shadow.appendChild(btn);
+  (document.fullscreenElement || document.body).appendChild(host);
+  return { host, btn };
+}
+
+function positionOverlay(video, ov) {
+  const r = video.getBoundingClientRect();
+  const vw = window.innerWidth, vh = window.innerHeight;
+  const visible =
+    captureEnabled && video.isConnected &&
+    r.width >= MIN_W && r.height >= MIN_H &&
+    r.bottom > 0 && r.right > 0 && r.top < vh && r.left < vw;
+  if (!visible) { ov.host.style.display = 'none'; return; }
+  ov.host.style.display = 'block';
+  const hw = ov.host.offsetWidth || 118, hh = ov.host.offsetHeight || 32;
+  const top = Math.max(2, Math.min(vh - hh - 2, r.top + 10));
+  const left = Math.max(2, Math.min(vw - hw - 2, r.right - hw - 10));
+  ov.host.style.top = top + 'px';
+  ov.host.style.left = left + 'px';
+}
+
+// add badges for downloadable videos, drop them when video/stream goes away
+function syncOverlays() {
+  document.querySelectorAll('video').forEach((v) => {
+    if (!getVideoDownload(v)) return;
+    if (!videoOverlays.has(v)) videoOverlays.set(v, createOverlay(v));
+  });
+  videoOverlays.forEach((ov, v) => {
+    if (!v.isConnected || !getVideoDownload(v)) {
+      ov.host.remove();
+      videoOverlays.delete(v);
+    }
+  });
+}
+
+// reposition (rAF-throttled, not a continuous loop -> no idle CPU burn)
+let _rafPending = false;
+function positionAll() {
+  _rafPending = false;
+  videoOverlays.forEach((ov, v) => positionOverlay(v, ov));
+}
+function scheduleReposition() {
+  if (_rafPending) return;
+  _rafPending = true;
+  requestAnimationFrame(positionAll);
+}
+
+window.addEventListener('scroll', scheduleReposition, true);
+window.addEventListener('resize', scheduleReposition, true);
+document.addEventListener('fullscreenchange', () => {
+  const container = document.fullscreenElement || document.body;
+  videoOverlays.forEach((ov) => container.appendChild(ov.host));
+  scheduleReposition();
+});
+
+// new/removed <video> elements anywhere on the page
+const _videoObserver = new MutationObserver(() => { syncOverlays(); scheduleReposition(); });
+try {
+  _videoObserver.observe(document.documentElement, { childList: true, subtree: true });
+} catch (e) { /* documentElement not ready yet; the interval below covers it */ }
+
+function sniffRuntimeMedia() {
+  if (!captureEnabled) return;
+
+  const runtimeCandidates = [];
+
+  const hlsUrl = window.hls?.url;
+  if (hlsUrl && !hlsUrl.startsWith('blob:') && !hlsUrl.startsWith('data:')) {
+    runtimeCandidates.push({
+      url: hlsUrl,
+      filename: hlsUrl.split('?')[0].split('/').pop() || 'playlist.m3u8',
+      mime: 'application/x-mpegurl',
+      size: 0,
+      kind: 'hls'
+    });
+  }
+
+  const levelUrls = Array.isArray(window.hls?.levels) ? window.hls.levels : [];
+  levelUrls.forEach((entry) => {
+    const url = Array.isArray(entry) ? entry[0] : entry?.url || entry;
+    if (typeof url === 'string' && url.startsWith('http')) {
+      runtimeCandidates.push({
+        url,
+        filename: url.split('?')[0].split('/').pop() || 'video.m3u8',
+        mime: 'application/x-mpegurl',
+        size: 0,
+        kind: 'hls'
+      });
+    }
+  });
+
+  const playerSrc = window.player?.media?.src || document.querySelector('video.player')?.currentSrc;
+  if (playerSrc && !playerSrc.startsWith('blob:') && !playerSrc.startsWith('data:')) {
+    runtimeCandidates.push({
+      url: playerSrc,
+      filename: playerSrc.split('?')[0].split('/').pop() || 'video.mp4',
+      mime: 'video/mp4',
+      size: 0,
+      kind: 'file'
+    });
+  }
+
+  runtimeCandidates.forEach((candidate) => addSniffedMedia(candidate));
+}
+
+// Also scan the DOM for static media (direct <video>/<audio> src and <source>).
+// Note: streaming sites use Media Source Extensions -> the src is a blob: URL
+// that points at in-memory buffers, NOT a downloadable file. Those can only be
+// grabbed via the HLS/DASH manifest the network sniffer catches above.
+function scanDom() {
+  if (!captureEnabled) return;
+
+  // keep the per-element download badges in sync, then reposition
+  try {
+    syncOverlays();
+    scheduleReposition();
+  } catch (e) {
+    console.error('SDM overlay error:', e);
+  }
+
+  document.querySelectorAll('video, audio').forEach(v => {
+    const urls = [];
+    if (v.currentSrc) urls.push(v.currentSrc);
+    if (v.src) urls.push(v.src);
+    v.querySelectorAll('source').forEach(s => { if (s.src) urls.push(s.src); });
+    urls.forEach(u => {
+      if (!u || u.startsWith('blob:') || u.startsWith('data:')) return;
+      const isHls = /\.m3u8(\?.*)?$/i.test(u);
+      addSniffedMedia({
+        url: u,
+        filename: u.split('?')[0].split('/').pop() || 'media_file',
+        mime: isHls ? 'application/x-mpegurl' : (v.tagName === 'VIDEO' ? 'video/mp4' : 'audio/mp3'),
+        size: 0,
+        kind: isHls ? 'hls' : 'file'
+      });
+    });
+  });
+}
+setInterval(scanDom, 500);
+setInterval(sniffRuntimeMedia, 500);
+
+// Run immediately on page load
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', () => {
+    setTimeout(() => { scanDom(); sniffRuntimeMedia(); }, 100);
+  });
+} else {
+  setTimeout(() => { scanDom(); sniffRuntimeMedia(); }, 100);
+}

@@ -1,0 +1,98 @@
+"""GUI smoke tests (offscreen Qt). Skips cleanly if PySide6 can't init."""
+import time
+
+import pytest
+
+pytest.importorskip("PySide6")
+from PySide6.QtWidgets import QApplication   # noqa: E402
+from PySide6.QtCore import Qt                 # noqa: E402
+
+import task as T   # noqa: E402
+
+
+@pytest.fixture(scope="module")
+def qapp():
+    app = QApplication.instance() or QApplication([])
+    yield app
+
+
+@pytest.fixture
+def win(qapp, monkeypatch):
+    import main
+    w = main.DownloadApp()
+    yield w
+    try:
+        w.queue.shutdown()
+    except Exception:
+        pass
+
+
+def _fake_task(fid, status, total=1000, done=0, fname=None):
+    t = T.DownloadTask("https://x/" + (fname or f"f{fid}.zip"),
+                       f"C:/t/{fname or f'f{fid}.zip'}",
+                       filename=fname or f"f{fid}.zip")
+    t.total_size = total
+    t.downloaded = done
+    t.status = status
+    return t
+
+
+def test_constructs_and_empty_state(win):
+    win.refresh()
+    assert win.table.rowCount() == 0
+    # window isn't shown in tests, so isVisible() is False up the hierarchy;
+    # isHidden() reflects the explicit show/hide intent set by refresh()
+    assert not win.empty.isHidden()
+
+
+def test_filters(win):
+    states = [T.DOWNLOADING, T.COMPLETED, T.PAUSED, T.QUEUED, T.ERROR]
+    for i, s in enumerate(states):
+        win.queue.tasks.append(_fake_task(i, s))
+    win.refresh()
+    assert win.table.rowCount() == 5
+    win._set_filter("Active")
+    assert win.table.rowCount() == 3       # downloading + paused + queued
+    win._set_filter("Done")
+    assert win.table.rowCount() == 2       # completed + error
+    win._set_filter("All")
+
+
+def test_userrole_and_get_task(win):
+    t = _fake_task(1, T.DOWNLOADING)
+    win.queue.tasks.append(t)
+    win.refresh()
+    assert win.table.item(0, 0).data(Qt.UserRole) == t.id
+    assert win.queue.get_task(t.id) is t
+
+
+def test_speed_cell_populates(win):
+    t = _fake_task(1, T.DOWNLOADING, total=10_000_000, done=0)
+    win.queue.tasks.append(t)
+    win.refresh()                          # seed baseline
+    t.downloaded = 2_000_000
+    time.sleep(0.6)
+    win.refresh()                          # compute delta
+    assert win.table.item(0, 3).text() != ""
+
+
+def test_settings_dialog_roundtrip(qapp):
+    import main
+    dlg = main.SettingsDialog(None, "C:/dl", 3, 8, verify_tls=False, pair_token="TKN")
+    d, conc, segs, verify = dlg.values()
+    assert conc == 3 and segs == 8 and verify is False
+    assert dlg.token_edit.text() == "TKN"
+
+
+def test_hover_color_defined():
+    import main
+    assert hasattr(main, "HOVER") and main.HOVER.startswith("#")
+
+
+def test_speed_graph_capped(qapp):
+    import main
+    g = main.SpeedGraphWidget(max_points=50)
+    for i in range(200):
+        g.add_value(i)
+    assert len(g.data) == 50
+    g.grab()   # paintEvent must not raise
