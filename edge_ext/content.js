@@ -5,7 +5,11 @@ const FILE_RE = /\.(zip|rar|7z|exe|msi|dmg|pkg|iso|img|bin|dat|deb|rpm|appimage|
 let captureEnabled = true;
 chrome.storage.local.get({ enabled: true }, (v) => { captureEnabled = v.enabled; });
 chrome.storage.onChanged.addListener((ch) => {
-  if (ch.enabled) captureEnabled = ch.enabled.newValue;
+  if (ch.enabled) {
+    captureEnabled = ch.enabled.newValue;
+    // reflect the toggle on the download badges right away
+    if (typeof scheduleReposition === 'function') scheduleReposition();
+  }
 });
 
 document.addEventListener("click", function (e) {
@@ -26,6 +30,10 @@ function sendToApp(url, suggestedName = null) {
   // route via the background worker so the browser's cookies for this URL
   // are attached (needed for Google Drive and other login-gated downloads)
   chrome.runtime.sendMessage({ type: "DOWNLOAD_URL", url, filename }, (res) => {
+    if (res && res.unpaired) {
+      showToast("Pair the extension first — open its popup and paste the app token");
+      return;
+    }
     if (chrome.runtime.lastError || !res || !res.ok) {
       // app offline -> fall back to a normal browser download
       showToast("App offline — downloading in browser");
@@ -190,76 +198,222 @@ function updatePanel() {
 
 function addSniffedMedia(media) {
   if (sniffedMedia.has(media.url)) return;
+  // generic stream names (master.m3u8, index.m3u8…) -> use the page title
+  if (!media.filename || isGenericName(media.filename)) {
+    media.filename = buildName(sanitizeName(document.title), media.url, media.kind);
+  }
   sniffedMedia.set(media.url, media);
   updatePanel();
+  // a sniffed stream can make a blob/MSE <video> downloadable -> attach a badge
+  try { syncOverlays(); scheduleReposition(); } catch (e) { /* ignore */ }
 }
 
 function filenameFromUrl(url) {
   return (url || '').split('?')[0].split('/').pop() || 'media_file';
 }
 
-function getRuntimeDownloadUrl(video) {
-  const current = video.currentSrc || video.src || '';
-  if (current && !current.startsWith('blob:') && !current.startsWith('data:')) {
-    return current;
-  }
-
-  const levelUrls = Array.isArray(window.hls?.levels) ? window.hls.levels : [];
-  if (levelUrls.length) {
-    const first = levelUrls[0];
-    const candidate = Array.isArray(first) ? first[0] : first?.url || first;
-    if (typeof candidate === 'string' && candidate.startsWith('http')) return candidate;
-  }
-
-  const playlist = window.hls?.url;
-  if (typeof playlist === 'string' && playlist.startsWith('http')) return playlist;
-  return '';
+// ---- name the saved file after the actual video title, not the URL ----
+function sanitizeName(s) {
+  return (s || '')
+    .replace(/[<>:"/\\|?*\x00-\x1f]/g, ' ')  // illegal filename chars
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/[. ]+$/, '')                    // no trailing dot/space
+    .slice(0, 120);
 }
 
-function ensureVideoOverlay(video) {
-  if (!video || !(video instanceof HTMLVideoElement)) return;
+function extFromUrl(url) {
+  const m = (url || '').split('?')[0].match(/\.([a-z0-9]{2,5})$/i);
+  return m ? m[1].toLowerCase() : '';
+}
 
-  const downloadUrl = getRuntimeDownloadUrl(video);
-  if (!downloadUrl || downloadUrl.startsWith('blob:') || downloadUrl.startsWith('data:')) return;
+// Generic stream filenames carry no information — treat them as "no name".
+function isGenericName(name) {
+  return /^(master|index|playlist|chunklist|prog_index|media|video|stream|manifest)\.?/i
+    .test((name || '').trim());
+}
 
-  if (video.dataset.hyperfetchOverlayAttached === downloadUrl) return;
+// Best human title for a video element: element hints -> nearby heading ->
+// page og:title / <title>.
+function videoTitle(video) {
+  const attrs = [
+    video.getAttribute && video.getAttribute('title'),
+    video.getAttribute && video.getAttribute('aria-label'),
+    video.getAttribute && video.getAttribute('data-title'),
+  ];
+  for (const a of attrs) {
+    const c = sanitizeName(a);
+    if (c) return c;
+  }
+  // climb a few ancestors looking for a caption/heading/title element
+  let el = video;
+  for (let depth = 0; el && depth < 5; depth++, el = el.parentElement) {
+    const cap = el.querySelector &&
+      el.querySelector('figcaption, h1, h2, [itemprop="name"], [class*="title" i]');
+    if (cap) {
+      const c = sanitizeName(cap.textContent);
+      if (c && c.length > 1) return c;
+    }
+  }
+  const meta = document.querySelector(
+    'meta[property="og:title"], meta[name="og:title"], meta[name="twitter:title"]');
+  const metaTitle = sanitizeName(meta && meta.getAttribute('content'));
+  if (metaTitle) return metaTitle;
+  return sanitizeName(document.title);
+}
 
+// Build the saved filename: <title>.<ext>. HLS stays .m3u8 so the app rewrites
+// it to .ts; direct files keep their real extension.
+function buildName(title, url, kind) {
+  const ext = kind === 'hls' ? 'm3u8' : (extFromUrl(url) || 'mp4');
+  let base = sanitizeName(title);
+  if (!base) {
+    const fromUrl = filenameFromUrl(url).replace(/\.[a-z0-9]+$/i, '');
+    base = isGenericName(fromUrl) ? '' : sanitizeName(fromUrl);
+  }
+  if (!base) base = 'video';
+  base = base.replace(new RegExp('\\.' + ext + '$', 'i'), '');  // avoid double ext
+  return base + '.' + ext;
+}
+
+// ===================================================================
+//  Per-element download badge
+//  A floating "Download" button pinned to the TOP-RIGHT corner of every
+//  downloadable <video>. It must NOT be a child of <video> (children of a
+//  <video> are fallback content and never render). Instead each badge is a
+//  position:fixed shadow-DOM host tracked to the video's bounding rect, so it
+//  works for blob:/MSE players too (via a network-sniffed stream) and follows
+//  scroll / resize / fullscreen.
+// ===================================================================
+const videoOverlays = new Map();   // HTMLVideoElement -> { host, btn }
+const MIN_W = 120, MIN_H = 68;     // skip tiny thumbnails / tracking pixels
+
+// Pick the best network-sniffed stream for a blob/MSE video (prefer HLS, newest).
+function bestSniffedStream() {
+  const arr = Array.from(sniffedMedia.values());
+  let fallback = null;
+  for (let i = arr.length - 1; i >= 0; i--) {
+    const m = arr[i];
+    if (!m.url || m.url.startsWith('blob:') || m.url.startsWith('data:')) continue;
+    if (m.kind === 'hls') return m;
+    if (!fallback) fallback = m;
+  }
+  return fallback;
+}
+
+// Resolve what a video element would download, or null if nothing grabbable.
+// The saved filename is the video's title (from the page), not the URL.
+function getVideoDownload(video) {
+  const title = videoTitle(video);
+  const cands = [video.currentSrc, video.src];
+  video.querySelectorAll('source').forEach((s) => cands.push(s.src));
+  for (const u of cands) {
+    if (u && /^https?:/i.test(u)) {
+      const kind = /\.m3u8(\?.*)?$/i.test(u) ? 'hls' : 'file';
+      return { url: u, kind, filename: buildName(title, u, kind) };
+    }
+  }
+  // MSE / blob element with no direct file -> fall back to a sniffed stream
+  const src = video.currentSrc || video.src || '';
+  if (!src || src.startsWith('blob:') || src.startsWith('mediasource:')) {
+    const s = bestSniffedStream();
+    if (s) return { url: s.url, kind: s.kind, filename: buildName(title, s.url, s.kind) };
+  }
+  return null;
+}
+
+function createOverlay(video) {
+  const host = document.createElement('div');
+  host.className = 'hyperfetch-video-badge';
+  host.style.cssText =
+    'position:fixed;z-index:2147483647;margin:0;padding:0;border:0;' +
+    'background:transparent;pointer-events:none;display:none;';
+  const shadow = host.attachShadow({ mode: 'closed' });
+  const style = document.createElement('style');
+  style.textContent = `
+    .btn{pointer-events:auto;display:inline-flex;align-items:center;gap:6px;
+      border:none;border-radius:999px;padding:7px 12px;cursor:pointer;
+      background:linear-gradient(135deg,#6366f1,#8b5cf6);color:#fff;
+      font:700 12px/1 'Segoe UI',system-ui,sans-serif;
+      box-shadow:0 4px 14px rgba(0,0,0,.45);opacity:.9;
+      transition:opacity .15s,transform .15s;white-space:nowrap;}
+    .btn:hover{opacity:1;transform:scale(1.05);}
+    .ico{font-size:13px;line-height:1;}
+  `;
   const btn = document.createElement('button');
+  btn.className = 'btn';
   btn.type = 'button';
-  btn.textContent = 'HyperFetch';
-  btn.setAttribute('aria-label', 'Download with HyperFetch');
-  btn.style.cssText = [
-    'position: absolute',
-    'top: 8px',
-    'right: 8px',
-    'z-index: 2147483647',
-    'border: none',
-    'border-radius: 999px',
-    'padding: 6px 10px',
-    'background: linear-gradient(135deg, #6366f1, #8b5cf6)',
-    'color: #fff',
-    'font: 700 11px/1 "Segoe UI", sans-serif',
-    'cursor: pointer',
-    'box-shadow: 0 4px 12px rgba(0,0,0,0.35)',
-    'pointer-events: auto'
-  ].join('; ');
-
+  btn.innerHTML = '<span class="ico">⬇</span><span class="lbl">Download</span>';
   btn.addEventListener('click', (e) => {
     e.preventDefault();
     e.stopPropagation();
-    sendToApp(downloadUrl, filenameFromUrl(downloadUrl));
+    const dl = getVideoDownload(video);
+    if (!dl) return;
+    sendToApp(dl.url, dl.filename);
+    const lbl = btn.querySelector('.lbl');
+    if (lbl) { lbl.textContent = 'Sent ✓'; setTimeout(() => { lbl.textContent = 'Download'; }, 2000); }
   });
-
-  if (getComputedStyle(video).position === 'static') {
-    video.style.position = 'relative';
-  }
-  if (!video.style.display || video.style.display === 'inline') {
-    video.style.display = 'block';
-  }
-
-  video.appendChild(btn);
-  video.dataset.hyperfetchOverlayAttached = downloadUrl;
+  shadow.appendChild(style);
+  shadow.appendChild(btn);
+  (document.fullscreenElement || document.body).appendChild(host);
+  return { host, btn };
 }
+
+function positionOverlay(video, ov) {
+  const r = video.getBoundingClientRect();
+  const vw = window.innerWidth, vh = window.innerHeight;
+  const visible =
+    captureEnabled && video.isConnected &&
+    r.width >= MIN_W && r.height >= MIN_H &&
+    r.bottom > 0 && r.right > 0 && r.top < vh && r.left < vw;
+  if (!visible) { ov.host.style.display = 'none'; return; }
+  ov.host.style.display = 'block';
+  const hw = ov.host.offsetWidth || 118, hh = ov.host.offsetHeight || 32;
+  const top = Math.max(2, Math.min(vh - hh - 2, r.top + 10));
+  const left = Math.max(2, Math.min(vw - hw - 2, r.right - hw - 10));
+  ov.host.style.top = top + 'px';
+  ov.host.style.left = left + 'px';
+}
+
+// add badges for downloadable videos, drop them when video/stream goes away
+function syncOverlays() {
+  document.querySelectorAll('video').forEach((v) => {
+    if (!getVideoDownload(v)) return;
+    if (!videoOverlays.has(v)) videoOverlays.set(v, createOverlay(v));
+  });
+  videoOverlays.forEach((ov, v) => {
+    if (!v.isConnected || !getVideoDownload(v)) {
+      ov.host.remove();
+      videoOverlays.delete(v);
+    }
+  });
+}
+
+// reposition (rAF-throttled, not a continuous loop -> no idle CPU burn)
+let _rafPending = false;
+function positionAll() {
+  _rafPending = false;
+  videoOverlays.forEach((ov, v) => positionOverlay(v, ov));
+}
+function scheduleReposition() {
+  if (_rafPending) return;
+  _rafPending = true;
+  requestAnimationFrame(positionAll);
+}
+
+window.addEventListener('scroll', scheduleReposition, true);
+window.addEventListener('resize', scheduleReposition, true);
+document.addEventListener('fullscreenchange', () => {
+  const container = document.fullscreenElement || document.body;
+  videoOverlays.forEach((ov) => container.appendChild(ov.host));
+  scheduleReposition();
+});
+
+// new/removed <video> elements anywhere on the page
+const _videoObserver = new MutationObserver(() => { syncOverlays(); scheduleReposition(); });
+try {
+  _videoObserver.observe(document.documentElement, { childList: true, subtree: true });
+} catch (e) { /* documentElement not ready yet; the interval below covers it */ }
 
 function sniffRuntimeMedia() {
   if (!captureEnabled) return;
@@ -312,14 +466,13 @@ function sniffRuntimeMedia() {
 function scanDom() {
   if (!captureEnabled) return;
 
-  document.querySelectorAll('video').forEach((v) => {
-    if (v.classList.contains('preview') || v.hidden) return;
-    try {
-      ensureVideoOverlay(v);
-    } catch (e) {
-      console.error('HyperFetch overlay error:', e);
-    }
-  });
+  // keep the per-element download badges in sync, then reposition
+  try {
+    syncOverlays();
+    scheduleReposition();
+  } catch (e) {
+    console.error('HyperFetch overlay error:', e);
+  }
 
   document.querySelectorAll('video, audio').forEach(v => {
     const urls = [];

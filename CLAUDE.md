@@ -93,9 +93,10 @@ by default via `utils.VERIFY_TLS`; filenames are confined to the chosen folder
   inside functions (not at module top) and are listed in `HyperFetch.spec`'s
   `hiddenimports` / `collect_all`. If you add a lazily-imported module, update the spec or
   the frozen build breaks.
-- **`edge_ext/` mirrors `chrome_ext/` but has diverged** — when changing extension
-  behavior, check whether the same change belongs in both. `chrome_ext/` is the one CI
-  syntax-checks and tests.
+- **`edge_ext/` is kept byte-for-byte in sync with `chrome_ext/`** (runtime files:
+  `background.js`, `content.js`, `popup.html`, `popup.js`, `manifest.json`). When changing
+  extension behavior, mirror the change into both. `chrome_ext/` is the one CI syntax-checks
+  and tests; copy its files over to `edge_ext/` after editing.
 - **`.hfdownload` = in-progress temp file, `.part*` = legacy**; both are gitignored and cleaned
   on completion/cancel.
 - The GUI is a single large `DownloadApp` `QWidget` in `main.py` with inline dark-theme

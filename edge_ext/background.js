@@ -4,32 +4,40 @@ const FILE_RE = /\.(zip|rar|7z|exe|msi|dmg|pkg|iso|img|bin|dat|deb|rpm|appimage|
 
 const ignoreErr = () => void chrome.runtime.lastError;
 
-// capture on/off toggle (popup writes it; cached here, survives SW restarts via re-read)
+// capture on/off toggle + pairing token (popup writes them; cached here and
+// kept fresh via storage.onChanged so service-worker restarts pick them up).
 let captureEnabled = true;
-chrome.storage.local.get({ enabled: true }, (v) => { captureEnabled = v.enabled; });
+let pairToken = "";
+chrome.storage.local.get({ enabled: true, token: "" }, (v) => {
+  captureEnabled = v.enabled;
+  pairToken = v.token || "";
+});
 chrome.storage.onChanged.addListener((ch) => {
   if (ch.enabled) captureEnabled = ch.enabled.newValue;
+  if (ch.token) pairToken = ch.token.newValue || "";
 });
 
 // Send a download to the app WITH the browser's cookies for that URL —
 // required for auth-gated hosts (Google Drive, attachments behind login).
+// Authenticated with the pairing token so only this paired extension can queue.
 function sendToApp(url, filename, referrer, done) {
   chrome.cookies.getAll({ url }, (cookies) => {
     ignoreErr();
     const cookieStr = (cookies || []).map((c) => `${c.name}=${c.value}`).join("; ");
     fetch(APP, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", "X-HyperFetch-Token": pairToken },
       body: JSON.stringify({
         url,
         filename: filename || "",
         cookies: cookieStr,
         referrer: referrer || "",
-        userAgent: navigator.userAgent
+        userAgent: navigator.userAgent,
+        token: pairToken
       })
     })
-      .then((r) => done(r.ok))
-      .catch(() => done(false));
+      .then((r) => done(r.ok, r.status))
+      .catch(() => done(false, 0));
   });
 }
 
@@ -41,18 +49,18 @@ chrome.downloads.onCreated.addListener((item) => {
   const name = item.filename ? item.filename.split(/[\\/]/).pop() : "";
   if (!FILE_RE.test(url) && !FILE_RE.test(name)) return;
 
-  // Pause immediately so Edge doesn't download in parallel while we ask the app.
+  // Pause immediately so Chrome doesn't download in parallel while we ask the app.
   chrome.downloads.pause(item.id, ignoreErr);
 
   sendToApp(url, name, item.referrer, (ok) => {
     if (ok) {
-      // App accepted: kill Edge's copy and remove it from the download shelf.
+      // App accepted: kill Chrome's copy and remove it from the download shelf.
       chrome.downloads.cancel(item.id, () => {
         ignoreErr();
         chrome.downloads.erase({ id: item.id }, ignoreErr);
       });
     } else {
-      // App offline/refused -> let Edge continue the download.
+      // App offline/refused -> let Chrome continue the download.
       chrome.downloads.resume(item.id, ignoreErr);
     }
   });
@@ -62,7 +70,8 @@ chrome.downloads.onCreated.addListener((item) => {
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg && msg.type === "DOWNLOAD_URL") {
     const ref = sender && sender.tab ? sender.tab.url : "";
-    sendToApp(msg.url, msg.filename, ref, (ok) => sendResponse({ ok }));
+    sendToApp(msg.url, msg.filename, ref,
+      (ok, status) => sendResponse({ ok, unpaired: status === 401 }));
     return true; // keep the message channel open for the async response
   }
 });
