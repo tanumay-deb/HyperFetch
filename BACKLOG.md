@@ -18,6 +18,7 @@ Conventions:
 
 | SHA | Summary |
 |---|---|
+| `d36e620` | Tier 3: Built inline quality picker dropdown in the browser extension for HLS variants, and removed deprecated test logic. |
 | `9693651` | Tier 2/3 Features: Native Multi-queue support, Smart Adaptive segments, 403 URL Expiry interception, task status Enum, pinned requirements. |
 | `92d7c5c` | Fixed missing import causing blank NameDelegate cells. |
 | `PENDING` | Tier 2 UI: Added `QSystemTrayIcon` minimize-to-tray + native OS completion toasts, and finished replacing emoji in sidebar with `themed_icon` SVGs. |
@@ -43,7 +44,7 @@ _(empty — pick from below or file as discovered)_
 
 ## Tier 3 — architectural
 
-- [ ] **Inline quality picker in the extension.** Render the variant list as a popup pinned to the `<video>` element, not in the floating media panel. Closer to real video-grabber UX.
+_(empty — pick from below or file as discovered)_
 
 ---
 
