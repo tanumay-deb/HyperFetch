@@ -66,8 +66,8 @@ _(none currently — the arch-batch review found 10 real bugs incl. 1 blocker, a
 
 ## Hygiene / quality (non-user-visible)
 
-- [ ] **Coverage report.** `pytest --cov` to learn what % of code 126 tests actually touch.
-- [ ] **`mypy --strict` pass.** `task.py` has partial hints; `main.py` has almost none. Catches a lot.
+- [ ] **Coverage report.** `pytest --cov` to learn what % of code the 136 tests actually touch.
+- [ ] **`mypy --strict` pass.** `task.py` has partial hints; the `gui/` package + `downloader.py`/`queue_manager.py` have almost none. Catches a lot.
 - [ ] **Pre-commit hooks**: `ruff` · `mypy` · chrome↔edge parity check · pytest fast subset.
 - [ ] **Structured logging** module-wide (`logging` not bare `print`/silent). Format: `[downloader] task=abc seg=3 retry=2 ...`.
 - [ ] **Property tests** on `humanize_age` / `fmt_eta` / `human_size` — random inputs, no exceptions, monotonic where expected.
