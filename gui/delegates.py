@@ -33,6 +33,7 @@ from api_server import run_server, PORT
 
 from gui.theme import *
 from gui.icons import themed_icon
+from gui.models import TaskTableModel
 
 class NameDelegate(QStyledItemDelegate):
     """File cell: category icon + filename, with a thin progress bar (active) or
