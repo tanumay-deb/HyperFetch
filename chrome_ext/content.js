@@ -394,14 +394,16 @@ function getVideoDownload(video) {
   for (const u of cands) {
     if (u && /^https?:/i.test(u)) {
       const kind = /\.m3u8(\?.*)?$/i.test(u) ? 'hls' : 'file';
-      return { url: u, kind, filename: buildName(title, u, kind) };
+      const m = sniffedMedia.get(u);
+      const variants = m && m.variants ? m.variants : [];
+      return { url: u, kind, filename: buildName(title, u, kind), variants };
     }
   }
   // MSE / blob element with no direct file -> fall back to a sniffed stream
   const src = video.currentSrc || video.src || '';
   if (!src || src.startsWith('blob:') || src.startsWith('mediasource:')) {
     const s = bestSniffedStream();
-    if (s) return { url: s.url, kind: s.kind, filename: buildName(title, s.url, s.kind) };
+    if (s) return { url: s.url, kind: s.kind, filename: buildName(title, s.url, s.kind), variants: s.variants || [] };
   }
   return null;
 }
@@ -415,32 +417,147 @@ function createOverlay(video) {
   const shadow = host.attachShadow({ mode: 'closed' });
   const style = document.createElement('style');
   style.textContent = `
-    .btn{pointer-events:auto;display:inline-flex;align-items:center;gap:6px;
-      border:none;border-radius:999px;padding:7px 12px;cursor:pointer;
-      background:linear-gradient(135deg,#6366f1,#8b5cf6);color:#fff;
-      font:700 12px/1 'Segoe UI',system-ui,sans-serif;
-      box-shadow:0 4px 14px rgba(0,0,0,.45);opacity:.9;
-      transition:opacity .15s,transform .15s;white-space:nowrap;}
-    .btn:hover{opacity:1;transform:scale(1.05);}
-    .ico{font-size:13px;line-height:1;}
+    .badge-container {
+      position: relative;
+      display: inline-block;
+      pointer-events: auto;
+    }
+    .btn-group {
+      display: flex;
+      align-items: stretch;
+      background: linear-gradient(135deg, #6366f1, #8b5cf6);
+      border-radius: 999px;
+      box-shadow: 0 4px 14px rgba(0,0,0,.45);
+      opacity: 0.9;
+      transition: opacity 0.15s, transform 0.15s;
+    }
+    .btn-group:hover {
+      opacity: 1;
+      transform: scale(1.05);
+    }
+    .btn {
+      border: none; background: transparent; color: #fff;
+      font: 700 12px/1 'Segoe UI', system-ui, sans-serif;
+      padding: 7px 12px; cursor: pointer; white-space: nowrap;
+      display: inline-flex; align-items: center; gap: 6px;
+    }
+    .btn-arrow {
+      border: none; background: transparent; color: #fff;
+      padding: 0 8px 0 4px; cursor: pointer;
+      display: none; align-items: center; justify-content: center;
+      border-left: 1px solid rgba(255,255,255,0.2);
+    }
+    .menu {
+      position: absolute; top: 100%; right: 0; margin-top: 8px;
+      background: #111a2e; border: 1px solid #243352;
+      border-radius: 8px; box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+      display: none; flex-direction: column; min-width: 180px;
+      overflow: hidden; font-family: 'Segoe UI', system-ui, sans-serif;
+    }
+    .menu.open { display: flex; }
+    .menu-item {
+      padding: 10px 14px; background: transparent; border: none;
+      color: #e5e9f5; font-size: 12px; cursor: pointer;
+      text-align: left; display: flex; flex-direction: column; gap: 4px;
+      border-bottom: 1px solid #243352;
+    }
+    .menu-item:last-child { border-bottom: none; }
+    .menu-item:hover { background: #1a2540; }
+    .menu-item .meta { font-size: 10px; color: #8b97b8; }
+    .ico { font-size: 13px; line-height: 1; }
   `;
-  const btn = document.createElement('button');
-  btn.className = 'btn';
-  btn.type = 'button';
-  btn.innerHTML = '<span class="ico">⬇</span><span class="lbl">Download</span>';
-  btn.addEventListener('click', (e) => {
+
+  const container = document.createElement('div');
+  container.className = 'badge-container';
+
+  const group = document.createElement('div');
+  group.className = 'btn-group';
+
+  const btnMain = document.createElement('button');
+  btnMain.className = 'btn';
+  btnMain.type = 'button';
+  btnMain.innerHTML = '<span class="ico">⬇</span><span class="lbl">Download</span>';
+
+  const btnArrow = document.createElement('button');
+  btnArrow.className = 'btn-arrow';
+  btnArrow.type = 'button';
+  btnArrow.innerHTML = '▼';
+
+  const menu = document.createElement('div');
+  menu.className = 'menu';
+
+  group.appendChild(btnMain);
+  group.appendChild(btnArrow);
+  container.appendChild(group);
+  container.appendChild(menu);
+  shadow.appendChild(style);
+  shadow.appendChild(container);
+
+  let currentDl = null;
+
+  btnMain.addEventListener('click', (e) => {
     e.preventDefault();
     e.stopPropagation();
-    const dl = getVideoDownload(video);
-    if (!dl) return;
-    sendToApp(dl.url, dl.filename);
-    const lbl = btn.querySelector('.lbl');
+    if (!currentDl) return;
+    sendToApp(currentDl.url, currentDl.filename);
+    menu.classList.remove('open');
+    const lbl = btnMain.querySelector('.lbl');
     if (lbl) { lbl.textContent = 'Sent ✓'; setTimeout(() => { lbl.textContent = 'Download'; }, 2000); }
   });
-  shadow.appendChild(style);
-  shadow.appendChild(btn);
+
+  btnArrow.addEventListener('click', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    menu.classList.toggle('open');
+  });
+
+  container.addEventListener('mouseleave', () => {
+    menu.classList.remove('open');
+  });
+
   (document.fullscreenElement || document.body).appendChild(host);
-  return { host, btn };
+
+  const updateState = (dl) => {
+    currentDl = dl;
+    if (dl && dl.variants && dl.variants.length > 1) {
+      btnArrow.style.display = 'flex';
+      menu.innerHTML = '';
+      dl.variants.forEach(v => {
+        const item = document.createElement('button');
+        item.className = 'menu-item';
+        
+        const label = document.createElement('span');
+        label.style.fontWeight = 'bold';
+        label.textContent = "Download " + v.label;
+        item.appendChild(label);
+
+        const meta = document.createElement('span');
+        meta.className = 'meta';
+        const metaText = [v.size ? '~' + formatSize(v.size) : null, bitrateText(v.bandwidth)].filter(Boolean).join(' • ');
+        if (metaText) {
+            meta.textContent = metaText;
+            item.appendChild(meta);
+        }
+
+        item.onclick = (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          const name = currentDl.filename.replace(/\.m3u8$/i, '') + ' ' + v.label + '.m3u8';
+          sendToApp(v.url, name);
+          menu.classList.remove('open');
+          const lbl = btnMain.querySelector('.lbl');
+          if (lbl) { lbl.textContent = 'Sent ✓'; setTimeout(() => { lbl.textContent = 'Download'; }, 2000); }
+        };
+        menu.appendChild(item);
+      });
+    } else {
+      btnArrow.style.display = 'none';
+      menu.innerHTML = '';
+      menu.classList.remove('open');
+    }
+  };
+
+  return { host, updateState };
 }
 
 function positionOverlay(video, ov) {
@@ -462,8 +579,14 @@ function positionOverlay(video, ov) {
 // add badges for downloadable videos, drop them when video/stream goes away
 function syncOverlays() {
   document.querySelectorAll('video').forEach((v) => {
-    if (!getVideoDownload(v)) return;
-    if (!videoOverlays.has(v)) videoOverlays.set(v, createOverlay(v));
+    const dl = getVideoDownload(v);
+    if (!dl) return;
+    let ov = videoOverlays.get(v);
+    if (!ov) {
+      ov = createOverlay(v);
+      videoOverlays.set(v, ov);
+    }
+    ov.updateState(dl);
   });
   videoOverlays.forEach((ov, v) => {
     if (!v.isConnected || !getVideoDownload(v)) {

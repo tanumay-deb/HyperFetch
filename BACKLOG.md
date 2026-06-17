@@ -18,7 +18,8 @@ Conventions:
 
 | SHA | Summary |
 |---|---|
-| `PENDING` | Tier 2 Features: Implemented 403 URL Expiry interception/resume prompt, and Smart Adaptive segment counting scaling dynamically from 1 to 32 connections based on file size. |
+| `9693651` | Tier 2/3 Features: Native Multi-queue support, Smart Adaptive segments, 403 URL Expiry interception, task status Enum, pinned requirements. |
+| `92d7c5c` | Fixed missing import causing blank NameDelegate cells. |
 | `PENDING` | Tier 2 UI: Added `QSystemTrayIcon` minimize-to-tray + native OS completion toasts, and finished replacing emoji in sidebar with `themed_icon` SVGs. |
 | `PENDING` | Tier 3 architectural: Split `main.py` into a robust `gui/` package (`models`, `delegates`, `dialogs`, `theme`, `main_window`) with zero behavior changes. Also fixed legacy `%TEMP%` cleanup sweep. |
 | `6d57bcf` | Local crash reporter + GitHub-Releases update check (light versions, no infra). |
@@ -66,10 +67,8 @@ _(none currently — last adversarial review found 11, all fixed in `05fdc02`)_
 
 - [ ] **Coverage report.** `pytest --cov` to learn what % of code 126 tests actually touch.
 - [ ] **`mypy --strict` pass.** `task.py` has partial hints; `main.py` has almost none. Catches a lot.
-- [ ] **Replace status string constants with `enum.Enum`** in `task.py` (`"Downloading"`, `"Completed"`, …). Typo-proof.
 - [ ] **Pre-commit hooks**: `ruff` · `mypy` · chrome↔edge parity check · pytest fast subset.
 - [ ] **Structured logging** module-wide (`logging` not bare `print`/silent). Format: `[downloader] task=abc seg=3 retry=2 ...`.
-- [ ] **Pinned `requirements.txt`** — currently unpinned, builds non-reproducible.
 - [ ] **Property tests** on `humanize_age` / `fmt_eta` / `human_size` — random inputs, no exceptions, monotonic where expected.
 - [ ] **Schema validation** on `downloads.json` / `settings.json` — silent failure mode today if JSON has unexpected shape.
 - [ ] **Concurrency stress test** for the global semaphore — 30 fake tasks, no deadlock, every release accounted for.
