@@ -18,6 +18,7 @@ Conventions:
 
 | SHA | Summary |
 |---|---|
+| `9eeaac2`+ | Hygiene: property/fuzz tests for the formatters + 30-task/3-queue concurrency stress test (no deadlock, no slot leak). 143 tests. |
 | `29f760d` | Fix 10 confirmed issues from adversarial review of the arch batch: **blocker** Auto-segments=0 deadlock; dead concurrency setting; move-to-queue missed wakeup; per-queue slot leak on move; queue filter showed all tasks; 403-resume scheme bypass + stale-plan corruption; finalize silent data loss; dead runtime theme switch; QMessageBox leak; error=None. |
 | `d54cca5` | closeEvent 3-way Minimize/Close/Cancel dialog on tray exit (+ tests). |
 | `d36e620` | Tier 3: Inline quality-picker dropdown in the extension for HLS variants; removed deprecated test logic. |
@@ -70,9 +71,7 @@ _(none currently — the arch-batch review found 10 real bugs incl. 1 blocker, a
 - [ ] **`mypy --strict` pass.** `task.py` has partial hints; the `gui/` package + `downloader.py`/`queue_manager.py` have almost none. Catches a lot.
 - [ ] **Pre-commit hooks**: `ruff` · `mypy` · chrome↔edge parity check · pytest fast subset.
 - [ ] **Structured logging** module-wide (`logging` not bare `print`/silent). Format: `[downloader] task=abc seg=3 retry=2 ...`.
-- [ ] **Property tests** on `humanize_age` / `fmt_eta` / `human_size` — random inputs, no exceptions, monotonic where expected.
 - [ ] **Schema validation** on `downloads.json` / `settings.json` — silent failure mode today if JSON has unexpected shape.
-- [ ] **Concurrency stress test** for the global semaphore — 30 fake tasks, no deadlock, every release accounted for.
 - [ ] **GUI integration test** with offscreen Qt — exercise pause/resume/cancel via actual click events, not direct method calls.
 - [ ] **Visual regression** — selftest screenshot diff against a committed PNG.
 
