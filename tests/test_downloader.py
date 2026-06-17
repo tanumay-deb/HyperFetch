@@ -155,3 +155,22 @@ def test_html_login_page_detected(tmp_path):
         assert "web page" in t.error.lower() or "login" in t.error.lower()
     finally:
         httpd.shutdown()
+
+
+def test_format_disk_error_includes_free_space_for_enospc(tmp_path):
+    """ENOSPC errors get a 'disk full -- X MiB free' message instead of the
+    bare OSError dump, so the user knows to pick a different folder."""
+    import errno
+    from downloader import Downloader
+    e = OSError(errno.ENOSPC, "no space")
+    msg = Downloader._format_disk_error(e, str(tmp_path / "x.hfdownload"))
+    assert "disk full" in msg.lower()
+    assert "miB" in msg or "Settings" in msg
+
+
+def test_format_disk_error_generic_passthrough(tmp_path):
+    """Non-ENOSPC OSErrors fall through to the original message."""
+    from downloader import Downloader
+    e = OSError(13, "Permission denied")
+    msg = Downloader._format_disk_error(e, str(tmp_path / "x"))
+    assert "permission" in msg.lower()

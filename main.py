@@ -1183,6 +1183,35 @@ class DownloadApp(QWidget):
             except (KeyError, TypeError, ValueError):
                 continue
             self.queue.add_task(t, start=False)
+        self._sweep_orphan_temps()
+
+    def _sweep_orphan_temps(self):
+        """Delete .hfdownload temp files in the save dir that don't belong to
+        any persisted task — they're leftovers from a previous crash with no
+        way to resume. Bounded to the configured save dir + its category
+        subfolders so we never touch unrelated files."""
+        known = {t.save_path + ".hfdownload" for t in self.queue.tasks}
+        candidates = []
+        try:
+            for entry in os.scandir(self.save_dir):
+                if entry.is_file() and entry.name.endswith(".hfdownload"):
+                    candidates.append(entry.path)
+                elif entry.is_dir() and entry.name in utils.CATEGORIES:
+                    try:
+                        for sub in os.scandir(entry.path):
+                            if sub.is_file() and sub.name.endswith(".hfdownload"):
+                                candidates.append(sub.path)
+                    except OSError:
+                        pass
+        except OSError:
+            return
+        for path in candidates:
+            if path in known:
+                continue
+            try:
+                os.remove(path)
+            except OSError:
+                pass
 
     def _save_state(self):
         keep = [t.to_dict() for t in self.queue.tasks

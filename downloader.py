@@ -148,6 +148,23 @@ class Downloader:
         self.t.supports_range = accept != "none" and size > 0
 
     # ------------------------------------------------------------- planning
+    @staticmethod
+    def _format_disk_error(exc, path):
+        """Turn a bare OSError from the segment write into something actionable.
+        Detects ENOSPC ("No space left on device") and reports the actual free
+        bytes on the target volume so the user can pick a different drive in
+        Settings and resume from the partial .hfdownload still on disk."""
+        import errno, shutil
+        if getattr(exc, "errno", None) == errno.ENOSPC:
+            try:
+                free = shutil.disk_usage(os.path.dirname(path) or ".").free
+                free_mb = free >> 20
+                return (f"disk full — {free_mb} MiB free. "
+                        "Pick a different folder in Settings and Resume.")
+            except OSError:
+                return "disk full — pick a different folder in Settings and Resume."
+        return f"disk error: {exc}"
+
     def _check_disk_space(self, path, needed):
         """Raise OSError if the target volume can't hold the file (+64 MiB slack)."""
         import shutil
@@ -191,7 +208,7 @@ class Downloader:
         temp_path = self.t.save_path + ".hfdownload"
         attempts = 0
 
-        while not self.t.pause_requested:
+        while not self.t.pause_requested and not self.t.cancel_requested:
             if self.t.supports_range:
                 if seg.complete:
                     return
@@ -248,10 +265,12 @@ class Downloader:
                     self._throttle_conns()
                 retry_exc = e
             except OSError as e:
-                # disk full / file locked: not retryable, surface it
+                # disk full / file locked: not retryable, surface a useful
+                # error with the actual free space + needed space so the user
+                # can pick a different drive in Settings and resume.
                 if not self.t.cancel_requested:
                     self.t.status = T.ERROR
-                    self.t.error = f"disk error: {e}"
+                    self.t.error = self._format_disk_error(e, temp_path)
                 return
             finally:
                 # Release the slot BEFORE the retry backoff so other tasks can use
@@ -273,9 +292,14 @@ class Downloader:
         return min(2 ** attempt, 30)        # 2, 4, 8, 16, 30
 
     def _backoff_sleep(self, exc, attempt):
-        """Sleep in small steps so pause/cancel stays responsive."""
+        """Sleep in small steps so pause/cancel stays responsive.
+        Polling cancel_requested too (not just pause) — otherwise a Cancel
+        during a 60s Retry-After window would sit dormant until the sleep
+        ended, instead of breaking out within ~200ms."""
         deadline = time.time() + self._retry_wait(exc, attempt)
-        while time.time() < deadline and not self.t.pause_requested:
+        while time.time() < deadline \
+                and not self.t.pause_requested \
+                and not self.t.cancel_requested:
             time.sleep(0.2)
 
     # ------------------------------------------------------------- run

@@ -124,3 +124,32 @@ def test_speed_graph_capped(qapp):
         g.add_value(i)
     assert len(g.data) == 50
     g.grab()   # paintEvent must not raise
+
+
+def test_sweep_orphan_temps_removes_only_unknown_hfdownload(qapp, tmp_path, monkeypatch):
+    """Startup sweep deletes leftover .hfdownload files in the save dir, but
+    NOT ones that belong to a persisted task or files unrelated to HyperFetch."""
+    import os
+    import main
+    save_dir = tmp_path
+    (save_dir / "ghost.zip.hfdownload").write_bytes(b"orphan")
+    (save_dir / "Programs").mkdir()
+    (save_dir / "Programs" / "ghost.exe.hfdownload").write_bytes(b"orphan2")
+    (save_dir / "Programs" / "known.exe.hfdownload").write_bytes(b"keep")
+    (save_dir / "unrelated.txt").write_bytes(b"leave me alone")
+
+    w = main.DownloadApp()
+    try:
+        w.save_dir = str(save_dir)
+        # one task already persisted whose temp file exists on disk
+        t = T.DownloadTask("u", str(save_dir / "Programs" / "known.exe"),
+                           filename="known.exe")
+        w.queue.tasks.append(t)
+        w._sweep_orphan_temps()
+        assert not (save_dir / "ghost.zip.hfdownload").exists()
+        assert not (save_dir / "Programs" / "ghost.exe.hfdownload").exists()
+        assert (save_dir / "Programs" / "known.exe.hfdownload").exists()
+        assert (save_dir / "unrelated.txt").exists()
+    finally:
+        try: w.queue.shutdown()
+        except Exception: pass
