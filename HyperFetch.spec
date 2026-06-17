@@ -7,7 +7,8 @@ crypto_datas, crypto_binaries, crypto_hidden = collect_all('cryptography')
 
 hidden = (
     # local modules reached via lazy `import` inside functions
-    ['hls', 'downloader', 'queue_manager', 'api_server', 'task', 'utils']
+    ['hls', 'downloader', 'queue_manager', 'api_server', 'task', 'utils',
+     'crash_reporter', 'updater']
     + crypto_hidden
     + collect_submodules('flask_cors')
 )

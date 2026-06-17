@@ -25,6 +25,8 @@ from PySide6.QtGui import QColor, QFont, QIcon, QPainter, QPainterPath, QBrush, 
 
 import task as T
 import utils
+import crash_reporter
+import updater
 from queue_manager import QueueManager
 from api_server import run_server, PORT
 
@@ -1076,6 +1078,31 @@ class SettingsDialog(QDialog):
         tnote.setWordWrap(True)
         lay.addWidget(tnote)
 
+        # ---- Updates + Diagnostics ----
+        sep_u = QFrame()
+        sep_u.setFrameShape(QFrame.HLine)
+        sep_u.setStyleSheet(f"color: {BORDER};")
+        lay.addWidget(sep_u)
+
+        urow = QHBoxLayout()
+        urow.addWidget(_muted_label(f"Version {APP_VERSION}"))
+        urow.addStretch()
+        self._update_status = QLabel("")
+        self._update_status.setStyleSheet(f"color: {MUTED}; font-size: 12px;")
+        urow.addWidget(self._update_status)
+        chk_btn = QPushButton("Check for Updates")
+        chk_btn.clicked.connect(self._on_check_updates)
+        urow.addWidget(chk_btn)
+        lay.addLayout(urow)
+
+        drow = QHBoxLayout()
+        drow.addWidget(_muted_label("Diagnostics"))
+        drow.addStretch()
+        open_crash_btn = QPushButton("Open Crash Folder")
+        open_crash_btn.clicked.connect(self._on_open_crashes)
+        drow.addWidget(open_crash_btn)
+        lay.addLayout(drow)
+
         brow = QHBoxLayout()
         ok = QPushButton("Save")
         ok.setObjectName("primary")
@@ -1092,6 +1119,38 @@ class SettingsDialog(QDialog):
                                              self.dir_edit.text())
         if d:
             self.dir_edit.setText(d)
+
+    def _on_check_updates(self):
+        """Hit the GitHub Releases API (cached 1h) and surface the result.
+        If a newer tag is found, offer to open the release page in the browser
+        — no silent install, no signed-binary swap, just a manual pointer."""
+        self._update_status.setText("checking…")
+        QApplication.processEvents()
+        info = updater.check_for_update(APP_VERSION, force=True)
+        if info is None:
+            self._update_status.setText("offline or unavailable")
+            return
+        if info["available"]:
+            self._update_status.setText(f"v{info['version']} available")
+            if QMessageBox.question(
+                    self, "Update available",
+                    f"HyperFetch {info['version']} is out (you have {APP_VERSION}).\n"
+                    "Open the release page in your browser?",
+                    QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes) == QMessageBox.Yes:
+                import webbrowser
+                webbrowser.open(info["url"])
+        else:
+            self._update_status.setText("up to date")
+
+    def _on_open_crashes(self):
+        d = crash_reporter.crashes_dir()
+        # cross-platform "show folder in file manager"
+        if sys.platform == "win32":
+            os.startfile(d)
+        elif sys.platform == "darwin":
+            import subprocess; subprocess.Popen(["open", d])
+        else:
+            import subprocess; subprocess.Popen(["xdg-open", d])
 
     def values(self):
         theme = "light" if self.theme_combo.currentText() == "Light" else "dark"
@@ -1135,10 +1194,22 @@ class DownloadApp(QWidget):
         self._build_ui()
         self._load_state()
         self._start_server()
+        self._check_unsent_crashes()
 
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.refresh)
         self.timer.start(500)
+
+    def _check_unsent_crashes(self):
+        """If the previous run left crash reports on disk, show a one-line
+        flash and remember the count so the user can review them via the
+        notification's 'Open' action. No network involvement."""
+        reports = crash_reporter.unsent_reports()
+        self._crash_dir = crash_reporter.crashes_dir()
+        if reports:
+            n = len(reports)
+            self._flash(f"⚠ {n} crash report{'s' if n != 1 else ''} from last run — "
+                        f"Settings → Open Crash Folder", secs=8)
 
     # ------------------------------------------------------------- settings/state
     def _load_settings(self):
@@ -1962,6 +2033,9 @@ if __name__ == "__main__":
     if "--selftest" in sys.argv:
         _self_test()
         sys.exit(0)
+
+    # install BEFORE QApplication so a Qt construction crash is captured too
+    crash_reporter.install(APP_VERSION)
 
     app = QApplication(sys.argv)
     app.setFont(QFont("Segoe UI", 10))
