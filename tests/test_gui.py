@@ -219,3 +219,31 @@ def test_sweep_orphan_temps_removes_only_unknown_hfdownload(qapp, tmp_path, monk
         except Exception: pass
         try: os.remove(known_temp)
         except OSError: pass
+
+
+def test_theme_switch_propagates_to_painter_modules(qapp):
+    """apply_theme must update the color globals that delegates/dialogs read,
+    not just gui.theme's own namespace. ACCENT is identical across palettes so
+    we assert on MUTED/SEL which actually differ."""
+    from gui import theme, delegates, dialogs
+    try:
+        theme.apply_theme("light")
+        assert theme.MUTED == theme.LIGHT["muted"]
+        assert delegates.MUTED == theme.LIGHT["muted"], "delegate color stale after switch"
+        assert delegates.SEL == theme.LIGHT["sel"]
+        assert dialogs.MUTED == theme.LIGHT["muted"], "dialog color stale after switch"
+    finally:
+        theme.apply_theme("dark")
+        assert delegates.MUTED == theme.DARK["muted"], "switch back failed"
+
+
+def test_queue_filter_shows_only_that_queue(win):
+    main_q = _fake_task(1, T.QUEUED, fname="a.zip"); main_q.queue_name = "Main"
+    other = _fake_task(2, T.QUEUED, fname="b.zip"); other.queue_name = "Side"
+    win.queue.tasks.extend([main_q, other])
+    win._set_filter("Queue:Main")
+    vis = win._visible_tasks()
+    assert main_q in vis and other not in vis
+    win._set_filter("Queue:Side")
+    vis = win._visible_tasks()
+    assert other in vis and main_q not in vis

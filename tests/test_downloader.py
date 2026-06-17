@@ -174,3 +174,39 @@ def test_format_disk_error_generic_passthrough(tmp_path):
     e = OSError(13, "Permission denied")
     msg = Downloader._format_disk_error(e, str(tmp_path / "x"))
     assert "permission" in msg.lower()
+
+
+def test_auto_segments_zero_completes(file_server, tmp_path):
+    """Auto mode (segments=0) must NOT deadlock — the connection cap is derived
+    from the actual built segment count, not the requested 0."""
+    data = file_server.put("auto.bin", n_bytes=2 * 1024 * 1024)
+    dst = str(tmp_path / "auto.bin")
+    t = T.DownloadTask(file_server.url("auto.bin"), dst)
+    dl = Downloader(t, segments=0)
+    done = threading.Event()
+    th = threading.Thread(target=lambda: (dl.run(), done.set()), daemon=True)
+    th.start()
+    assert done.wait(timeout=30), "Auto-segment download hung (connection gate deadlock)"
+    assert t.status == T.COMPLETED
+    assert open(dst, "rb").read() == data
+
+
+def test_finalize_failure_marks_error_not_completed(file_server, tmp_path, monkeypatch):
+    """If the final move fails, the task must end ERROR (with the temp kept for
+    retry), NOT COMPLETED with no file at the destination."""
+    import shutil
+    file_server.put("f.bin", n_bytes=1 * 1024 * 1024)
+    dst = str(tmp_path / "f.bin")
+    t = T.DownloadTask(file_server.url("f.bin"), dst)
+
+    real_move = shutil.move
+    def boom(src, dstp, *a, **k):
+        raise OSError(28, "No space left on device")
+    monkeypatch.setattr(shutil, "move", boom)
+
+    Downloader(t, segments=4).run()
+    assert t.status == T.ERROR
+    assert "disk" in t.error.lower() or "space" in t.error.lower() or "folder" in t.error.lower()
+    assert not os.path.exists(dst)                 # no half-written destination
+    # the staged sibling must be cleaned up, not left behind
+    assert not os.path.exists(dst + ".hfmove")

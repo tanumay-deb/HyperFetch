@@ -81,8 +81,20 @@ def palette_for(name):
     return LIGHT if name == "light" else DARK
 
 
+# color names propagated to consumer modules on a theme switch (see below)
+_COLOR_NAMES = ("ACCENT", "ACCENT_2", "BG", "SURFACE", "SURFACE_2",
+                "BORDER", "HOVER", "PRESSED", "ALT", "SEL", "TEXT", "MUTED")
+# modules that do `from gui.theme import *` and read the colors at paint/style
+# time. After main.py was split into the gui/ package these copies stopped
+# tracking apply_theme's rebinds, so a runtime theme switch left delegates /
+# graph / dialogs stale. Re-pushing the values keeps the single-namespace
+# `import *` ergonomics without the staleness.
+_THEME_CONSUMERS = ("gui.delegates", "gui.models", "gui.dialogs", "gui.main_window")
+
+
 def apply_theme(name):
-    """Switch the active palette by reassigning the module-level colour globals."""
+    """Switch the active palette by reassigning the module-level colour globals
+    AND propagating them to the consumer modules that imported them by value."""
     global THEME, ACCENT, ACCENT_2, BG, SURFACE, SURFACE_2
     global BORDER, HOVER, PRESSED, ALT, SEL, TEXT, MUTED
     THEME = "light" if name == "light" else "dark"
@@ -92,6 +104,15 @@ def apply_theme(name):
     BORDER, HOVER, PRESSED = p["border"], p["hover"], p["pressed"]
     ALT, SEL = p["alt"], p["sel"]
     TEXT, MUTED = p["text"], p["muted"]
+
+    g = globals()
+    for modname in _THEME_CONSUMERS:
+        mod = sys.modules.get(modname)
+        if mod is None:
+            continue
+        for n in _COLOR_NAMES:
+            if hasattr(mod, n):
+                setattr(mod, n, g[n])
 
 def build_qss():
     """Build the app stylesheet from the active palette."""

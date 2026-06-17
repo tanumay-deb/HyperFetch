@@ -153,3 +153,50 @@ def test_scheduler_not_busy_spin(fake_worker):
     cpu = time.process_time() - c0
     q.shutdown()
     assert cpu < 0.5, f"idle scheduler burned {cpu:.2f}s CPU (busy spin)"
+
+
+def test_move_to_queue_wakes_scheduler(fake_worker):
+    """Moving a QUEUED task to a queue with free capacity must start it promptly
+    (the bare field-write used to leave it parked)."""
+    from queue_manager import Queue
+    q = QueueManager(queues=[{"name": "A", "max_concurrent": 1},
+                             {"name": "B", "max_concurrent": 1}])
+    a1 = T.DownloadTask("u", "a1"); a1.queue_name = "A"
+    a2 = T.DownloadTask("u", "a2"); a2.queue_name = "A"
+    q.add_task(a1); q.add_task(a2)
+    assert _wait(lambda: a1.status == T.DOWNLOADING)   # A runs one
+    # a2 is stuck behind a1 in queue A (cap 1). Move it to free queue B.
+    q.move_to_queue(a2, "B")
+    assert _wait(lambda: a2.status == T.DOWNLOADING, timeout=3), \
+        "moved task did not start — scheduler not woken"
+    q.shutdown()
+
+
+def test_set_max_concurrent_admits_waiting_tasks(fake_worker):
+    """Raising a queue's cap at runtime should admit a waiting task."""
+    q = QueueManager(queues=[{"name": "Main", "max_concurrent": 1}])
+    t1 = T.DownloadTask("u", "1")
+    t2 = T.DownloadTask("u", "2")
+    q.add_task(t1); q.add_task(t2)
+    assert _wait(lambda: t1.status == T.DOWNLOADING)
+    assert t2.status == T.QUEUED                       # capped at 1
+    q.set_max_concurrent("Main", 2)
+    assert _wait(lambda: t2.status == T.DOWNLOADING, timeout=3), \
+        "raising the cap did not admit the waiting task"
+    q.shutdown()
+
+
+def test_move_running_task_does_not_corrupt_slot_accounting(fake_worker):
+    """A DOWNLOADING task moved between queues keeps charging its ORIGINAL
+    queue's slot (bound at start), so no leak / negative active count."""
+    q = QueueManager(queues=[{"name": "A", "max_concurrent": 1},
+                             {"name": "B", "max_concurrent": 1}])
+    a = T.DownloadTask("u", "a"); a.queue_name = "A"
+    q.add_task(a)
+    assert _wait(lambda: a.status == T.DOWNLOADING)
+    q.move_to_queue(a, "B")                             # move while running
+    assert _wait(lambda: a.status == T.COMPLETED, timeout=5)
+    # both queues settle at 0 active — no leak in A, no negative in B
+    assert q.queues["A"].active == 0
+    assert q.queues["B"].active == 0
+    q.shutdown()

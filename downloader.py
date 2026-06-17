@@ -74,10 +74,13 @@ class Downloader:
         # browser-supplied headers (Cookie/Referer/UA) merged into every request
         self._base_headers = {**HEADERS, **(getattr(dtask, "headers", None) or {})}
         self._probe_ctype = ""
-        # adaptive connection gate: shrinks when the server answers 429
+        # adaptive connection gate: shrinks when the server answers 429.
+        # Initialized to a safe non-zero placeholder; run() sets the real cap
+        # from the ACTUAL segment count once segments exist — deriving it from
+        # num_segments would be 0 in Auto mode and deadlock every worker.
         self._conn_cv = threading.Condition()
         self._active_conns = 0
-        self._max_conns = self.num_segments
+        self._max_conns = max(1, self.num_segments)
 
     # ------------------------------------------------------------ conn gate
     def _acquire_conn(self):
@@ -354,7 +357,12 @@ class Downloader:
             self.t.status = T.ERROR
             self.t.error = str(e)
             return
-                
+
+        # Set the connection cap from the ACTUAL segment count (covers fresh
+        # builds, Auto mode, and resume-from-disk where segments are restored
+        # and _build_segments is skipped). Must be > 0 or the gate deadlocks.
+        self._max_conns = max(1, len(self.t.segments))
+
         self.t.recompute_downloaded()
 
         threads = []
@@ -390,12 +398,26 @@ class Downloader:
         all_done = all(s.complete for s in self.t.segments) if self.t.supports_range \
             else self.t.downloaded > 0
         if all_done:
+            # temp_path is in %TEMP%, often a DIFFERENT volume than the
+            # destination -> shutil.move is copy+delete and can fail (dest full,
+            # AV/permission lock). Move into a sibling temp in the DEST dir first,
+            # then atomically replace, so a failure never both deletes the old
+            # file AND loses the new one, and never marks COMPLETED on failure.
             try:
-                if os.path.exists(self.t.save_path):
-                    os.remove(self.t.save_path)
-                shutil.move(temp_path, self.t.save_path)
-            except OSError:
-                pass
+                self._check_disk_space(self.t.save_path, self.t.total_size)
+                staged = self.t.save_path + ".hfmove"
+                shutil.move(temp_path, staged)        # cross-volume copy lands here
+                os.replace(staged, self.t.save_path)  # atomic same-volume swap
+            except OSError as e:
+                self.t.status = T.ERROR
+                self.t.error = self._format_disk_error(e, self.t.save_path)
+                for leftover in (self.t.save_path + ".hfmove",):
+                    try:
+                        if os.path.exists(leftover):
+                            os.remove(leftover)
+                    except OSError:
+                        pass
+                return  # leave temp_path in %TEMP% for a retry
             self.t.status = T.COMPLETED
         else:
             self.t.status = T.PAUSED

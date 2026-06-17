@@ -110,6 +110,27 @@ class QueueManager:
         if task.status in (T.QUEUED, T.PAUSED, T.DOWNLOADING):
             task.status = T.CANCELLED
 
+    def move_to_queue(self, task, qname):
+        """Re-assign a task to a different queue and wake the scheduler.
+        The bare field write the GUI used to do never notified, so a QUEUED
+        task moved into a queue with free capacity could sit idle (the
+        scheduler parks on cond.wait with no timeout)."""
+        with self.cond:
+            task.queue_name = qname
+            if qname not in self.queues:
+                self.queues[qname] = Queue(qname, 3)
+            self.cond.notify_all()
+
+    def set_max_concurrent(self, qname, n):
+        """Change a queue's concurrency cap at runtime and admit waiting tasks
+        if the cap was raised. Without the notify a raised cap would only take
+        effect on the next add/complete event."""
+        with self.cond:
+            q = self.queues.get(qname)
+            if q:
+                q.max_concurrent = max(1, int(n))
+                self.cond.notify_all()
+
     def shutdown(self):
         with self.cond:
             self._stop = True
@@ -177,10 +198,15 @@ class QueueManager:
                     self.queues[task.queue_name] = q
                 q.active += 1
                 self.active += 1
-            threading.Thread(target=self._execute, args=(task,), daemon=True).start()
+            # Bind the slot to the queue we charged it against (q.name), passed
+            # explicitly — reading task.queue_name again in _execute would let a
+            # mid-download "Move to Queue" decrement a DIFFERENT queue than the
+            # one incremented here, leaking a slot in one and going negative in
+            # the other.
+            threading.Thread(target=self._execute, args=(task, q.name),
+                             daemon=True).start()
 
-    def _execute(self, task):
-        started_queue = task.queue_name
+    def _execute(self, task, started_queue):
         try:
             if not task.cancel_requested:
                 Downloader(task, segments=self.segments).run()

@@ -326,13 +326,22 @@ class HlsDownloader:
                 self.t.status = T.PAUSED
             return
 
-        # finalize
+        # finalize — temp is in %TEMP% (possibly a different volume), so stage
+        # into the dest dir then atomically replace. On failure mark ERROR and
+        # keep the temp for retry instead of claiming COMPLETED with no file.
         try:
-            if os.path.exists(self.t.save_path):
-                os.remove(self.t.save_path)
-            shutil.move(temp_path, self.t.save_path)
-        except OSError:
-            pass
+            staged = self.t.save_path + ".hfmove"
+            shutil.move(temp_path, staged)
+            os.replace(staged, self.t.save_path)
+        except OSError as e:
+            self.t.status = T.ERROR
+            self.t.error = f"finalize failed (pick another folder, then Resume): {e}"
+            try:
+                if os.path.exists(self.t.save_path + ".hfmove"):
+                    os.remove(self.t.save_path + ".hfmove")
+            except OSError:
+                pass
+            return
         self.t.total_size = downloaded
         self.t.downloaded = downloaded
         self.t.status = T.COMPLETED

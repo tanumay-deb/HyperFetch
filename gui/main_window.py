@@ -463,9 +463,8 @@ class DownloadApp(QWidget):
         tasks = list(self.queue.tasks)
         f = self._filter
         if f and f.startswith("Queue:"):
-            # only one queue today; this node mirrors "All" but is the entry-point
-            # for future per-queue filtering once multi-queue support lands.
-            pass
+            qn = f.split(":", 1)[1]
+            tasks = [t for t in tasks if getattr(t, "queue_name", "Main") == qn]
         elif f == "Active":
             tasks = [t for t in tasks if t.status in (T.DOWNLOADING, T.QUEUED)]
         elif f == "Paused":
@@ -645,11 +644,24 @@ class DownloadApp(QWidget):
                 new_url, ok = QInputDialog.getText(
                     self, "URL Expired",
                     f"The server denied access (403) to '{t.filename}'.\n"
-                    "If the URL expired, paste a fresh one to resume from where it left off:",
+                    "If the URL expired, paste a fresh one. The download restarts "
+                    "from the new link (the old partial may be from a different file):",
                     QLineEdit.Normal, t.url)
                 if ok and new_url.strip():
-                    t.url = new_url.strip()
-                    t.error = None
+                    fresh = new_url.strip()
+                    # same scheme gate as the API boundary — this manual path
+                    # would otherwise hand file://, ftp://, etc. to requests.
+                    if not fresh.lower().startswith(("http://", "https://")):
+                        self._flash("URL must start with http:// or https://")
+                        continue
+                    t.url = fresh
+                    t.error = ""
+                    # the fresh URL may point to a different-sized resource;
+                    # drop the old segment plan so run() re-probes instead of
+                    # resuming against stale byte offsets (which would corrupt).
+                    t.segments = []
+                    t.total_size = 0
+                    t.downloaded = 0
                 else:
                     continue
             self.queue.resume_task(t)
@@ -794,7 +806,9 @@ class DownloadApp(QWidget):
             self.save_dir = d
         self.max_concurrent = conc
         self.segments = segs
-        self.queue.max_concurrent = conc
+        # concurrency now lives per-Queue; update the actual scheduling source
+        # (and notify the parked scheduler) instead of a dead QueueManager attr.
+        self.queue.set_max_concurrent("Main", conc)
         self.queue.segments = segs
         self.verify_tls = verify
         utils.VERIFY_TLS = verify
@@ -867,7 +881,9 @@ class DownloadApp(QWidget):
         menu.exec(self.table.viewport().mapToGlobal(pos))
         
     def _move_task_to_queue(self, task, qname):
-        task.queue_name = qname
+        # route through the queue manager so the scheduler is woken (a bare
+        # field write left a QUEUED task idle in a now-free queue).
+        self.queue.move_to_queue(task, qname)
         self._save_tick = 10
         self.refresh()
 
@@ -986,6 +1002,7 @@ class DownloadApp(QWidget):
             msg_box.exec()
 
             clicked = msg_box.clickedButton()
+            msg_box.deleteLater()   # parented to self -> would otherwise leak per close
             if clicked == min_btn:
                 e.ignore()
                 self.hide()
