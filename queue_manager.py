@@ -12,12 +12,20 @@ import task as T
 from downloader import Downloader
 
 
+class Queue:
+    def __init__(self, name, max_concurrent=3):
+        self.name = name
+        self.max_concurrent = max_concurrent
+        self.active = 0
+
 class QueueManager:
-    def __init__(self, max_concurrent=3, segments=8):
+    def __init__(self, queues=None, segments=8):
         self._heap = []                  # ready-to-run tasks (priority ordered)
         self.tasks = []                  # every task ever added, for the GUI
+        self.queues = {}
+        for q in (queues or [{"name": "Main", "max_concurrent": 3}]):
+            self.queues[q["name"]] = Queue(q["name"], q["max_concurrent"])
         self.active = 0
-        self.max_concurrent = max_concurrent
         self.segments = segments
 
         self.cond = threading.Condition()
@@ -131,10 +139,27 @@ class QueueManager:
 
     def _next_ready(self):
         """Return a runnable task or None."""
-        if not self._heap or self.active >= self.max_concurrent:
+        if not self._heap:
             return None, None
-        task = heapq.heappop(self._heap)
-        return task, None
+            
+        passed_over = []
+        ready_task = None
+        while self._heap:
+            task = heapq.heappop(self._heap)
+            q = self.queues.get(task.queue_name)
+            if not q:
+                q = Queue(task.queue_name, 3)
+                self.queues[task.queue_name] = q
+            if q.active < q.max_concurrent:
+                ready_task = task
+                break
+            else:
+                passed_over.append(task)
+                
+        for t in passed_over:
+            heapq.heappush(self._heap, t)
+            
+        return ready_task, None
 
     def _scheduler(self):
         while True:
@@ -146,15 +171,24 @@ class QueueManager:
                     self.cond.wait(timeout=wait)   # sleeps until notify or timeout
                 if self._stop:
                     return
+                q = self.queues.get(task.queue_name)
+                if not q:
+                    q = Queue(task.queue_name, 3)
+                    self.queues[task.queue_name] = q
+                q.active += 1
                 self.active += 1
             threading.Thread(target=self._execute, args=(task,), daemon=True).start()
 
     def _execute(self, task):
+        started_queue = task.queue_name
         try:
             if not task.cancel_requested:
                 Downloader(task, segments=self.segments).run()
         finally:
             with self.cond:
+                q = self.queues.get(started_queue)
+                if q:
+                    q.active -= 1
                 self.active -= 1
                 # notify_all (not notify) so a closeEvent's wait_active waiter
                 # always wakes — a single notify can wake the scheduler instead,

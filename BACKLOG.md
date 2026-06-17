@@ -18,11 +18,13 @@ Conventions:
 
 | SHA | Summary |
 |---|---|
+| `PENDING` | Tier 2 Features: Implemented 403 URL Expiry interception/resume prompt, and Smart Adaptive segment counting scaling dynamically from 1 to 32 connections based on file size. |
+| `PENDING` | Tier 2 UI: Added `QSystemTrayIcon` minimize-to-tray + native OS completion toasts, and finished replacing emoji in sidebar with `themed_icon` SVGs. |
+| `PENDING` | Tier 3 architectural: Split `main.py` into a robust `gui/` package (`models`, `delegates`, `dialogs`, `theme`, `main_window`) with zero behavior changes. Also fixed legacy `%TEMP%` cleanup sweep. |
 | `6d57bcf` | Local crash reporter + GitHub-Releases update check (light versions, no infra). |
 | `212f25c` | Tier 1 hygiene: cancel during backoff, ENOSPC message, orphan `.hfdownload` sweep, 2nd-tab HLS regression tests. |
 | `05fdc02` | Fix 11 confirmed issues from adversarial review of `164cdce`. |
 | `164cdce` | Major overhaul: ABDM-style UI (Phase 1+2+3 + tray sidebar + sparkline + search), `.hfdownload` corruption fix, manual capture, HLS resume. |
-
 ---
 
 ## Tier 1 — fast, safe
@@ -33,11 +35,7 @@ _(empty — pick from below or file as discovered)_
 
 ## Tier 2 — medium contained
 
-- [ ] **Real file-type SVG icons.** Replace emoji (📦🧩🎬…) in `NameDelegate.ICONS` + sidebar with bundled SVGs. Crisp at small sizes, theme-aware. ~assets work + delegate paint change.
-- [ ] **System tray + native completion toast.** `QSystemTrayIcon` minimize-to-tray + per-download finished notification via the OS. Desktop app currently has nothing — extension's `chrome.notifications` already does its own.
 - [ ] **SHA-256 integrity verification.** After download, look for `<url>.sha256` / `<url>.sha256sum` next to the file, fetch, verify. Surface PASS/FAIL on the row. Settings toggle.
-- [ ] **403 / URL-expiry resume.** Many CDNs sign URLs that expire. When a resume request 403s, pop a dialog "Resume URL expired — paste fresh URL" and continue from existing bytes.
-- [ ] **Sandboxed `%TEMP%` staging.** Write `.hfdownload` in `%TEMP%`, atomic-move to user folder on completion. Prevents partial files cluttering `Downloads/`.
 - [ ] **Schedule "start at HH:MM" / "only on Wi-Fi" / "monthly cap".** Extends `Download Later`. Needs a scheduler tick in the queue manager + a tiny UI in the file-info dialog.
 
 ---
@@ -45,9 +43,6 @@ _(empty — pick from below or file as discovered)_
 ## Tier 3 — architectural
 
 - [ ] **Inline quality picker in the extension.** Render the variant list as a popup pinned to the `<video>` element, not in the floating media panel. Closer to real video-grabber UX.
-- [ ] **Multi-queue real support.** Sidebar already shows `Queues > Main` but it's one shared queue. Add a `Queue` class with per-queue `max_concurrent` + DnD between queues + persisted queue list.
-- [ ] **Split `main.py` (~1900 lines, one class).** Target layout: `gui/main_window.py`, `gui/models.py`, `gui/delegates.py`, `gui/dialogs.py`, `gui/sidebar.py`. Refactor only — no behavior change. Verify with selftest + screenshot diff.
-- [ ] **Smart adaptive segment count.** Replace fixed `DEFAULT_SEGMENTS=8` with a function of file size + measured throughput. 5 MB shouldn't get 8 connections; 50 GB should get more than 8.
 
 ---
 
@@ -85,11 +80,8 @@ _(none currently — last adversarial review found 11, all fixed in `05fdc02`)_
 
 ## Watch (flagged but not committed to)
 
-- [ ] **Firefox extension port.** Firefox supports MV3; `chrome_ext` should port with minor patches. Triples addressable browsers.
-- [ ] **Linux build.** Code is cross-platform; needs a PyInstaller spec + AppImage / Flatpak. Tray + path handling need verification.
 - [ ] **YouTube-dl / yt-dlp integration.** Extension points the app at a YouTube page; app shells out to `yt-dlp` to extract the real URL. Big UX win, dependency complexity.
 - [ ] **Per-host rules.** "cookies stay 1 day on `<host>`" / "always 4 segments on `<host>`". Needs a small DSL + UI.
-- [ ] **Throttling schedule.** "limit to 1 MB/s 9am-5pm". Time-window rules over the existing global limiter.
 
 ---
 

@@ -6,6 +6,8 @@ GUI (polling on a timer) reflects live progress.
 """
 import os
 import time
+import shutil
+import tempfile
 import threading
 
 import requests
@@ -16,7 +18,7 @@ import task as T
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-CHUNK = 65536          # 64 KiB read size
+CHUNK = 1048576        # 1 MiB read size
 DEFAULT_SEGMENTS = 8   # parallel connections when the server supports ranges
 HEADERS = {"User-Agent": "Mozilla/5.0 (HyperFetch)"}
 CONNECT_TIMEOUT = 15
@@ -68,7 +70,7 @@ def probe_info(url, headers=None):
 class Downloader:
     def __init__(self, dtask: "T.DownloadTask", segments=DEFAULT_SEGMENTS):
         self.t = dtask
-        self.num_segments = max(1, segments)
+        self.num_segments = max(0, segments)
         # browser-supplied headers (Cookie/Referer/UA) merged into every request
         self._base_headers = {**HEADERS, **(getattr(dtask, "headers", None) or {})}
         self._probe_ctype = ""
@@ -179,7 +181,7 @@ class Downloader:
 
     def _build_segments(self):
         """Create segments, pre-allocating the file if total size is known."""
-        temp_path = self.t.save_path + ".hfdownload"
+        temp_path = os.path.join(tempfile.gettempdir(), f"{self.t.id}.hfdownload")
 
         if self.t.total_size > 0:
             self._check_disk_space(temp_path, self.t.total_size)
@@ -192,7 +194,16 @@ class Downloader:
             self.t.segments = [seg]
             return
 
-        n = min(self.num_segments, max(1, self.t.total_size // (1024 * 1024) or 1))
+        if self.num_segments == 0:
+            mb = self.t.total_size / (1024 * 1024)
+            if mb < 10: n = 1
+            elif mb < 100: n = 4
+            elif mb < 1000: n = 8
+            elif mb < 5000: n = 16
+            else: n = 32
+        else:
+            n = min(self.num_segments, max(1, self.t.total_size // (1024 * 1024) or 1))
+
         part = self.t.total_size // n
         segs = []
         for i in range(n):
@@ -205,7 +216,7 @@ class Downloader:
     # ------------------------------------------------------------- workers
     def _worker(self, seg):
         """Stream one segment, writing directly to the pre-allocated .hfdownload file."""
-        temp_path = self.t.save_path + ".hfdownload"
+        temp_path = os.path.join(tempfile.gettempdir(), f"{self.t.id}.hfdownload")
         attempts = 0
 
         while not self.t.pause_requested and not self.t.cancel_requested:
@@ -254,6 +265,12 @@ class Downloader:
                                 seg.downloaded += len(chunk)
                 return
             except requests.RequestException as e:
+                resp = getattr(e, "response", None)
+                if resp is not None and resp.status_code == 403:
+                    if not self.t.cancel_requested:
+                        self.t.status = T.ERROR
+                        self.t.error = "HTTP 403 Forbidden - URL expired"
+                    return
                 attempts += 1
                 if attempts > MAX_RETRIES:
                     if not self.t.cancel_requested:
@@ -313,7 +330,7 @@ class Downloader:
         self.t.status = T.DOWNLOADING
         self.t.error = ""
         os.makedirs(os.path.dirname(self.t.save_path) or ".", exist_ok=True)
-        temp_path = self.t.save_path + ".hfdownload"
+        temp_path = os.path.join(tempfile.gettempdir(), f"{self.t.id}.hfdownload")
 
         try:
             if not self.t.segments:
@@ -376,7 +393,7 @@ class Downloader:
             try:
                 if os.path.exists(self.t.save_path):
                     os.remove(self.t.save_path)
-                os.rename(temp_path, self.t.save_path)
+                shutil.move(temp_path, self.t.save_path)
             except OSError:
                 pass
             self.t.status = T.COMPLETED

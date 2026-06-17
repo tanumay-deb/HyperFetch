@@ -8,6 +8,8 @@ does that: master->variant selection, AES-128 decryption, raw concat into one
 """
 import os
 import time
+import shutil
+import tempfile
 import struct
 import threading
 import urllib.parse
@@ -203,7 +205,7 @@ class HlsDownloader:
             self.t.save_path = self.t.save_path[:-5] + ".ts"
             self.t.filename = os.path.basename(self.t.save_path)
         os.makedirs(os.path.dirname(self.t.save_path) or ".", exist_ok=True)
-        temp_path = self.t.save_path + ".hfdownload"
+        temp_path = os.path.join(tempfile.gettempdir(), f"{self.t.id}.hfdownload")
 
         try:
             text = self._fetch_text(self.t.url)
@@ -286,6 +288,11 @@ class HlsDownloader:
                         try:
                             data = fut.result()
                         except (requests.RequestException, RuntimeError) as e:
+                            resp = getattr(e, "response", None)
+                            if resp is not None and resp.status_code == 403:
+                                self.t.status = T.ERROR
+                                self.t.error = "HTTP 403 Forbidden - URL expired"
+                                return
                             self.t.status = T.ERROR
                             # done+i is 0-based within remaining; +1 for human display
                             self.t.error = f"segment {done + i + 1}/{total} failed: {e}"
@@ -323,7 +330,7 @@ class HlsDownloader:
         try:
             if os.path.exists(self.t.save_path):
                 os.remove(self.t.save_path)
-            os.rename(temp_path, self.t.save_path)
+            shutil.move(temp_path, self.t.save_path)
         except OSError:
             pass
         self.t.total_size = downloaded

@@ -48,7 +48,7 @@ def _wait(cond, timeout=15):
 
 
 def test_concurrency_cap(fake_worker):
-    q = QueueManager(max_concurrent=2)
+    q = QueueManager(queues=[{"name": "Main", "max_concurrent": 2}])
     peak = [0]
     stop = threading.Event()
 
@@ -68,7 +68,7 @@ def test_concurrency_cap(fake_worker):
 
 
 def test_pause_queued_never_runs(fake_worker):
-    q = QueueManager(max_concurrent=1)
+    q = QueueManager(queues=[{"name": "Main", "max_concurrent": 1}])
     block = q.add_task(T.DownloadTask("u", "block"))
     later = q.add_task(T.DownloadTask("u", "later"))
     q.pause_task(later)              # pause before it gets a slot
@@ -80,7 +80,7 @@ def test_pause_queued_never_runs(fake_worker):
 
 
 def test_resume_runs_to_completion(fake_worker):
-    q = QueueManager(max_concurrent=2)
+    q = QueueManager(queues=[{"name": "Main", "max_concurrent": 2}])
     t = q.add_task(T.DownloadTask("u", "r"))
     q.pause_task(t)
     time.sleep(0.1)
@@ -90,7 +90,7 @@ def test_resume_runs_to_completion(fake_worker):
 
 
 def test_cancel_queued(fake_worker):
-    q = QueueManager(max_concurrent=1)
+    q = QueueManager(queues=[{"name": "Main", "max_concurrent": 1}])
     block = q.add_task(T.DownloadTask("u", "block"))
     victim = q.add_task(T.DownloadTask("u", "victim"))
     q.cancel_task(victim)
@@ -108,7 +108,7 @@ def test_get_task(fake_worker):
 
 
 def test_remove_finished(fake_worker):
-    q = QueueManager(max_concurrent=4)
+    q = QueueManager(queues=[{"name": "Main", "max_concurrent": 4}])
     done = q.add_task(T.DownloadTask("u", "d"))
     assert _wait(lambda: done.status == T.COMPLETED)
     paused = T.DownloadTask("u", "p")
@@ -122,7 +122,7 @@ def test_remove_finished(fake_worker):
 def test_wait_active_drains_paused_workers(fake_worker):
     """closeEvent uses wait_active to block until in-flight workers actually
     return, so the last chunk gets flushed instead of dying with the process."""
-    q = QueueManager(max_concurrent=2)
+    q = QueueManager(queues=[{"name": "Main", "max_concurrent": 2}])
     a = q.add_task(T.DownloadTask("u", "a"))
     b = q.add_task(T.DownloadTask("u", "b"))
     assert _wait(lambda: a.status == T.DOWNLOADING and b.status == T.DOWNLOADING)
@@ -135,7 +135,7 @@ def test_wait_active_drains_paused_workers(fake_worker):
 
 def test_wait_active_times_out_cleanly(fake_worker):
     """If a worker won't unwind, wait_active returns False rather than blocking."""
-    q = QueueManager(max_concurrent=1)
+    q = QueueManager(queues=[{"name": "Main", "max_concurrent": 1}])
     t = q.add_task(T.DownloadTask("u", "x"))
     assert _wait(lambda: t.status == T.DOWNLOADING)
     # do NOT pause -> fake worker keeps running ~0.6s; ask for 0.1s

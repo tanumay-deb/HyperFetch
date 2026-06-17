@@ -1,0 +1,1030 @@
+"""HyperFetch - IDM-style GUI.
+
+Multi-segment downloads with a live queue, pause/resume/cancel, IDM-style
+file-info dialogs, persistent state, and an embedded Flask server so the
+browser extension feeds downloads into this same window.
+"""
+import os
+import sys
+import time
+import threading
+import subprocess
+from collections import deque
+
+from PySide6.QtWidgets import (
+    QApplication, QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel,
+    QTableWidget, QTableWidgetItem, QHeaderView, QProgressBar, QDialog,
+    QLineEdit, QSpinBox, QFileDialog, QMessageBox, QAbstractItemView,
+    QFrame, QButtonGroup, QGridLayout, QSplitter, QSizePolicy, QComboBox, QMenu, QInputDialog,
+    QCheckBox, QListWidget, QListWidgetItem, QTableView, QStyledItemDelegate, QStyle,
+    QSystemTrayIcon
+)
+from PySide6.QtCore import (
+    Qt, QTimer, QModelIndex, QAbstractTableModel, QSortFilterProxyModel, QRect, QSize, QEvent
+)
+from PySide6.QtGui import QColor, QFont, QIcon, QPainter, QPainterPath, QBrush, QPen, QLinearGradient, QKeySequence, QShortcut
+
+import task as T
+import utils
+import crash_reporter
+import updater
+from queue_manager import QueueManager
+from api_server import run_server, PORT
+
+
+from gui.theme import *
+from gui.theme import _muted_label
+from gui.models import TaskTableModel
+from gui.delegates import NameDelegate, SpeedGraphWidget
+from gui.dialogs import FileInfoDialog, DownloadCompleteDialog, PropertiesDialog, SettingsDialog
+from gui.icons import themed_icon
+
+class DownloadApp(QWidget):
+    COLS = ["File", "Size", "Progress", "Speed", "Status"]
+    FILTERS = ["All", "Active", "Paused", "Done"]
+
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("HyperFetch")
+        self.setMinimumSize(900, 540)
+        self._app_icon = QIcon()
+        for ic in (resource_path("assets", "icon.ico"),
+                   resource_path("assets", "icon.png")):
+            if os.path.exists(ic):
+                self._app_icon = QIcon(ic)
+                self.setWindowIcon(self._app_icon)
+                break
+
+        self._settings_path = os.path.join(utils.app_data_dir(), "settings.json")
+        self._state_path = os.path.join(utils.app_data_dir(), "downloads.json")
+        self._load_settings()
+
+        self.queue = QueueManager(queues=self.queues_config, segments=self.segments)
+        self.pending = deque()  # filled by the embedded Flask server
+        self._speed = {}        # task.id -> (last_downloaded, last_time, bps)
+        self._rows = {}         # task.id -> row index
+        self._filter = "All"
+        self._search = ""
+        self._dialog_open = False
+        self._save_tick = 0
+        self._completed_seen = None   # seeded on first refresh; tracks done IDs
+        self._complete_popup = None   # the live "Download Completed" popup
+        self._flash_text = ""         # transient status-bar message
+        self._flash_until = 0.0
+        self.tray = None
+        self._tray_notice_shown = False
+        self._quit_requested = False
+
+        self._build_ui()
+        self._setup_tray()
+        self._load_state()
+        self._start_server()
+        self._check_unsent_crashes()
+
+        self.timer = QTimer(self)
+        self.timer.timeout.connect(self.refresh)
+        self.timer.start(500)
+
+    def _check_unsent_crashes(self):
+        """If the previous run left crash reports on disk, show a one-line
+        flash and remember the count so the user can review them via the
+        notification's 'Open' action. No network involvement."""
+        reports = crash_reporter.unsent_reports()
+        self._crash_dir = crash_reporter.crashes_dir()
+        if reports:
+            n = len(reports)
+            self._flash(f"⚠ {n} crash report{'s' if n != 1 else ''} from last run — "
+                        f"Settings → Open Crash Folder", secs=8)
+
+    # ------------------------------------------------------------- settings/state
+    def _load_settings(self):
+        s = utils.load_json(self._settings_path, {})
+        self.save_dir = s.get("save_dir") or utils.default_download_dir()
+        if not os.path.isdir(self.save_dir):
+            self.save_dir = utils.default_download_dir()
+        self.max_concurrent = int(s.get("max_concurrent", MAX_CONCURRENT))
+        self.segments = int(s.get("segments", SEGMENTS))
+        self.global_speed_limit = int(s.get("global_speed_limit", 0))
+        utils.global_limiter.set_limit(self.global_speed_limit)
+        # security
+        self.verify_tls = bool(s.get("verify_tls", True))
+        utils.VERIFY_TLS = self.verify_tls
+        self.theme = s.get("theme", "dark")
+        apply_theme(self.theme)
+        self.pair_token = utils.get_or_create_token()
+        # per-column widths the user dragged to last time (col-index -> px).
+        # Stretched col 0 (File) is excluded; only the fixed-default cols persist.
+        self.column_widths = s.get("column_widths") or {}
+        self.queues_config = s.get("queues", [{"name": "Main", "max_concurrent": self.max_concurrent}])
+
+    def _save_settings(self):
+        widths = {}
+        if hasattr(self, "table"):
+            h = self.table.horizontalHeader()
+            for c in range(1, self.model.columnCount()):
+                widths[str(c)] = h.sectionSize(c)
+        utils.save_json(self._settings_path, {
+            "save_dir": self.save_dir,
+            "max_concurrent": self.max_concurrent,
+            "segments": self.segments,
+            "global_speed_limit": getattr(self, "global_speed_limit", 0),
+            "verify_tls": getattr(self, "verify_tls", True),
+            "theme": getattr(self, "theme", "dark"),
+            "column_widths": widths or self.column_widths,
+            "queues": [{"name": q.name, "max_concurrent": q.max_concurrent} for q in getattr(self, "queue", type("T", (), {"queues": {}})).queues.values()] if hasattr(self, "queue") else self.queues_config,
+        })
+
+    def _load_state(self):
+        for d in utils.load_json(self._state_path, []):
+            try:
+                t = T.DownloadTask.from_dict(d)
+            except (KeyError, TypeError, ValueError):
+                continue
+            self.queue.add_task(t, start=False)
+        self._sweep_orphan_temps()
+
+    def _sweep_orphan_temps(self):
+        """Delete .hfdownload temp files in %TEMP% and the legacy save dir that
+        don't belong to any persisted task. They're leftovers from a previous crash
+        with no way to resume."""
+        import tempfile
+        known = {os.path.join(tempfile.gettempdir(), f"{t.id}.hfdownload") for t in self.queue.tasks}
+        candidates = []
+        
+        # 1. Sweep legacy locations (save dir + subfolders)
+        try:
+            for entry in os.scandir(self.save_dir):
+                if entry.is_file() and entry.name.endswith(".hfdownload"):
+                    candidates.append(entry.path)
+                elif entry.is_dir() and entry.name in utils.CATEGORIES:
+                    try:
+                        for sub in os.scandir(entry.path):
+                            if sub.is_file() and sub.name.endswith(".hfdownload"):
+                                candidates.append(sub.path)
+                    except OSError:
+                        pass
+        except OSError:
+            pass
+
+        # 2. Sweep %TEMP% (current staging area)
+        try:
+            for entry in os.scandir(tempfile.gettempdir()):
+                if entry.is_file() and entry.name.endswith(".hfdownload"):
+                    candidates.append(entry.path)
+        except OSError:
+            pass
+
+        for path in candidates:
+            if path not in known:
+                try:
+                    os.remove(path)
+                except OSError:
+                    pass
+
+    def _save_state(self):
+        keep = [t.to_dict() for t in self.queue.tasks
+                if t.status != T.CANCELLED]
+        utils.save_json(self._state_path, keep)
+
+    # ---------------------------------------------------------------- UI
+    def _build_ui(self):
+        self.setStyleSheet(build_qss())
+        root = QHBoxLayout(self)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
+
+        # ---- left nav rail ----
+        root.addWidget(self._build_sidebar())
+
+        # ---- main pane ----
+        main = QWidget()
+        main.setObjectName("mainPane")
+        main_layout = QVBoxLayout(main)
+        main_layout.setContentsMargins(18, 14, 18, 10)
+        main_layout.setSpacing(12)
+
+
+
+        # ---- toolbar ----
+        bar = QHBoxLayout()
+        bar.setSpacing(8)
+
+        self.btn_add = QPushButton("＋  New Download")
+        self.btn_add.setObjectName("primary")
+        self.btn_resume = QPushButton("▶  Resume")
+        self.btn_pause = QPushButton("⏸  Pause")
+        self.btn_cancel = QPushButton("✕  Delete")
+        for b in (self.btn_add, self.btn_resume, self.btn_pause, self.btn_cancel):
+            bar.addWidget(b)
+
+        bar.addStretch()
+
+        # search box (filters the list by filename)
+        self.search = QLineEdit()
+        self.search.setPlaceholderText("Search the list")
+        self.search.setClearButtonEnabled(True)
+        self.search.setFixedWidth(220)
+        self.search.textChanged.connect(self._on_search)
+        bar.addWidget(self.search)
+
+        self.limit_combo = QComboBox()
+        self.limit_combo.addItems(["Unlimited", "100 Kb/s", "500 Kb/s", "1 Mb/s", "5 Mb/s", "10 Mb/s"])
+        limit_txt = "Unlimited"
+        if getattr(self, "global_speed_limit", 0) > 0:
+            mb = self.global_speed_limit * 8 / (1000*1000)
+            limit_txt = f"{int(mb)} Mb/s" if mb >= 1 else f"{int(self.global_speed_limit * 8 / 1000)} Kb/s"
+        self.limit_combo.setCurrentText(limit_txt)
+        self.limit_combo.currentTextChanged.connect(self._on_global_limit_changed)
+        bar.addWidget(_muted_label("Limit:"))
+        bar.addWidget(self.limit_combo)
+
+        self.btn_more = QPushButton("⋯")
+        self.btn_more.setObjectName("ghost")
+        self.btn_more.setToolTip("Bulk actions — pause / resume / cancel / clear all")
+        self.btn_clear = QPushButton("🗑")
+        self.btn_clear.setObjectName("ghost")
+        self.btn_clear.setToolTip("Clear finished downloads from the list")
+        self.btn_open = QPushButton("📂")
+        self.btn_open.setObjectName("ghost")
+        self.btn_open.setToolTip("Open download folder")
+        self.btn_settings = QPushButton("⚙")
+        self.btn_settings.setObjectName("ghost")
+        self.btn_settings.setToolTip("Settings")
+        for b in (self.btn_more, self.btn_clear, self.btn_open, self.btn_settings):
+            bar.addWidget(b)
+        main_layout.addLayout(bar)
+
+        # ---- table (model/view: sortable, delegate-painted name cell) ----
+        self.model = TaskTableModel(self)
+        self.proxy = QSortFilterProxyModel(self)
+        self.proxy.setSourceModel(self.model)
+        self.proxy.setSortRole(TaskTableModel.SORT_ROLE)
+
+        self.table = QTableView()
+        self.table.setModel(self.proxy)
+        self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.table.setSelectionMode(QAbstractItemView.ExtendedSelection)
+        self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.table.setAlternatingRowColors(True)
+        self.table.setShowGrid(False)
+        self.table.setWordWrap(False)
+        self.table.setSortingEnabled(True)
+        self.table.setItemDelegateForColumn(0, NameDelegate(self.table))
+        self.table.verticalHeader().setVisible(False)
+        self.table.verticalHeader().setDefaultSectionSize(48)
+        h = self.table.horizontalHeader()
+        h.setHighlightSections(False)
+        # File stays stretchable (eats the leftover); other cols are user-draggable.
+        h.setSectionResizeMode(0, QHeaderView.Stretch)
+        h.setStretchLastSection(False)
+        DEFAULTS = {1: 120, 2: 120, 3: 110, 4: 110, 5: 130}
+        for c, default in DEFAULTS.items():
+            h.setSectionResizeMode(c, QHeaderView.Interactive)
+            saved = self.column_widths.get(str(c)) if hasattr(self, "column_widths") else None
+            self.table.setColumnWidth(c, int(saved) if saved else default)
+        # persist any width the user drags
+        h.sectionResized.connect(lambda *_: self._mark_settings_dirty())
+        self.table.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self.table.doubleClicked.connect(self._on_double_clicked)
+        self.table.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.table.customContextMenuRequested.connect(self._on_context_menu)
+        self.table.selectionModel().selectionChanged.connect(
+            lambda *_: self._update_action_buttons())
+        self.table.sortByColumn(5, Qt.DescendingOrder)   # newest first, like ABDM
+        main_layout.addWidget(self.table)
+
+        # ---- shortcuts ----
+        QShortcut(QKeySequence("Del"), self).activated.connect(self._on_delete_key)
+        QShortcut(QKeySequence("Space"), self).activated.connect(self._toggle_pause_resume)
+        QShortcut(QKeySequence("Ctrl+N"), self).activated.connect(self.on_add)
+
+        # ---- empty state ----
+        self.empty = QLabel("No downloads yet.\nAdd a URL or grab one from the browser.",
+                            self.table)
+        self.empty.setAlignment(Qt.AlignCenter)
+        self.empty.setStyleSheet(f"color: {MUTED}; font-size: 14px; background: transparent;")
+
+        # ---- bottom status bar ----
+        status = QHBoxLayout()
+        status.setSpacing(12)
+        self.status_lbl = QLabel()
+        self.status_lbl.setStyleSheet(f"color: {MUTED}; font-size: 12px;")
+        self.subtitle = QLabel()
+        self.subtitle.setStyleSheet(f"color: {MUTED}; font-size: 12px;")
+        self.speed_graph = SpeedGraphWidget()
+        self.speed_graph.setFixedSize(110, 22)
+        self.total_speed = QLabel()
+        self.total_speed.setStyleSheet(
+            f"font-size: 13px; font-weight: 700; color: {STATUS_COLORS[T.DOWNLOADING]};")
+        status.addWidget(self.status_lbl)
+        status.addStretch()
+        status.addWidget(self.subtitle)
+        status.addWidget(self.speed_graph)
+        status.addWidget(self.total_speed)
+        main_layout.addLayout(status)
+
+        root.addWidget(main, 1)
+
+        self.btn_add.clicked.connect(self.on_add)
+        self.btn_pause.clicked.connect(self.on_pause)
+        self.btn_resume.clicked.connect(self.on_resume)
+        self.btn_cancel.clicked.connect(self.on_cancel)
+        self.btn_more.clicked.connect(self._show_bulk_menu)
+        self.btn_clear.clicked.connect(self.on_clear)
+        self.btn_open.clicked.connect(self.on_open)
+        self.btn_settings.clicked.connect(self.on_settings)
+        self._update_action_buttons()
+
+    # ---- left nav rail (categories + status groups) ----
+    # icon + label + filter-key. None entry = section header (non-selectable).
+    def _get_nav_items(self):
+        items = [
+            ("all",        "All",        "All"),
+            None,
+            ("archive",    "Compressed",  "Compressed"),
+            ("program",    "Programs",    "Programs"),
+            ("video",      "Videos",      "Video"),
+            ("music",      "Music",       "Music"),
+            ("document",   "Documents",   "Documents"),
+            ("folder",     "Other",       "Other"),
+            None,
+        ]
+        if hasattr(self, "queue"):
+            for q in self.queue.queues.values():
+                items.append(("queue", q.name, f"Queue:{q.name}"))
+        else:
+            items.append(("queue", "Main", "Queue:Main"))
+        items.extend([
+            None,
+            ("hourglass",  "Unfinished",  "Unfinished"),
+            ("check",      "Finished",    "Finished"),
+        ])
+        return items
+    SECTION_TITLES = ["Categories", "Queues", "Status"]
+
+    def _build_sidebar(self):
+        rail = QFrame()
+        rail.setObjectName("sidebar")
+        rail.setFixedWidth(200)
+        lay = QVBoxLayout(rail)
+        lay.setContentsMargins(10, 16, 10, 14)
+        lay.setSpacing(8)
+
+        self.nav = QListWidget()
+        self.nav.setObjectName("nav")
+        self.nav.setFrameShape(QFrame.NoFrame)
+        self.nav.setIconSize(QSize(16, 16))
+        self.nav.setUniformItemSizes(False)
+
+        # the items will end up as: header, items, header, items, ...
+        # — headers are non-selectable + styled via NavItemRole below.
+        self._nav_count_items = {}     # filter key -> QListWidgetItem (for counts)
+        section_iter = iter(self.SECTION_TITLES)
+        for entry in self._get_nav_items():
+            if entry is None:
+                hdr = QListWidgetItem(next(section_iter, "").upper())
+                hdr.setFlags(Qt.NoItemFlags)        # non-selectable section header
+                hdr.setData(Qt.UserRole + 1, "header")
+                self.nav.addItem(hdr)
+                continue
+            icon, label, key = entry
+            it = QListWidgetItem(f"   {label}")
+            from gui.icons import themed_icon
+            it.setIcon(themed_icon(icon, "text", 16))
+            it.setData(Qt.UserRole, key)
+            self.nav.addItem(it)
+            self._nav_count_items[key] = it
+        self.nav.setCurrentRow(0)
+        self.nav.currentItemChanged.connect(self._on_nav)
+        lay.addWidget(self.nav, 1)
+        return rail
+
+    def _on_nav(self, current, _previous):
+        if current is None:
+            return
+        key = current.data(Qt.UserRole)
+        if not key:                # section header — ignore
+            return
+        self._set_filter(key)
+
+    def _refresh_nav_counts(self):
+        """Live per-item counts shown right-aligned, like ABDM's '0'."""
+        # one pass over tasks per tick, cheap.
+        tasks = list(self.queue.tasks)
+        by_cat = {}
+        for t in tasks:
+            by_cat[utils.category_for(t.filename)] = by_cat.get(utils.category_for(t.filename), 0) + 1
+        unfinished = sum(1 for t in tasks if t.status in (T.DOWNLOADING, T.QUEUED, T.PAUSED))
+        finished = sum(1 for t in tasks if t.status in (T.COMPLETED, T.ERROR, T.CANCELLED))
+        counts = {
+            "All": len(tasks),
+            "Compressed": by_cat.get("Compressed", 0),
+            "Programs": by_cat.get("Programs", 0),
+            "Video": by_cat.get("Video", 0),
+            "Music": by_cat.get("Music", 0),
+            "Documents": by_cat.get("Documents", 0),
+            "Other": by_cat.get("Other", 0),
+            "Unfinished": unfinished,
+            "Finished": finished,
+        }
+        for q in self.queue.queues.values():
+            counts[f"Queue:{q.name}"] = sum(1 for t in tasks if getattr(t, "queue_name", "Main") == q.name)
+        labels = {k: (icon, label) for (icon, label, k) in (e for e in self._get_nav_items() if e)}
+        for key, item in self._nav_count_items.items():
+            n = counts.get(key, 0)
+            icon, label = labels[key]
+            item.setText(f"   {label}" + (f"   · {n}" if n else ""))
+
+    def _on_search(self, text):
+        self._search = text.strip().lower()
+        self.refresh()
+
+    def resizeEvent(self, e):
+        super().resizeEvent(e)
+        if hasattr(self, "empty"):
+            self.empty.setGeometry(self.table.rect())
+
+    def _start_server(self):
+        def serve():
+            try:
+                run_server(self.queue, self.save_dir, PORT, pending=self.pending,
+                           token=self.pair_token)
+            except OSError as e:
+                self._server_err = str(e)
+        self._server_err = ""
+        threading.Thread(target=serve, daemon=True).start()
+
+    # ---------------------------------------------------------------- helpers
+    def _set_filter(self, name):
+        self._filter = name
+        self.refresh()
+
+    def _visible_tasks(self):
+        tasks = list(self.queue.tasks)
+        f = self._filter
+        if f and f.startswith("Queue:"):
+            # only one queue today; this node mirrors "All" but is the entry-point
+            # for future per-queue filtering once multi-queue support lands.
+            pass
+        elif f == "Active":
+            tasks = [t for t in tasks if t.status in (T.DOWNLOADING, T.QUEUED)]
+        elif f == "Paused":
+            tasks = [t for t in tasks if t.status == T.PAUSED]
+        elif f in ("Done", "Finished"):
+            tasks = [t for t in tasks if t.status in (T.COMPLETED, T.ERROR, T.CANCELLED)]
+        elif f == "Unfinished":
+            tasks = [t for t in tasks if t.status in (T.DOWNLOADING, T.QUEUED, T.PAUSED)]
+        elif f in utils.CATEGORIES or f == "Other":
+            tasks = [t for t in tasks if utils.category_for(t.filename) == f]
+        q = getattr(self, "_search", "")
+        if q:
+            tasks = [t for t in tasks if q in (t.filename or "").lower()]
+        return tasks
+
+    def _bps_for(self, t):
+        """Current smoothed speed (B/s) for a task, read by the table model."""
+        return self._speed.get(t.id, (0, 0, 0.0))[2]
+
+    def _task_at(self, proxy_index):
+        """Map a view (proxy) index to its task, or None."""
+        if not proxy_index.isValid():
+            return None
+        row = self.proxy.mapToSource(proxy_index).row()
+        return self.model.tasks[row] if 0 <= row < len(self.model.tasks) else None
+
+    def _selected_tasks(self):
+        """Tasks for every selected row (multi-select aware)."""
+        sm = self.table.selectionModel()
+        if not sm:
+            return []
+        out = []
+        for idx in sm.selectedRows():
+            t = self._task_at(idx)
+            if t is not None:
+                out.append(t)
+        return out
+
+    def _update_action_buttons(self):
+        """Enable Pause/Resume/Cancel only when the selection has a valid target."""
+        ts = self._selected_tasks()
+        self.btn_pause.setEnabled(any(t.status in (T.DOWNLOADING, T.QUEUED) for t in ts))
+        self.btn_resume.setEnabled(any(t.status in (T.PAUSED, T.ERROR) for t in ts))
+        self.btn_cancel.setEnabled(
+            any(t.status in (T.DOWNLOADING, T.QUEUED, T.PAUSED) for t in ts))
+
+    def _mark_settings_dirty(self):
+        """Debounced settings save — the next refresh tick (within ~10s) writes
+        out widths/options the user just changed. Cheap to call from a header
+        resize without writing the JSON on every pixel of drag."""
+        self._settings_dirty = True
+
+    def _flash(self, msg, secs=2.5):
+        """Show a transient one-line message in the status bar."""
+        self._flash_text = msg
+        self._flash_until = time.time() + secs
+        self.status_lbl.setText(self._status_text())
+
+    # ---------------------------------------------------------------- dialogs
+    def _show_file_info(self, url="", suggested="", headers=None, flash=False):
+        """Run the IDM-style dialog and queue the result.
+
+        ``flash`` (browser-pushed downloads) blinks the dialog to the front so a
+        download sent from the extension grabs attention even if the app is in
+        the background."""
+        self._dialog_open = True
+        try:
+            dlg = FileInfoDialog(self, url, self.save_dir, suggested, headers)
+            if flash:
+                # browser-pushed: float above every other window and pull the app
+                # to the foreground so the dialog "captures the screen" — the user
+                # shouldn't have to switch to the app to see it.
+                dlg.setWindowFlag(Qt.WindowStaysOnTopHint, True)
+                self._bring_to_front()
+                self._flash_dialog(dlg)
+            if dlg.exec() != QDialog.Accepted or not dlg.choice:
+                return
+            final_url, fname, folder = dlg.values()
+            if not final_url:
+                return
+            if not os.path.isdir(folder):
+                folder = self.save_dir
+            filename = utils.filename_from_url(final_url, fname or suggested)
+            save_path = utils.unique_path(folder, filename)
+            t = T.DownloadTask(final_url, save_path,
+                               filename=filename, headers=headers)
+            if dlg.choice == "later":
+                t.status = T.PAUSED
+                self.queue.add_task(t, start=False)
+            else:
+                self.queue.add_task(t)
+            self._save_state()
+        finally:
+            self._dialog_open = False
+
+    def _bring_to_front(self):
+        """Restore + foreground the main window so a browser-pushed dialog is
+        seen even if the app was minimized or behind other windows."""
+        if self.isMinimized():
+            self.showNormal()
+        self.show()
+        self.raise_()
+        self.activateWindow()
+
+    def _flash_dialog(self, dlg):
+        """Blink a browser-pushed dialog to the front + flash the taskbar so a
+        download sent from the extension is noticed even when the app is hidden."""
+        self.raise_()
+        self.activateWindow()
+        QApplication.alert(self, 2000)
+        QTimer.singleShot(0, lambda: self._pulse_dialog(dlg, 0))
+
+    def _pulse_dialog(self, dlg, n):
+        try:
+            if not dlg.isVisible() or n >= 6:
+                dlg.setWindowOpacity(1.0)
+                return
+            dlg.setWindowOpacity(0.65 if n % 2 else 1.0)
+            dlg.raise_()
+            dlg.activateWindow()
+        except RuntimeError:
+            return  # dialog already closed
+        QTimer.singleShot(120, lambda: self._pulse_dialog(dlg, n + 1))
+
+    def _check_completions(self):
+        """Pop a 'Download Completed' card when a task finishes this session."""
+        current = {t.id for t in self.queue.tasks if t.status == T.COMPLETED}
+        if self._completed_seen is None:
+            self._completed_seen = current      # don't notify for preexisting
+            return
+        new_done = current - self._completed_seen
+        self._completed_seen = current
+        if not new_done:
+            return
+        # show the latest completion; avoid stacking popups when several finish
+        task = next((t for t in self.queue.tasks if t.id in new_done), None)
+        if task is not None:
+            self._show_complete_popup(task)
+            if self.tray and self.tray.isVisible():
+                self.tray.showMessage("Download Complete", f"{task.filename} finished downloading.", QSystemTrayIcon.Information, 5000)
+
+    def _show_complete_popup(self, task):
+        if self._complete_popup is not None:
+            try:
+                self._complete_popup.close()
+            except RuntimeError:
+                pass  # already destroyed by Qt
+        dlg = DownloadCompleteDialog(self, task)
+        self._complete_popup = dlg
+        dlg.show()
+        dlg.raise_()
+        dlg.activateWindow()
+
+    # ---------------------------------------------------------------- actions
+    def on_add(self):
+        self._show_file_info()
+
+    def on_pause(self):
+        ts = [t for t in self._selected_tasks()
+              if t.status in (T.DOWNLOADING, T.QUEUED)]
+        if not ts:
+            self._flash("Select a downloading or queued item to pause.")
+            return
+        for t in ts:
+            self.queue.pause_task(t)
+        self._flash(f"Paused {len(ts)} download(s).")
+        self.refresh()
+
+    def on_resume(self):
+        ts = [t for t in self._selected_tasks()
+              if t.status in (T.PAUSED, T.ERROR)]
+        if not ts:
+            self._flash("Select a paused or errored item to resume.")
+            return
+        for t in ts:
+            if t.status == T.ERROR and "403" in (t.error or ""):
+                new_url, ok = QInputDialog.getText(
+                    self, "URL Expired",
+                    f"The server denied access (403) to '{t.filename}'.\n"
+                    "If the URL expired, paste a fresh one to resume from where it left off:",
+                    QLineEdit.Normal, t.url)
+                if ok and new_url.strip():
+                    t.url = new_url.strip()
+                    t.error = None
+                else:
+                    continue
+            self.queue.resume_task(t)
+        self._flash(f"Resumed {len(ts)} download(s).")
+        self.refresh()
+
+    def on_cancel(self):
+        ts = [t for t in self._selected_tasks()
+              if t.status in (T.DOWNLOADING, T.QUEUED, T.PAUSED)]
+        if not ts:
+            self._flash("Select an active item to cancel.")
+            return
+        for t in ts:
+            self.queue.cancel_task(t)
+        self._flash(f"Cancelled {len(ts)} download(s).")
+        self.refresh()
+
+    def _on_delete_key(self):
+        # Cancel active ones, completely remove terminal ones from the list
+        ts = self._selected_tasks()
+        if not ts:
+            return
+            
+        active = [t for t in ts if t.status in (T.DOWNLOADING, T.QUEUED, T.PAUSED)]
+        terminal = [t for t in ts if t.status in (T.COMPLETED, T.ERROR, T.CANCELLED)]
+        
+        if active:
+            for t in active:
+                self.queue.cancel_task(t)
+            self._flash(f"Cancelled {len(active)} active download(s).")
+            
+        if terminal:
+            for t in terminal:
+                if t in self.queue.tasks:
+                    self.queue.tasks.remove(t)
+            self._save_state()
+            self._flash(f"Removed {len(terminal)} completed/cancelled download(s).")
+            
+        self.refresh()
+
+    def _toggle_pause_resume(self):
+        ts = self._selected_tasks()
+        if not ts: return
+        if any(t.status in (T.DOWNLOADING, T.QUEUED) for t in ts):
+            self.on_pause()
+        else:
+            self.on_resume()
+
+    # ---- bulk actions (overflow menu) ----
+    def _show_bulk_menu(self):
+        menu = QMenu(self)
+        menu.setStyleSheet(
+            f"QMenu {{ background: {SURFACE}; color: {TEXT}; border: 1px solid {BORDER}; }}"
+            f"QMenu::item:selected {{ background: {HOVER}; }}")
+        menu.addAction("⏸  Pause all", self._pause_all)
+        menu.addAction("▶  Resume all", self._resume_all)
+        menu.addAction("✕  Cancel all", self._cancel_all)
+        menu.addSeparator()
+        menu.addAction("🗑  Clear all", self._clear_all)
+        menu.exec(self.btn_more.mapToGlobal(self.btn_more.rect().bottomLeft()))
+
+    def _pause_all(self):
+        ts = [t for t in self.queue.tasks if t.status in (T.DOWNLOADING, T.QUEUED)]
+        for t in ts:
+            self.queue.pause_task(t)
+        self._flash(f"Paused {len(ts)} download(s)." if ts else "Nothing to pause.")
+        self.refresh()
+
+    def _resume_all(self):
+        ts = [t for t in self.queue.tasks if t.status in (T.PAUSED, T.ERROR)]
+        for t in ts:
+            self.queue.resume_task(t)
+        self._flash(f"Resumed {len(ts)} download(s)." if ts else "Nothing to resume.")
+        self.refresh()
+
+    def _cancel_all(self):
+        ts = [t for t in self.queue.tasks
+              if t.status in (T.DOWNLOADING, T.QUEUED, T.PAUSED)]
+        if not ts:
+            self._flash("Nothing to cancel.")
+            return
+        if QMessageBox.question(
+                self, "Cancel all", f"Cancel {len(ts)} active download(s)?",
+                QMessageBox.Yes | QMessageBox.No, QMessageBox.No) != QMessageBox.Yes:
+            return
+        for t in ts:
+            self.queue.cancel_task(t)
+        self._flash(f"Cancelled {len(ts)} download(s).")
+        self.refresh()
+
+    def _clear_all(self):
+        if not self.queue.tasks:
+            return
+        if QMessageBox.question(
+                self, "Clear all",
+                "Remove ALL downloads from the list? Active ones are cancelled.",
+                QMessageBox.Yes | QMessageBox.No, QMessageBox.No) != QMessageBox.Yes:
+            return
+        self.queue.clear_all()
+        self._save_state()
+        self._flash("Cleared all downloads.")
+        self.refresh()
+
+    def _move_task(self, task, where):
+        self.queue.move(task, where)
+        self.refresh()
+
+    def _apply_theme(self, name):
+        """Switch palette at runtime and repaint everything."""
+        apply_theme(name)
+        self.theme = THEME
+        self.setStyleSheet(build_qss())
+        # one-shot inline styles on persistent header/footer widgets
+        self.subtitle.setStyleSheet(f"color: {MUTED}; font-size: 12px;")
+        self.total_speed.setStyleSheet(
+            f"font-size: 18px; font-weight: 700; color: {STATUS_COLORS[T.DOWNLOADING]};")
+        self.status_lbl.setStyleSheet(f"color: {MUTED}; font-size: 12px;")
+        self.empty.setStyleSheet(
+            f"color: {MUTED}; font-size: 14px; background: transparent;")
+        self.speed_graph.update()
+        self.refresh()
+
+    def on_clear(self):
+        self.queue.remove_finished()
+        self._save_state()
+        self.refresh()
+
+    def on_open(self):
+        try:
+            os.startfile(self.save_dir)
+        except OSError:
+            subprocess.Popen(["explorer", self.save_dir])
+
+    def on_settings(self):
+        dlg = SettingsDialog(self, self.save_dir, self.max_concurrent, self.segments,
+                             verify_tls=self.verify_tls, pair_token=self.pair_token,
+                             theme=self.theme)
+        if dlg.exec() != QDialog.Accepted:
+            return
+        d, conc, segs, verify, theme = dlg.values()
+        if os.path.isdir(d):
+            self.save_dir = d
+        self.max_concurrent = conc
+        self.segments = segs
+        self.queue.max_concurrent = conc
+        self.queue.segments = segs
+        self.verify_tls = verify
+        utils.VERIFY_TLS = verify
+        if theme != self.theme:
+            self._apply_theme(theme)
+        self._save_settings()
+
+    def _on_double_clicked(self, index):
+        t = self._task_at(index)
+        if t is not None:
+            PropertiesDialog(self, t).exec()
+
+    def _on_global_limit_changed(self, text):
+        if "Unlimited" in text:
+            bps = 0
+        elif "Kb/s" in text:
+            bps = int(text.split()[0]) * 1000 // 8
+        elif "Mb/s" in text:
+            bps = int(text.split()[0]) * 1000 * 1000 // 8
+        else:
+            bps = 0
+        self.global_speed_limit = bps
+        utils.global_limiter.set_limit(bps)
+        self._save_tick = 10
+
+    def _on_context_menu(self, pos):
+        t = self._task_at(self.table.indexAt(pos))
+        if not t: return
+
+        menu = QMenu(self.table)
+        menu.setStyleSheet(f"QMenu {{ background: {SURFACE}; color: {TEXT}; border: 1px solid {BORDER}; }}"
+                           f"QMenu::item:selected {{ background: {HOVER}; }}")
+        
+        limit_menu = menu.addMenu("Set Speed Limit...")
+        
+        actions = [
+            ("Unlimited", 0),
+            ("100 Kb/s", 100 * 1000 // 8),
+            ("500 Kb/s", 500 * 1000 // 8),
+            ("1 Mb/s", 1000 * 1000 // 8),
+            ("5 Mb/s", 5 * 1000 * 1000 // 8),
+            ("Custom...", -1)
+        ]
+        
+        for name, bps in actions:
+            act = limit_menu.addAction(name)
+            act.setCheckable(True)
+            if bps == t.speed_limit or (bps == -1 and t.speed_limit not in [a[1] for a in actions[:-1]]):
+                act.setChecked(True)
+            
+            act.triggered.connect(lambda checked=False, val=bps, task=t: self._set_task_limit(task, val))
+            
+        if t.status == T.QUEUED:
+            menu.addSeparator()
+            menu.addAction("⬆  Move to top", lambda: self._move_task(t, "top"))
+            menu.addAction("↑  Move up", lambda: self._move_task(t, "up"))
+            menu.addAction("↓  Move down", lambda: self._move_task(t, "down"))
+            menu.addAction("⬇  Move to bottom", lambda: self._move_task(t, "bottom"))
+            
+        menu.addSeparator()
+        q_menu = menu.addMenu("Move to Queue")
+        for q in self.queue.queues.values():
+            act = q_menu.addAction(q.name)
+            if getattr(t, "queue_name", "Main") == q.name:
+                act.setCheckable(True)
+                act.setChecked(True)
+                act.setEnabled(False)
+            act.triggered.connect(lambda checked=False, name=q.name, task=t: self._move_task_to_queue(task, name))
+
+        menu.exec(self.table.viewport().mapToGlobal(pos))
+        
+    def _move_task_to_queue(self, task, qname):
+        task.queue_name = qname
+        self._save_tick = 10
+        self.refresh()
+
+    def _set_task_limit(self, task, bps):
+        if bps == -1:
+            val, ok = QInputDialog.getInt(self, "Custom Speed Limit", 
+                                          "Enter limit in Kb/s (0 for unlimited):",
+                                          value=int(task.speed_limit * 8 / 1000), min=0, max=999999)
+            if ok:
+                bps = val * 1000 // 8
+            else:
+                return
+        task.set_speed_limit(bps)
+        self._save_tick = 10
+
+    # ------------------------------------------------------------- refresh loop
+    def refresh(self):
+        # browser handed us a download -> show the IDM-style dialog
+        if self.pending and not self._dialog_open:
+            item = self.pending.popleft()
+            self._show_file_info(item.get("url", ""), item.get("filename", ""),
+                                 item.get("headers"), flash=True)
+
+        tasks = self._visible_tasks()
+        self.empty.setVisible(len(tasks) == 0)
+        self.empty.setGeometry(self.table.rect())
+
+        # update the per-task smoothed speed (read by the model + the graph)
+        now = time.time()
+        total_bps = 0.0
+        for t in tasks:
+            if t.id not in self._speed:
+                self._speed[t.id] = (t.downloaded, now, 0.0)
+            last_dl, last_t, bps = self._speed[t.id]
+            dt = now - last_t
+            if t.status == T.DOWNLOADING and dt >= 0.4:
+                inst = max(0.0, (t.downloaded - last_dl) / dt)
+                bps = inst if bps <= 0 else 0.6 * inst + 0.4 * bps  # light smoothing
+                self._speed[t.id] = (t.downloaded, now, bps)
+            elif t.status != T.DOWNLOADING:
+                bps = 0
+                self._speed[t.id] = (t.downloaded, now, 0)
+            if t.status == T.DOWNLOADING:
+                total_bps += bps
+
+        self.model.set_tasks(tasks)
+        self.model.refresh_dynamic()
+        self._refresh_nav_counts()
+
+        self.speed_graph.add_value(total_bps)
+        disp_bps = self.speed_graph.current()
+        self.total_speed.setText(f"↓ {human_speed(disp_bps)}" if disp_bps > 1 else "")
+        self.subtitle.setText(self._subtitle_text())
+        self.status_lbl.setText(self._status_text())
+        self._update_action_buttons()
+
+        self._check_completions()
+
+        # periodic autosave (every ~10 s) so progress survives crashes
+        self._save_tick += 1
+        if self._save_tick >= 20:
+            self._save_tick = 0
+            self._save_state()
+            if getattr(self, "_settings_dirty", False):
+                self._save_settings()
+                self._settings_dirty = False
+
+    def _subtitle_text(self):
+        active = sum(1 for t in self.queue.tasks if t.status == T.DOWNLOADING)
+        queued = sum(1 for t in self.queue.tasks if t.status == T.QUEUED)
+        done = sum(1 for t in self.queue.tasks if t.status == T.COMPLETED)
+        return f"{active} active · {queued} queued · {done} completed"
+
+    def _status_text(self):
+        if time.time() < getattr(self, "_flash_until", 0):
+            return self._flash_text
+        srv = f"Browser bridge: http://127.0.0.1:{PORT}" if not self._server_err \
+            else f"Server ERROR: {self._server_err}"
+        return (f"Save to: {self.save_dir}    |    {srv}"
+                f"    |    v{APP_VERSION}")
+
+    # ---------------------------------------------------------------- close
+    def _setup_tray(self):
+        self.tray = QSystemTrayIcon(self._app_icon, self)
+        self.tray.setToolTip("HyperFetch")
+        menu = QMenu(self)
+        menu.addAction("Show/Hide", self._toggle_window)
+        menu.addAction("Quit", self._quit_app)
+        self.tray.setContextMenu(menu)
+        self.tray.activated.connect(self._on_tray_activated)
+        self.tray.show()
+
+    def _toggle_window(self):
+        if self.isVisible() and not self.isMinimized():
+            self.hide()
+        else:
+            self.showNormal()
+            self.activateWindow()
+
+    def _quit_app(self):
+        self._quit_requested = True
+        self.close()
+
+    def _on_tray_activated(self, reason):
+        if reason == QSystemTrayIcon.Trigger:
+            self._toggle_window()
+
+    def closeEvent(self, e):
+        if not self._quit_requested and self.tray and self.tray.isVisible():
+            e.ignore()
+            self.hide()
+            if getattr(self, "_tray_notice_shown", False) is False:
+                self.tray.showMessage("HyperFetch", "Minimized to system tray. Right-click to quit.", 
+                                      QSystemTrayIcon.Information, 3000)
+                self._tray_notice_shown = True
+            return
+
+        # Proceed with actual shutdown
+        active = [t for t in self.queue.tasks
+                  if t.status in (T.DOWNLOADING, T.QUEUED)]
+        if active:
+            ans = QMessageBox.question(
+                self, "Exit",
+                f"{len(active)} download(s) in progress.\n"
+                "Pause them and exit? They will resume next time.",
+                QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes)
+            if ans != QMessageBox.Yes:
+                e.ignore()
+                return
+            for t in active:
+                self.queue.pause_task(t)
+            # Wait (bounded) for in-flight workers to actually unwind so the
+            # last chunk is durable on disk. Drive Qt's event loop while we
+            # wait so the window stays responsive (a blocking cond.wait would
+            # freeze paint/hover and trip Windows' "Not Responding").
+            deadline = time.monotonic() + 8.0
+            while self.queue.active > 0 and time.monotonic() < deadline:
+                QApplication.processEvents()
+                self.queue.wait_active(timeout=0.1)
+            if self.queue.active > 0:
+                # workers didn't drain in time — log to status bar so we know
+                self._server_err = "shutdown timed out: some writes may be unflushed"
+        self.queue.shutdown()
+        self._save_state()
+        self._save_settings()
+        super().closeEvent(e)
+
+
+def _self_test():
+    """Headless smoke test of the frozen binary: construct the app, tick once,
+    exit 0. Lets the installer/CI verify the build actually runs."""
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    app = QApplication(sys.argv)
+    win = DownloadApp()
+    win.refresh()
+    win.queue.shutdown()
+    QTimer.singleShot(0, app.quit)
+    app.exec()
+    print(f"selftest OK v{APP_VERSION}")
+

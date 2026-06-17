@@ -4,16 +4,24 @@ import time
 import uuid
 import threading
 import itertools
+from enum import Enum
 from typing import List, Optional
 import utils
 
-# Task status constants
-QUEUED = "Queued"
-DOWNLOADING = "Downloading"
-PAUSED = "Paused"
-COMPLETED = "Completed"
-ERROR = "Error"
-CANCELLED = "Cancelled"
+class Status(str, Enum):
+    QUEUED = "Queued"
+    DOWNLOADING = "Downloading"
+    PAUSED = "Paused"
+    COMPLETED = "Completed"
+    ERROR = "Error"
+    CANCELLED = "Cancelled"
+
+QUEUED = Status.QUEUED
+DOWNLOADING = Status.DOWNLOADING
+PAUSED = Status.PAUSED
+COMPLETED = Status.COMPLETED
+ERROR = Status.ERROR
+CANCELLED = Status.CANCELLED
 
 _id_counter = itertools.count(1)
 _seq_counter = itertools.count(1)   # monotonic insertion order for FIFO tie-breaks
@@ -50,8 +58,9 @@ class DownloadTask:
                  segments=None, downloaded=0, supports_range=True,
                  status=QUEUED, error="", task_id=None, speed_limit=0,
                  headers=None, priority=0, added=_NO_TIMESTAMP,
-                 seg_total=0, seg_done=0):
+                 seg_total=0, seg_done=0, queue_name="Main"):
         self.id = task_id or uuid.uuid4().hex
+        self.queue_name = queue_name
         # Brand-new tasks stamp `added=time.time()`; from_dict passes the saved
         # value (or 0 for legacy state with no field). 0 means "unknown" and
         # humanize_age renders it as empty — NOT as "just now".
@@ -151,6 +160,7 @@ class DownloadTask:
             "added": self.added,
             "seg_total": self.seg_total,
             "seg_done": self.seg_done,
+            "queue_name": self.queue_name,
             # never write cookies/auth to disk; keep only safe headers (Referer/UA)
             "headers": utils.strip_sensitive(self.headers)
         }
@@ -177,5 +187,6 @@ class DownloadTask:
             task_id=d.get("id"), speed_limit=d.get("speed_limit", 0),
             headers=d.get("headers") or {}, priority=d.get("priority", 0),
             added=d.get("added"),
-            seg_total=d.get("seg_total", 0), seg_done=d.get("seg_done", 0)
+            seg_total=d.get("seg_total", 0), seg_done=d.get("seg_done", 0),
+            queue_name=d.get("queue_name", "Main")
         )
