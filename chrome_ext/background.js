@@ -51,11 +51,16 @@ function sendToApp(url, filename, referrer, done) {
 // (content.js). Browser-initiated downloads are left entirely to the browser,
 // so re-requested or already-downloaded files never trigger a surprise dialog.
 chrome.runtime.onInstalled.addListener(() => {
-  chrome.contextMenus.create({
-    id: "hyperfetch-download",
-    title: "Download with HyperFetch",
-    contexts: ["link", "image", "video", "audio"]
-  }, ignoreErr);
+  // removeAll() first so an extension UPDATE doesn't hit "duplicate id" — the
+  // prior registration persists across update and create() with the same id
+  // surfaces an error to chrome://extensions otherwise.
+  chrome.contextMenus.removeAll(() => {
+    chrome.contextMenus.create({
+      id: "hyperfetch-download",
+      title: "Download with HyperFetch",
+      contexts: ["link", "image", "video", "audio"]
+    }, ignoreErr);
+  });
 });
 
 chrome.contextMenus.onClicked.addListener((info, tab) => {
@@ -104,12 +109,15 @@ const SEGMENT_CT = /(mp2t|iso\.segment)/i;
 // fetch+parse it (cross-origin CORS), but the worker can (host_permissions).
 // We parse the master here and hand the variants to the panel so the user can
 // pick a quality and see an estimated size — the master itself carries none.
-// `parsedHls` marks masters we've SUCCESSFULLY processed (message posted).
-// `inFlightHls` dedups concurrent webRequest hits while the fetch is awaiting.
-// Both clear on SW restart, which is exactly what we want — a master that
-// failed to post (SW evicted mid-fetch, fetch threw, parse returned empty)
-// becomes eligible for retry the next time the player asks for it.
-const parsedHls = new Set();
+// HLS master memo. Keyed by manifest URL; the value is the message payload that
+// would have gone to the original tab. On a cache hit we *re-send* the cached
+// payload to the new tabId rather than refusing — so opening the same video in
+// a second tab still gets the variant panel without re-fetching the master.
+// inFlightHls dedups concurrent webRequest hits during the awaiting fetch.
+// Both clear on SW restart, which is fine: a master that failed to fetch or
+// returned nothing useful (empty text, parse fail) is NOT cached, so the next
+// webRequest hits will retry naturally.
+const parsedHls = new Map();
 const inFlightHls = new Set();
 
 function resolveUrl(u, base) {
@@ -155,23 +163,34 @@ function hlsDuration(text) {
 // Fetch a sniffed .m3u8; if it's a master, push its quality variants (with
 // estimated sizes) to the panel. Non-masters fall through to a single entry.
 async function handleHls(url, tabId, fallbackName) {
-  if (parsedHls.has(url) || inFlightHls.has(url)) return;
+  // cache hit -> re-deliver to the new tab, no re-fetch
+  const cached = parsedHls.get(url);
+  if (cached) {
+    if (tabId >= 0) chrome.tabs.sendMessage(tabId, cached, ignoreErr);
+    return;
+  }
+  if (inFlightHls.has(url)) return;
   inFlightHls.add(url);
   try {
     let text = "";
+    let fetchOk = false;
     // credentials:include -> send the site's cookies (auth-gated manifests); the
     // worker's host_permissions make the cross-origin response readable regardless.
-    try { text = await (await fetch(url, { credentials: "include" })).text(); }
-    catch (e) { /* offline/blocked */ }
+    try {
+      text = await (await fetch(url, { credentials: "include" })).text();
+      fetchOk = !!text;
+    } catch (e) { /* offline/blocked */ }
     const variants = parseHlsVariants(text, url);
 
     if (!variants.length) {
       // a single-quality media playlist (or DASH/unreadable) — one plain row
-      if (tabId >= 0) chrome.tabs.sendMessage(tabId, {
-        type: "SNIFFED_MEDIA", url, mime: "application/x-mpegurl",
-        size: 0, filename: fallbackName, kind: "hls"
-      }, ignoreErr);
-      parsedHls.add(url);
+      const payload = { type: "SNIFFED_MEDIA", url, mime: "application/x-mpegurl",
+                        size: 0, filename: fallbackName, kind: "hls" };
+      if (tabId >= 0) chrome.tabs.sendMessage(tabId, payload, ignoreErr);
+      // Only memo when the fetch actually returned something — a transient
+      // failure must stay retryable, and a tabId<0 background request must
+      // not silently consume the URL for every future real tab.
+      if (fetchOk && tabId >= 0) parsedHls.set(url, payload);
       return;
     }
 
@@ -189,10 +208,15 @@ async function handleHls(url, tabId, fallbackName) {
       size: (duration && v.bandwidth) ? Math.round(v.bandwidth / 8 * duration) : 0
     }));
 
-    if (tabId >= 0) chrome.tabs.sendMessage(tabId, {
-      type: "SNIFFED_HLS_MASTER", url, filename: fallbackName, variants: enriched
-    }, ignoreErr);
-    parsedHls.add(url);   // only mark "done" after the message is actually posted
+    const payload = { type: "SNIFFED_HLS_MASTER", url,
+                      filename: fallbackName, variants: enriched };
+    if (tabId >= 0) {
+      chrome.tabs.sendMessage(tabId, payload, ignoreErr);
+      // Memo only after a real tab actually got the message. tabId<0 (extension
+      // / prerender / closed-tab requests) must NOT consume the URL — the next
+      // real tab opening this video would otherwise never see the variant panel.
+      parsedHls.set(url, payload);
+    }
   } finally {
     inFlightHls.delete(url);
   }

@@ -1897,11 +1897,14 @@ class DownloadApp(QWidget):
             for t in active:
                 self.queue.pause_task(t)
             # Wait (bounded) for in-flight workers to actually unwind so the
-            # last chunk is durable on disk. A fixed sleep used to truncate
-            # tail bytes under slow networks; this drains in the common case
-            # and caps the wait so the app still exits if a worker hangs.
-            QApplication.processEvents()
-            if not self.queue.wait_active(timeout=8.0):
+            # last chunk is durable on disk. Drive Qt's event loop while we
+            # wait so the window stays responsive (a blocking cond.wait would
+            # freeze paint/hover and trip Windows' "Not Responding").
+            deadline = time.monotonic() + 8.0
+            while self.queue.active > 0 and time.monotonic() < deadline:
+                QApplication.processEvents()
+                self.queue.wait_active(timeout=0.1)
+            if self.queue.active > 0:
                 # workers didn't drain in time — log to status bar so we know
                 self._server_err = "shutdown timed out: some writes may be unflushed"
         self.queue.shutdown()

@@ -211,6 +211,7 @@ class Downloader:
 
             if not self._acquire_conn():
                 return  # paused while waiting for a connection slot
+            retry_exc = None
             try:
                 # with-block guarantees the response/socket closes on every
                 # path — incl. raise_for_status() failures and mid-stream errors
@@ -245,7 +246,7 @@ class Downloader:
                 resp = getattr(e, "response", None)
                 if resp is not None and resp.status_code == 429:
                     self._throttle_conns()
-                self._backoff_sleep(e, attempts)
+                retry_exc = e
             except OSError as e:
                 # disk full / file locked: not retryable, surface it
                 if not self.t.cancel_requested:
@@ -253,7 +254,13 @@ class Downloader:
                     self.t.error = f"disk error: {e}"
                 return
             finally:
+                # Release the slot BEFORE the retry backoff so other tasks can use
+                # it during a Retry-After window. Holding the global semaphore for
+                # up to 60 s of sleep would re-create the cross-task starvation the
+                # global cap was added to prevent.
                 self._release_conn()
+            if retry_exc is not None:
+                self._backoff_sleep(retry_exc, attempts)
 
     @staticmethod
     def _retry_wait(exc, attempt):

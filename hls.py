@@ -93,13 +93,21 @@ class HlsDownloader:
         return best_url
 
     def _parse_media(self, text, base_url):
-        """Return (segments, key_info). segments = list of (url, seq)."""
+        """Return (segments, endlist). segments = [(url, seq, key)].
+        endlist = True only if the playlist contains #EXT-X-ENDLIST — i.e. it is
+        finite VOD. Sliding-window live/event playlists return endlist=False so
+        the caller can refuse a partial-byte resume (their segment URIs change
+        between fetches even when the segment count doesn't, which would silently
+        concatenate bytes from a different point in the stream)."""
         segments = []
         key = None  # {"method","uri","iv"}
         seq = 0
+        endlist = False
         for line in text.splitlines():
             line = line.strip()
-            if line.startswith("#EXT-X-MEDIA-SEQUENCE"):
+            if line == "#EXT-X-ENDLIST":
+                endlist = True
+            elif line.startswith("#EXT-X-MEDIA-SEQUENCE"):
                 try:
                     seq = int(line.split(":", 1)[1])
                 except ValueError:
@@ -109,7 +117,7 @@ class HlsDownloader:
             elif line and not line.startswith("#"):
                 segments.append((urllib.parse.urljoin(base_url, line), seq, key))
                 seq += 1
-        return segments
+        return segments, endlist
 
     def _parse_key(self, line, base_url):
         attrs = {}
@@ -206,7 +214,7 @@ class HlsDownloader:
                     raise RuntimeError("no playable variant in master playlist")
                 base = variant
                 text = self._fetch_text(variant)
-            segments = self._parse_media(text, base)
+            segments, endlist = self._parse_media(text, base)
         except (requests.RequestException, RuntimeError) as e:
             self.t.status = T.ERROR
             self.t.error = f"HLS parse failed: {e}"
@@ -220,17 +228,25 @@ class HlsDownloader:
         total = len(segments)
 
         # ---- resume: skip segments already in the .hfdownload file ----
-        # `done` and `downloaded` are persisted across restarts (task.to_dict).
-        # We trust the saved seg_done only if (a) the playlist still has at
-        # least that many segments AND (b) the temp file size matches the
-        # saved byte count. If anything is off, restart from 0 — the .ts
-        # concat format has no headers to validate against.
-        resume_done = self.t.seg_done if self.t.seg_total == total else 0
-        if resume_done > 0 and os.path.exists(temp_path) \
-                and os.path.getsize(temp_path) == self.t.downloaded:
-            done = resume_done
+        # Gates: (1) finite VOD (#EXT-X-ENDLIST) — a sliding-window live/event
+        # playlist republishes the same segment COUNT but different content
+        # (shifted MEDIA-SEQUENCE), so appending would silently corrupt the
+        # output. (2) seg_total matches. (3) the file is at least as big as the
+        # saved byte count — equality would race with the unlocked two-store
+        # write order (seg_done then downloaded); >= is safe because we truncate
+        # the temp file back to `self.t.downloaded` before reopening in append,
+        # so any extra bytes from a partial trailing segment get re-fetched.
+        can_resume = (endlist and self.t.seg_total == total
+                      and self.t.seg_done > 0
+                      and os.path.exists(temp_path)
+                      and os.path.getsize(temp_path) >= self.t.downloaded > 0)
+        if can_resume:
+            done = self.t.seg_done
             downloaded = self.t.downloaded
-            segments = segments[resume_done:]   # skip what's already on disk
+            segments = segments[done:]
+            # truncate any partial trailing segment bytes so append starts clean
+            with open(temp_path, "r+b") as f:
+                f.truncate(downloaded)
             open_mode = "ab"
         else:
             done = 0
@@ -282,8 +298,12 @@ class HlsDownloader:
                         f.flush()
                         downloaded += len(data)
                         done += 1
-                        self.t.seg_done = done
+                        # Write downloaded BEFORE seg_done so an autosave that races
+                        # into the gap snapshots {seg_done=N, downloaded≥segN_end}.
+                        # The reverse order produced {seg_done=N+1, downloaded=old}
+                        # and the resume gate's size check threw away progress.
                         self.t.downloaded = downloaded
+                        self.t.seg_done = done
                         # estimate total size from average segment so far -> live %
                         self.t.total_size = int(downloaded / done * total)
         except OSError as e:

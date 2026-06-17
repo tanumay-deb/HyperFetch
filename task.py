@@ -44,13 +44,21 @@ class DownloadTask:
     Simple attribute reads/writes under the GIL are fine for display purposes.
     """
 
+    _NO_TIMESTAMP = object()
+
     def __init__(self, url, save_path, filename="", total_size=0,
                  segments=None, downloaded=0, supports_range=True,
                  status=QUEUED, error="", task_id=None, speed_limit=0,
-                 headers=None, priority=0, added=None,
+                 headers=None, priority=0, added=_NO_TIMESTAMP,
                  seg_total=0, seg_done=0):
         self.id = task_id or uuid.uuid4().hex
-        self.added = added or time.time()   # epoch added — for the "Date Added" column
+        # Brand-new tasks stamp `added=time.time()`; from_dict passes the saved
+        # value (or 0 for legacy state with no field). 0 means "unknown" and
+        # humanize_age renders it as empty — NOT as "just now".
+        if added is DownloadTask._NO_TIMESTAMP:
+            self.added = time.time()
+        else:
+            self.added = added or 0
         self.url = url
         self.save_path = save_path
         self.filename = filename or url.split("/")[-1]

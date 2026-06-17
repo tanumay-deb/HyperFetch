@@ -191,17 +191,28 @@ const STREAM_BADGE =
   'padding:1px 6px;font-size:10px;margin-left:6px;">STREAM</span>';
 
 function renderSingleItem(item, media) {
-  const badge = media.kind === "hls" ? STREAM_BADGE : '';
+  // Built with DOM methods (not innerHTML) — media.filename / media.mime are
+  // host-controlled. media.mime is the raw Content-Type header verbatim, so a
+  // malicious origin could otherwise inject e.g. `<img src=x onerror=...>` and
+  // get script execution inside our shadow DOM.
+  const name = document.createElement("div");
+  name.className = "filename";
+  name.textContent = media.filename || "";
+  if (media.kind === "hls") name.insertAdjacentHTML("beforeend", STREAM_BADGE);
+  const meta = document.createElement("div");
+  meta.className = "meta";
   const sizeTxt = media.kind === "hls" ? "Video stream" : formatSize(media.size);
-  item.innerHTML = `
-    <div class="filename">${media.filename}${badge}</div>
-    <div class="meta">${sizeTxt} • ${media.mime || 'unknown'}</div>
-    <button class="btn-download">Download with HyperFetch</button>
-  `;
-  item.querySelector(".btn-download").onclick = (e) => {
+  meta.textContent = `${sizeTxt} • ${media.mime || 'unknown'}`;
+  const btn = document.createElement("button");
+  btn.className = "btn-download";
+  btn.textContent = "Download with HyperFetch";
+  btn.onclick = (e) => {
     e.preventDefault();
     sendToApp(media.url, media.filename);
   };
+  item.appendChild(name);
+  item.appendChild(meta);
+  item.appendChild(btn);
 }
 
 function bitrateText(bps) {

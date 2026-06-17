@@ -30,12 +30,20 @@ def hls_server(aes_tools):
             out += f"#EXTINF:4.0,\n{prefix}{i}.ts\n"
         return out + "#EXT-X-ENDLIST\n"
 
+    # a live playlist that LOOKS like VOD (has segments) but lacks ENDLIST,
+    # used by the sliding-window resume-refusal test
+    live_with_segs = "#EXTM3U\n#EXT-X-TARGETDURATION:4\n#EXT-X-MEDIA-SEQUENCE:0\n"
+    for i in range(5):
+        live_with_segs += f"#EXTINF:4.0,\nseg{i}.ts\n"
+    # NOTE: no #EXT-X-ENDLIST -> sliding window
+
     routes = {
         "master.m3u8": (master.encode(), "application/vnd.apple.mpegurl"),
         "high.m3u8": (media("seg").encode(), "application/vnd.apple.mpegurl"),
         "low.m3u8": (media("seg").encode(), "application/vnd.apple.mpegurl"),
         "aes.m3u8": (media("enc", True).encode(), "application/vnd.apple.mpegurl"),
         "live.m3u8": (b"#EXTM3U\n#EXT-X-TARGETDURATION:4\n", "application/vnd.apple.mpegurl"),
+        "sliding.m3u8": (live_with_segs.encode(), "application/vnd.apple.mpegurl"),
         "key.bin": (key, "application/octet-stream"),
     }
     for i in range(5):
@@ -134,6 +142,26 @@ def test_hls_resume_skips_already_fetched(hls_server, tmp_path):
     assert t.status == T.COMPLETED
     assert open(t.save_path, "rb").read() == hls_server.plain_total
     assert t.seg_done == 5
+
+
+def test_hls_resume_refuses_live_playlist(hls_server, tmp_path):
+    """A sliding-window playlist (no #EXT-X-ENDLIST) must NOT resume — appending
+    new bytes onto an older window snapshot would silently corrupt the .ts."""
+    dst = str(tmp_path / "live.ts")
+    t = T.DownloadTask(f"{hls_server.base}/sliding.m3u8", dst, filename="live.m3u8")
+    temp = dst[:-3] + ".ts.hfdownload"
+    seg_size = len(hls_server.plain_total) // 5
+    # pretend we resumed mid-stream
+    with open(temp, "wb") as f:
+        f.write(hls_server.plain_total[: seg_size * 3])
+    t.seg_total = 5
+    t.seg_done = 3
+    t.downloaded = seg_size * 3
+    Downloader(t).run()
+    # full download (5 segments * one byte-value each), NOT 3+5=8
+    assert t.status == T.COMPLETED
+    assert t.seg_done == 5
+    assert open(t.save_path, "rb").read() == hls_server.plain_total
 
 
 def test_hls_resume_restarts_if_temp_corrupt(hls_server, tmp_path):

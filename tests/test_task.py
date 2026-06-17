@@ -74,6 +74,29 @@ def test_hls_seg_fields_default_zero_when_missing():
     assert r.seg_total == 0 and r.seg_done == 0
 
 
+def test_added_unknown_for_legacy_tasks():
+    """Legacy state (pre-`added` field) restores with added=0 — NOT time.time().
+    humanize_age renders 0 as an empty cell, not a fake "just now"."""
+    r = T.DownloadTask.from_dict({"url": "u", "save_path": "p"})
+    assert r.added == 0
+
+
+def test_added_brand_new_task_stamps_now():
+    """Fresh tasks (no `added` kwarg passed) stamp the current time."""
+    import time as _t
+    before = _t.time()
+    t = T.DownloadTask("u", "p")
+    assert before <= t.added <= _t.time() + 1
+
+
+def test_added_round_trips_through_persistence():
+    """A saved timestamp survives to_dict/from_dict unchanged."""
+    t = T.DownloadTask("u", "p")
+    t.added = 1700000000.5
+    r = T.DownloadTask.from_dict(json.loads(json.dumps(t.to_dict())))
+    assert r.added == 1700000000.5
+
+
 def test_control_flags():
     t = T.DownloadTask("u", "p")
     assert not t.pause_requested and not t.cancel_requested

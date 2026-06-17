@@ -156,4 +156,7 @@ class QueueManager:
         finally:
             with self.cond:
                 self.active -= 1
-                self.cond.notify()
+                # notify_all (not notify) so a closeEvent's wait_active waiter
+                # always wakes — a single notify can wake the scheduler instead,
+                # leaving wait_active parked until its full timeout fires.
+                self.cond.notify_all()
