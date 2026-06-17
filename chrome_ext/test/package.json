@@ -4,7 +4,7 @@
   "private": true,
   "description": "jsdom behavior tests for the HyperFetch content script",
   "scripts": {
-    "test": "node overlay.test.js"
+    "test": "node overlay.test.js && node hls-parse.test.js"
   },
   "devDependencies": {
     "jsdom": "^29.1.1"

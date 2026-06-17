@@ -16,9 +16,11 @@ from PySide6.QtWidgets import (
     QTableWidget, QTableWidgetItem, QHeaderView, QProgressBar, QDialog,
     QLineEdit, QSpinBox, QFileDialog, QMessageBox, QAbstractItemView,
     QFrame, QButtonGroup, QGridLayout, QSplitter, QSizePolicy, QComboBox, QMenu, QInputDialog,
-    QCheckBox
+    QCheckBox, QListWidget, QListWidgetItem, QTableView, QStyledItemDelegate, QStyle
 )
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import (
+    Qt, QTimer, QModelIndex, QAbstractTableModel, QSortFilterProxyModel, QRect, QSize
+)
 from PySide6.QtGui import QColor, QFont, QIcon, QPainter, QPainterPath, QBrush, QPen, QLinearGradient
 
 import task as T
@@ -159,7 +161,7 @@ QLineEdit:read-only {{ color: {MUTED}; }}
 QLineEdit::placeholder {{ color: {MUTED}; }}
 
 /* ---------- table ---------- */
-QTableWidget {{
+QTableView {{
     background: {SURFACE};
     alternate-background-color: {ALT};
     border: 1px solid {BORDER};
@@ -167,8 +169,8 @@ QTableWidget {{
     gridline-color: transparent;
     outline: none;
 }}
-QTableWidget::item {{ padding: 0 10px; border: none; }}
-QTableWidget::item:selected {{ background: {SEL}; color: {TEXT}; }}
+QTableView::item {{ padding: 0 10px; border: none; }}
+QTableView::item:selected {{ background: {SEL}; color: {TEXT}; }}
 QHeaderView::section {{
     background: {SURFACE};
     color: {MUTED};
@@ -181,6 +183,37 @@ QHeaderView::section {{
     letter-spacing: 1px;
 }}
 QTableCornerButton::section {{ background: {SURFACE}; border: none; }}
+
+/* ---------- left nav rail ---------- */
+QFrame#sidebar {{
+    background: {SURFACE};
+    border: none;
+    border-right: 1px solid {BORDER};
+}}
+QWidget#mainPane {{ background: {BG}; }}
+QListWidget#nav {{
+    background: transparent;
+    border: none;
+    outline: none;
+    font-size: 13px;
+}}
+QListWidget#nav::item {{
+    padding: 5px 8px;
+    border-radius: 7px;
+    color: {MUTED};
+    margin: 0;
+}}
+QListWidget#nav::item:hover {{ background: {HOVER}; color: {TEXT}; }}
+QListWidget#nav::item:selected {{ background: {SEL}; color: {TEXT}; }}
+QListWidget#nav::item:disabled {{
+    /* section header: small, all-caps, muted, no hover, no selection */
+    color: {MUTED};
+    background: transparent;
+    padding: 12px 8px 4px;
+    font-size: 10px;
+    font-weight: 800;
+    letter-spacing: 1px;
+}}
 
 /* ---------- progress ---------- */
 QProgressBar {{
@@ -250,6 +283,32 @@ def human_speed(bps):
     return f"{bps:.1f} TB/s"
 
 
+def humanize_age(epoch):
+    """Relative 'date added' text, e.g. '5 min ago', '2 days ago'."""
+    if not epoch:
+        return ""
+    d = time.time() - epoch
+    if d < 60:
+        return "just now"
+    if d < 3600:
+        n = int(d // 60);  return f"{n} min ago"
+    if d < 86400:
+        n = int(d // 3600); return f"{n} hr ago" if n == 1 else f"{n} hrs ago"
+    n = int(d // 86400);    return "1 day ago" if n == 1 else f"{n} days ago"
+
+
+def fmt_eta(secs):
+    """Time-left text from seconds; '' when unknown."""
+    if not secs or secs <= 0 or secs == float("inf"):
+        return ""
+    secs = int(secs)
+    if secs < 60:
+        return f"{secs}s"
+    if secs < 3600:
+        return f"{secs // 60}m {secs % 60}s"
+    return f"{secs // 3600}h {(secs % 3600) // 60}m"
+
+
 def _muted_label(text):
     lbl = QLabel(text)
     lbl.setStyleSheet(f"color: {MUTED}; font-size: 12px; font-weight: 600;"
@@ -257,19 +316,180 @@ def _muted_label(text):
     return lbl
 
 
+class TaskTableModel(QAbstractTableModel):
+    """Model over the (already filtered) visible task list. Sorting + the
+    two-line name rendering are handled by the proxy + NameDelegate; live
+    progress/speed updates come through refresh_dynamic()."""
+    COLS = ["File", "Size", "Status", "Speed", "Time Left", "Added"]
+    SORT_ROLE = Qt.UserRole + 1
+    TASK_ROLE = Qt.UserRole + 2
+
+    def __init__(self, app):
+        super().__init__()
+        self.app = app
+        self.tasks = []
+
+    def set_tasks(self, tasks):
+        tasks = list(tasks)
+        if tasks != self.tasks:           # membership/order changed -> full reset
+            self.beginResetModel()
+            self.tasks = tasks
+            self.endResetModel()
+
+    def refresh_dynamic(self):
+        """Repaint volatile columns (progress/speed/time-left/status) in place."""
+        if self.tasks:
+            self.dataChanged.emit(self.index(0, 0),
+                                  self.index(len(self.tasks) - 1, len(self.COLS) - 1))
+
+    def rowCount(self, parent=QModelIndex()):
+        return 0 if parent.isValid() else len(self.tasks)
+
+    def columnCount(self, parent=QModelIndex()):
+        return len(self.COLS)
+
+    def headerData(self, section, orientation, role=Qt.DisplayRole):
+        if orientation == Qt.Horizontal and role == Qt.DisplayRole:
+            return self.COLS[section]
+        return None
+
+    def _eta_secs(self, t, bps):
+        if t.status == T.DOWNLOADING and bps > 0 and t.total_size > 0:
+            return max(0, (t.total_size - t.downloaded) / bps)
+        return 0
+
+    def data(self, index, role=Qt.DisplayRole):
+        if not index.isValid():
+            return None
+        t = self.tasks[index.row()]
+        col = index.column()
+        if role == self.TASK_ROLE:
+            return t
+        bps = self.app._bps_for(t)
+        if role == Qt.DisplayRole:
+            if col == 0:
+                return t.filename                       # painted by NameDelegate
+            if col == 1:
+                return human_size(t.total_size) if t.total_size else "—"
+            if col == 2:
+                return t.status
+            if col == 3:
+                return human_speed(bps) if t.status == T.DOWNLOADING else ""
+            if col == 4:
+                return fmt_eta(self._eta_secs(t, bps))
+            if col == 5:
+                return humanize_age(t.added)
+        elif role == Qt.ForegroundRole and col == 2:
+            return QColor(STATUS_COLORS.get(t.status, TEXT))
+        elif role == Qt.TextAlignmentRole and col in (1, 3, 4):
+            return int(Qt.AlignRight | Qt.AlignVCenter)
+        elif role == self.SORT_ROLE:
+            if col == 0:
+                return (t.filename or "").lower()
+            if col == 1:
+                return t.total_size or t.downloaded
+            if col == 2:
+                return t.status
+            if col == 3:
+                return bps
+            if col == 4:
+                return self._eta_secs(t, bps)
+            if col == 5:
+                return t.added or 0
+        return None
+
+
+class NameDelegate(QStyledItemDelegate):
+    """File cell: category icon + filename, with a thin progress bar (active) or
+    the category name (idle) on the second line — the ABDM-style two-line cell."""
+    ICONS = {"Compressed": "📦", "Programs": "🧩", "Video": "🎬",
+             "Music": "🎵", "Documents": "📄", "Other": "📁"}
+
+    def sizeHint(self, option, index):
+        return QSize(240, 48)
+
+    def paint(self, painter, option, index):
+        t = index.data(TaskTableModel.TASK_ROLE)
+        if t is None:
+            return super().paint(painter, option, index)
+        r = option.rect
+        painter.save()
+        painter.setRenderHint(QPainter.Antialiasing, True)
+
+        # row background (delegate owns the whole cell, so paint it ourselves)
+        if option.state & QStyle.State_Selected:
+            painter.fillRect(r, QColor(SEL))
+        else:
+            painter.fillRect(r, QColor(ALT if index.row() % 2 else SURFACE))
+
+        cat = utils.category_for(t.filename)
+        # icon
+        painter.setPen(QColor(TEXT))
+        icon_f = QFont(); icon_f.setPointSize(12)
+        painter.setFont(icon_f)
+        painter.drawText(QRect(r.left() + 12, r.top(), 26, r.height()),
+                         int(Qt.AlignVCenter | Qt.AlignLeft), self.ICONS.get(cat, "📁"))
+
+        tx = r.left() + 44
+        tw = max(40, r.right() - tx - 10)
+
+        # line 1 — filename
+        name_f = QFont(); name_f.setPointSize(9); name_f.setBold(True)
+        painter.setFont(name_f)
+        painter.setPen(QColor(TEXT))
+        name = painter.fontMetrics().elidedText(t.filename or "", Qt.ElideMiddle, tw)
+        painter.drawText(QRect(tx, r.top() + 5, tw, 17),
+                         int(Qt.AlignVCenter | Qt.AlignLeft), name)
+
+        # line 2 — progress bar (active) or category
+        sub_top = r.top() + 25
+        if t.status in (T.DOWNLOADING, T.PAUSED) and t.total_size > 0:
+            pct = max(0, min(100, t.percent))
+            barw = max(20, tw - 48)
+            bar = QRect(tx, sub_top + 4, barw, 6)
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(QColor(BG))
+            painter.drawRoundedRect(bar, 3, 3)
+            if pct > 0:
+                fill = QRect(bar.left(), bar.top(), int(bar.width() * pct / 100), bar.height())
+                painter.setBrush(QColor(ACCENT))
+                painter.drawRoundedRect(fill, 3, 3)
+            painter.setPen(QColor(MUTED))
+            small = QFont(); small.setPointSize(8); painter.setFont(small)
+            painter.drawText(QRect(bar.right() + 8, sub_top, 44, 16),
+                             int(Qt.AlignVCenter | Qt.AlignLeft), f"{pct}%")
+        else:
+            painter.setPen(QColor(MUTED))
+            sub_f = QFont(); sub_f.setPointSize(8); painter.setFont(sub_f)
+            painter.drawText(QRect(tx, sub_top, tw, 16),
+                             int(Qt.AlignVCenter | Qt.AlignLeft), cat)
+        painter.restore()
+
+
 class SpeedGraphWidget(QWidget):
     def __init__(self, parent=None, max_points=120):
         super().__init__(parent)
         self.max_points = max_points
-        self.data = [0] * max_points
+        self.data = [0.0] * max_points
+        self._ema = 0.0      # smoothed sample (the spiky 0.5s reads are noisy)
+        self._peak = 1.0     # decaying Y-scale so one spike can't flatten the rest
         self.setMinimumHeight(40)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
 
     def add_value(self, val):
-        self.data.append(val)
+        # smooth toward sustained throughput rather than plotting each raw burst
+        self._ema = val if self._ema <= 0 else 0.3 * val + 0.7 * self._ema
+        self.data.append(self._ema)
         if len(self.data) > self.max_points:
             self.data.pop(0)
+        # peak decays ~6%/tick: the axis follows real sustained speed, and a lone
+        # spike relaxes out instead of permanently squashing the baseline.
+        self._peak = max(self._ema, self._peak * 0.94)
         self.update()
+
+    def current(self):
+        """Smoothed current speed (B/s) — used for the readout so it doesn't flicker."""
+        return self._ema
 
     def paintEvent(self, event):
         painter = QPainter(self)
@@ -278,10 +498,9 @@ class SpeedGraphWidget(QWidget):
         w = self.width()
         h = self.height()
 
-        max_val = max(self.data)
-        if max_val == 0:
+        max_val = self._peak * 1.15  # decaying peak + headroom (not the raw max)
+        if max_val <= 0:
             max_val = 1
-        max_val *= 1.1  # 10% headroom
 
         path = QPainterPath()
         dx = w / (self.max_points - 1)
@@ -905,6 +1124,7 @@ class DownloadApp(QWidget):
         self._speed = {}        # task.id -> (last_downloaded, last_time, bps)
         self._rows = {}         # task.id -> row index
         self._filter = "All"
+        self._search = ""
         self._dialog_open = False
         self._save_tick = 0
         self._completed_seen = None   # seeded on first refresh; tracks done IDs
@@ -936,8 +1156,16 @@ class DownloadApp(QWidget):
         self.theme = s.get("theme", "dark")
         apply_theme(self.theme)
         self.pair_token = utils.get_or_create_token()
+        # per-column widths the user dragged to last time (col-index -> px).
+        # Stretched col 0 (File) is excluded; only the fixed-default cols persist.
+        self.column_widths = s.get("column_widths") or {}
 
     def _save_settings(self):
+        widths = {}
+        if hasattr(self, "table"):
+            h = self.table.horizontalHeader()
+            for c in range(1, self.model.columnCount()):
+                widths[str(c)] = h.sectionSize(c)
         utils.save_json(self._settings_path, {
             "save_dir": self.save_dir,
             "max_concurrent": self.max_concurrent,
@@ -945,6 +1173,7 @@ class DownloadApp(QWidget):
             "global_speed_limit": getattr(self, "global_speed_limit", 0),
             "verify_tls": getattr(self, "verify_tls", True),
             "theme": getattr(self, "theme", "dark"),
+            "column_widths": widths or self.column_widths,
         })
 
     def _load_state(self):
@@ -963,88 +1192,58 @@ class DownloadApp(QWidget):
     # ---------------------------------------------------------------- UI
     def _build_ui(self):
         self.setStyleSheet(build_qss())
-        root = QVBoxLayout(self)
-        root.setContentsMargins(24, 20, 24, 14)
-        root.setSpacing(14)
-        
-        splitter = QSplitter(Qt.Vertical)
-        
-        top_widget = QWidget()
-        top_layout = QVBoxLayout(top_widget)
-        top_layout.setContentsMargins(0, 0, 0, 0)
-        top_layout.setSpacing(10)
+        root = QHBoxLayout(self)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
 
-        # ---- header: title + live total speed ----
-        head = QHBoxLayout()
-        title_box = QVBoxLayout()
-        title_box.setSpacing(2)
-        title = QLabel("⚡ HyperFetch")
-        title.setStyleSheet("font-size: 21px; font-weight: 800;")
-        self.subtitle = QLabel("")
-        self.subtitle.setStyleSheet(f"color: {MUTED}; font-size: 12px;")
-        title_box.addWidget(title)
-        title_box.addWidget(self.subtitle)
-        head.addLayout(title_box)
-        
-        self.speed_graph = SpeedGraphWidget()
-        head.addWidget(self.speed_graph, 1)
+        # ---- left nav rail ----
+        root.addWidget(self._build_sidebar())
 
-        self.total_speed = QLabel("")
-        self.total_speed.setStyleSheet(
-            f"font-size: 18px; font-weight: 700; color: {STATUS_COLORS[T.DOWNLOADING]};")
-        self.total_speed.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        head.addWidget(self.total_speed)
-        
-        top_layout.addLayout(head)
-        splitter.addWidget(top_widget)
+        # ---- main pane ----
+        main = QWidget()
+        main.setObjectName("mainPane")
+        main_layout = QVBoxLayout(main)
+        main_layout.setContentsMargins(18, 14, 18, 10)
+        main_layout.setSpacing(12)
 
-        bottom_widget = QWidget()
-        bottom_layout = QVBoxLayout(bottom_widget)
-        bottom_layout.setContentsMargins(0, 0, 0, 0)
-        bottom_layout.setSpacing(14)
+        # ---- centered app title ----
+        header = QLabel("⚡ HyperFetch")
+        header.setAlignment(Qt.AlignCenter)
+        header.setStyleSheet("font-size: 16px; font-weight: 800;")
+        main_layout.addWidget(header)
 
-        # ---- toolbar: actions left, filters right ----
+        # ---- toolbar ----
         bar = QHBoxLayout()
         bar.setSpacing(8)
 
-        self.btn_add = QPushButton("＋  Add URL")
+        self.btn_add = QPushButton("＋  New Download")
         self.btn_add.setObjectName("primary")
-        self.btn_pause = QPushButton("⏸  Pause")
         self.btn_resume = QPushButton("▶  Resume")
-        self.btn_cancel = QPushButton("✕  Cancel")
-        for b in (self.btn_add, self.btn_pause, self.btn_resume, self.btn_cancel):
+        self.btn_pause = QPushButton("⏸  Pause")
+        self.btn_cancel = QPushButton("✕  Delete")
+        for b in (self.btn_add, self.btn_resume, self.btn_pause, self.btn_cancel):
             bar.addWidget(b)
 
         bar.addStretch()
 
+        # search box (filters the list by filename)
+        self.search = QLineEdit()
+        self.search.setPlaceholderText("Search the list")
+        self.search.setClearButtonEnabled(True)
+        self.search.setFixedWidth(220)
+        self.search.textChanged.connect(self._on_search)
+        bar.addWidget(self.search)
+
         self.limit_combo = QComboBox()
         self.limit_combo.addItems(["Unlimited", "100 KB/s", "500 KB/s", "1 MB/s", "5 MB/s", "10 MB/s"])
-        
         limit_txt = "Unlimited"
         if getattr(self, "global_speed_limit", 0) > 0:
             mb = self.global_speed_limit / (1024*1024)
-            if mb >= 1: limit_txt = f"{int(mb)} MB/s"
-            else: limit_txt = f"{int(self.global_speed_limit / 1024)} KB/s"
+            limit_txt = f"{int(mb)} MB/s" if mb >= 1 else f"{int(self.global_speed_limit / 1024)} KB/s"
         self.limit_combo.setCurrentText(limit_txt)
-        
         self.limit_combo.currentTextChanged.connect(self._on_global_limit_changed)
-        bar.addWidget(_muted_label("Global Limit:"))
+        bar.addWidget(_muted_label("Limit:"))
         bar.addWidget(self.limit_combo)
-
-        self._filter_group = QButtonGroup(self)
-        for name in self.FILTERS:
-            chip = QPushButton(name)
-            chip.setObjectName("chip")
-            chip.setCheckable(True)
-            chip.setChecked(name == "All")
-            chip.clicked.connect(lambda _, n=name: self._set_filter(n))
-            self._filter_group.addButton(chip)
-            bar.addWidget(chip)
-
-        sep = QFrame()
-        sep.setFrameShape(QFrame.VLine)
-        sep.setStyleSheet(f"color: {BORDER};")
-        bar.addWidget(sep)
 
         self.btn_more = QPushButton("⋯")
         self.btn_more.setObjectName("ghost")
@@ -1058,39 +1257,48 @@ class DownloadApp(QWidget):
         self.btn_settings = QPushButton("⚙")
         self.btn_settings.setObjectName("ghost")
         self.btn_settings.setToolTip("Settings")
-        bar.addWidget(self.btn_more)
-        bar.addWidget(self.btn_clear)
-        bar.addWidget(self.btn_open)
-        bar.addWidget(self.btn_settings)
-        bottom_layout.addLayout(bar)
+        for b in (self.btn_more, self.btn_clear, self.btn_open, self.btn_settings):
+            bar.addWidget(b)
+        main_layout.addLayout(bar)
 
-        # ---- table ----
-        self.table = QTableWidget(0, len(self.COLS))
-        self.table.setHorizontalHeaderLabels(self.COLS)
+        # ---- table (model/view: sortable, delegate-painted name cell) ----
+        self.model = TaskTableModel(self)
+        self.proxy = QSortFilterProxyModel(self)
+        self.proxy.setSourceModel(self.model)
+        self.proxy.setSortRole(TaskTableModel.SORT_ROLE)
+
+        self.table = QTableView()
+        self.table.setModel(self.proxy)
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.table.setAlternatingRowColors(True)
         self.table.setShowGrid(False)
         self.table.setWordWrap(False)
-        self.table.setTextElideMode(Qt.ElideMiddle)
+        self.table.setSortingEnabled(True)
+        self.table.setItemDelegateForColumn(0, NameDelegate(self.table))
         self.table.verticalHeader().setVisible(False)
-        self.table.verticalHeader().setDefaultSectionSize(46)
+        self.table.verticalHeader().setDefaultSectionSize(48)
         h = self.table.horizontalHeader()
+        h.setHighlightSections(False)
+        # File stays stretchable (eats the leftover); other cols are user-draggable.
         h.setSectionResizeMode(0, QHeaderView.Stretch)
-        for c, width in ((1, 150), (2, 200), (3, 110), (4, 150)):
-            h.setSectionResizeMode(c, QHeaderView.Fixed)
-            self.table.setColumnWidth(c, width)
-        self.table.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        self.table.cellDoubleClicked.connect(self.on_row_double_clicked)
+        h.setStretchLastSection(False)
+        DEFAULTS = {1: 120, 2: 120, 3: 110, 4: 110, 5: 130}
+        for c, default in DEFAULTS.items():
+            h.setSectionResizeMode(c, QHeaderView.Interactive)
+            saved = self.column_widths.get(str(c)) if hasattr(self, "column_widths") else None
+            self.table.setColumnWidth(c, int(saved) if saved else default)
+        # persist any width the user drags
+        h.sectionResized.connect(lambda *_: self._mark_settings_dirty())
+        self.table.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self.table.doubleClicked.connect(self._on_double_clicked)
         self.table.setContextMenuPolicy(Qt.CustomContextMenu)
         self.table.customContextMenuRequested.connect(self._on_context_menu)
-        self.table.itemSelectionChanged.connect(self._update_action_buttons)
-        bottom_layout.addWidget(self.table)
-        
-        splitter.addWidget(bottom_widget)
-        splitter.setSizes([80, 420])
-        root.addWidget(splitter)
+        self.table.selectionModel().selectionChanged.connect(
+            lambda *_: self._update_action_buttons())
+        self.table.sortByColumn(5, Qt.DescendingOrder)   # newest first, like ABDM
+        main_layout.addWidget(self.table)
 
         # ---- empty state ----
         self.empty = QLabel("No downloads yet.\nAdd a URL or grab one from the browser.",
@@ -1098,10 +1306,26 @@ class DownloadApp(QWidget):
         self.empty.setAlignment(Qt.AlignCenter)
         self.empty.setStyleSheet(f"color: {MUTED}; font-size: 14px; background: transparent;")
 
-        # ---- footer ----
+        # ---- bottom status bar ----
+        status = QHBoxLayout()
+        status.setSpacing(12)
         self.status_lbl = QLabel()
         self.status_lbl.setStyleSheet(f"color: {MUTED}; font-size: 12px;")
-        root.addWidget(self.status_lbl)
+        self.subtitle = QLabel()
+        self.subtitle.setStyleSheet(f"color: {MUTED}; font-size: 12px;")
+        self.speed_graph = SpeedGraphWidget()
+        self.speed_graph.setFixedSize(110, 22)
+        self.total_speed = QLabel()
+        self.total_speed.setStyleSheet(
+            f"font-size: 13px; font-weight: 700; color: {STATUS_COLORS[T.DOWNLOADING]};")
+        status.addWidget(self.status_lbl)
+        status.addStretch()
+        status.addWidget(self.subtitle)
+        status.addWidget(self.speed_graph)
+        status.addWidget(self.total_speed)
+        main_layout.addLayout(status)
+
+        root.addWidget(main, 1)
 
         self.btn_add.clicked.connect(self.on_add)
         self.btn_pause.clicked.connect(self.on_pause)
@@ -1112,6 +1336,99 @@ class DownloadApp(QWidget):
         self.btn_open.clicked.connect(self.on_open)
         self.btn_settings.clicked.connect(self.on_settings)
         self._update_action_buttons()
+
+    # ---- left nav rail (categories + status groups) ----
+    # icon + label + filter-key. None entry = section header (non-selectable).
+    NAV_ITEMS = [
+        ("📁",  "All",        "All"),
+        None,                                       # ── Categories ──
+        ("📦", "Compressed",  "Compressed"),
+        ("🧩", "Programs",    "Programs"),
+        ("🎬", "Videos",      "Video"),
+        ("🎵", "Music",       "Music"),
+        ("📄", "Documents",   "Documents"),
+        ("🗂", "Other",       "Other"),
+        None,                                       # ── Queues ──
+        ("⛓", "Main",        "Queue:Main"),
+        None,                                       # ── Status ──
+        ("⏳", "Unfinished",  "Unfinished"),
+        ("✓",  "Finished",    "Finished"),
+    ]
+    SECTION_TITLES = ["Categories", "Queues", "Status"]
+
+    def _build_sidebar(self):
+        rail = QFrame()
+        rail.setObjectName("sidebar")
+        rail.setFixedWidth(200)
+        lay = QVBoxLayout(rail)
+        lay.setContentsMargins(10, 16, 10, 14)
+        lay.setSpacing(8)
+
+        self.nav = QListWidget()
+        self.nav.setObjectName("nav")
+        self.nav.setFrameShape(QFrame.NoFrame)
+        self.nav.setIconSize(QSize(16, 16))
+        self.nav.setUniformItemSizes(False)
+
+        # the items will end up as: header, items, header, items, ...
+        # — headers are non-selectable + styled via NavItemRole below.
+        self._nav_count_items = {}     # filter key -> QListWidgetItem (for counts)
+        section_iter = iter(self.SECTION_TITLES)
+        for entry in self.NAV_ITEMS:
+            if entry is None:
+                hdr = QListWidgetItem(next(section_iter, "").upper())
+                hdr.setFlags(Qt.NoItemFlags)        # non-selectable section header
+                hdr.setData(Qt.UserRole + 1, "header")
+                self.nav.addItem(hdr)
+                continue
+            icon, label, key = entry
+            it = QListWidgetItem(f"  {icon}   {label}")
+            it.setData(Qt.UserRole, key)
+            self.nav.addItem(it)
+            self._nav_count_items[key] = it
+        self.nav.setCurrentRow(0)
+        self.nav.currentItemChanged.connect(self._on_nav)
+        lay.addWidget(self.nav, 1)
+        return rail
+
+    def _on_nav(self, current, _previous):
+        if current is None:
+            return
+        key = current.data(Qt.UserRole)
+        if not key:                # section header — ignore
+            return
+        self._set_filter(key)
+
+    def _refresh_nav_counts(self):
+        """Live per-item counts shown right-aligned, like ABDM's '0'."""
+        # one pass over tasks per tick, cheap.
+        tasks = list(self.queue.tasks)
+        by_cat = {}
+        for t in tasks:
+            by_cat[utils.category_for(t.filename)] = by_cat.get(utils.category_for(t.filename), 0) + 1
+        unfinished = sum(1 for t in tasks if t.status in (T.DOWNLOADING, T.QUEUED, T.PAUSED))
+        finished = sum(1 for t in tasks if t.status in (T.COMPLETED, T.ERROR, T.CANCELLED))
+        counts = {
+            "All": len(tasks),
+            "Compressed": by_cat.get("Compressed", 0),
+            "Programs": by_cat.get("Programs", 0),
+            "Video": by_cat.get("Video", 0),
+            "Music": by_cat.get("Music", 0),
+            "Documents": by_cat.get("Documents", 0),
+            "Other": by_cat.get("Other", 0),
+            "Queue:Main": len(tasks),       # one queue today; mirror the total
+            "Unfinished": unfinished,
+            "Finished": finished,
+        }
+        labels = {k: (icon, label) for (icon, label, k) in (e for e in self.NAV_ITEMS if e)}
+        for key, item in self._nav_count_items.items():
+            n = counts.get(key, 0)
+            icon, label = labels[key]
+            item.setText(f"  {icon}   {label}" + (f"   · {n}" if n else ""))
+
+    def _on_search(self, text):
+        self._search = text.strip().lower()
+        self.refresh()
 
     def resizeEvent(self, e):
         super().resizeEvent(e)
@@ -1135,26 +1452,47 @@ class DownloadApp(QWidget):
 
     def _visible_tasks(self):
         tasks = list(self.queue.tasks)
-        if self._filter == "Active":
-            keep = (T.DOWNLOADING, T.QUEUED)
-            return [t for t in tasks if t.status in keep]
-        if self._filter == "Paused":
-            return [t for t in tasks if t.status == T.PAUSED]
-        if self._filter == "Done":
-            keep = (T.COMPLETED, T.ERROR, T.CANCELLED)
-            return [t for t in tasks if t.status in keep]
+        f = self._filter
+        if f and f.startswith("Queue:"):
+            # only one queue today; this node mirrors "All" but is the entry-point
+            # for future per-queue filtering once multi-queue support lands.
+            pass
+        elif f == "Active":
+            tasks = [t for t in tasks if t.status in (T.DOWNLOADING, T.QUEUED)]
+        elif f == "Paused":
+            tasks = [t for t in tasks if t.status == T.PAUSED]
+        elif f in ("Done", "Finished"):
+            tasks = [t for t in tasks if t.status in (T.COMPLETED, T.ERROR, T.CANCELLED)]
+        elif f == "Unfinished":
+            tasks = [t for t in tasks if t.status in (T.DOWNLOADING, T.QUEUED, T.PAUSED)]
+        elif f in utils.CATEGORIES or f == "Other":
+            tasks = [t for t in tasks if utils.category_for(t.filename) == f]
+        q = getattr(self, "_search", "")
+        if q:
+            tasks = [t for t in tasks if q in (t.filename or "").lower()]
         return tasks
+
+    def _bps_for(self, t):
+        """Current smoothed speed (B/s) for a task, read by the table model."""
+        return self._speed.get(t.id, (0, 0, 0.0))[2]
+
+    def _task_at(self, proxy_index):
+        """Map a view (proxy) index to its task, or None."""
+        if not proxy_index.isValid():
+            return None
+        row = self.proxy.mapToSource(proxy_index).row()
+        return self.model.tasks[row] if 0 <= row < len(self.model.tasks) else None
 
     def _selected_tasks(self):
         """Tasks for every selected row (multi-select aware)."""
-        model = self.table.selectionModel()
-        rows = {idx.row() for idx in model.selectedRows()} if model else set()
+        sm = self.table.selectionModel()
+        if not sm:
+            return []
         out = []
-        for tid, r in self._rows.items():
-            if r in rows:
-                t = next((x for x in self.queue.tasks if x.id == tid), None)
-                if t:
-                    out.append(t)
+        for idx in sm.selectedRows():
+            t = self._task_at(idx)
+            if t is not None:
+                out.append(t)
         return out
 
     def _update_action_buttons(self):
@@ -1165,6 +1503,12 @@ class DownloadApp(QWidget):
         self.btn_cancel.setEnabled(
             any(t.status in (T.DOWNLOADING, T.QUEUED, T.PAUSED) for t in ts))
 
+    def _mark_settings_dirty(self):
+        """Debounced settings save — the next refresh tick (within ~10s) writes
+        out widths/options the user just changed. Cheap to call from a header
+        resize without writing the JSON on every pixel of drag."""
+        self._settings_dirty = True
+
     def _flash(self, msg, secs=2.5):
         """Show a transient one-line message in the status bar."""
         self._flash_text = msg
@@ -1172,11 +1516,22 @@ class DownloadApp(QWidget):
         self.status_lbl.setText(self._status_text())
 
     # ---------------------------------------------------------------- dialogs
-    def _show_file_info(self, url="", suggested="", headers=None):
-        """Run the IDM-style dialog and queue the result."""
+    def _show_file_info(self, url="", suggested="", headers=None, flash=False):
+        """Run the IDM-style dialog and queue the result.
+
+        ``flash`` (browser-pushed downloads) blinks the dialog to the front so a
+        download sent from the extension grabs attention even if the app is in
+        the background."""
         self._dialog_open = True
         try:
             dlg = FileInfoDialog(self, url, self.save_dir, suggested, headers)
+            if flash:
+                # browser-pushed: float above every other window and pull the app
+                # to the foreground so the dialog "captures the screen" — the user
+                # shouldn't have to switch to the app to see it.
+                dlg.setWindowFlag(Qt.WindowStaysOnTopHint, True)
+                self._bring_to_front()
+                self._flash_dialog(dlg)
             if dlg.exec() != QDialog.Accepted or not dlg.choice:
                 return
             final_url, fname, folder = dlg.values()
@@ -1196,6 +1551,35 @@ class DownloadApp(QWidget):
             self._save_state()
         finally:
             self._dialog_open = False
+
+    def _bring_to_front(self):
+        """Restore + foreground the main window so a browser-pushed dialog is
+        seen even if the app was minimized or behind other windows."""
+        if self.isMinimized():
+            self.showNormal()
+        self.show()
+        self.raise_()
+        self.activateWindow()
+
+    def _flash_dialog(self, dlg):
+        """Blink a browser-pushed dialog to the front + flash the taskbar so a
+        download sent from the extension is noticed even when the app is hidden."""
+        self.raise_()
+        self.activateWindow()
+        QApplication.alert(self, 2000)
+        QTimer.singleShot(0, lambda: self._pulse_dialog(dlg, 0))
+
+    def _pulse_dialog(self, dlg, n):
+        try:
+            if not dlg.isVisible() or n >= 6:
+                dlg.setWindowOpacity(1.0)
+                return
+            dlg.setWindowOpacity(0.65 if n % 2 else 1.0)
+            dlg.raise_()
+            dlg.activateWindow()
+        except RuntimeError:
+            return  # dialog already closed
+        QTimer.singleShot(120, lambda: self._pulse_dialog(dlg, n + 1))
 
     def _check_completions(self):
         """Pop a 'Download Completed' card when a task finishes this session."""
@@ -1365,13 +1749,10 @@ class DownloadApp(QWidget):
             self._apply_theme(theme)
         self._save_settings()
 
-    def on_row_double_clicked(self, row, _col):
-        for tid, r in self._rows.items():
-            if r == row:
-                t = next((x for x in self.queue.tasks if x.id == tid), None)
-                if t:
-                    PropertiesDialog(self, t).exec()
-                return
+    def _on_double_clicked(self, index):
+        t = self._task_at(index)
+        if t is not None:
+            PropertiesDialog(self, t).exec()
 
     def _on_global_limit_changed(self, text):
         if "Unlimited" in text:
@@ -1387,11 +1768,7 @@ class DownloadApp(QWidget):
         self._save_tick = 10
 
     def _on_context_menu(self, pos):
-        item = self.table.itemAt(pos)
-        if not item: return
-        row = item.row()
-        task_id = self.table.item(row, 0).data(Qt.UserRole)
-        t = self.queue.get_task(task_id)
+        t = self._task_at(self.table.indexAt(pos))
         if not t: return
 
         menu = QMenu(self.table)
@@ -1444,22 +1821,16 @@ class DownloadApp(QWidget):
         if self.pending and not self._dialog_open:
             item = self.pending.popleft()
             self._show_file_info(item.get("url", ""), item.get("filename", ""),
-                                 item.get("headers"))
+                                 item.get("headers"), flash=True)
 
         tasks = self._visible_tasks()
-        if self.table.rowCount() != len(tasks):
-            self.table.setRowCount(len(tasks))
-        self._rows = {}
         self.empty.setVisible(len(tasks) == 0)
         self.empty.setGeometry(self.table.rect())
 
+        # update the per-task smoothed speed (read by the model + the graph)
         now = time.time()
         total_bps = 0.0
-        for row, t in enumerate(tasks):
-            self._rows[t.id] = row
-
-            # speed from downloaded delta (seed the baseline on first sight,
-            # otherwise dt stays 0 forever and the speed never shows)
+        for t in tasks:
             if t.id not in self._speed:
                 self._speed[t.id] = (t.downloaded, now, 0.0)
             last_dl, last_t, bps = self._speed[t.id]
@@ -1474,17 +1845,13 @@ class DownloadApp(QWidget):
             if t.status == T.DOWNLOADING:
                 total_bps += bps
 
-            self._set(row, 0, t.filename)
-            self.table.item(row, 0).setData(Qt.UserRole, t.id)
-            size = f"{human_size(t.downloaded)} / {human_size(t.total_size)}" \
-                if t.total_size else human_size(t.downloaded)
-            self._set(row, 1, size)
-            self._set_progress(row, t)
-            self._set(row, 3, human_speed(bps) if t.status == T.DOWNLOADING else "")
-            self._set_status(row, t)
+        self.model.set_tasks(tasks)
+        self.model.refresh_dynamic()
+        self._refresh_nav_counts()
 
         self.speed_graph.add_value(total_bps)
-        self.total_speed.setText(f"↓ {human_speed(total_bps)}" if total_bps > 0 else "")
+        disp_bps = self.speed_graph.current()
+        self.total_speed.setText(f"↓ {human_speed(disp_bps)}" if disp_bps > 1 else "")
         self.subtitle.setText(self._subtitle_text())
         self.status_lbl.setText(self._status_text())
         self._update_action_buttons()
@@ -1496,69 +1863,9 @@ class DownloadApp(QWidget):
         if self._save_tick >= 20:
             self._save_tick = 0
             self._save_state()
-
-    def _set(self, row, col, text):
-        item = self.table.item(row, col)
-        if item is None:
-            item = QTableWidgetItem()
-            self.table.setItem(row, col, item)
-        if item.text() != text:
-            item.setText(text)
-
-    def _set_progress(self, row, t):
-        box = self.table.cellWidget(row, 2)
-        if box is None or not isinstance(box.layout(), QHBoxLayout) \
-                or not isinstance(box.findChild(QProgressBar), QProgressBar):
-            box = QWidget()
-            box.setStyleSheet("background: transparent;")
-            lay = QHBoxLayout(box)
-            lay.setContentsMargins(10, 0, 6, 0)
-            lay.setSpacing(8)
-            bar = QProgressBar()
-            bar.setFixedHeight(8)
-            bar.setTextVisible(False)
-            pct = QLabel("")
-            pct.setStyleSheet(f"color: {MUTED}; font-size: 11px; font-weight: 700;"
-                              "background: transparent;")
-            pct.setFixedWidth(34)
-            lay.addWidget(bar, 1)
-            lay.addWidget(pct)
-            self.table.setCellWidget(row, 2, box)
-        bar = box.findChild(QProgressBar)
-        pct = box.findChild(QLabel)
-        if t.total_size <= 0 and t.status == T.DOWNLOADING:
-            bar.setRange(0, 0)  # indeterminate
-            pct.setText("…")
-        else:
-            # size-less downloads finish with percent==0; show done as done
-            val = 100 if t.status == T.COMPLETED else t.percent
-            bar.setRange(0, 100)
-            bar.setValue(val)
-            pct.setText(f"{val}%")
-
-    def _set_status(self, row, t):
-        box = self.table.cellWidget(row, 4)
-        if box is None or box.findChild(QLabel) is None:
-            box = QWidget()
-            box.setStyleSheet("background: transparent;")
-            lay = QHBoxLayout(box)
-            lay.setContentsMargins(6, 8, 10, 8)
-            pill = QLabel()
-            pill.setAlignment(Qt.AlignCenter)
-            lay.addWidget(pill)
-            self.table.setCellWidget(row, 4, box)
-        pill = box.findChild(QLabel)
-        color = STATUS_COLORS.get(t.status, TEXT)
-        text = t.error[:18] if t.status == T.ERROR and t.error else t.status
-        if pill.text() != text:
-            pill.setText(text)
-        c = QColor(color)
-        pill.setStyleSheet(
-            f"background: rgba({c.red()},{c.green()},{c.blue()},0.16);"
-            f"color: {color}; border-radius: 10px;"
-            "padding: 3px 12px; font-weight: 700; font-size: 11px;")
-        if t.status == T.ERROR and t.error:
-            pill.setToolTip(t.error)
+            if getattr(self, "_settings_dirty", False):
+                self._save_settings()
+                self._settings_dirty = False
 
     def _subtitle_text(self):
         active = sum(1 for t in self.queue.tasks if t.status == T.DOWNLOADING)
@@ -1589,7 +1896,14 @@ class DownloadApp(QWidget):
                 return
             for t in active:
                 self.queue.pause_task(t)
-            time.sleep(0.5)  # give workers a beat to stop and flush
+            # Wait (bounded) for in-flight workers to actually unwind so the
+            # last chunk is durable on disk. A fixed sleep used to truncate
+            # tail bytes under slow networks; this drains in the common case
+            # and caps the wait so the app still exits if a worker hangs.
+            QApplication.processEvents()
+            if not self.queue.wait_active(timeout=8.0):
+                # workers didn't drain in time — log to status bar so we know
+                self._server_err = "shutdown timed out: some writes may be unflushed"
         self.queue.shutdown()
         self._save_state()
         self._save_settings()

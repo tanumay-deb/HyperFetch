@@ -218,7 +218,27 @@ class HlsDownloader:
             return
 
         total = len(segments)
+
+        # ---- resume: skip segments already in the .hfdownload file ----
+        # `done` and `downloaded` are persisted across restarts (task.to_dict).
+        # We trust the saved seg_done only if (a) the playlist still has at
+        # least that many segments AND (b) the temp file size matches the
+        # saved byte count. If anything is off, restart from 0 — the .ts
+        # concat format has no headers to validate against.
+        resume_done = self.t.seg_done if self.t.seg_total == total else 0
+        if resume_done > 0 and os.path.exists(temp_path) \
+                and os.path.getsize(temp_path) == self.t.downloaded:
+            done = resume_done
+            downloaded = self.t.downloaded
+            segments = segments[resume_done:]   # skip what's already on disk
+            open_mode = "ab"
+        else:
+            done = 0
+            downloaded = 0
+            open_mode = "wb"
         self.t.seg_total = total
+        self.t.seg_done = done
+        self.t.downloaded = downloaded
 
         # Pre-fetch distinct decryption keys once (avoids a race when several
         # segment threads would otherwise fetch the same key concurrently).
@@ -229,16 +249,15 @@ class HlsDownloader:
             self.t.error = f"HLS key fetch failed: {e}"
             return
 
-        done = 0
-        downloaded = 0
-        workers = max(1, min(PARALLEL, total))
+        workers = max(1, min(PARALLEL, max(1, len(segments))))
         try:
-            with open(temp_path, "wb") as f, \
+            with open(temp_path, open_mode) as f, \
                     ThreadPoolExecutor(max_workers=workers) as ex:
                 # download in ordered batches: fetch `workers` segments at once,
                 # then write them to disk in playlist order. Bounds memory to one
                 # batch and keeps pause/cancel latency to a single batch.
-                for start in range(0, total, workers):
+                remaining = len(segments)
+                for start in range(0, remaining, workers):
                     if self.t.cancel_requested:
                         break
                     if self.t.pause_requested:
@@ -252,9 +271,15 @@ class HlsDownloader:
                             data = fut.result()
                         except (requests.RequestException, RuntimeError) as e:
                             self.t.status = T.ERROR
-                            self.t.error = f"segment {start+i+1}/{total} failed: {e}"
+                            # done+i is 0-based within remaining; +1 for human display
+                            self.t.error = f"segment {done + i + 1}/{total} failed: {e}"
                             return
                         f.write(data)
+                        # flush BEFORE bumping seg_done so a sudden exit can never
+                        # leave seg_done > durable bytes (same lesson as the byte
+                        # downloader: a counted-but-unwritten segment would make
+                        # resume skip past missing data).
+                        f.flush()
                         downloaded += len(data)
                         done += 1
                         self.t.seg_done = done

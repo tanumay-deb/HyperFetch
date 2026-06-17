@@ -39,7 +39,7 @@ def _fake_task(fid, status, total=1000, done=0, fname=None):
 
 def test_constructs_and_empty_state(win):
     win.refresh()
-    assert win.table.rowCount() == 0
+    assert win.model.rowCount() == 0
     # window isn't shown in tests, so isVisible() is False up the hierarchy;
     # isHidden() reflects the explicit show/hide intent set by refresh()
     assert not win.empty.isHidden()
@@ -50,13 +50,13 @@ def test_filters(win):
     for i, s in enumerate(states):
         win.queue.tasks.append(_fake_task(i, s))
     win.refresh()
-    assert win.table.rowCount() == 5
-    win._set_filter("Active")
-    assert win.table.rowCount() == 2       # downloading + queued
+    assert win.model.rowCount() == 5
+    win._set_filter("Active")              # _set_filter refreshes the model
+    assert win.model.rowCount() == 2       # downloading + queued
     win._set_filter("Paused")
-    assert win.table.rowCount() == 1       # paused (no longer hidden under Active)
+    assert win.model.rowCount() == 1       # paused (no longer hidden under Active)
     win._set_filter("Done")
-    assert win.table.rowCount() == 2       # completed + error
+    assert win.model.rowCount() == 2       # completed + error
     win._set_filter("All")
 
 
@@ -69,11 +69,13 @@ def test_multiselect_pause(win):
     assert sum(1 for t in win.queue.tasks if t.status == T.PAUSED) == 3
 
 
-def test_userrole_and_get_task(win):
+def test_model_exposes_task_and_get_task(win):
+    import main
     t = _fake_task(1, T.DOWNLOADING)
     win.queue.tasks.append(t)
     win.refresh()
-    assert win.table.item(0, 0).data(Qt.UserRole) == t.id
+    idx = win.model.index(0, 0)
+    assert win.model.data(idx, main.TaskTableModel.TASK_ROLE) is t
     assert win.queue.get_task(t.id) is t
 
 
@@ -84,7 +86,8 @@ def test_speed_cell_populates(win):
     t.downloaded = 2_000_000
     time.sleep(0.6)
     win.refresh()                          # compute delta
-    assert win.table.item(0, 3).text() != ""
+    speed_idx = win.model.index(0, 3)      # Speed column
+    assert win.model.data(speed_idx) != ""
 
 
 def test_settings_dialog_roundtrip(qapp):

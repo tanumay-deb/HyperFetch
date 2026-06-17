@@ -21,7 +21,15 @@ DEFAULT_SEGMENTS = 8   # parallel connections when the server supports ranges
 HEADERS = {"User-Agent": "Mozilla/5.0 (HyperFetch)"}
 CONNECT_TIMEOUT = 15
 MAX_RETRIES = 5        # per-segment attempts before the task errors
-STAGGER = 0.15         # delay between segment thread starts (rate-limit friendly)
+STAGGER = 0.05         # delay between segment thread starts (rate-limit friendly)
+
+# Process-wide cap on concurrent segment connections across ALL downloads.
+# Without it, N concurrent tasks each open `segments` sockets (N×8), and those
+# 30-50 connections starve each other on one uplink — total throughput collapses
+# to roughly a single connection's worth. Bounding the total keeps each live
+# connection fed. 16 saturates a fast link without thrashing.
+GLOBAL_MAX_CONNS = 16
+_GLOBAL_CONNS = threading.Semaphore(GLOBAL_MAX_CONNS)
 
 
 def probe_info(url, headers=None):
@@ -71,15 +79,25 @@ class Downloader:
 
     # ------------------------------------------------------------ conn gate
     def _acquire_conn(self):
+        # 1) per-task adaptive gate (shrinks to 1 on HTTP 429)
         with self._conn_cv:
             while self._active_conns >= self._max_conns:
-                if self.t.pause_requested:
+                if self.t.pause_requested or self.t.cancel_requested:
                     return False
                 self._conn_cv.wait(0.2)
             self._active_conns += 1
-            return True
+        # 2) process-wide gate across ALL downloads — prevents the N×segments
+        #    socket pileup. Poll so pause/cancel stays responsive while waiting.
+        while not _GLOBAL_CONNS.acquire(timeout=0.2):
+            if self.t.pause_requested or self.t.cancel_requested:
+                with self._conn_cv:                 # hand the per-task slot back
+                    self._active_conns -= 1
+                    self._conn_cv.notify_all()
+                return False
+        return True
 
     def _release_conn(self):
+        _GLOBAL_CONNS.release()
         with self._conn_cv:
             self._active_conns -= 1
             self._conn_cv.notify_all()
@@ -210,6 +228,11 @@ class Downloader:
                                 utils.global_limiter.wait(len(chunk))
                                 self.t._limiter.wait(len(chunk))
                                 f.write(chunk)
+                                # Flush to the OS BEFORE advancing the counter so a
+                                # later abrupt exit (daemon threads killed mid-write)
+                                # can never leave a counted-but-unwritten gap that
+                                # resume would wrongly treat as already-downloaded.
+                                f.flush()
                                 seg.downloaded += len(chunk)
                 return
             except requests.RequestException as e:

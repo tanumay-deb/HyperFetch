@@ -57,11 +57,20 @@ def test_terminal_status_unchanged_on_restore():
         assert T.DownloadTask.from_dict(d).status == s
 
 
-def test_hls_seg_fields_default_zero_on_restore():
+def test_hls_seg_fields_persist_for_resume():
+    """seg_total / seg_done round-trip through to_dict/from_dict so
+    HlsDownloader can resume past already-fetched segments after a restart
+    instead of restarting from segment 0."""
     t = T.DownloadTask("u", "p")
     t.seg_total = 10
     t.seg_done = 4
     r = T.DownloadTask.from_dict(json.loads(json.dumps(t.to_dict())))
+    assert r.seg_total == 10 and r.seg_done == 4
+
+
+def test_hls_seg_fields_default_zero_when_missing():
+    """Old saved state without seg_total/seg_done loads cleanly as 0/0."""
+    r = T.DownloadTask.from_dict({"url": "u", "save_path": "p"})
     assert r.seg_total == 0 and r.seg_done == 0
 
 

@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 HyperFetch — an IDM-style multi-segment download accelerator. A PySide6
 desktop GUI, a segmented HTTP downloader, an HLS (`.m3u8`) grabber, and a localhost
-Flask server that a Chrome/Edge MV3 extension feeds browser downloads into. Pure
+Flask server that a Chrome/Edge MV3 extension feeds downloads into on demand. Pure
 desktop, localhost-only; no accounts or remote services.
 
 ## Commands
@@ -35,12 +35,14 @@ node/jsdom extension tests, and a Windows PyInstaller build with `--selftest`.
 ## Architecture
 
 The central design fact: **the GUI and the Flask server share one `QueueManager`
-instance**, so browser-intercepted downloads and manually-added ones land in the same
+instance**, so browser-sent downloads and manually-added ones land in the same
 list and scheduler. `main.py` owns the queue and passes it to `run_server(...)`.
 
 Data/control flow for a download:
-1. Extension (`chrome_ext/background.js`) intercepts a download, pauses Chrome's copy,
-   POSTs URL + cookies/referer/UA to `/download` with the pairing token.
+1. Extension hands the app a download on **explicit user action only** — the
+   right-click "Download with HyperFetch" context menu (`background.js`) or an
+   in-page video badge (`content.js`). Nothing is auto-intercepted. It POSTs URL +
+   cookies/referer/UA to `/download` with the pairing token.
 2. `api_server.py` validates token + URL scheme. In GUI mode it pushes onto a `pending`
    deque; `main.py`'s 500ms `QTimer` pops it and shows the IDM file-info dialog before
    queuing. In headless mode it queues immediately.

@@ -47,8 +47,10 @@ class DownloadTask:
     def __init__(self, url, save_path, filename="", total_size=0,
                  segments=None, downloaded=0, supports_range=True,
                  status=QUEUED, error="", task_id=None, speed_limit=0,
-                 headers=None, priority=0):
+                 headers=None, priority=0, added=None,
+                 seg_total=0, seg_done=0):
         self.id = task_id or uuid.uuid4().hex
+        self.added = added or time.time()   # epoch added — for the "Date Added" column
         self.url = url
         self.save_path = save_path
         self.filename = filename or url.split("/")[-1]
@@ -66,9 +68,11 @@ class DownloadTask:
         self.priority = priority
         self.seq = next(_seq_counter)
 
-        # HLS segment progress (0 when not an HLS download)
-        self.seg_total = 0
-        self.seg_done = 0
+        # HLS segment progress (0 when not an HLS download). Persisted across
+        # restarts so HlsDownloader can resume past already-fetched segments
+        # instead of restarting from segment 0.
+        self.seg_total = seg_total
+        self.seg_done = seg_done
         
         self.speed_limit = speed_limit
         self._limiter = utils.RateLimiter()
@@ -136,6 +140,9 @@ class DownloadTask:
             "error": self.error,
             "speed_limit": self.speed_limit,
             "priority": self.priority,
+            "added": self.added,
+            "seg_total": self.seg_total,
+            "seg_done": self.seg_done,
             # never write cookies/auth to disk; keep only safe headers (Referer/UA)
             "headers": utils.strip_sensitive(self.headers)
         }
@@ -160,5 +167,7 @@ class DownloadTask:
             supports_range=d.get("supports_range", True),
             status=status, error=d.get("error", ""),
             task_id=d.get("id"), speed_limit=d.get("speed_limit", 0),
-            headers=d.get("headers") or {}, priority=d.get("priority", 0)
+            headers=d.get("headers") or {}, priority=d.get("priority", 0),
+            added=d.get("added"),
+            seg_total=d.get("seg_total", 0), seg_done=d.get("seg_done", 0)
         )

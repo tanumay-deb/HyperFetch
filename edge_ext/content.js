@@ -1,6 +1,7 @@
-// Intercept clicks on direct file links and hand them to the local app.
-// Keep FILE_RE in sync with background.js.
-const FILE_RE = /\.(zip|rar|7z|exe|msi|dmg|pkg|iso|img|bin|dat|deb|rpm|appimage|pdf|mp4|mkv|webm|avi|mov|mp3|m4a|flac|wav|ogg|docx|xlsx|pptx|epub|apk|tar|gz|bz2|xz|zst)(\?.*)?$/i;
+// Manual capture only: a file reaches the app when the user clicks an in-page
+// video badge (below) or the right-click "Download with HyperFetch" menu
+// (background.js). Normal link clicks are left to the browser — nothing is
+// auto-intercepted, so already-downloaded files never re-trigger a dialog.
 
 let captureEnabled = true;
 chrome.storage.local.get({ enabled: true }, (v) => { captureEnabled = v.enabled; });
@@ -10,19 +11,6 @@ chrome.storage.onChanged.addListener((ch) => {
     // reflect the toggle on the download badges right away
     if (typeof scheduleReposition === 'function') scheduleReposition();
   }
-});
-
-document.addEventListener("click", function (e) {
-  if (!captureEnabled) return;
-
-  const link = e.target.closest("a");
-  if (!link || !link.href) return;
-
-  const url = link.href;
-  if (!FILE_RE.test(url)) return;
-
-  e.preventDefault();  // stop the browser's own download
-  sendToApp(url);
 });
 
 function sendToApp(url, suggestedName = null) {
@@ -60,12 +48,20 @@ function showToast(msg) {
 
 // --- Media Sniffer UI ---
 const sniffedMedia = new Map();
+// variant-playlist URLs that belong to a parsed master — suppressed as standalone
+// rows so a master isn't duplicated by the chunklists the player also requests.
+const hlsVariantUrls = new Set();
 let panelRoot = null;
 let panelContainer = null;
 
 chrome.runtime.onMessage.addListener((msg) => {
   if (msg.type === "SNIFFED_MEDIA") {
     addSniffedMedia(msg);
+  } else if (msg.type === "SNIFFED_HLS_MASTER") {
+    addHlsMaster(msg);
+  } else if (msg.type === "HYPERFETCH_TOAST") {
+    // result of a right-click "Download with HyperFetch" (the menu has no UI)
+    showToast(msg.text);
   }
 });
 
@@ -128,6 +124,11 @@ function updatePanel() {
       .item:last-child { border-bottom: none; }
       .filename { font-weight: 600; font-size: 13px; word-break: break-all; }
       .meta { font-size: 11px; color: #8b97b8; }
+      .variant-row {
+        display: flex; align-items: center; justify-content: space-between;
+        gap: 8px; padding-top: 6px;
+      }
+      .variant-row .meta { flex: 1; }
       .btn-download {
         background: #243352; color: white; border: none;
         padding: 6px 12px; border-radius: 6px; cursor: pointer;
@@ -179,24 +180,71 @@ function updatePanel() {
   Array.from(sniffedMedia.values()).reverse().forEach(media => {
     const item = document.createElement("div");
     item.className = "item";
-    const badge = media.kind === "hls"
-      ? '<span style="background:#6366f1;color:#fff;border-radius:4px;padding:1px 6px;font-size:10px;margin-left:6px;">STREAM</span>'
-      : '';
-    const sizeTxt = media.kind === "hls" ? "Video stream" : formatSize(media.size);
-    item.innerHTML = `
-      <div class="filename">${media.filename}${badge}</div>
-      <div class="meta">${sizeTxt} • ${media.mime || 'unknown'}</div>
-      <button class="btn-download">Download with HyperFetch</button>
-    `;
-    item.querySelector(".btn-download").onclick = (e) => {
-      e.preventDefault();
-      sendToApp(media.url, media.filename);
-    };
+    if (media.isMaster) renderMasterItem(item, media);
+    else renderSingleItem(item, media);
     itemsDiv.appendChild(item);
   });
 }
 
+const STREAM_BADGE =
+  '<span style="background:#6366f1;color:#fff;border-radius:4px;' +
+  'padding:1px 6px;font-size:10px;margin-left:6px;">STREAM</span>';
+
+function renderSingleItem(item, media) {
+  const badge = media.kind === "hls" ? STREAM_BADGE : '';
+  const sizeTxt = media.kind === "hls" ? "Video stream" : formatSize(media.size);
+  item.innerHTML = `
+    <div class="filename">${media.filename}${badge}</div>
+    <div class="meta">${sizeTxt} • ${media.mime || 'unknown'}</div>
+    <button class="btn-download">Download with HyperFetch</button>
+  `;
+  item.querySelector(".btn-download").onclick = (e) => {
+    e.preventDefault();
+    sendToApp(media.url, media.filename);
+  };
+}
+
+function bitrateText(bps) {
+  if (!bps) return '';
+  return bps >= 1e6 ? (bps / 1e6).toFixed(1) + ' Mbps'
+                    : Math.round(bps / 1e3) + ' kbps';
+}
+
+// A master playlist: title header + one selectable row per quality variant.
+// Built with DOM methods (not innerHTML) since variant URLs/labels are
+// host-controlled.
+function renderMasterItem(item, media) {
+  const head = document.createElement("div");
+  head.className = "filename";
+  head.textContent = media.title;
+  head.insertAdjacentHTML("beforeend", STREAM_BADGE);
+  item.appendChild(head);
+
+  media.variants.forEach((v) => {
+    const row = document.createElement("div");
+    row.className = "variant-row";
+
+    const meta = document.createElement("div");
+    meta.className = "meta";
+    meta.textContent = [v.label, v.size ? '~' + formatSize(v.size) : null,
+                        bitrateText(v.bandwidth)].filter(Boolean).join(' • ');
+
+    const btn = document.createElement("button");
+    btn.className = "btn-download";
+    btn.textContent = "Download " + v.label;
+    btn.onclick = (e) => {
+      e.preventDefault();
+      sendToApp(v.url, media.title + ' ' + v.label + '.m3u8');
+    };
+
+    row.appendChild(meta);
+    row.appendChild(btn);
+    item.appendChild(row);
+  });
+}
+
 function addSniffedMedia(media) {
+  if (hlsVariantUrls.has(media.url)) return;  // already listed under a master
   if (sniffedMedia.has(media.url)) return;
   // generic stream names (master.m3u8, index.m3u8…) -> use the page title
   if (!media.filename || isGenericName(media.filename)) {
@@ -205,6 +253,31 @@ function addSniffedMedia(media) {
   sniffedMedia.set(media.url, media);
   updatePanel();
   // a sniffed stream can make a blob/MSE <video> downloadable -> attach a badge
+  try { syncOverlays(); scheduleReposition(); } catch (e) { /* ignore */ }
+}
+
+// A parsed HLS master: one entry exposing every quality variant. `url` is the
+// best variant so the existing badge / bestSniffedStream path grabs top quality.
+function addHlsMaster(msg) {
+  const variants = msg.variants || [];
+  variants.forEach((v) => {
+    hlsVariantUrls.add(v.url);
+    sniffedMedia.delete(v.url);  // drop a chunklist row that arrived before the master
+  });
+  const existing = sniffedMedia.get(msg.url);
+  if (existing && existing.isMaster) return;
+  const title = sanitizeName(document.title) || 'video';
+  const best = variants[0];
+  sniffedMedia.set(msg.url, {
+    url: best ? best.url : msg.url,
+    kind: 'hls',
+    isMaster: true,
+    title: title,
+    variants: variants,
+    size: best ? best.size : 0,
+    mime: 'application/x-mpegurl'
+  });
+  updatePanel();
   try { syncOverlays(); scheduleReposition(); } catch (e) { /* ignore */ }
 }
 

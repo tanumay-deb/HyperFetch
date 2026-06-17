@@ -4,7 +4,7 @@
   "description": "Sends downloads to the HyperFetch desktop app for accelerated multi-segment downloading.",
   "version": "1.1.0",
   "permissions": [
-    "downloads",
+    "contextMenus",
     "storage",
     "webRequest",
     "cookies"

@@ -119,6 +119,33 @@ def test_remove_finished(fake_worker):
     q.shutdown()
 
 
+def test_wait_active_drains_paused_workers(fake_worker):
+    """closeEvent uses wait_active to block until in-flight workers actually
+    return, so the last chunk gets flushed instead of dying with the process."""
+    q = QueueManager(max_concurrent=2)
+    a = q.add_task(T.DownloadTask("u", "a"))
+    b = q.add_task(T.DownloadTask("u", "b"))
+    assert _wait(lambda: a.status == T.DOWNLOADING and b.status == T.DOWNLOADING)
+    q.pause_task(a); q.pause_task(b)
+    drained = q.wait_active(timeout=5.0)
+    assert drained, "wait_active should return True when workers finish in time"
+    assert q.active == 0
+    q.shutdown()
+
+
+def test_wait_active_times_out_cleanly(fake_worker):
+    """If a worker won't unwind, wait_active returns False rather than blocking."""
+    q = QueueManager(max_concurrent=1)
+    t = q.add_task(T.DownloadTask("u", "x"))
+    assert _wait(lambda: t.status == T.DOWNLOADING)
+    # do NOT pause -> fake worker keeps running ~0.6s; ask for 0.1s
+    drained = q.wait_active(timeout=0.1)
+    assert drained is False
+    q.pause_task(t)
+    q.wait_active(timeout=2.0)
+    q.shutdown()
+
+
 def test_scheduler_not_busy_spin(fake_worker):
     q = QueueManager()
     c0 = time.process_time()

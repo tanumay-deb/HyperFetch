@@ -137,6 +137,15 @@ CATEGORIES = {
     "Documents": {".pdf", ".docx", ".xlsx", ".pptx", ".epub", ".txt"}
 }
 
+def category_for(filename):
+    """Category name for a file by extension (matches CATEGORIES keys), or 'Other'."""
+    ext = os.path.splitext(filename or "")[1].lower()
+    for cat, exts in CATEGORIES.items():
+        if ext in exts:
+            return cat
+    return "Other"
+
+
 def get_category_dir(base_dir, filename):
     """Return the base_dir + category subfolder based on file extension."""
     if not filename:

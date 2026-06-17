@@ -115,6 +115,43 @@ def test_live_stream_errors_clearly(hls_server, tmp_path):
     assert "segment" in t.error.lower() or "live" in t.error.lower()
 
 
+def test_hls_resume_skips_already_fetched(hls_server, tmp_path):
+    """Restart-from-disk path: 3 of 5 segments are 'already on disk' and
+    HlsDownloader appends only segments 3+4 to reach the full file."""
+    dst = str(tmp_path / "resume.ts")
+    t = T.DownloadTask(f"{hls_server.base}/high.m3u8", dst, filename="resume.m3u8")
+    # the grabber appends '.hfdownload' to save_path; we must seed THAT name,
+    # but save_path is rewritten from .m3u8 -> .ts before the temp path is built
+    temp = dst[:-3] + ".ts.hfdownload"
+    seg_size = len(hls_server.plain_total) // 5     # equal-sized fake segments
+    already = hls_server.plain_total[: seg_size * 3]
+    with open(temp, "wb") as f:
+        f.write(already)
+    t.seg_total = 5
+    t.seg_done = 3
+    t.downloaded = len(already)
+    Downloader(t).run()
+    assert t.status == T.COMPLETED
+    assert open(t.save_path, "rb").read() == hls_server.plain_total
+    assert t.seg_done == 5
+
+
+def test_hls_resume_restarts_if_temp_corrupt(hls_server, tmp_path):
+    """If the temp file size doesn't match the saved byte count, resume gives
+    up and re-downloads from segment 0 — the .ts concat has no integrity check."""
+    dst = str(tmp_path / "corrupt.ts")
+    t = T.DownloadTask(f"{hls_server.base}/high.m3u8", dst, filename="corrupt.m3u8")
+    temp = dst[:-3] + ".ts.hfdownload"
+    with open(temp, "wb") as f:
+        f.write(b"\x00" * 999)             # wrong size on purpose
+    t.seg_total = 5
+    t.seg_done = 3
+    t.downloaded = 4096 * 3                 # mismatches the on-disk size
+    Downloader(t).run()
+    assert t.status == T.COMPLETED
+    assert open(t.save_path, "rb").read() == hls_server.plain_total
+
+
 def test_title_filename_becomes_ts(hls_server, tmp_path):
     """A title-based .m3u8 name (from the grabber) is saved as <title>.ts."""
     import os

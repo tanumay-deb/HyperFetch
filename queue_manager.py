@@ -107,6 +107,20 @@ class QueueManager:
             self._stop = True
             self.cond.notify_all()
 
+    def wait_active(self, timeout):
+        """Block until every running worker has finished (or ``timeout`` seconds).
+        Returns True if everything drained, False if the timeout fired.
+        Used by the GUI's close handler so a graceful exit waits for in-flight
+        writes/flushes instead of letting daemon threads die mid-write."""
+        deadline = time.monotonic() + max(0.0, timeout)
+        with self.cond:
+            while self.active > 0:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    return False
+                self.cond.wait(timeout=remaining)
+            return True
+
     # ------------------------------------------------------------- internal
     def _drop_from_heap(self, task):
         with self.cond:

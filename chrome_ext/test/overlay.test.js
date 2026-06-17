@@ -158,6 +158,43 @@ async function test(name, fn) {
     assert.strictEqual(state.sent.filename, 'The Real Video Name.mp4');
   });
 
+  await test('HLS master: blob-video badge grabs the best (first) variant', async () => {
+    const { win, state } = makeEnv({ openShadow: true });
+    win.document.title = 'My Show';
+    const v = mkVideo(win, { src: 'blob:https://example.com/x', w: 800, h: 450 });
+    win.document.body.appendChild(v);
+    await wait(200);
+    assert.strictEqual(badges(win).length, 0, 'no badge before a stream is known');
+    state.msgListener({
+      type: 'SNIFFED_HLS_MASTER',
+      url: 'https://cdn.x/master.m3u8',
+      filename: 'master.m3u8',
+      variants: [
+        { label: '1080p', height: 1080, bandwidth: 5000000, url: 'https://cdn.x/1080/idx.m3u8', size: 0 },
+        { label: '480p', height: 480, bandwidth: 1000000, url: 'https://cdn.x/480/idx.m3u8', size: 0 },
+      ],
+    });
+    await wait(300);
+    assert.strictEqual(badges(win).length, 1, 'badge appears once the master is parsed');
+    const btn = badges(win)[0].shadowRoot.querySelector('button');
+    btn.dispatchEvent(new win.MouseEvent('click', { bubbles: true }));
+    assert.strictEqual(state.sent.url, 'https://cdn.x/1080/idx.m3u8', 'sends the top variant');
+  });
+
+  await test('clicking a plain file link is NOT auto-captured (manual only)', async () => {
+    const { win, state } = makeEnv();
+    // suppress jsdom navigation on the anchor; we only care that content.js
+    // does not hijack the click.
+    win.document.addEventListener('click', (e) => e.preventDefault(), true);
+    const a = win.document.createElement('a');
+    a.href = 'https://cdn.x/already-downloaded.zip';
+    a.textContent = 'download';
+    win.document.body.appendChild(a);
+    a.dispatchEvent(new win.MouseEvent('click', { bubbles: true, cancelable: true }));
+    await wait(50);
+    assert.strictEqual(state.sent, null, 'link click must not send to the app');
+  });
+
   console.log(`\n${passed} passed` + (process.exitCode ? ' (with failures)' : ''));
   // content.js installs setInterval timers on the jsdom window which keep the
   // node event loop alive; exit explicitly once assertions are done.

@@ -2,7 +2,8 @@
 
 Multi-segment download accelerator with a desktop GUI, IDM-style download
 dialogs, persistent state, a download queue, and a Chrome/Edge extension that
-intercepts browser downloads — like Internet Download Manager.
+hands downloads to the app on demand — right-click **Download with HyperFetch**,
+or grab streaming video from the in-page badge.
 
 ## Features
 - **Segmented downloads** — up to 16 parallel connections per file (when the
@@ -21,9 +22,11 @@ intercepts browser downloads — like Internet Download Manager.
   adaptively halves parallel connections on HTTP 429, staggers connection starts.
 - **Download queue** — priority ordering + bounded concurrency + scheduler.
 - **Settings** — default folder, concurrent downloads, connections per download.
-- **Browser integration** — the extension catches downloads in Chrome/Edge and
-  sends them to the app over a local Flask server; the file-info dialog pops up
-  exactly like IDM. Toggle capture on/off from the extension popup.
+- **Browser integration** — right-click any link/image/media → **Download with
+  HyperFetch**, or click the in-page badge on a streaming video, to send it to
+  the app over a local Flask server; the file-info dialog pops up exactly like
+  IDM. Nothing is auto-intercepted, so files already on disk never re-prompt.
+  Toggle capture on/off from the extension popup.
 
 ## Architecture
 | File | Role |
@@ -34,10 +37,10 @@ intercepts browser downloads — like Internet Download Manager.
 | `utils.py` | app-data dir, JSON persistence, filename derivation, unique paths |
 | `api_server.py` | Flask `POST /download` + `GET /ping` for the extension |
 | `main.py` | PySide6 GUI: table, dialogs, settings, embedded Flask server |
-| `chrome_ext/` | MV3 browser extension (background interceptor, popup, content script) |
+| `chrome_ext/` | MV3 browser extension (background worker, popup, content script) |
 
-GUI and server share **one** queue, so browser downloads appear in the window
-alongside manually added ones.
+GUI and server share **one** queue, so browser-sent downloads appear in the
+window alongside manually added ones.
 
 ## Run
 ```powershell
@@ -58,9 +61,9 @@ python api_server.py
 4. **Pair it (one time):** in the app open **⚙ Settings → Security**, copy the
    *pairing token*, then click the extension's toolbar icon and paste it into the
    **Pairing** box → Save.
-5. Keep `main.py` running. Downloads of common file types are intercepted and the
-   app shows the file-info dialog. If the app is offline the browser keeps the
-   download (the extension pauses, asks the app, then cancels or resumes).
+5. Keep `main.py` running. **Right-click** a link/image/media → **Download with
+   HyperFetch** (or click the badge on a streaming video) and the app shows the
+   file-info dialog. Normal browser downloads are left untouched.
 6. The popup shows connection + pairing status, a capture on/off toggle, and a
    test download button.
 
