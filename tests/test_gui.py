@@ -127,6 +127,55 @@ def test_speed_graph_capped(qapp):
     g.grab()   # paintEvent must not raise
 
 
+class _FakeTray:
+    """Stand-in for QSystemTrayIcon so closeEvent's tray branch fires in tests
+    (no real tray on a headless CI box)."""
+    def __init__(self): self.messages = []
+    def isVisible(self): return True
+    def showMessage(self, *a): self.messages.append(a)
+
+
+def _close_with_choice(win, button_text, monkeypatch):
+    """Drive closeEvent with the tray dialog answering the button labelled
+    `button_text`. QMessageBox.buttons() is role-sorted (not add-order), so we
+    match by text, not index. Returns the QCloseEvent."""
+    from PySide6.QtWidgets import QMessageBox
+    from PySide6.QtGui import QCloseEvent
+    monkeypatch.setattr(QMessageBox, "exec", lambda self: 0)
+    monkeypatch.setattr(
+        QMessageBox, "clickedButton",
+        lambda self: next(b for b in self.buttons() if b.text() == button_text))
+    ev = QCloseEvent()
+    win.closeEvent(ev)
+    return ev
+
+
+def test_close_event_minimize_to_tray(win, monkeypatch):
+    win.tray = _FakeTray()
+    win._quit_requested = False
+    ev = _close_with_choice(win, "Minimize to Tray", monkeypatch)
+    assert not ev.isAccepted()          # close vetoed -> stays running
+    assert not win._quit_requested
+    assert win.tray.messages             # showed the "minimized" toast once
+
+
+def test_close_event_cancel_keeps_app(win, monkeypatch):
+    win.tray = _FakeTray()
+    win._quit_requested = False
+    ev = _close_with_choice(win, "Cancel", monkeypatch)
+    assert not ev.isAccepted()
+    assert not win._quit_requested
+
+
+def test_close_event_close_app_proceeds_to_shutdown(win, monkeypatch):
+    win.tray = _FakeTray()
+    win._quit_requested = False
+    # no active tasks -> shutdown path runs cleanly to super().closeEvent
+    ev = _close_with_choice(win, "Close App", monkeypatch)
+    assert win._quit_requested
+    assert ev.isAccepted()
+
+
 def test_sweep_orphan_temps_removes_only_unknown_hfdownload(qapp, tmp_path, monkeypatch):
     """Startup sweep deletes leftover .hfdownload files in the save dir, but
     NOT ones that belong to a persisted task or files unrelated to HyperFetch."""

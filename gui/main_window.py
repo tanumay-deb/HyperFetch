@@ -977,13 +977,28 @@ class DownloadApp(QWidget):
 
     def closeEvent(self, e):
         if not self._quit_requested and self.tray and self.tray.isVisible():
-            e.ignore()
-            self.hide()
-            if getattr(self, "_tray_notice_shown", False) is False:
-                self.tray.showMessage("HyperFetch", "Minimized to system tray. Right-click to quit.", 
-                                      QSystemTrayIcon.Information, 3000)
-                self._tray_notice_shown = True
-            return
+            msg_box = QMessageBox(self)
+            msg_box.setWindowTitle("Exit HyperFetch")
+            msg_box.setText("Do you want to minimize to the taskbar or close the application?")
+            min_btn = msg_box.addButton("Minimize to Tray", QMessageBox.AcceptRole)
+            close_btn = msg_box.addButton("Close App", QMessageBox.DestructiveRole)
+            cancel_btn = msg_box.addButton("Cancel", QMessageBox.RejectRole)
+            msg_box.exec()
+
+            clicked = msg_box.clickedButton()
+            if clicked == min_btn:
+                e.ignore()
+                self.hide()
+                if getattr(self, "_tray_notice_shown", False) is False:
+                    self.tray.showMessage("HyperFetch", "Minimized to system tray. Right-click to quit.", 
+                                          QSystemTrayIcon.Information, 3000)
+                    self._tray_notice_shown = True
+                return
+            elif clicked == close_btn:
+                self._quit_requested = True
+            else:
+                e.ignore()
+                return
 
         # Proceed with actual shutdown
         active = [t for t in self.queue.tasks
