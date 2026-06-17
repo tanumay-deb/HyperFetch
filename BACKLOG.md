@@ -18,6 +18,7 @@ Conventions:
 
 | SHA | Summary |
 |---|---|
+| `v1.2.0` | **Release v1.2.0** — bumped APP_VERSION + installer, wired `updater.REPO` to `tanumay-deb/HyperFetch` (Check-for-Updates now live), GitHub release with the onedir .zip. |
 | `9eeaac2`+ | Hygiene: property/fuzz tests for the formatters + 30-task/3-queue concurrency stress test (no deadlock, no slot leak). 143 tests. |
 | `29f760d` | Fix 10 confirmed issues from adversarial review of the arch batch: **blocker** Auto-segments=0 deadlock; dead concurrency setting; move-to-queue missed wakeup; per-queue slot leak on move; queue filter showed all tasks; 403-resume scheme bypass + stale-plan corruption; finalize silent data loss; dead runtime theme switch; QMessageBox leak; error=None. |
 | `d54cca5` | closeEvent 3-way Minimize/Close/Cancel dialog on tray exit (+ tests). |

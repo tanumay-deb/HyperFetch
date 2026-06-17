@@ -15,7 +15,7 @@ import urllib.error
 import utils
 
 # Set to your repo (owner/name). Empty disables the check cleanly.
-REPO = "anthropics/IDMClone"          # placeholder — replace before shipping
+REPO = "tanumay-deb/HyperFetch"       # GitHub repo the update check queries
 
 CACHE_TTL = 3600           # seconds
 HTTP_TIMEOUT = 6
