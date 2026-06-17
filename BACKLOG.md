@@ -18,11 +18,11 @@ Conventions:
 
 | SHA | Summary |
 |---|---|
-| `d36e620` | Tier 3: Built inline quality picker dropdown in the browser extension for HLS variants, and removed deprecated test logic. |
-| `9693651` | Tier 2/3 Features: Native Multi-queue support, Smart Adaptive segments, 403 URL Expiry interception, task status Enum, pinned requirements. |
-| `92d7c5c` | Fixed missing import causing blank NameDelegate cells. |
-| `PENDING` | Tier 2 UI: Added `QSystemTrayIcon` minimize-to-tray + native OS completion toasts, and finished replacing emoji in sidebar with `themed_icon` SVGs. |
-| `PENDING` | Tier 3 architectural: Split `main.py` into a robust `gui/` package (`models`, `delegates`, `dialogs`, `theme`, `main_window`) with zero behavior changes. Also fixed legacy `%TEMP%` cleanup sweep. |
+| `29f760d` | Fix 10 confirmed issues from adversarial review of the arch batch: **blocker** Auto-segments=0 deadlock; dead concurrency setting; move-to-queue missed wakeup; per-queue slot leak on move; queue filter showed all tasks; 403-resume scheme bypass + stale-plan corruption; finalize silent data loss; dead runtime theme switch; QMessageBox leak; error=None. |
+| `d54cca5` | closeEvent 3-way Minimize/Close/Cancel dialog on tray exit (+ tests). |
+| `d36e620` | Tier 3: Inline quality-picker dropdown in the extension for HLS variants; removed deprecated test logic. |
+| `9693651` | Tier 2/3: Native multi-queue + per-queue concurrency, smart adaptive segments (Auto), 403/URL-expiry resume, `TaskStatus(str,Enum)`, pinned requirements, **`gui/` package split** (`main_window`/`models`/`delegates`/`dialogs`/`theme`/`icons`), `QSystemTrayIcon` minimize-to-tray + completion toasts, SVG sidebar/file icons, `%TEMP%` orphan sweep. |
+| `92d7c5c` | Fixed missing `TaskTableModel` import causing blank NameDelegate cells. |
 | `6d57bcf` | Local crash reporter + GitHub-Releases update check (light versions, no infra). |
 | `212f25c` | Tier 1 hygiene: cancel during backoff, ENOSPC message, orphan `.hfdownload` sweep, 2nd-tab HLS regression tests. |
 | `05fdc02` | Fix 11 confirmed issues from adversarial review of `164cdce`. |
@@ -60,7 +60,7 @@ _(empty — pick from below or file as discovered)_
 
 ## Bugs / regressions (none open)
 
-_(none currently — last adversarial review found 11, all fixed in `05fdc02`)_
+_(none currently — the arch-batch review found 10 real bugs incl. 1 blocker, all fixed in `29f760d`; the prior review found 11, all fixed in `05fdc02`.)_
 
 ---
 
@@ -92,4 +92,4 @@ _(none currently — last adversarial review found 11, all fixed in `05fdc02`)_
 3. **Finishing work:** move the bullet to **Done** with the commit SHA. Keep the note short.
 4. **Bugs found in review:** if confirmed real, file under **Bugs** with the file:line and the fix path. If declined, file under **Watch** with the reason.
 
-Two reviews this session each found ~10 real bugs in newly-committed code. Treat every architectural change as an invitation for adversarial review before declaring done.
+Three adversarial reviews so far have each found ~10 real bugs in newly-committed code (incl. a download-hangs-forever blocker in the multi-queue/Auto-segments batch). Treat every architectural change as an invitation for adversarial review before declaring done — "tests pass" is necessary, not sufficient.
