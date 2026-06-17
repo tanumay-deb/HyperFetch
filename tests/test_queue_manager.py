@@ -200,3 +200,25 @@ def test_move_running_task_does_not_corrupt_slot_accounting(fake_worker):
     assert q.queues["A"].active == 0
     assert q.queues["B"].active == 0
     q.shutdown()
+
+
+def test_concurrency_stress_no_deadlock_no_leak(fake_worker):
+    """30 tasks across 3 queues drain fully with no deadlock, and every slot
+    is released — global active and every per-queue active settle at 0."""
+    q = QueueManager(queues=[{"name": "A", "max_concurrent": 3},
+                             {"name": "B", "max_concurrent": 2},
+                             {"name": "C", "max_concurrent": 4}])
+    tasks = []
+    for i in range(30):
+        t = T.DownloadTask("u", f"s{i}")
+        t.queue_name = ["A", "B", "C"][i % 3]
+        q.add_task(t)
+        tasks.append(t)
+    # everything completes within a bounded time -> no deadlock
+    assert _wait(lambda: all(t.status == T.COMPLETED for t in tasks), timeout=30), \
+        "stress run did not drain — possible deadlock"
+    # every release accounted for
+    assert q.active == 0
+    for name in ("A", "B", "C"):
+        assert q.queues[name].active == 0, f"queue {name} leaked a slot"
+    q.shutdown()
