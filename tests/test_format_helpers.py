@@ -68,6 +68,10 @@ def test_fmt_eta_invariants():
     assert fmt_eta(42).endswith("s")
     assert "m" in fmt_eta(125)
     assert "h" in fmt_eta(7300)
+    # a legit long ETA still shows hours; an absurd one (near-stalled speed) caps
+    assert "h" in fmt_eta(50 * 3600)
+    assert fmt_eta(18808 * 3600) == "—"
+    assert fmt_eta(99 * 3600) == "—"
 
 
 def test_humanize_age_buckets():

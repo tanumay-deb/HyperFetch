@@ -247,3 +247,15 @@ def test_queue_filter_shows_only_that_queue(win):
     win._set_filter("Queue:Side")
     vis = win._visible_tasks()
     assert other in vis and main_q not in vis
+
+
+def test_theme_toggle_round_trips(win):
+    """dark -> light -> dark must actually switch back; self.theme must track
+    the applied palette (not a stale module global)."""
+    from gui import theme
+    win._apply_theme("light")
+    assert win.theme == "light"
+    assert theme.THEME == "light"
+    win._apply_theme("dark")
+    assert win.theme == "dark", "theme did not switch back to dark"
+    assert theme.THEME == "dark"

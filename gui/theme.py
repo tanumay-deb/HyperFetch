@@ -332,6 +332,10 @@ def fmt_eta(secs):
         return f"{secs}s"
     if secs < 3600:
         return f"{secs // 60}m {secs % 60}s"
+    # a near-stalled speed makes (bytes_left / bps) explode (e.g. "18808h");
+    # anything beyond ~4 days is meaningless noise -> show "—".
+    if secs >= 99 * 3600:
+        return "—"
     return f"{secs // 3600}h {(secs % 3600) // 60}m"
 
 

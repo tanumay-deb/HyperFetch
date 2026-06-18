@@ -772,7 +772,10 @@ class DownloadApp(QWidget):
     def _apply_theme(self, name):
         """Switch palette at runtime and repaint everything."""
         apply_theme(name)
-        self.theme = THEME
+        # use the arg, NOT the module-global THEME — that global is a stale
+        # `import *` copy that never tracks apply_theme's rebind, so reading it
+        # pinned self.theme to "dark" and broke switching back.
+        self.theme = "light" if name == "light" else "dark"
         self.setStyleSheet(build_qss())
         # one-shot inline styles on persistent header/footer widgets
         self.subtitle.setStyleSheet(f"color: {MUTED}; font-size: 12px;")
