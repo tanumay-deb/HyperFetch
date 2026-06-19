@@ -191,3 +191,17 @@ def test_title_filename_becomes_ts(hls_server, tmp_path):
     assert os.path.basename(t.save_path) == "My Holiday Clip.ts"
     assert t.filename == "My Holiday Clip.ts"
     assert open(t.save_path, "rb").read() == hls_server.plain_total
+
+
+def test_probe_variants_lists_master(hls_server):
+    import hls
+    v = hls.probe_variants(f"{hls_server.base}/master.m3u8")
+    assert len(v) == 2
+    assert v[0]["bandwidth"] == 2400000 and v[1]["bandwidth"] == 800000  # best first
+    assert all(x.get("url") and x.get("label") for x in v)
+
+
+def test_probe_variants_empty_for_media_playlist(hls_server):
+    import hls
+    # high.m3u8 is a media playlist (no #EXT-X-STREAM-INF) -> nothing to choose
+    assert hls.probe_variants(f"{hls_server.base}/high.m3u8") == []

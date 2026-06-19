@@ -77,3 +77,26 @@ def test_cookies_forwarded_to_task(tmp_path):
                               "userAgent": "UA", "referrer": "https://ref"})
     h = q.tasks[0].headers
     assert h["Cookie"] == "s=1" and h["Referer"] == "https://ref" and h["User-Agent"] == "UA"
+
+
+def test_probe_returns_variants(tmp_path, monkeypatch):
+    import hls
+    monkeypatch.setattr(hls, "probe_variants",
+                        lambda url, headers=None: [{"label": "1080p", "height": 1080,
+                                                    "bandwidth": 5_000_000,
+                                                    "url": url + "#1080", "size": 9}])
+    c = create_app(_FakeQueue(), str(tmp_path), pending=None).test_client()
+    r = c.post("/probe", json={"url": "https://x/master.m3u8"})
+    assert r.status_code == 200
+    v = r.get_json()["variants"]
+    assert len(v) == 1 and v[0]["label"] == "1080p"
+
+
+def test_probe_rejects_bad_scheme(tmp_path):
+    c = create_app(_FakeQueue(), str(tmp_path), pending=None).test_client()
+    assert c.post("/probe", json={"url": "file:///etc/passwd"}).status_code == 400
+
+
+def test_probe_requires_token(tmp_path):
+    c = create_app(_FakeQueue(), str(tmp_path), pending=None, token="SECRET").test_client()
+    assert c.post("/probe", json={"url": "https://x/m.m3u8"}).status_code == 401

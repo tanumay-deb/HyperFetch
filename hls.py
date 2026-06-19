@@ -7,6 +7,7 @@ does that: master->variant selection, AES-128 decryption, raw concat into one
 .ts file (plays in VLC / most players without ffmpeg), with pause/cancel/progress.
 """
 import os
+import re
 import time
 import shutil
 import tempfile
@@ -35,6 +36,71 @@ def is_hls(url="", filename="", ctype=""):
     c = (ctype or "").lower()
     return (u.endswith(".m3u8") or f.endswith(".m3u8")
             or "mpegurl" in c)
+
+
+def probe_variants(url, headers=None):
+    """Fetch an HLS master and return its quality variants, best first:
+    ``[{label, height, bandwidth, url, size}]``. Returns ``[]`` for a
+    single-quality media playlist (nothing to choose) or on any fetch error.
+
+    Runs in the app, so it has the real Referer/cookies/UA and no CORS — it
+    works on the referer/auth-gated CDNs the browser extension's own fetch
+    can't read. Backs the extension's /probe endpoint."""
+    base = {**HEADERS, **(headers or {})}
+    sess = requests.Session()
+    try:
+        text = _get(sess, url, base).text
+    except requests.RequestException:
+        return []
+    if "#EXT-X-STREAM-INF" not in text:
+        return []                       # media playlist — single quality
+
+    lines = text.splitlines()
+    variants = []
+    for i, line in enumerate(lines):
+        if not line.startswith("#EXT-X-STREAM-INF"):
+            continue
+        attrs = line.split(":", 1)[-1]
+        # anchor to a delimiter so AVERAGE-BANDWIDTH= can't shadow BANDWIDTH=
+        bw = re.search(r"(?:^|,)\s*BANDWIDTH=(\d+)", attrs, re.I)
+        res = re.search(r"(?:^|,)\s*RESOLUTION=\d+x(\d+)", attrs, re.I)
+        uri = ""
+        for j in range(i + 1, len(lines)):
+            cand = lines[j].strip()
+            if cand and not cand.startswith("#"):
+                uri = cand
+                break
+        if not uri:
+            continue
+        variants.append({
+            "height": int(res.group(1)) if res else 0,
+            "bandwidth": int(bw.group(1)) if bw else 0,
+            "url": urllib.parse.urljoin(url, uri),
+        })
+    variants.sort(key=lambda v: (v["height"], v["bandwidth"]), reverse=True)
+
+    # estimate sizes from the top variant's total duration (one extra fetch)
+    duration = 0.0
+    if variants:
+        try:
+            vtext = _get(sess, variants[0]["url"], base).text
+            for m in re.finditer(r"#EXTINF:\s*([\d.]+)", vtext):
+                duration += float(m.group(1) or 0)
+        except requests.RequestException:
+            duration = 0.0
+
+    out = []
+    for v in variants:
+        if v["height"]:
+            label = f"{v['height']}p"
+        elif v["bandwidth"]:
+            label = f"{round(v['bandwidth'] / 1000)} kbps"
+        else:
+            label = "variant"
+        size = int(v["bandwidth"] / 8 * duration) if (duration and v["bandwidth"]) else 0
+        out.append({"label": label, "height": v["height"],
+                    "bandwidth": v["bandwidth"], "url": v["url"], "size": size})
+    return out
 
 
 def _get(session, url, headers, **kw):

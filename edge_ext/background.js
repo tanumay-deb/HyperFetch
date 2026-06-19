@@ -2,6 +2,7 @@
 // action only — the right-click menu and the in-page video badges. Browser
 // downloads are NOT auto-intercepted.
 const APP = "http://127.0.0.1:5000/download";
+const PROBE = "http://127.0.0.1:5000/probe";
 
 const ignoreErr = () => void chrome.runtime.lastError;
 
@@ -160,11 +161,51 @@ function hlsDuration(text) {
   return total;
 }
 
-// Fetch a sniffed .m3u8; if it's a master, push its quality variants (with
-// estimated sizes) to the panel. Non-masters fall through to a single entry.
-async function handleHls(url, tabId, fallbackName) {
-  // cache hit -> re-deliver to the new tab, no re-fetch
-  const cached = parsedHls.get(url);
+// Ask the desktop app to parse the master. The app has the original capture's
+// cookies/referer/UA and no CORS, so it reads referer/auth-gated manifests the
+// SW's own fetch can't. Returns the variant array, [] for single-quality, or
+// null when the app is unreachable (-> caller falls back to the SW fetch).
+function probeViaApp(url, referer) {
+  return new Promise((resolve) => {
+    chrome.storage.local.get({ token: "" }, ({ token }) => {
+      chrome.cookies.getAll({ url }, (cookies) => {
+        ignoreErr();
+        const cookieStr = (cookies || []).map((c) => `${c.name}=${c.value}`).join("; ");
+        fetch(PROBE, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "X-HyperFetch-Token": token },
+          body: JSON.stringify({ url, cookies: cookieStr, referrer: referer || "",
+                                 userAgent: navigator.userAgent, token })
+        })
+          .then((r) => (r.ok ? r.json() : null))
+          .then((j) => resolve(j && Array.isArray(j.variants) ? j.variants : (j ? [] : null)))
+          .catch(() => resolve(null));   // app offline -> fall back
+      });
+    });
+  });
+}
+
+// Fallback: fetch + parse in the worker (works for same-origin / open CDNs).
+async function probeViaFetch(url) {
+  let text = "";
+  try { text = await (await fetch(url, { credentials: "include" })).text(); }
+  catch (e) { return null; }            // couldn't read it at all
+  const variants = parseHlsVariants(text, url);
+  if (!variants.length) return [];      // single-quality / unreadable-as-master
+  let duration = 0;
+  try { duration = hlsDuration(await (await fetch(variants[0].url, { credentials: "include" })).text()); }
+  catch (e) { /* sizes omitted */ }
+  return variants.map((v) => ({
+    label: v.height ? v.height + "p"
+      : (v.bandwidth ? Math.round(v.bandwidth / 1000) + " kbps" : "variant"),
+    height: v.height, bandwidth: v.bandwidth, url: v.url,
+    size: (duration && v.bandwidth) ? Math.round(v.bandwidth / 8 * duration) : 0
+  }));
+}
+
+// Resolve a sniffed .m3u8 into a quality picker (master) or a single row.
+async function handleHls(url, tabId, fallbackName, referer) {
+  const cached = parsedHls.get(url);   // re-deliver to a new tab, no re-probe
   if (cached) {
     if (tabId >= 0) chrome.tabs.sendMessage(tabId, cached, ignoreErr);
     return;
@@ -172,49 +213,25 @@ async function handleHls(url, tabId, fallbackName) {
   if (inFlightHls.has(url)) return;
   inFlightHls.add(url);
   try {
-    let text = "";
-    let fetchOk = false;
-    // credentials:include -> send the site's cookies (auth-gated manifests); the
-    // worker's host_permissions make the cross-origin response readable regardless.
-    try {
-      text = await (await fetch(url, { credentials: "include" })).text();
-      fetchOk = !!text;
-    } catch (e) { /* offline/blocked */ }
-    const variants = parseHlsVariants(text, url);
+    let variants = await probeViaApp(url, referer);   // app-side (auth path)
+    const appAnswered = variants !== null;
+    if (!appAnswered) variants = await probeViaFetch(url);  // SW fallback
+    const definite = appAnswered || variants !== null;     // got a real answer?
 
-    if (!variants.length) {
-      // a single-quality media playlist (or DASH/unreadable) — one plain row
+    if (!variants || !variants.length) {
       const payload = { type: "SNIFFED_MEDIA", url, mime: "application/x-mpegurl",
                         size: 0, filename: fallbackName, kind: "hls" };
       if (tabId >= 0) chrome.tabs.sendMessage(tabId, payload, ignoreErr);
-      // Only memo when the fetch actually returned something — a transient
-      // failure must stay retryable, and a tabId<0 background request must
-      // not silently consume the URL for every future real tab.
-      if (fetchOk && tabId >= 0) parsedHls.set(url, payload);
+      // cache only on a definite answer + a real tab; a transient failure or a
+      // tabId<0 background request must stay retryable for the next real tab.
+      if (definite && tabId >= 0) parsedHls.set(url, payload);
       return;
     }
 
-    // duration is identical across variants — fetch the top one once and reuse it
-    let duration = 0;
-    try { duration = hlsDuration(await (await fetch(variants[0].url, { credentials: "include" })).text()); }
-    catch (e) { /* leave 0 -> sizes omitted */ }
-
-    const enriched = variants.map((v) => ({
-      label: v.height ? v.height + "p"
-        : (v.bandwidth ? Math.round(v.bandwidth / 1000) + " kbps" : "variant"),
-      height: v.height,
-      bandwidth: v.bandwidth,
-      url: v.url,
-      size: (duration && v.bandwidth) ? Math.round(v.bandwidth / 8 * duration) : 0
-    }));
-
     const payload = { type: "SNIFFED_HLS_MASTER", url,
-                      filename: fallbackName, variants: enriched };
+                      filename: fallbackName, variants };
     if (tabId >= 0) {
       chrome.tabs.sendMessage(tabId, payload, ignoreErr);
-      // Memo only after a real tab actually got the message. tabId<0 (extension
-      // / prerender / closed-tab requests) must NOT consume the URL — the next
-      // real tab opening this video would otherwise never see the variant panel.
       parsedHls.set(url, payload);
     }
   } finally {
@@ -260,9 +277,11 @@ chrome.webRequest.onResponseStarted.addListener(
       if (ext) filename += "." + ext;
     }
 
-    // HLS: fetch+parse in the worker so the panel can list quality variants.
+    // HLS: resolve quality variants (app /probe, with SW fetch as fallback).
+    // Pass the page URL so the app can send a real Referer to gated CDNs.
     if (kind === "hls") {
-      handleHls(details.url, details.tabId, filename);
+      const referer = details.documentUrl || details.originUrl || details.initiator || "";
+      handleHls(details.url, details.tabId, filename, referer);
       return;
     }
 

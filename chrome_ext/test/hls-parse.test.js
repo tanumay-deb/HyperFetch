@@ -85,8 +85,13 @@ test('hlsDuration sums #EXTINF segment durations', () => {
 // ---- handleHls multi-tab cache + retryable-on-failure tests ----------------
 // Spawn an isolated background.js instance per test (parsedHls is module-level
 // in the worker, so reusing the sandbox across tests would leak cache state).
-function loadBackgroundWithFakes({ fetchImpl, sent }) {
+const PROBE_URL = 'http://127.0.0.1:5000/probe';
+
+// probeImpl default = app "offline" ({ok:false}) so the 3 fallback tests below
+// exercise the SW-fetch path. The probe-success test passes its own probeImpl.
+function loadBackgroundWithFakes({ fetchImpl, sent, probeImpl }) {
   const noop = () => {};
+  const probe = probeImpl || (() => Promise.resolve({ ok: false }));
   const sandbox = {
     chrome: {
       storage: {
@@ -99,10 +104,10 @@ function loadBackgroundWithFakes({ fetchImpl, sent }) {
       tabs: {
         sendMessage: (tabId, msg) => { sent.push({ tabId, msg }); },
       },
-      cookies: { getAll: noop },
+      cookies: { getAll: (q, cb) => cb([]) },   // must call back or probeViaApp hangs
     },
     URL,
-    fetch: fetchImpl,
+    fetch: (u, opts) => (u === PROBE_URL ? probe(u, opts) : fetchImpl(u, opts)),
     navigator: { userAgent: 'test' },
     console,
   };
@@ -162,6 +167,28 @@ async function nextTick() { await new Promise((r) => setImmediate(r)); }
     assert.strictEqual(tabSeven.length, 1, 'tab 7 must receive variants even after a tabId<0 request');
     passed++; console.log('  ok  tabId<0 fetch does not poison the cache');
   })().catch((e) => { console.error('FAIL  tabId<0 cache poisoning: ' + e.message); process.exitCode = 1; });
+
+  await (async function test_probeViaAppUsedWhenAppReachable() {
+    const sent = [];
+    let swFetched = false;
+    const fetchImpl = (u) => { swFetched = true; return Promise.resolve(okText(MASTER_BODY)); };
+    // app /probe returns variants directly (the auth-path the SW can't replay)
+    const probeImpl = () => Promise.resolve({
+      ok: true,
+      json: () => Promise.resolve({ variants: [
+        { label: '1080p', height: 1080, bandwidth: 5000000, url: 'https://cdn.x/1080.m3u8', size: 123 },
+        { label: '480p', height: 480, bandwidth: 1000000, url: 'https://cdn.x/480.m3u8', size: 45 },
+      ] }),
+    });
+    const sb = loadBackgroundWithFakes({ fetchImpl, sent, probeImpl });
+    await sb.handleHls(MASTER_URL, 3, 'master.m3u8');
+    const masters = sent.filter((s) => s.msg.type === 'SNIFFED_HLS_MASTER');
+    assert.strictEqual(masters.length, 1, 'app /probe should deliver the master');
+    assert.strictEqual(masters[0].msg.variants.length, 2);
+    assert.strictEqual(masters[0].msg.variants[0].label, '1080p');
+    assert.strictEqual(swFetched, false, 'app /probe success must skip the SW fetch');
+    passed++; console.log('  ok  probeViaApp used (no SW fetch) when the app is reachable');
+  })().catch((e) => { console.error('FAIL  probeViaApp path: ' + e.message); process.exitCode = 1; });
 
   console.log(`\n${passed} passed` + (process.exitCode ? ' (with failures)' : ''));
   process.exit(process.exitCode || 0);

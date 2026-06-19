@@ -48,6 +48,31 @@ def create_app(queue, save_dir, pending=None, token=None):
         # open (no token) so the popup can show connection status; reveals nothing
         return jsonify({"status": "ok", "needsToken": bool(app.config.get("HYPERFETCH_TOKEN"))})
 
+    @app.route("/probe", methods=["POST"])
+    def probe():
+        """Parse an HLS master's quality variants for the extension's picker.
+        The app has the original capture's cookies/referer/UA and no CORS, so
+        it reads referer/auth-gated manifests the extension's own fetch can't."""
+        data = request.get_json(silent=True) or {}
+        if not _authorized(data):
+            return jsonify({"status": "error", "message": "unauthorized"}), 401
+        url = (data.get("url") or "").strip()
+        if not url.lower().startswith(("http://", "https://")):
+            return jsonify({"status": "error", "message": "invalid url"}), 400
+        headers = {}
+        if data.get("cookies"):
+            headers["Cookie"] = data["cookies"]
+        if data.get("userAgent"):
+            headers["User-Agent"] = data["userAgent"]
+        if data.get("referrer"):
+            headers["Referer"] = data["referrer"]
+        import hls
+        try:
+            variants = hls.probe_variants(url, headers)
+        except Exception:
+            variants = []
+        return jsonify({"variants": variants})
+
     @app.route("/download", methods=["POST"])
     def download():
         data = request.get_json(silent=True) or {}
