@@ -324,6 +324,12 @@ class Downloader:
 
     # ------------------------------------------------------------- run
     def run(self):
+        # magnet / .torrent -> aria2c sidecar engine, not an HTTP byte download
+        import torrent
+        if torrent.is_torrent_task(self.t.url, self.t.filename):
+            torrent.TorrentDownloader(self.t).run()
+            return
+
         # HLS (.m3u8) playlists need segment fetch+concat, not a byte download
         import hls
         if hls.is_hls(self.t.url, self.t.filename, self._probe_ctype):

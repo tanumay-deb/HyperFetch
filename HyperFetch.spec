@@ -1,5 +1,6 @@
 # -*- mode: python ; coding: utf-8 -*-
 """PyInstaller build spec for HyperFetch (onedir, windowed)."""
+import os
 from PyInstaller.utils.hooks import collect_all, collect_submodules
 
 # cryptography is imported lazily inside hls.py -> pull it in explicitly
@@ -8,17 +9,27 @@ crypto_datas, crypto_binaries, crypto_hidden = collect_all('cryptography')
 hidden = (
     # local modules reached via lazy `import` inside functions
     ['hls', 'downloader', 'queue_manager', 'api_server', 'task', 'utils',
-     'crash_reporter', 'updater']
+     'crash_reporter', 'updater', 'torrent']
     + crypto_hidden
     + collect_submodules('flask_cors')
 )
+
+# Bundle the aria2c sidecar (BitTorrent/magnet engine) IF present. Drop the
+# official aria2c.exe into bin/ before building; torrent.aria2c_path() looks
+# there first. Absent -> the build still works, torrents just report
+# "aria2c not found" until the binary ships.
+extra_datas = []
+if os.path.isfile(os.path.join('bin', 'aria2c.exe')):
+    extra_datas.append(('bin/aria2c.exe', 'bin'))
+elif os.path.isfile(os.path.join('bin', 'aria2c')):
+    extra_datas.append(('bin/aria2c', 'bin'))
 
 a = Analysis(
     ['main.py'],
     pathex=[],
     binaries=crypto_binaries,
     datas=[('assets/icon.ico', 'assets'), ('assets/icon.png', 'assets'),
-           ('assets/icons', 'assets/icons')] + crypto_datas,
+           ('assets/icons', 'assets/icons')] + extra_datas + crypto_datas,
     hiddenimports=hidden,
     hookspath=[],
     runtime_hooks=[],

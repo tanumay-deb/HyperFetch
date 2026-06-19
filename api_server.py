@@ -80,8 +80,8 @@ def create_app(queue, save_dir, pending=None, token=None):
             return jsonify({"status": "error", "message": "unauthorized"}), 401
 
         url = (data.get("url") or "").strip()
-        # only real web downloads — block file://, chrome://, javascript:, etc.
-        if not url.lower().startswith(("http://", "https://")):
+        # real web downloads + magnet links; block file://, chrome://, javascript:
+        if not url.lower().startswith(("http://", "https://", "magnet:")):
             return jsonify({"status": "error", "message": "invalid url"}), 400
 
         suggested = data.get("filename") or ""

@@ -189,7 +189,8 @@ class FileInfoDialog(QDialog):
         return b
 
     def _url_changed(self, text):
-        ok = text.strip().lower().startswith(("http://", "https://"))
+        # magnet links are valid targets too (handled by the aria2c engine)
+        ok = text.strip().lower().startswith(("http://", "https://", "magnet:"))
         self.btn_now.setEnabled(ok)
         self.btn_later.setEnabled(ok)
 

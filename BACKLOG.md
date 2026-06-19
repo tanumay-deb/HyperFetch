@@ -54,7 +54,6 @@ _(empty — pick from below or file as discovered)_
 
 ## Tier 4 — multi-session each
 
-- [ ] **HTTP/2 + HTTP/3.** Migrate `requests` → `httpx` (or `niquests`) in `downloader.py` + `hls.py`. Unlocks multiplexing, drops socket count. Re-run the full suite + the hls fixture server. Risk: behavioral surprises in retry/timeout semantics.
 - [ ] **Auto-update — real version.** Light version (manual button) shipped in `6d57bcf`. Real version needs: code signing cert · signed Windows installer (Inno Setup already wired) · WinSparkle or a stub that swaps the running .exe · differential patches · rollback. Product decisions before code.
 - [ ] **Crash reporter — networked.** Light version (local JSON dumps) shipped in `6d57bcf`. Networked version needs: submission endpoint (Sentry SaaS / Glitchtip self-hosted / custom) · opt-in consent UI · dedup · rate limit. Product decision on destination.
 - [ ] **mmap-based finalize.** Map the `.hfdownload` so the GUI can stream-preview a partially-downloaded video while it grows. Cross-platform mmap gotchas (Windows file locks).
@@ -82,6 +81,7 @@ _(none currently — the arch-batch review found 10 real bugs incl. 1 blocker, a
 
 ## Watch (flagged but not committed to)
 
+- [x] **HTTP/2 + HTTP/3 — DECLINED.** A multi-segment downloader opens N TCP connections on purpose to beat per-connection CDN throttling; HTTP/2 multiplexes over ONE connection sharing one congestion window, so it would collapse that parallelism and likely *lower* throughput against the throttling CDNs this app targets. HTTP/3 needs aioquic + experimental httpx support. Near-zero gain, real regression risk → not worth it. Revisit only if the workload shifts to many tiny requests on cooperative servers.
 - [ ] **YouTube-dl / yt-dlp integration.** Extension points the app at a YouTube page; app shells out to `yt-dlp` to extract the real URL. Big UX win, dependency complexity.
 - [ ] **Per-host rules.** "cookies stay 1 day on `<host>`" / "always 4 segments on `<host>`". Needs a small DSL + UI.
 
