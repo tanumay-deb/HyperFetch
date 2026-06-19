@@ -16,7 +16,7 @@ from PySide6.QtWidgets import (
     QTableWidget, QTableWidgetItem, QHeaderView, QProgressBar, QDialog,
     QLineEdit, QSpinBox, QFileDialog, QMessageBox, QAbstractItemView,
     QFrame, QButtonGroup, QGridLayout, QSplitter, QSizePolicy, QComboBox, QMenu, QInputDialog,
-    QCheckBox, QListWidget, QListWidgetItem, QTableView, QStyledItemDelegate, QStyle
+    QCheckBox, QListWidget, QListWidgetItem, QTableView, QStyledItemDelegate, QStyle, QTimeEdit, QScrollArea
 )
 from PySide6.QtCore import (
     Qt, QTimer, QModelIndex, QAbstractTableModel, QSortFilterProxyModel, QRect, QSize
@@ -493,14 +493,27 @@ class PropertiesDialog(QDialog):
 
 class SettingsDialog(QDialog):
     def __init__(self, parent, save_dir, max_concurrent, segments,
-                 verify_tls=True, pair_token="", theme="dark"):
+                 verify_tls=True, pair_token="", theme="dark",
+                 sched_en=False, sched_start="02:00", sched_stop="08:00"):
         super().__init__(parent)
         self.setWindowTitle("Settings")
         self.setMinimumWidth(480)
+        self.setMinimumHeight(550)
 
-        lay = QVBoxLayout(self)
+        self.main_lay = QVBoxLayout(self)
+        self.main_lay.setContentsMargins(0, 0, 0, 0)
+        
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+        
+        inner_w = QWidget()
+        lay = QVBoxLayout(inner_w)
         lay.setSpacing(10)
-        lay.setContentsMargins(22, 20, 22, 18)
+        lay.setContentsMargins(22, 20, 22, 0)
+        scroll.setWidget(inner_w)
+        
+        self.main_lay.addWidget(scroll)
 
         title = QLabel("⚙  Settings")
         title.setStyleSheet("font-size: 17px; font-weight: 700;")
@@ -581,6 +594,41 @@ class SettingsDialog(QDialog):
         tnote.setWordWrap(True)
         lay.addWidget(tnote)
 
+        # ---- Scheduler section ----
+        sep_s = QFrame()
+        sep_s.setFrameShape(QFrame.HLine)
+        sep_s.setStyleSheet(f"color: {BORDER};")
+        lay.addWidget(sep_s)
+        lay.addWidget(QLabel("⏰  Scheduler"))
+        
+        self.sched_chk = QCheckBox("Enable Time-based Scheduler")
+        self.sched_chk.setChecked(sched_en)
+        lay.addWidget(self.sched_chk)
+        
+        t_row = QHBoxLayout()
+        t_row.addWidget(_muted_label("Start at:"))
+        self.time_start = QTimeEdit()
+        self.time_start.setDisplayFormat("HH:mm")
+        try:
+            h, m = map(int, sched_start.split(":"))
+        except:
+            h, m = 2, 0
+        from PySide6.QtCore import QTime
+        self.time_start.setTime(QTime(h, m))
+        t_row.addWidget(self.time_start)
+        
+        t_row.addWidget(_muted_label(" Stop at:"))
+        self.time_stop = QTimeEdit()
+        self.time_stop.setDisplayFormat("HH:mm")
+        try:
+            h, m = map(int, sched_stop.split(":"))
+        except:
+            h, m = 8, 0
+        self.time_stop.setTime(QTime(h, m))
+        t_row.addWidget(self.time_stop)
+        t_row.addStretch()
+        lay.addLayout(t_row)
+
         # ---- Updates + Diagnostics ----
         sep_u = QFrame()
         sep_u.setFrameShape(QFrame.HLine)
@@ -607,6 +655,7 @@ class SettingsDialog(QDialog):
         lay.addLayout(drow)
 
         brow = QHBoxLayout()
+        brow.setContentsMargins(22, 10, 22, 18)
         ok = QPushButton("Save")
         ok.setObjectName("primary")
         cancel = QPushButton("Cancel")
@@ -615,7 +664,7 @@ class SettingsDialog(QDialog):
         brow.addStretch()
         brow.addWidget(cancel)
         brow.addWidget(ok)
-        lay.addLayout(brow)
+        self.main_lay.addLayout(brow)
 
     def _browse(self):
         d = QFileDialog.getExistingDirectory(self, "Default download folder",
@@ -658,7 +707,9 @@ class SettingsDialog(QDialog):
     def values(self):
         theme = "light" if self.theme_combo.currentText() == "Light" else "dark"
         return (self.dir_edit.text().strip(), self.concurrent.value(),
-                self.segments.value(), self.verify_chk.isChecked(), theme)
+                self.segments.value(), self.verify_chk.isChecked(), theme,
+                self.sched_chk.isChecked(), self.time_start.time().toString("HH:mm"),
+                self.time_stop.time().toString("HH:mm"))
 
 
 # ====================================================================== main app

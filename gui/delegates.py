@@ -77,7 +77,13 @@ class NameDelegate(QStyledItemDelegate):
         name_f = QFont(); name_f.setPointSize(9); name_f.setBold(True)
         painter.setFont(name_f)
         painter.setPen(QColor(TEXT))
-        name = painter.fontMetrics().elidedText(t.filename or "", Qt.ElideMiddle, tw)
+        
+        import torrent
+        display_name = t.filename or ""
+        if torrent.is_torrent_task(t.url, t.filename):
+            display_name = "[Torrent] " + display_name
+            
+        name = painter.fontMetrics().elidedText(display_name, Qt.ElideMiddle, tw)
         painter.drawText(QRect(tx, r.top() + 5, tw, 17),
                          int(Qt.AlignVCenter | Qt.AlignLeft), name)
 

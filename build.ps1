@@ -26,6 +26,33 @@ if (-not (Test-Path "assets\icon.ico")) {
     python -c "from PIL import Image; Image.open('assets/icon.png').convert('RGBA').save('assets/icon.ico', sizes=[(16,16),(32,32),(48,48),(64,64),(128,128),(256,256)])"
 }
 
+Write-Host "==> Ensuring aria2c (BitTorrent/magnet engine)" -ForegroundColor Cyan
+$ariaVersion = "1.37.0"
+$ariaBuild   = "aria2-$ariaVersion-win-64bit-build1"
+$ariaExe     = "bin\aria2c.exe"
+if (Test-Path $ariaExe) {
+    Write-Host "    already present: $ariaExe" -ForegroundColor DarkGray
+} else {
+    try {
+        New-Item -ItemType Directory -Force bin | Out-Null
+        $zip = Join-Path $env:TEMP "$ariaBuild.zip"
+        $url = "https://github.com/aria2/aria2/releases/download/release-$ariaVersion/$ariaBuild.zip"
+        Invoke-WebRequest -Uri $url -OutFile $zip -UseBasicParsing
+        $sha = (Get-FileHash $zip -Algorithm SHA256).Hash
+        Write-Host "    SHA256 $sha" -ForegroundColor DarkGray
+        Write-Host "    ^ verify against https://github.com/aria2/aria2/releases/tag/release-$ariaVersion" -ForegroundColor DarkGray
+        $tmp = Join-Path $env:TEMP $ariaBuild
+        Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue
+        Expand-Archive -Path $zip -DestinationPath $tmp -Force
+        Copy-Item (Join-Path $tmp "$ariaBuild\aria2c.exe") $ariaExe -Force
+        Remove-Item $zip -Force -ErrorAction SilentlyContinue
+        Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue
+        Write-Host "    aria2c.exe -> $ariaExe" -ForegroundColor Green
+    } catch {
+        Write-Warning "aria2c fetch failed ($($_.Exception.Message)); build continues without the torrent engine."
+    }
+}
+
 Write-Host "==> Cleaning previous build" -ForegroundColor Cyan
 Remove-Item -Recurse -Force build, dist -ErrorAction SilentlyContinue
 

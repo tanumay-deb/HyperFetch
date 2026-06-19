@@ -10,6 +10,7 @@ import utils
 
 class Status(str, Enum):
     QUEUED = "Queued"
+    SCHEDULED = "Scheduled"
     DOWNLOADING = "Downloading"
     PAUSED = "Paused"
     COMPLETED = "Completed"
@@ -17,6 +18,7 @@ class Status(str, Enum):
     CANCELLED = "Cancelled"
 
 QUEUED = Status.QUEUED
+SCHEDULED = Status.SCHEDULED
 DOWNLOADING = Status.DOWNLOADING
 PAUSED = Status.PAUSED
 COMPLETED = Status.COMPLETED
@@ -161,6 +163,7 @@ class DownloadTask:
             "seg_total": self.seg_total,
             "seg_done": self.seg_done,
             "queue_name": self.queue_name,
+            "is_scheduled": getattr(self, "is_scheduled", False),
             # never write cookies/auth to disk; keep only safe headers (Referer/UA)
             "headers": utils.strip_sensitive(self.headers)
         }
@@ -187,6 +190,9 @@ class DownloadTask:
             task_id=d.get("id"), speed_limit=d.get("speed_limit", 0),
             headers=d.get("headers") or {}, priority=d.get("priority", 0),
             added=d.get("added"),
-            seg_total=d.get("seg_total", 0), seg_done=d.get("seg_done", 0),
+            seg_total=d.get("seg_total", 0),
+            seg_done=d.get("seg_done", 0),
             queue_name=d.get("queue_name", "Main")
         )
+        t.is_scheduled = d.get("is_scheduled", False)
+        return t

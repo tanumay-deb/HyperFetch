@@ -84,6 +84,12 @@ class QueueManager:
             for rank, t in enumerate(ordered):    # 0..n-1 → new add appends after
                 t.priority = rank
             heapq.heapify(self._heap)
+            
+            # Sync `self.tasks` so the visual order in the GUI updates
+            queued_indices = [idx for idx, t in enumerate(self.tasks) if t in ordered]
+            for idx, t in zip(queued_indices, ordered):
+                self.tasks[idx] = t
+                
             self.cond.notify()
 
     def get_task(self, task_id):
@@ -109,6 +115,28 @@ class QueueManager:
         self._drop_from_heap(task)
         if task.status in (T.QUEUED, T.PAUSED, T.DOWNLOADING):
             task.status = T.CANCELLED
+
+    def force_start(self, task: "T.DownloadTask"):
+        """Force start a task immediately, bypassing concurrency limits."""
+        with self.cond:
+            if task.status in (T.DOWNLOADING, T.COMPLETED, T.CANCELLED):
+                return
+            task.clear_pause()
+            self._drop_from_heap(task)
+            if task not in self.tasks:
+                self.tasks.append(task)
+            task.status = T.QUEUED # Transition state
+
+            q = self.queues.get(task.queue_name)
+            if not q:
+                q = Queue(task.queue_name, 3)
+                self.queues[task.queue_name] = q
+            q.active += 1
+            self.active += 1
+
+            threading.Thread(target=self._execute, args=(task, q.name),
+                             daemon=True).start()
+            self.cond.notify_all()
 
     def move_to_queue(self, task, qname):
         """Re-assign a task to a different queue and wake the scheduler.

@@ -84,6 +84,11 @@ class DownloadApp(QWidget):
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.refresh)
         self.timer.start(500)
+        
+        self._scheduler_timer = QTimer(self)
+        self._scheduler_timer.timeout.connect(self._check_scheduler)
+        self._scheduler_timer.start(60000)
+        QTimer.singleShot(1000, self._check_scheduler)
 
     def _check_unsent_crashes(self):
         """If the previous run left crash reports on disk, show a one-line
@@ -116,6 +121,10 @@ class DownloadApp(QWidget):
         # Stretched col 0 (File) is excluded; only the fixed-default cols persist.
         self.column_widths = s.get("column_widths") or {}
         self.queues_config = s.get("queues", [{"name": "Main", "max_concurrent": self.max_concurrent}])
+        self.scheduler_enabled = bool(s.get("scheduler_enabled", False))
+        self.scheduler_start = s.get("scheduler_start", "02:00")
+        self.scheduler_stop = s.get("scheduler_stop", "08:00")
+        self._scheduler_active = False
 
     def _save_settings(self):
         widths = {}
@@ -132,6 +141,9 @@ class DownloadApp(QWidget):
             "theme": getattr(self, "theme", "dark"),
             "column_widths": widths or self.column_widths,
             "queues": [{"name": q.name, "max_concurrent": q.max_concurrent} for q in getattr(self, "queue", type("T", (), {"queues": {}})).queues.values()] if hasattr(self, "queue") else self.queues_config,
+            "scheduler_enabled": getattr(self, "scheduler_enabled", False),
+            "scheduler_start": getattr(self, "scheduler_start", "02:00"),
+            "scheduler_stop": getattr(self, "scheduler_stop", "08:00")
         })
 
     def _load_state(self):
@@ -552,7 +564,8 @@ class DownloadApp(QWidget):
             t = T.DownloadTask(final_url, save_path,
                                filename=filename, headers=headers)
             if dlg.choice == "later":
-                t.status = T.PAUSED
+                t.status = T.SCHEDULED
+                t.is_scheduled = True
                 self.queue.add_task(t, start=False)
             else:
                 self.queue.add_task(t)
@@ -801,10 +814,13 @@ class DownloadApp(QWidget):
     def on_settings(self):
         dlg = SettingsDialog(self, self.save_dir, self.max_concurrent, self.segments,
                              verify_tls=self.verify_tls, pair_token=self.pair_token,
-                             theme=self.theme)
+                             theme=self.theme,
+                             sched_en=self.scheduler_enabled,
+                             sched_start=self.scheduler_start,
+                             sched_stop=self.scheduler_stop)
         if dlg.exec() != QDialog.Accepted:
             return
-        d, conc, segs, verify, theme = dlg.values()
+        d, conc, segs, verify, theme, s_en, s_start, s_stop = dlg.values()
         if os.path.isdir(d):
             self.save_dir = d
         self.max_concurrent = conc
@@ -817,8 +833,49 @@ class DownloadApp(QWidget):
         utils.VERIFY_TLS = verify
         if theme != self.theme:
             self._apply_theme(theme)
+        self.scheduler_enabled = s_en
+        self.scheduler_start = s_start
+        self.scheduler_stop = s_stop
         self._save_settings()
+        self._check_scheduler()
 
+    def _check_scheduler(self):
+        if not getattr(self, "scheduler_enabled", False):
+            self._scheduler_active = False
+            return
+            
+        import datetime
+        now = datetime.datetime.now().time()
+        curr_mins = now.hour * 60 + now.minute
+        
+        try:
+            sh, sm = map(int, self.scheduler_start.split(":"))
+            eh, em = map(int, self.scheduler_stop.split(":"))
+        except Exception:
+            return
+            
+        start_mins = sh * 60 + sm
+        stop_mins = eh * 60 + em
+        
+        is_active = False
+        if start_mins < stop_mins:
+            is_active = start_mins <= curr_mins < stop_mins
+        else:
+            is_active = curr_mins >= start_mins or curr_mins < stop_mins
+            
+        if is_active and not self._scheduler_active:
+            self._scheduler_active = True
+            for t in self.queue.tasks:
+                if getattr(t, "is_scheduled", False) and t.status in (T.SCHEDULED, T.PAUSED):
+                    self.queue.resume_task(t)
+        elif not is_active and self._scheduler_active:
+            self._scheduler_active = False
+            for t in self.queue.tasks:
+                if t.status in (T.QUEUED, T.DOWNLOADING):
+                    self.queue.pause_task(t)
+                    t.status = T.SCHEDULED
+                    t.is_scheduled = True
+                    
     def _on_double_clicked(self, index):
         t = self._task_at(index)
         if t is not None:
@@ -844,6 +901,10 @@ class DownloadApp(QWidget):
         menu = QMenu(self.table)
         menu.setStyleSheet(f"QMenu {{ background: {SURFACE}; color: {TEXT}; border: 1px solid {BORDER}; }}"
                            f"QMenu::item:selected {{ background: {HOVER}; }}")
+        
+        if t.status in (T.QUEUED, T.PAUSED, T.SCHEDULED, T.ERROR):
+            menu.addAction("🚀  Force Download", lambda: self._force_download(t))
+            menu.addSeparator()
         
         limit_menu = menu.addMenu("Set Speed Limit...")
         
@@ -882,6 +943,11 @@ class DownloadApp(QWidget):
             act.triggered.connect(lambda checked=False, name=q.name, task=t: self._move_task_to_queue(task, name))
 
         menu.exec(self.table.viewport().mapToGlobal(pos))
+
+    def _force_download(self, task):
+        self.queue.force_start(task)
+        self._save_tick = 10
+        self.refresh()
         
     def _move_task_to_queue(self, task, qname):
         # route through the queue manager so the scheduler is woken (a bare

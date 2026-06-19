@@ -99,3 +99,16 @@ _(none currently — the arch-batch review found 10 real bugs incl. 1 blocker, a
 4. **Bugs found in review:** if confirmed real, file under **Bugs** with the file:line and the fix path. If declined, file under **Watch** with the reason.
 
 Three adversarial reviews so far have each found ~10 real bugs in newly-committed code (incl. a download-hangs-forever blocker in the multi-queue/Auto-segments batch). Treat every architectural change as an invitation for adversarial review before declaring done — "tests pass" is necessary, not sufficient.
+
+Bugs: 
+when the app size is changing the layouts are getting mixed up 
+
+2nd SS - i only see Error but no error description - when double clicking it should show what error
+
+when i am selecting the file see the delete button is disable
+
+after the torrent download completed, in the pop-up the open file and open folder options were disabled (when an user clicks on open file/folder the pop-up should close for all scenario)
+
+there should be an option to identify torrent files
+
+you say its multi queue but i dont see an option to add another queue except main

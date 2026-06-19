@@ -93,8 +93,11 @@ def test_speed_cell_populates(win):
 def test_settings_dialog_roundtrip(qapp):
     from gui.dialogs import SettingsDialog
     dlg = SettingsDialog(None, "C:/dl", 3, 8, verify_tls=False, pair_token="TKN")
-    d, conc, segs, verify, theme = dlg.values()
-    assert conc == 3 and segs == 8 and verify is False
+    d, conc, segs, verify, theme, s_en, s_st, s_sp = dlg.values()
+    assert d == "C:/dl"
+    assert conc == 3
+    assert segs == 8
+    assert verify is False
     assert theme == "dark"
     assert dlg.token_edit.text() == "TKN"
 
