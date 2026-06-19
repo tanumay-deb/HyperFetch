@@ -18,6 +18,7 @@ Conventions:
 
 | SHA | Summary |
 |---|---|
+| `59a5a3b` | Tier 2: HLS variant picker via app-side `/probe` — extension POSTs the master URL to the app (real Referer/cookies/UA, no CORS), `hls.probe_variants` returns the quality list; SW fetch kept as fallback. Fixes pickers missing on referer-gated CDNs. |
 | `41253f5` | Fix theme not switching back to dark (`self.theme` read a stale `import *` `THEME` copy) + cap absurd ETA ("18808h" → "—" beyond 99h). |
 | `v1.2.0` | **Release v1.2.0** — bumped APP_VERSION + installer, wired `updater.REPO` to `tanumay-deb/HyperFetch` (Check-for-Updates now live), GitHub release with the onedir .zip. |
 | `9eeaac2`+ | Hygiene: property/fuzz tests for the formatters + 30-task/3-queue concurrency stress test (no deadlock, no slot leak). 143 tests. |
@@ -40,7 +41,6 @@ _(empty — pick from below or file as discovered)_
 
 ## Tier 2 — medium contained
 
-- [ ] **HLS variant picker via app-side `/probe`.** The extension builds the 480p/720p picker by re-fetching the `.m3u8` from the service worker, but a SW `fetch` can't replay the page's `Referer`, so referer/auth-gated CDNs reject it → those streams show a single plain "Video stream" row (+ a duplicate from the sniffed variant chunklist). Download still works (app auto-picks highest), but no manual quality choice. Fix: add a Flask `/probe` endpoint — extension POSTs the master URL (app already has cookies+referer+UA from the original capture), app parses variants and returns them, extension renders the picker. Robust because it reuses the app's working auth path. Files: `api_server.py` (+`/probe`), `chrome_ext/background.js` (+`edge_ext`), `hls.py` (expose variant list).
 - [ ] **SHA-256 integrity verification.** After download, look for `<url>.sha256` / `<url>.sha256sum` next to the file, fetch, verify. Surface PASS/FAIL on the row. Settings toggle.
 - [ ] **Schedule "start at HH:MM" / "only on Wi-Fi" / "monthly cap".** Extends `Download Later`. Needs a scheduler tick in the queue manager + a tiny UI in the file-info dialog.
 
