@@ -18,6 +18,7 @@ Conventions:
 
 | SHA | Summary |
 |---|---|
+| `0f94ba0` | Tier 4: **BitTorrent / magnet** via aria2c sidecar — `torrent.py` `TorrentDownloader` drives a per-task aria2c subprocess (pause=terminate+resume via .aria2, progress parsed from readout); `downloader.run()` delegates magnet/.torrent; `magnet:` scheme allowed; spec bundles `bin/aria2c.exe`. **Needs `bin/aria2c.exe` shipped + a real-swarm smoke test.** |
 | `59a5a3b` | Tier 2: HLS variant picker via app-side `/probe` — extension POSTs the master URL to the app (real Referer/cookies/UA, no CORS), `hls.probe_variants` returns the quality list; SW fetch kept as fallback. Fixes pickers missing on referer-gated CDNs. |
 | `41253f5` | Fix theme not switching back to dark (`self.theme` read a stale `import *` `THEME` copy) + cap absurd ETA ("18808h" → "—" beyond 99h). |
 | `v1.2.0` | **Release v1.2.0** — bumped APP_VERSION + installer, wired `updater.REPO` to `tanumay-deb/HyperFetch` (Check-for-Updates now live), GitHub release with the onedir .zip. |
@@ -57,7 +58,10 @@ _(empty — pick from below or file as discovered)_
 - [ ] **Auto-update — real version.** Light version (manual button) shipped in `6d57bcf`. Real version needs: code signing cert · signed Windows installer (Inno Setup already wired) · WinSparkle or a stub that swaps the running .exe · differential patches · rollback. Product decisions before code.
 - [ ] **Crash reporter — networked.** Light version (local JSON dumps) shipped in `6d57bcf`. Networked version needs: submission endpoint (Sentry SaaS / Glitchtip self-hosted / custom) · opt-in consent UI · dedup · rate limit. Product decision on destination.
 - [ ] **mmap-based finalize.** Map the `.hfdownload` so the GUI can stream-preview a partially-downloaded video while it grows. Cross-platform mmap gotchas (Windows file locks).
-- [ ] **BitTorrent / magnet link support.** Bolt-on second engine (libtorrent or aria2 subprocess). Adds a runtime dependency + a separate task model.
+
+### Follow-ups for shipped-but-incomplete work
+- [ ] **Ship `bin/aria2c.exe` + real-swarm smoke test** (BitTorrent landed in `0f94ba0`, untested end-to-end). Add a `build.ps1` step to fetch the official aria2 win64 binary into `bin/`. Then verify a real magnet downloads, pauses, resumes, cancels.
+- [ ] **Torrent UX polish** — multi-file torrents land in the chosen folder but the row shows one name/size; consider per-file listing or a folder-open action. Seeding is off (`--seed-time=0`); expose if wanted.
 
 ---
 
