@@ -462,6 +462,7 @@ class DownloadApp(QWidget):
         g_lay.addWidget(self.speed_graph)
         
         self.g_text_container = QWidget()
+        self.g_text_container.setStyleSheet("background: transparent;")  # show the card, not BG
         g_text = QVBoxLayout(self.g_text_container)
         g_text.setContentsMargins(0, 0, 0, 0)
         g_text.setSpacing(2)

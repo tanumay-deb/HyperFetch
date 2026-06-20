@@ -137,12 +137,27 @@ CATEGORIES = {
     "Documents": {".pdf", ".docx", ".xlsx", ".pptx", ".epub", ".txt"}
 }
 
+_VIDEO_KEYWORDS = ("1080p", "720p", "2160p", "480p", "4k", "x264", "x265",
+                   "h264", "h265", "hevc", "web-dl", "webrip", "bluray", "blu-ray",
+                   "bdrip", "brrip", "hdrip", "dvdrip", "xvid", "hdtv")
+_AUDIO_KEYWORDS = ("flac", "320kbps", "mp3", "discography")
+
+
 def category_for(filename):
-    """Category name for a file by extension (matches CATEGORIES keys), or 'Other'."""
-    ext = os.path.splitext(filename or "")[1].lower()
+    """Category for a file. Extension match first (matches CATEGORIES keys);
+    for extension-less names (torrent/release titles like
+    'Show.S01E01.1080p.WEB.x264') fall back to release-keyword detection so a
+    task lands in ONE stable category instead of drifting between 'Other' and a
+    real category as its name changes during a torrent's lifecycle."""
+    name = (filename or "").lower()
+    ext = os.path.splitext(name)[1]
     for cat, exts in CATEGORIES.items():
         if ext in exts:
             return cat
+    if any(k in name for k in _VIDEO_KEYWORDS):
+        return "Video"
+    if any(k in name for k in _AUDIO_KEYWORDS):
+        return "Music"
     return "Other"
 
 
