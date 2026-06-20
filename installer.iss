@@ -2,7 +2,7 @@
 ; Build with: iscc installer.iss   (after build.ps1 has produced dist\HyperFetch)
 
 #define AppName "HyperFetch"
-#define AppVersion "1.2.0"
+#define AppVersion "1.2.1"
 #define AppPublisher "HyperFetch"
 #define AppExe "HyperFetch.exe"
 
