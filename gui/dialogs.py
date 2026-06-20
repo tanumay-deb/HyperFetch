@@ -16,10 +16,10 @@ from PySide6.QtWidgets import (
     QTableWidget, QTableWidgetItem, QHeaderView, QProgressBar, QDialog,
     QLineEdit, QSpinBox, QFileDialog, QMessageBox, QAbstractItemView,
     QFrame, QButtonGroup, QGridLayout, QSplitter, QSizePolicy, QComboBox, QMenu, QInputDialog,
-    QCheckBox, QListWidget, QListWidgetItem, QTableView, QStyledItemDelegate, QStyle, QTimeEdit, QScrollArea
+    QCheckBox, QListWidget, QListWidgetItem, QTableView, QStyledItemDelegate, QStyle, QTimeEdit, QScrollArea, QStackedWidget, QSlider
 )
 from PySide6.QtCore import (
-    Qt, QTimer, QModelIndex, QAbstractTableModel, QSortFilterProxyModel, QRect, QSize
+    Qt, QTimer, QModelIndex, QAbstractTableModel, QSortFilterProxyModel, QRect, QSize, QPropertyAnimation, QEasingCurve, QPoint, Property
 )
 from PySide6.QtGui import QColor, QFont, QIcon, QPainter, QPainterPath, QBrush, QPen, QLinearGradient
 
@@ -376,25 +376,33 @@ class DownloadCompleteDialog(QDialog):
         brow.addWidget(btn_close)
         lay.addLayout(brow)
 
-        exists = os.path.exists(task.save_path)
-        self.btn_open.setEnabled(exists)
-        self.btn_folder.setEnabled(exists)
+        folder = os.path.dirname(os.path.normpath(task.save_path)) or "."
+        # Open File needs the exact file (torrents save a folder of files, so the
+        # placeholder save_path won't exist -> stays disabled), but Open Folder
+        # just needs the destination directory, which always exists post-download.
+        self.btn_open.setEnabled(os.path.exists(task.save_path))
+        self.btn_folder.setEnabled(os.path.isdir(folder))
 
     def _open_file(self):
         try:
             os.startfile(self.task.save_path)
         except OSError:
             pass
+        self.close()              # close the popup on any action
 
     def _open_folder(self):
         path = os.path.normpath(self.task.save_path)
         try:
-            subprocess.Popen(["explorer", "/select,", path])
+            if os.path.exists(path):
+                subprocess.Popen(["explorer", "/select,", path])
+            else:
+                os.startfile(os.path.dirname(path) or ".")
         except OSError:
             try:
-                os.startfile(os.path.dirname(path))
+                os.startfile(os.path.dirname(path) or ".")
             except OSError:
                 pass
+        self.close()
 
     def _copy_link(self):
         QApplication.clipboard().setText(self.task.url or "")
@@ -439,20 +447,23 @@ class PropertiesDialog(QDialog):
             ("Save path", t.save_path),
             ("Size", f"{human_size(t.downloaded)} of {human_size(t.total_size)}"
                      f"  ({t.percent}%)"),
-            ("Segments", str(len(t.segments) or "—")),
-            ("Range support", "Yes" if t.supports_range else
-             ("No" if t.segments else "Unknown")),
-            ("Speed limit", f"{t.speed_limit * 8 // 1000} Kb/s" if t.speed_limit > 0 else "Unlimited"),
         ]
         if t.error:
             rows.append(("Error", t.error))
         for i, (k, v) in enumerate(rows):
             grid.addWidget(_muted_label(k), i, 0, Qt.AlignTop)
-            val = QLabel(v)
-            val.setWordWrap(True)
-            val.setTextInteractionFlags(Qt.TextSelectableByMouse)
-            val.setStyleSheet("background: transparent;")
-            grid.addWidget(val, i, 1)
+            if k == "URL":
+                val = QLineEdit(v)
+                val.setReadOnly(True)
+                val.setCursorPosition(0)
+                val.setStyleSheet("background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1); border-radius: 4px; padding: 4px; color: " + TEXT)
+                grid.addWidget(val, i, 1)
+            else:
+                val = QLabel(v)
+                val.setWordWrap(True)
+                val.setTextInteractionFlags(Qt.TextSelectableByMouse)
+                val.setStyleSheet("background: transparent;")
+                grid.addWidget(val, i, 1)
         grid.setColumnStretch(1, 1)
         lay.addLayout(grid)
 
@@ -491,225 +502,477 @@ class PropertiesDialog(QDialog):
                 pass
 
 
+
+class AnimatedToggle(QCheckBox):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setFixedSize(40, 22)
+        self.setCursor(Qt.PointingHandCursor)
+        self._thumb_pos = 2
+        
+        self.anim = QPropertyAnimation(self, b"thumb_pos", self)
+        self.anim.setEasingCurve(QEasingCurve.InOutCirc)
+        self.anim.setDuration(200)
+        
+        self.stateChanged.connect(self._on_state_change)
+
+    def get_thumb_pos(self):
+        return self._thumb_pos
+
+    def set_thumb_pos(self, pos):
+        self._thumb_pos = pos
+        self.update()
+
+    thumb_pos = Property(float, get_thumb_pos, set_thumb_pos)
+
+    def _on_state_change(self, state):
+        self.anim.stop()
+        if state:
+            self.anim.setEndValue(self.width() - 20)
+        else:
+            self.anim.setEndValue(2)
+        self.anim.start()
+
+    def hitButton(self, pos):
+        return self.contentsRect().contains(pos)
+
+    def paintEvent(self, e):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        
+        # Track
+        track_rect = QRect(0, 0, self.width(), self.height())
+        if self.isChecked():
+            p.setBrush(QColor(ACCENT))
+            p.setPen(Qt.NoPen)
+        else:
+            p.setBrush(QColor(SURFACE))
+            p.setPen(QColor(BORDER))
+            
+        p.drawRoundedRect(track_rect, 11, 11)
+        
+        # Thumb
+        p.setBrush(QColor("white"))
+        p.setPen(Qt.NoPen)
+        p.drawEllipse(self._thumb_pos, 2, 18, 18)
+        p.end()
+
+def _card_widget():
+    w = QWidget()
+    w.setStyleSheet(f"QWidget {{ background: {SURFACE_2}; border-radius: 8px; }}")
+    return w
+
+class SettingsSlider(QWidget):
+    def __init__(self, min_val, max_val, current_val):
+        super().__init__()
+        lay = QHBoxLayout(self)
+        lay.setContentsMargins(0,0,0,0)
+        
+        self.val_lbl = QLabel(str(current_val))
+        self.val_lbl.setFixedWidth(30)
+        self.val_lbl.setStyleSheet(f"color: {TEXT}; font-weight: 600;")
+        
+        self.slider = QSlider(Qt.Horizontal)
+        self.slider.setRange(min_val, max_val)
+        self.slider.setValue(current_val)
+        self.slider.setStyleSheet(f"""
+            QSlider::groove:horizontal {{
+                border-radius: 2px;
+                height: 4px;
+                background: {SURFACE};
+            }}
+            QSlider::handle:horizontal {{
+                background: {ACCENT};
+                width: 12px;
+                height: 12px;
+                margin: -4px 0;
+                border-radius: 6px;
+            }}
+            QSlider::sub-page:horizontal {{
+                background: {ACCENT};
+                border-radius: 2px;
+            }}
+        """)
+        
+        self.max_lbl = QLabel(str(max_val))
+        self.max_lbl.setStyleSheet(f"color: {MUTED};")
+        
+        self.slider.valueChanged.connect(lambda v: self.val_lbl.setText(str(v)))
+        
+        lay.addWidget(self.val_lbl)
+        lay.addWidget(self.slider)
+        lay.addWidget(self.max_lbl)
+
 class SettingsDialog(QDialog):
     def __init__(self, parent, save_dir, max_concurrent, segments,
                  verify_tls=True, pair_token="", theme="dark",
                  sched_en=False, sched_start="02:00", sched_stop="08:00"):
         super().__init__(parent)
         self.setWindowTitle("Settings")
-        self.setMinimumWidth(480)
-        self.setMinimumHeight(550)
+        self.setMinimumWidth(800)
+        self.setMinimumHeight(600)
+
+        # Style the dialog background
+        self.setStyleSheet(f"QDialog {{ background: {BG}; }}")
 
         self.main_lay = QVBoxLayout(self)
         self.main_lay.setContentsMargins(0, 0, 0, 0)
+        self.main_lay.setSpacing(0)
         
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QFrame.NoFrame)
+        # Top title bar (mockup shows "HyperFetch" and "Search settings...")
+        # For simplicity, we just use a header
+        
+        content_lay = QHBoxLayout()
+        content_lay.setContentsMargins(0, 0, 0, 0)
+        content_lay.setSpacing(0)
+        
+        # --- Sidebar ---
+        self.sidebar = QWidget()
+        self.sidebar.setFixedWidth(220)
+        self.sidebar.setStyleSheet(f"QWidget {{ background: {SURFACE}; border-right: 1px solid {BORDER}; }}")
+        sb_lay = QVBoxLayout(self.sidebar)
+        sb_lay.setContentsMargins(10, 20, 10, 20)
+        sb_lay.setSpacing(8)
+        
+        title = QLabel("Settings")
+        title.setStyleSheet(f"font-size: 18px; font-weight: 800; color: {TEXT}; padding-left: 10px; padding-bottom: 10px;")
+        sb_lay.addWidget(title)
+        
+        self.nav = QListWidget()
+        self.nav.setFrameShape(QFrame.NoFrame)
+        self.nav.setStyleSheet(f"""
+            QListWidget {{ background: transparent; outline: none; }}
+            QListWidget::item {{ color: {MUTED}; padding: 10px 14px; border-radius: 8px; font-weight: 600; margin-bottom: 4px; }}
+            QListWidget::item:selected {{ background: {ACCENT}; color: white; }}
+            QListWidget::item:hover:!selected {{ background: {HOVER}; color: {TEXT}; }}
+        """)
+        
+        self.nav.addItem("⚙  Settings")
+        self.nav.addItem("ℹ  About")
+        self.nav.setCurrentRow(0)
+        
+        sb_lay.addWidget(self.nav)
+        sb_lay.addStretch()
+        
+        content_lay.addWidget(self.sidebar)
+        
+        # --- Stacked Content ---
+        self.stack = QStackedWidget()
+        self.stack.setStyleSheet(f"QStackedWidget {{ background: {BG}; }}")
+        
+        # PAGE 1: Settings
+        self.page_settings = QScrollArea()
+        self.page_settings.setWidgetResizable(True)
+        self.page_settings.setFrameShape(QFrame.NoFrame)
+        self.page_settings.setStyleSheet(f"QScrollArea {{ background: {BG}; }} QWidget#inner {{ background: {BG}; }}")
         
         inner_w = QWidget()
-        lay = QVBoxLayout(inner_w)
-        lay.setSpacing(10)
-        lay.setContentsMargins(22, 20, 22, 0)
-        scroll.setWidget(inner_w)
+        inner_w.setObjectName("inner")
+        s_lay = QVBoxLayout(inner_w)
+        s_lay.setContentsMargins(30, 30, 40, 30)
+        s_lay.setSpacing(24)
         
-        self.main_lay.addWidget(scroll)
-
-        title = QLabel("⚙  Settings")
-        title.setStyleSheet("font-size: 17px; font-weight: 700;")
-        lay.addWidget(title)
-
-        lay.addWidget(_muted_label("Default download folder"))
+        # General
+        s_lay.addWidget(self._sec_title("General"))
+        gen_card = _card_widget()
+        g_lay = QVBoxLayout(gen_card)
+        g_lay.setSpacing(16)
+        
+        # Default download folder
         drow = QHBoxLayout()
-        self.dir_edit = QLineEdit(save_dir)
-        browse = QPushButton("Browse…")
+        d_icon = QLabel("📁")
+        d_icon.setStyleSheet(f"font-size: 20px; background: transparent;")
+        drow.addWidget(d_icon)
+        
+        d_text = QVBoxLayout()
+        d_text.setSpacing(2)
+        d_lbl = QLabel("Default Download Folder")
+        d_lbl.setStyleSheet(f"color: {TEXT}; font-weight: 700; background: transparent;")
+        self.dir_edit = QLabel(save_dir)
+        self.dir_edit.setStyleSheet(f"color: {MUTED}; font-size: 11px; background: transparent;")
+        d_text.addWidget(d_lbl)
+        d_text.addWidget(self.dir_edit)
+        drow.addLayout(d_text)
+        drow.addStretch()
+        
+        browse = QPushButton("Browse...")
+        browse.setStyleSheet(f"background: transparent; color: {TEXT}; border: 1px solid {BORDER}; border-radius: 6px; padding: 6px 12px;")
         browse.clicked.connect(self._browse)
-        drow.addWidget(self.dir_edit, 1)
         drow.addWidget(browse)
-        lay.addLayout(drow)
-
-        grid = QGridLayout()
-        grid.setHorizontalSpacing(18)
-        grid.addWidget(_muted_label("Concurrent downloads"), 0, 0)
-        self.concurrent = QSpinBox()
-        self.concurrent.setRange(1, 10)
-        self.concurrent.setValue(max_concurrent)
-        grid.addWidget(self.concurrent, 0, 1)
-        grid.addWidget(_muted_label("Connections per download"), 1, 0)
-        self.segments = QSpinBox()
-        self.segments.setRange(0, 32)
-        self.segments.setSpecialValueText("Auto")
-        self.segments.setValue(segments)
-        grid.addWidget(self.segments, 1, 1)
-        grid.setColumnStretch(2, 1)
-        lay.addLayout(grid)
-
-        note = _muted_label("More connections download large files faster — 8 is a "
-                            "good default. New values apply to downloads started afterwards.")
-        note.setWordWrap(True)
-        lay.addWidget(note)
-
-        # ---- appearance section ----
-        sep_a = QFrame()
-        sep_a.setFrameShape(QFrame.HLine)
-        sep_a.setStyleSheet(f"color: {BORDER};")
-        lay.addWidget(sep_a)
-        lay.addWidget(QLabel("🎨  Appearance"))
-        arow = QHBoxLayout()
-        arow.addWidget(_muted_label("Theme"))
+        g_lay.addLayout(drow)
+        
+        # Sliders
+        sliders_row = QHBoxLayout()
+        sliders_row.setSpacing(20)
+        
+        # Concurrent Downloads
+        c_card = _card_widget()
+        c_card.setStyleSheet(f"QWidget {{ background: {SURFACE}; border-radius: 8px; }}")
+        c_lay = QVBoxLayout(c_card)
+        c_title = QLabel("Concurrent Downloads")
+        c_title.setStyleSheet(f"color: {TEXT}; font-weight: 600; background: transparent;")
+        c_desc = QLabel("Maximum number of downloads at the same time.")
+        c_desc.setStyleSheet(f"color: {MUTED}; font-size: 11px; background: transparent;")
+        self.concurrent_slider = SettingsSlider(1, 16, max_concurrent)
+        c_lay.addWidget(c_title)
+        c_lay.addWidget(c_desc)
+        c_lay.addWidget(self.concurrent_slider)
+        sliders_row.addWidget(c_card)
+        
+        # Connections
+        s_card = _card_widget()
+        s_card.setStyleSheet(f"QWidget {{ background: {SURFACE}; border-radius: 8px; }}")
+        sl_lay = QVBoxLayout(s_card)
+        s_title = QLabel("Connections per Download")
+        s_title.setStyleSheet(f"color: {TEXT}; font-weight: 600; background: transparent;")
+        s_desc = QLabel("Maximum connections for each download.")
+        s_desc.setStyleSheet(f"color: {MUTED}; font-size: 11px; background: transparent;")
+        self.segments_slider = SettingsSlider(1, 16, segments if segments > 0 else 8)
+        sl_lay.addWidget(s_title)
+        sl_lay.addWidget(s_desc)
+        sl_lay.addWidget(self.segments_slider)
+        sliders_row.addWidget(s_card)
+        
+        g_lay.addLayout(sliders_row)
+        s_lay.addWidget(gen_card)
+        
+        # Appearance
+        s_lay.addWidget(self._sec_title("Appearance"))
+        app_card = _card_widget()
+        a_lay = QHBoxLayout(app_card)
+        a_lay.addWidget(QLabel("🌙"))
+        a_text = QVBoxLayout()
+        a_lbl = QLabel("Theme")
+        a_lbl.setStyleSheet(f"color: {TEXT}; font-weight: 700; background: transparent;")
+        a_desc = QLabel("Choose your preferred theme.")
+        a_desc.setStyleSheet(f"color: {MUTED}; font-size: 11px; background: transparent;")
+        a_text.addWidget(a_lbl)
+        a_text.addWidget(a_desc)
+        a_lay.addLayout(a_text)
+        a_lay.addStretch()
         self.theme_combo = QComboBox()
         self.theme_combo.addItems(["Dark", "Light"])
         self.theme_combo.setCurrentText("Light" if theme == "light" else "Dark")
-        arow.addWidget(self.theme_combo)
-        arow.addStretch()
-        lay.addLayout(arow)
-
-        # ---- security section ----
-        sep = QFrame()
-        sep.setFrameShape(QFrame.HLine)
-        sep.setStyleSheet(f"color: {BORDER};")
-        lay.addWidget(sep)
-        lay.addWidget(QLabel("🔒  Security"))
-
-        self.verify_chk = QCheckBox("Verify HTTPS certificates (recommended)")
+        a_lay.addWidget(self.theme_combo)
+        s_lay.addWidget(app_card)
+        
+        # Security
+        s_lay.addWidget(self._sec_title("Security"))
+        sec_card = _card_widget()
+        se_lay = QHBoxLayout(sec_card)
+        se_lay.addWidget(QLabel("🛡️"))
+        se_text = QVBoxLayout()
+        se_lbl = QLabel("Verify HTTPS Certificates (Recommended)")
+        se_lbl.setStyleSheet(f"color: {TEXT}; font-weight: 700; background: transparent;")
+        se_desc = QLabel("Ensures secure connections by verifying website certificates.")
+        se_desc.setStyleSheet(f"color: {MUTED}; font-size: 11px; background: transparent;")
+        se_text.addWidget(se_lbl)
+        se_text.addWidget(se_desc)
+        se_lay.addLayout(se_text)
+        se_lay.addStretch()
+        self.verify_chk = AnimatedToggle()
         self.verify_chk.setChecked(verify_tls)
-        lay.addWidget(self.verify_chk)
-        warn = _muted_label("Only turn off for trusted hosts with self-signed "
-                            "certificates. Off = vulnerable to interception.")
-        warn.setWordWrap(True)
-        lay.addWidget(warn)
-
-        lay.addWidget(_muted_label("Browser extension pairing token"))
-        trow = QHBoxLayout()
+        # Ensure initial state matches visually
+        self.verify_chk._thumb_pos = self.verify_chk.width() - 20 if verify_tls else 2
+        se_lay.addWidget(self.verify_chk)
+        s_lay.addWidget(sec_card)
+        
+        # Browser Integration
+        s_lay.addWidget(self._sec_title("Browser Integration"))
+        br_card = _card_widget()
+        b_lay = QHBoxLayout(br_card)
+        b_lay.addWidget(QLabel("🧩"))
+        b_text = QVBoxLayout()
+        b_lbl = QLabel("Browser Extension Pairing Token")
+        b_lbl.setStyleSheet(f"color: {TEXT}; font-weight: 700; background: transparent;")
+        b_desc = QLabel("Use this token to pair your browser extension with HyperFetch.")
+        b_desc.setStyleSheet(f"color: {MUTED}; font-size: 11px; background: transparent;")
+        b_text.addWidget(b_lbl)
+        b_text.addWidget(b_desc)
+        b_lay.addLayout(b_text)
+        b_lay.addStretch()
+        
         self.token_edit = QLineEdit(pair_token)
         self.token_edit.setReadOnly(True)
+        self.token_edit.setFixedWidth(200)
+        self.token_edit.setStyleSheet(f"background: {SURFACE}; border: 1px solid {BORDER}; border-radius: 4px; color: {MUTED};")
         copy_btn = QPushButton("Copy")
-        copy_btn.clicked.connect(
-            lambda: QApplication.clipboard().setText(self.token_edit.text()))
-        trow.addWidget(self.token_edit, 1)
-        trow.addWidget(copy_btn)
-        lay.addLayout(trow)
-        tnote = _muted_label("Paste this into the extension popup once to let it "
-                             "send downloads to this app.")
-        tnote.setWordWrap(True)
-        lay.addWidget(tnote)
-
-        # ---- Scheduler section ----
-        sep_s = QFrame()
-        sep_s.setFrameShape(QFrame.HLine)
-        sep_s.setStyleSheet(f"color: {BORDER};")
-        lay.addWidget(sep_s)
-        lay.addWidget(QLabel("⏰  Scheduler"))
+        copy_btn.setStyleSheet(f"background: transparent; color: {TEXT}; border: 1px solid {BORDER}; border-radius: 6px; padding: 6px 12px;")
+        copy_btn.clicked.connect(lambda: QApplication.clipboard().setText(self.token_edit.text()))
+        b_lay.addWidget(self.token_edit)
+        b_lay.addWidget(copy_btn)
+        s_lay.addWidget(br_card)
         
-        self.sched_chk = QCheckBox("Enable Time-based Scheduler")
-        self.sched_chk.setChecked(sched_en)
-        lay.addWidget(self.sched_chk)
+        # Scheduler
+        sch_card = _card_widget()
+        sc_lay = QHBoxLayout(sch_card)
+        sc_lay.addWidget(QLabel("⏰"))
+        sc_text = QVBoxLayout()
+        sc_lbl = QLabel("Scheduler")
+        sc_lbl.setStyleSheet(f"color: {TEXT}; font-weight: 700; background: transparent;")
+        sc_desc = QLabel("Enable time-based scheduling")
+        sc_desc.setStyleSheet(f"color: {MUTED}; font-size: 11px; background: transparent;")
+        sc_text.addWidget(sc_lbl)
+        sc_text.addWidget(sc_desc)
         
+        # Times
         t_row = QHBoxLayout()
-        t_row.addWidget(_muted_label("Start at:"))
+        t_row.addWidget(QLabel("Start at", styleSheet=f"color: {MUTED}; font-size: 11px; background: transparent;"))
         self.time_start = QTimeEdit()
         self.time_start.setDisplayFormat("HH:mm")
-        try:
-            h, m = map(int, sched_start.split(":"))
-        except:
-            h, m = 2, 0
+        try: h, m = map(int, sched_start.split(":"))
+        except: h, m = 2, 0
         from PySide6.QtCore import QTime
         self.time_start.setTime(QTime(h, m))
         t_row.addWidget(self.time_start)
         
-        t_row.addWidget(_muted_label(" Stop at:"))
+        t_row.addWidget(QLabel("Stop at", styleSheet=f"color: {MUTED}; font-size: 11px; background: transparent;"))
         self.time_stop = QTimeEdit()
         self.time_stop.setDisplayFormat("HH:mm")
-        try:
-            h, m = map(int, sched_stop.split(":"))
-        except:
-            h, m = 8, 0
+        try: h, m = map(int, sched_stop.split(":"))
+        except: h, m = 8, 0
         self.time_stop.setTime(QTime(h, m))
         t_row.addWidget(self.time_stop)
         t_row.addStretch()
-        lay.addLayout(t_row)
-
-        # ---- Updates + Diagnostics ----
-        sep_u = QFrame()
-        sep_u.setFrameShape(QFrame.HLine)
-        sep_u.setStyleSheet(f"color: {BORDER};")
-        lay.addWidget(sep_u)
-
-        urow = QHBoxLayout()
-        urow.addWidget(_muted_label(f"Version {APP_VERSION}"))
-        urow.addStretch()
+        
+        sc_text.addLayout(t_row)
+        sc_lay.addLayout(sc_text)
+        sc_lay.addStretch()
+        self.sched_chk = AnimatedToggle()
+        self.sched_chk.setChecked(sched_en)
+        self.sched_chk._thumb_pos = self.sched_chk.width() - 20 if sched_en else 2
+        sc_lay.addWidget(self.sched_chk)
+        s_lay.addWidget(sch_card)
+        
+        s_lay.addStretch()
+        self.page_settings.setWidget(inner_w)
+        self.stack.addWidget(self.page_settings)
+        
+        # PAGE 2: About
+        self.page_about = QScrollArea()
+        self.page_about.setWidgetResizable(True)
+        self.page_about.setFrameShape(QFrame.NoFrame)
+        self.page_about.setStyleSheet(f"QScrollArea {{ background: {BG}; }} QWidget#about_inner {{ background: {BG}; }}")
+        
+        ab_inner = QWidget()
+        ab_inner.setObjectName("about_inner")
+        ab_lay = QVBoxLayout(ab_inner)
+        ab_lay.setContentsMargins(30, 30, 40, 30)
+        ab_lay.setSpacing(24)
+        
+        ab_lay.addWidget(self._sec_title("About"))
+        about_card = _card_widget()
+        abc_lay = QHBoxLayout(about_card)
+        abc_lay.addWidget(QLabel("ℹ️"))
+        abc_text = QVBoxLayout()
+        abc_lbl = QLabel(f"HyperFetch v{APP_VERSION}")
+        abc_lbl.setStyleSheet(f"color: {TEXT}; font-weight: 700; background: transparent;")
+        abc_desc = QLabel("Check for updates or access diagnostics.")
+        abc_desc.setStyleSheet(f"color: {MUTED}; font-size: 11px; background: transparent;")
+        abc_text.addWidget(abc_lbl)
+        abc_text.addWidget(abc_desc)
+        
         self._update_status = QLabel("")
-        self._update_status.setStyleSheet(f"color: {MUTED}; font-size: 12px;")
-        urow.addWidget(self._update_status)
+        self._update_status.setStyleSheet(f"color: {MUTED}; font-size: 11px; background: transparent;")
+        abc_text.addWidget(self._update_status)
+        
+        abc_lay.addLayout(abc_text)
+        abc_lay.addStretch()
+        
+        btn_col = QVBoxLayout()
         chk_btn = QPushButton("Check for Updates")
+        chk_btn.setStyleSheet(f"background: transparent; color: {TEXT}; border: 1px solid {BORDER}; border-radius: 6px; padding: 6px 12px;")
         chk_btn.clicked.connect(self._on_check_updates)
-        urow.addWidget(chk_btn)
-        lay.addLayout(urow)
-
-        drow = QHBoxLayout()
-        drow.addWidget(_muted_label("Diagnostics"))
-        drow.addStretch()
+        btn_col.addWidget(chk_btn)
+        
         open_crash_btn = QPushButton("Open Crash Folder")
+        open_crash_btn.setStyleSheet(f"background: transparent; color: {TEXT}; border: 1px solid {BORDER}; border-radius: 6px; padding: 6px 12px;")
         open_crash_btn.clicked.connect(self._on_open_crashes)
-        drow.addWidget(open_crash_btn)
-        lay.addLayout(drow)
-
-        brow = QHBoxLayout()
-        brow.setContentsMargins(22, 10, 22, 18)
-        ok = QPushButton("Save")
-        ok.setObjectName("primary")
+        btn_col.addWidget(open_crash_btn)
+        
+        abc_lay.addLayout(btn_col)
+        ab_lay.addWidget(about_card)
+        ab_lay.addStretch()
+        
+        self.page_about.setWidget(ab_inner)
+        self.stack.addWidget(self.page_about)
+        
+        content_lay.addWidget(self.stack)
+        
+        # Link nav to stack
+        self.nav.currentRowChanged.connect(self.stack.setCurrentIndex)
+        
+        self.main_lay.addLayout(content_lay)
+        
+        # Bottom Bar
+        bot_lay = QHBoxLayout()
+        bot_lay.setContentsMargins(20, 16, 30, 16)
+        bot_lay.addStretch()
+        
         cancel = QPushButton("Cancel")
-        ok.clicked.connect(self.accept)
+        cancel.setStyleSheet(f"background: transparent; color: {TEXT}; padding: 8px 16px; border: none;")
         cancel.clicked.connect(self.reject)
-        brow.addStretch()
-        brow.addWidget(cancel)
-        brow.addWidget(ok)
-        self.main_lay.addLayout(brow)
+        
+        ok = QPushButton("Save Changes")
+        ok.setObjectName("primary")
+        ok.setStyleSheet(f"""
+            QPushButton {{ background: {ACCENT}; color: white; border-radius: 8px; padding: 8px 24px; font-weight: 700; }}
+            QPushButton:hover {{ background: #9D3CFF; }}
+        """)
+        ok.clicked.connect(self.accept)
+        
+        bot_lay.addWidget(cancel)
+        bot_lay.addWidget(ok)
+        
+        # A thin line above buttons
+        sep = QFrame()
+        sep.setFrameShape(QFrame.HLine)
+        sep.setStyleSheet(f"color: {SURFACE};")
+        self.main_lay.addWidget(sep)
+        self.main_lay.addLayout(bot_lay)
+
+    def _sec_title(self, text):
+        lbl = QLabel(text)
+        lbl.setStyleSheet(f"font-size: 18px; font-weight: 800; color: {TEXT};")
+        return lbl
 
     def _browse(self):
-        d = QFileDialog.getExistingDirectory(self, "Default download folder",
-                                             self.dir_edit.text())
-        if d:
-            self.dir_edit.setText(d)
-
-    def _on_check_updates(self):
-        """Hit the GitHub Releases API (cached 1h) and surface the result.
-        If a newer tag is found, offer to open the release page in the browser
-        — no silent install, no signed-binary swap, just a manual pointer."""
-        self._update_status.setText("checking…")
-        QApplication.processEvents()
-        info = updater.check_for_update(APP_VERSION, force=True)
-        if info is None:
-            self._update_status.setText("offline or unavailable")
-            return
-        if info["available"]:
-            self._update_status.setText(f"v{info['version']} available")
-            if QMessageBox.question(
-                    self, "Update available",
-                    f"HyperFetch {info['version']} is out (you have {APP_VERSION}).\n"
-                    "Open the release page in your browser?",
-                    QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes) == QMessageBox.Yes:
-                import webbrowser
-                webbrowser.open(info["url"])
-        else:
-            self._update_status.setText("up to date")
-
-    def _on_open_crashes(self):
-        d = crash_reporter.crashes_dir()
-        # cross-platform "show folder in file manager"
-        if sys.platform == "win32":
-            os.startfile(d)
-        elif sys.platform == "darwin":
-            import subprocess; subprocess.Popen(["open", d])
-        else:
-            import subprocess; subprocess.Popen(["xdg-open", d])
+        folder = QFileDialog.getExistingDirectory(self, "Select Download Folder", self.dir_edit.text())
+        if folder:
+            self.dir_edit.setText(folder)
 
     def values(self):
-        theme = "light" if self.theme_combo.currentText() == "Light" else "dark"
-        return (self.dir_edit.text().strip(), self.concurrent.value(),
-                self.segments.value(), self.verify_chk.isChecked(), theme,
-                self.sched_chk.isChecked(), self.time_start.time().toString("HH:mm"),
-                self.time_stop.time().toString("HH:mm"))
+        return (
+            self.dir_edit.text(),
+            self.concurrent_slider.slider.value(),
+            self.segments_slider.slider.value(),
+            self.verify_chk.isChecked(),
+            self.theme_combo.currentText().lower(),
+            self.sched_chk.isChecked(),
+            self.time_start.time().toString("HH:mm"),
+            self.time_stop.time().toString("HH:mm")
+        )
 
+    def _on_check_updates(self):
+        self._update_status.setText("Checking...")
+        QApplication.processEvents()
+        import urllib.request, json
+        try:
+            req = urllib.request.Request("https://api.github.com/repos/tanumay-deb/HyperFetch/releases/latest")
+            with urllib.request.urlopen(req, timeout=5) as r:
+                data = json.loads(r.read().decode())
+                latest = data.get("tag_name", "")
+                if latest and latest.lstrip("v") != APP_VERSION:
+                    self._update_status.setText(f"Update available: {latest}")
+                else:
+                    self._update_status.setText("You are on the latest version.")
+        except Exception:
+            self._update_status.setText("Failed to check for updates.")
 
-# ====================================================================== main app
+    def _on_open_crashes(self):
+        folder = crash_reporter.CRASH_DIR
+        if os.path.exists(folder):
+            try:
+                os.startfile(folder)
+            except OSError:
+                pass

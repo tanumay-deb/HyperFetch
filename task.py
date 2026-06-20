@@ -17,6 +17,12 @@ class Status(str, Enum):
     ERROR = "Error"
     CANCELLED = "Cancelled"
 
+    def __str__(self):
+        # without this, f"{status}" / str(status) yields "Status.DOWNLOADING"
+        # (Enum.__str__) instead of the value "Downloading". JSON persistence is
+        # unaffected — the encoder uses the underlying str data, not __str__.
+        return self.value
+
 QUEUED = Status.QUEUED
 SCHEDULED = Status.SCHEDULED
 DOWNLOADING = Status.DOWNLOADING

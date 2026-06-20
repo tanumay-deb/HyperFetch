@@ -46,11 +46,11 @@ MAX_CONCURRENT = 3
 
 # ---------------------------------------------------------------- theme palettes
 DARK = dict(
-    accent="#6366f1", accent2="#8b5cf6",
-    bg="#0b1220", surface="#111a2e", surface2="#1a2540",
-    border="#243352", hover="#223054", pressed="#1b2747",
-    alt="#141e36", sel="#26335c",
-    text="#e5e9f5", muted="#8b97b8",
+    accent="#7c3aed", accent2="#8b5cf6",
+    bg="#0b0e14", surface="#141722", surface2="#1c202d",
+    border="#2a2f40", hover="#1e2333", pressed="#181c29",
+    alt="#0f121a", sel="#252a3d",
+    text="#f1f5f9", muted="#94a3b8",
 )
 LIGHT = dict(
     accent="#6366f1", accent2="#8b5cf6",

@@ -106,7 +106,11 @@ class TaskTableModel(QAbstractTableModel):
             if col == 1:
                 return t.total_size or t.downloaded
             if col == 2:
-                return t.status
+                # 0: Active, 1: Paused, 2: Completed, 3: Failed
+                if t.status in (T.DOWNLOADING, T.QUEUED, T.SCHEDULED): return 0
+                if t.status == T.PAUSED: return 1
+                if t.status == T.COMPLETED: return 2
+                return 3
             if col == 3:
                 return bps
             if col == 4:

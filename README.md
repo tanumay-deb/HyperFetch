@@ -8,6 +8,8 @@ or grab streaming video from the in-page badge.
 ## Features
 - **Segmented downloads** — up to 16 parallel connections per file (when the
   server supports HTTP `Range`), falls back to a single stream otherwise.
+- **BitTorrent & Magnet Links** — built-in support for downloading torrents and magnet links directly, without needing a separate client.
+- **HLS (.m3u8) Grabber** — native support for fetching, decrypting (AES-128), and concatenating HTTP Live Streaming videos.
 - **IDM-style dialogs** — every new download shows a *Download File Info* dialog
   (probed size/type, editable filename, save-to folder, priority,
   Download Now / Download Later). Double-click any row for full *Properties*
@@ -18,10 +20,10 @@ or grab streaming video from the in-page badge.
 - **Persistent state** — the download list (including segment progress) survives
   restarts; in-flight downloads restore as paused and resumable. Stored in
   `%APPDATA%\HyperFetch\`.
+- **Advanced Queueing & Scheduling** — priority ordering, bounded concurrency limits, a global **Time-based Scheduler** (start/stop overnight), and **Force Download** to bypass all limits.
+- **Global Speed Limit** — throttle the application's maximum download speed so it doesn't saturate your entire network while you game or stream.
 - **Rate-limit aware** — retries with exponential backoff (honors `Retry-After`),
   adaptively halves parallel connections on HTTP 429, staggers connection starts.
-- **Download queue** — priority ordering + bounded concurrency + scheduler.
-- **Settings** — default folder, concurrent downloads, connections per download.
 - **Browser integration** — right-click any link/image/media → **Download with
   HyperFetch**, or click the in-page badge on a streaming video, to send it to
   the app over a local Flask server; the file-info dialog pops up exactly like

@@ -26,6 +26,17 @@ import task as T
 POLL = 0.3            # seconds between pause/cancel checks
 STOP_GRACE = 5        # seconds to wait after terminate before kill
 
+# well-known public trackers appended to every magnet so peers are found via
+# trackers + DHT + PEX + LPD (a hash-only magnet otherwise leans on DHT alone)
+PUBLIC_TRACKERS = [
+    "udp://tracker.opentrackr.org:1337/announce",
+    "udp://open.tracker.cl:1337/announce",
+    "udp://tracker.openbittorrent.com:6969/announce",
+    "udp://exodus.desync.com:6969/announce",
+    "udp://tracker.torrent.eu.org:451/announce",
+    "udp://open.stealth.si:80/announce",
+]
+
 
 def is_magnet(url):
     return (url or "").strip().lower().startswith("magnet:")
@@ -103,6 +114,14 @@ class TorrentDownloader:
             "--console-log-level=warn",
             "--bt-save-metadata=true",
             "--continue=true",           # resume from .aria2 control file
+            # peer discovery — match what desktop torrent clients do so a bare
+            # magnet finds peers via more than DHT alone (the usual reason a
+            # magnet "works in qBittorrent but stalls here").
+            "--enable-dht=true",
+            "--enable-peer-exchange=true",
+            "--bt-enable-lpd=true",       # local peer discovery
+            "--bt-max-peers=0",           # unlimited peers
+            "--bt-tracker=" + ",".join(PUBLIC_TRACKERS),
             src,
         ]
 

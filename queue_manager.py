@@ -116,6 +116,13 @@ class QueueManager:
         if task.status in (T.QUEUED, T.PAUSED, T.DOWNLOADING):
             task.status = T.CANCELLED
 
+    def remove_task(self, task: "T.DownloadTask"):
+        self.cancel_task(task)
+        with self.cond:
+            if task in self.tasks:
+                self.tasks.remove(task)
+            self.cond.notify_all()
+
     def force_start(self, task: "T.DownloadTask"):
         """Force start a task immediately, bypassing concurrency limits."""
         with self.cond:
@@ -148,6 +155,29 @@ class QueueManager:
             if qname not in self.queues:
                 self.queues[qname] = Queue(qname, 3)
             self.cond.notify_all()
+
+    def delete_queue(self, name):
+        """Remove a queue and move its tasks to the Main queue."""
+        with self.cond:
+            if name in self.queues and name != "Main":
+                del self.queues[name]
+                for task in self.tasks:
+                    if getattr(task, "queue_name", "Main") == name:
+                        task.queue_name = "Main"
+                self.cond.notify_all()
+
+    def add_queue(self, name, max_concurrent=3):
+        """Create a named queue. Returns True if created, False if it already
+        exists or the name is blank."""
+        name = (name or "").strip()
+        if not name:
+            return False
+        with self.cond:
+            if name in self.queues:
+                return False
+            self.queues[name] = Queue(name, max(1, int(max_concurrent)))
+            self.cond.notify_all()
+        return True
 
     def set_max_concurrent(self, qname, n):
         """Change a queue's concurrency cap at runtime and admit waiting tasks
