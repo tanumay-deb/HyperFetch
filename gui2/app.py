@@ -18,7 +18,9 @@ from PySide6.QtWidgets import (
     QComboBox, QMenu, QApplication, QDialog, QInputDialog, QMessageBox,
     QLabel, QSystemTrayIcon
 )
-from PySide6.QtCore import Qt, QTimer, QPropertyAnimation, QEasingCurve, QByteArray, QEvent
+from PySide6.QtCore import (
+    Qt, QTimer, QPropertyAnimation, QParallelAnimationGroup, QEasingCurve, QByteArray, QEvent
+)
 from PySide6.QtGui import QIcon, QKeySequence, QShortcut, QAction, QFont
 
 import task as T
@@ -159,9 +161,17 @@ class DownloadAppV2(QWidget):
         self.sidebar.openSettings.connect(self._open_settings)
         self.sidebar.toggleCollapse.connect(self._toggle_sidebar)
         root.addWidget(self.sidebar)
-        self.sidebar_anim = QPropertyAnimation(self.sidebar, b"minimumWidth")
-        self.sidebar_anim.setDuration(180)
-        self.sidebar_anim.setEasingCurve(QEasingCurve.InOutCubic)
+        # animate min AND max together so the width is exact every frame (child
+        # min-widths can't fight it) -> a smooth slide instead of a jumpy reflow
+        self._anim_min = QPropertyAnimation(self.sidebar, b"minimumWidth")
+        self._anim_max = QPropertyAnimation(self.sidebar, b"maximumWidth")
+        self.sidebar_anim = QParallelAnimationGroup(self)
+        for a in (self._anim_min, self._anim_max):
+            a.setDuration(260)
+            a.setEasingCurve(QEasingCurve.InOutCubic)
+            self.sidebar_anim.addAnimation(a)
+        self._sidebar_target = 260
+        self.sidebar_anim.finished.connect(lambda: self.sidebar.setFixedWidth(self._sidebar_target))
 
         main = QWidget()
         main.setObjectName("mainPane")
@@ -172,13 +182,7 @@ class DownloadAppV2(QWidget):
         # top bar
         top = QHBoxLayout()
         top.setSpacing(10)
-        self.btn_collapse = QPushButton("‹›")
-        self.btn_collapse.setObjectName("iconbtn")
-        self.btn_collapse.setFixedSize(34, 30)
-        self.btn_collapse.setCursor(Qt.PointingHandCursor)
-        self.btn_collapse.setToolTip("Show / hide sidebar")
-        self.btn_collapse.clicked.connect(self._toggle_sidebar)
-        top.addWidget(self.btn_collapse)
+        # (sidebar show/hide lives in the sidebar header — no duplicate here)
 
         self.search = QLineEdit()
         self.search.setPlaceholderText("Search downloads…")
@@ -706,7 +710,17 @@ class DownloadAppV2(QWidget):
     # ------------------------------------------------------------- sidebar collapse
     def _toggle_sidebar(self):
         self._sidebar_collapsed = not self._sidebar_collapsed
+        target = 72 if self._sidebar_collapsed else 260
+        self._sidebar_target = target
         self.sidebar.set_collapsed(self._sidebar_collapsed)
+        cur = self.sidebar.width()
+        self.sidebar.setMinimumWidth(0)
+        self.sidebar.setMaximumWidth(16777215)        # free both bounds before tween
+        self.sidebar_anim.stop()
+        for a in (self._anim_min, self._anim_max):
+            a.setStartValue(cur)
+            a.setEndValue(target)
+        self.sidebar_anim.start()
 
     # ------------------------------------------------------------- drag & drop
     def dragEnterEvent(self, e):
@@ -736,16 +750,43 @@ class DownloadAppV2(QWidget):
         super().changeEvent(e)
 
     def closeEvent(self, e):
-        beh = self._extras.get("close_behavior", "Minimize to tray")
-        if not self._quit_requested and self.tray and self.tray.isVisible():
-            if beh == "Ask every time":
-                ans = QMessageBox.question(self, "Close HyperFetch",
-                                           "Minimize to tray instead of quitting?",
-                                           QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes)
-                if ans == QMessageBox.Yes:
-                    e.ignore(); self.hide(); return
-            elif beh == "Minimize to tray":
-                e.ignore(); self.hide(); return
+        # explicit Quit (tray menu) always exits
+        if self._quit_requested:
+            self._shutdown(e)
+            return
+        beh = self._extras.get("close_behavior", "Ask every time")
+        have_tray = bool(self.tray and self.tray.isVisible())
+        if beh == "Minimize to tray" and have_tray:
+            e.ignore(); self.hide(); return
+        if beh == "Exit" or not have_tray:
+            self._shutdown(e); return
+
+        # Ask: Minimize / Exit / Cancel (+ remember choice)
+        from PySide6.QtWidgets import QCheckBox
+        box = QMessageBox(self)
+        box.setWindowTitle("Close HyperFetch")
+        box.setIcon(QMessageBox.Question)
+        box.setText("Minimize HyperFetch to the tray, or exit completely?")
+        mini = box.addButton("Minimize to tray", QMessageBox.AcceptRole)
+        quit_b = box.addButton("Exit", QMessageBox.DestructiveRole)
+        box.addButton("Cancel", QMessageBox.RejectRole)
+        remember = QCheckBox("Remember my choice")
+        box.setCheckBox(remember)
+        box.exec()
+        clicked = box.clickedButton()
+        if clicked is mini:
+            if remember.isChecked():
+                self._extras["close_behavior"] = "Minimize to tray"
+                self._save_settings()
+            e.ignore(); self.hide()
+        elif clicked is quit_b:
+            if remember.isChecked():
+                self._extras["close_behavior"] = "Exit"
+            self._shutdown(e)
+        else:                                   # Cancel / dialog dismissed
+            e.ignore()
+
+    def _shutdown(self, e):
         self._save_state()
         self._extras["geometry"] = bytes(self.saveGeometry().toBase64().data()).decode()
         self._extras["last_filter"] = self._filter

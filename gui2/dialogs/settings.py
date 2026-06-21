@@ -4,7 +4,7 @@ the app applies the actionable keys and persists the rest.
 """
 from PySide6.QtWidgets import (
     QDialog, QHBoxLayout, QVBoxLayout, QGridLayout, QLabel, QPushButton, QLineEdit,
-    QComboBox, QSlider, QListWidget, QListWidgetItem, QStackedWidget, QWidget,
+    QComboBox, QSlider, QSpinBox, QListWidget, QListWidgetItem, QStackedWidget, QWidget,
     QFrame, QFileDialog, QTimeEdit, QScrollArea, QApplication
 )
 from PySide6.QtCore import Qt, QTime
@@ -17,7 +17,7 @@ except Exception:                       # fallback if unavailable
     from PySide6.QtWidgets import QCheckBox as AnimatedToggle
 from gui2.palette import COLORS, ACCENTS, set_accent
 
-_SECTIONS = ["General", "Downloads", "Browser", "Appearance", "Advanced", "About"]
+_SECTIONS = ["General", "Downloads", "Network", "Browser", "Appearance", "Advanced", "About"]
 _SLIDER_QSS = (
     "QSlider::groove:horizontal{height:5px;background:%(b)s;border-radius:3px;}"
     "QSlider::sub-page:horizontal{background:%(a)s;border-radius:3px;}"
@@ -52,6 +52,7 @@ class SettingsDialogV2(QDialog):
         self.stack = QStackedWidget()
         self.stack.addWidget(self._p_general(save_dir, ex))
         self.stack.addWidget(self._p_downloads(max_concurrent, segments, ex))
+        self.stack.addWidget(self._p_network(ex))
         self.stack.addWidget(self._p_browser(ex))
         self.stack.addWidget(self._p_appearance(theme, accent, ex))
         self.stack.addWidget(self._p_advanced(verify_tls, sched_en, sched_start, sched_stop, ex))
@@ -130,7 +131,7 @@ class SettingsDialogV2(QDialog):
         self._row(g2, "On application launch", "What happens when HyperFetch starts", self.launch)
         self.min_tray = self._toggle(ex.get("minimize_tray", True))
         self._row(g2, "Minimize to system tray", "Keep HyperFetch running in the background", self.min_tray)
-        self.close_beh = self._combo(["Minimize to tray", "Exit", "Ask every time"], ex.get("close_behavior"))
+        self.close_beh = self._combo(["Ask every time", "Minimize to tray", "Exit"], ex.get("close_behavior"))
         self._row(g2, "Close button behavior", "When clicking the close button", self.close_beh)
         self.lang = self._combo(["System Default", "English"], ex.get("language"))
         self._row(g2, "Language", "Preferred language", self.lang)
@@ -152,8 +153,30 @@ class SettingsDialogV2(QDialog):
         self._row(g, "Auto start downloads", "Start downloads immediately after adding", self.auto_start)
         self.speed_limit = self._combo(["Unlimited", "1 Mb/s", "5 Mb/s", "10 Mb/s"], ex.get("speed_limit"))
         self._row(g, "Download Speed Limit", "Global download speed limit", self.speed_limit)
+        self.when_complete = self._combo(["Show notification", "Open file", "Open folder", "Do nothing"],
+                                         ex.get("when_complete"))
+        self._row(g, "When download is complete", "Action when a download finishes", self.when_complete)
         self.open_complete = self._toggle(ex.get("open_on_complete", False))
         self._row(g, "Open file when complete", "Launch the file as soon as it finishes", self.open_complete)
+        v.addWidget(f); v.addStretch()
+        return sa
+
+    def _p_network(self, ex):
+        sa, v = self._page("Network", "Configure network and connection settings")
+        f, g = self._card()
+        self.conn_type = self._combo(["Default (Auto)", "Direct", "System Proxy"], ex.get("connection_type"))
+        self._row(g, "Connection Type", "Select your internet connection type", self.conn_type)
+        self.max_conn = self._slider(1, 1000, int(ex.get("max_connections", 100) or 100))
+        self._row(g, "Max Connections", "Maximum total connections", self.max_conn)
+        self.listen_port = QSpinBox(); self.listen_port.setRange(1024, 65535)
+        self.listen_port.setValue(int(ex.get("listen_port", 56666) or 56666)); self.listen_port.setFixedWidth(130)
+        self._row(g, "Listen Port", "Port for incoming (torrent) connections", self.listen_port)
+        self.upnp = self._toggle(ex.get("upnp", True))
+        self._row(g, "Use UPnP / NAT-PMP", "Allow automatic port mapping", self.upnp)
+        proxy_btn = QPushButton("Configure")
+        self._row(g, "Proxy Settings", "Configure a proxy for downloads", proxy_btn)
+        self.dns_https = self._toggle(ex.get("dns_https", False))
+        self._row(g, "DNS over HTTPS", "Use secure DNS for resolving addresses", self.dns_https)
         v.addWidget(f); v.addStretch()
         return sa
 
@@ -165,7 +188,7 @@ class SettingsDialogV2(QDialog):
         v.addWidget(f)
         f2, g2 = self._card()
         self.browsers = {}
-        for b in ("Google Chrome", "Microsoft Edge", "Mozilla Firefox", "Brave"):
+        for b in ("Google Chrome", "Microsoft Edge", "Mozilla Firefox", "Brave", "Opera"):
             tog = self._toggle((ex.get("browsers") or {}).get(b, True))
             self.browsers[b] = tog
             self._row(g2, b, "Detected", tog)
@@ -218,6 +241,8 @@ class SettingsDialogV2(QDialog):
         g.addLayout(srow)
         self.disk_cache = self._toggle(ex.get("disk_cache", True))
         self._row(g, "Disk cache", "Improve disk writing performance", self.disk_cache)
+        self.preallocate = self._toggle(ex.get("preallocate", False))
+        self._row(g, "Pre-allocate disk space", "Reserve the full file size before downloading", self.preallocate)
         self.hash_check = self._toggle(ex.get("hash_check", False))
         self._row(g, "Enable hash verification", "Verify file integrity after download", self.hash_check)
         self.debug_log = self._toggle(ex.get("debug_log", False))
@@ -238,6 +263,11 @@ class SettingsDialogV2(QDialog):
         g.addLayout(brow)
         self.upd_lbl = QLabel(""); self.upd_lbl.setStyleSheet(f"color:{COLORS['muted']};background:transparent;")
         g.addWidget(self.upd_lbl)
+        links = QHBoxLayout()
+        lic = QPushButton("License"); lic.setObjectName("ghost")
+        cred = QPushButton("Credits"); cred.setObjectName("ghost")
+        links.addWidget(lic); links.addWidget(cred); links.addStretch()
+        g.addLayout(links)
         v.addWidget(f); v.addStretch()
         return sa
 
@@ -298,6 +328,13 @@ class SettingsDialogV2(QDialog):
             "speed_limit": self.speed_limit.currentText(),
             "open_on_complete": self.open_complete.isChecked(),
             "clipboard_monitor": self.clip_mon.isChecked(),
+            "when_complete": self.when_complete.currentText(),
+            "connection_type": self.conn_type.currentText(),
+            "max_connections": self.max_conn._slider.value(),
+            "listen_port": self.listen_port.value(),
+            "upnp": self.upnp.isChecked(),
+            "dns_https": self.dns_https.isChecked(),
+            "preallocate": self.preallocate.isChecked(),
             "ui_density": self.density.currentText(),
             "font_size": self.font_size.currentText(),
             "disk_cache": self.disk_cache.isChecked(),

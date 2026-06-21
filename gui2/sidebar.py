@@ -2,7 +2,7 @@
 the live stats card, and Settings. Pure widgets; collapsible to an icon rail.
 """
 from PySide6.QtWidgets import (
-    QFrame, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QSizePolicy
+    QFrame, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QSizePolicy, QWidget
 )
 from PySide6.QtCore import Qt, Signal
 
@@ -20,10 +20,10 @@ _CATEGORIES = [
     ("📁", "Other", "Other", None),
 ]
 _STATUS = [
-    ("↓", "Active", "Active", "#22c55e"),
+    ("▶", "Active", "Active", "#22c55e"),
     ("⏸", "Paused", "Paused", "#f59e0b"),
-    ("✓", "Completed", "Completed", "#38bdf8"),
-    ("！", "Failed", "Failed", "#ef4444"),
+    ("✓", "Completed", "Completed", "#22c55e"),
+    ("✕", "Failed", "Failed", "#ef4444"),
 ]
 
 
@@ -64,6 +64,7 @@ class NavRow(QFrame):
         self._collapsed = on
         self.lbl.setVisible(not on)
         self.cnt.setVisible(not on)
+        self.ic.setFixedWidth(44 if on else 22)   # center the icon in the rail
         self._restyle()
 
     def _restyle(self):
@@ -102,8 +103,8 @@ class Sidebar(QFrame):
         self._collapsed = False
 
         lay = QVBoxLayout(self)
-        lay.setContentsMargins(14, 14, 14, 14)
-        lay.setSpacing(10)
+        lay.setContentsMargins(14, 12, 14, 12)
+        lay.setSpacing(7)
 
         # ---- brand + collapse ----
         top = QHBoxLayout()
@@ -144,39 +145,35 @@ class Sidebar(QFrame):
         for ic, lbl, key, col in _CATEGORIES:
             self._add_row(lay, NavRow(ic, lbl, key, col))
 
-        # ---- STATUS ----
-        self.t_st = self._section("STATUS")
-        lay.addWidget(self.t_st)
-        for ic, lbl, key, col in _STATUS:
-            self._add_row(lay, NavRow(ic, lbl, key, col))
-
+        # status lives in the main-window filter pills — not in the sidebar.
         lay.addStretch()
 
-        # ---- stats card ----
+        # ---- stats card (compact; gauge stays visible when collapsed) ----
         self.stats = QFrame()
         self.stats.setObjectName("statsCard")
         sc = QHBoxLayout(self.stats)
-        sc.setContentsMargins(12, 14, 14, 14)
-        sc.setSpacing(10)
+        sc.setContentsMargins(10, 10, 10, 10)
+        sc.setSpacing(8)
         self.gauge = CircularSpeedGauge()
-        self.gauge.setFixedSize(80, 80)
-        sc.addWidget(self.gauge)
-        stext = QVBoxLayout()
-        stext.setSpacing(1)
+        self.gauge.setFixedSize(72, 72)
+        sc.addWidget(self.gauge, 0, Qt.AlignVCenter)
+        self.g_text = QWidget()
+        self.g_text.setStyleSheet("background: transparent;")
+        stext = QVBoxLayout(self.g_text)
+        stext.setContentsMargins(0, 0, 0, 0)
+        stext.setSpacing(0)
         self.lbl_speed = QLabel("0 B/s")
-        self.lbl_speed.setStyleSheet(f"font-size: 17px; font-weight: 800; background: transparent; color: {COLORS['text']};")
+        self.lbl_speed.setStyleSheet(f"font-size: 16px; font-weight: 800; background: transparent; color: {COLORS['text']};")
         cap1 = QLabel("Current Speed")
         cap1.setStyleSheet(f"font-size: 11px; color: {COLORS['muted']}; background: transparent;")
         self.lbl_conns = QLabel("0")
-        self.lbl_conns.setStyleSheet(f"font-size: 17px; font-weight: 800; background: transparent; color: {COLORS['text']};")
+        self.lbl_conns.setStyleSheet(f"font-size: 16px; font-weight: 800; background: transparent; color: {COLORS['text']};")
         cap2 = QLabel("Connections")
         cap2.setStyleSheet(f"font-size: 11px; color: {COLORS['muted']}; background: transparent;")
         stext.addWidget(self.lbl_speed); stext.addWidget(cap1)
-        stext.addSpacing(6)
+        stext.addSpacing(3)
         stext.addWidget(self.lbl_conns); stext.addWidget(cap2)
-        stext.addStretch()
-        self._stext = stext
-        sc.addLayout(stext)
+        sc.addWidget(self.g_text, 1)
         lay.addWidget(self.stats)
 
         # ---- settings ----
@@ -187,6 +184,7 @@ class Sidebar(QFrame):
         self.btn_settings.clicked.connect(self.openSettings)
         lay.addWidget(self.btn_settings)
 
+        self.set_collapsed(False)        # initial expanded state hides status icons
         self.set_active("All")
 
     def _section(self, title):
@@ -218,12 +216,17 @@ class Sidebar(QFrame):
         self.gauge.push(bps)
 
     def set_collapsed(self, on):
+        # width is animated by the app (DownloadAppV2._toggle_sidebar); here we
+        # only toggle what's visible so the rail reads cleanly when narrow.
         self._collapsed = on
-        self.setFixedWidth(72 if on else 260)
         self.brand.setVisible(not on)
-        for t in (self.t_dl, self.t_cat, self.t_st):
+        self.brand_icon.setVisible(not on)
+        for t in (self.t_dl, self.t_cat):
             t.setVisible(not on)
-        self.stats.setVisible(not on)
+        # keep the speed gauge visible when collapsed (compact, text hidden)
+        self.stats.setVisible(True)
+        self.g_text.setVisible(not on)
+        self.gauge.setFixedSize(48, 48) if on else self.gauge.setFixedSize(72, 72)
         for row in self._rows.values():
             row.set_collapsed(on)
         self.btn_new.setText("＋" if on else "＋  New Download")
