@@ -39,11 +39,19 @@ if __name__ == "__main__":
         print(f"HyperFetch {APP_VERSION}")
         sys.exit(0)
     if "--selftest" in sys.argv:
+        if "--v2" in sys.argv:
+            from gui2.app import _self_test_v2
+            sys.exit(_self_test_v2())
         _self_test()
         sys.exit(0)
 
     # install BEFORE QApplication so a Qt construction crash is captured too
     crash_reporter.install(APP_VERSION)
+
+    # v2 GUI (clean widget-based rewrite); old GUI stays the default until parity
+    if "--v2" in sys.argv:
+        from gui2.app import run_v2
+        sys.exit(run_v2())
 
     app = QApplication(sys.argv)
     app.setFont(QFont("Segoe UI", 10))
