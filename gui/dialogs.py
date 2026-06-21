@@ -25,6 +25,7 @@ from PySide6.QtGui import QColor, QFont, QIcon, QPainter, QPainterPath, QBrush, 
 
 import task as T
 import utils
+import torrent
 import crash_reporter
 import updater
 from queue_manager import QueueManager
@@ -377,15 +378,22 @@ class DownloadCompleteDialog(QDialog):
         lay.addLayout(brow)
 
         folder = os.path.dirname(os.path.normpath(task.save_path)) or "."
-        # Open File needs the exact file (torrents save a folder of files, so the
-        # placeholder save_path won't exist -> stays disabled), but Open Folder
-        # just needs the destination directory, which always exists post-download.
-        self.btn_open.setEnabled(os.path.exists(task.save_path))
+        # Open File launches the real file/dir; for a torrent the save_path is a
+        # placeholder and the payload is a folder, so open that folder instead
+        # (Open Folder just needs the destination dir, always present).
+        if os.path.exists(task.save_path):
+            self._open_target = task.save_path
+        elif torrent.is_torrent_task(task.url, task.filename) and os.path.isdir(folder):
+            self._open_target = folder
+        else:
+            self._open_target = ""
+        self.btn_open.setEnabled(bool(self._open_target))
         self.btn_folder.setEnabled(os.path.isdir(folder))
 
     def _open_file(self):
+        target = getattr(self, "_open_target", "") or self.task.save_path
         try:
-            os.startfile(self.task.save_path)
+            os.startfile(target)
         except OSError:
             pass
         self.close()              # close the popup on any action
@@ -473,7 +481,8 @@ class PropertiesDialog(QDialog):
         btn_copy = QPushButton("Copy URL")
         btn_close = QPushButton("Close")
         btn_close.setObjectName("primary")
-        btn_file.setEnabled(t.status == T.COMPLETED and os.path.exists(t.save_path))
+        self._open_target = self._resolve_open_target(t)
+        btn_file.setEnabled(t.status == T.COMPLETED and bool(self._open_target))
         btn_file.clicked.connect(self._open_file)
         btn_folder.clicked.connect(self._open_folder)
         btn_copy.clicked.connect(lambda: QApplication.clipboard().setText(t.url))
@@ -485,9 +494,21 @@ class PropertiesDialog(QDialog):
         brow.addWidget(btn_close)
         lay.addLayout(brow)
 
+    def _resolve_open_target(self, t):
+        """Path that 'Open File' should launch. The real file/dir if it exists;
+        for a torrent (save_path is a placeholder, and the payload is a folder)
+        fall back to the destination folder so it still opens something useful."""
+        if os.path.exists(t.save_path):
+            return t.save_path
+        folder = os.path.dirname(t.save_path) or "."
+        if torrent.is_torrent_task(t.url, t.filename) and os.path.isdir(folder):
+            return folder
+        return ""
+
     def _open_file(self):
+        target = getattr(self, "_open_target", "") or self.t.save_path
         try:
-            os.startfile(self.t.save_path)
+            os.startfile(target)
         except OSError:
             pass
 

@@ -98,7 +98,11 @@ class DownloadTask:
         # instead of restarting from segment 0.
         self.seg_total = seg_total
         self.seg_done = seg_done
-        
+
+        # live torrent swarm stats (transient; set by TorrentDownloader's reader)
+        self.tor_conns = 0          # connected peers
+        self.tor_seeds = 0          # seeders
+
         self.speed_limit = speed_limit
         self._limiter = utils.RateLimiter()
         self._limiter.set_limit(self.speed_limit)
@@ -187,7 +191,7 @@ class DownloadTask:
         status = d.get("status", QUEUED)
         if status in (DOWNLOADING, QUEUED):
             status = PAUSED
-        return cls(
+        t = cls(
             url=d["url"], save_path=d["save_path"],
             filename=d.get("filename", ""), total_size=d.get("total_size", 0),
             segments=segs, downloaded=d.get("downloaded", 0),

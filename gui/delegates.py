@@ -127,9 +127,17 @@ class CardDelegate(QStyledItemDelegate):
             status_str = f"Fetching metadata… • {t.status}"
         else:
             status_str = f"{human_size(t.downloaded)} / {human_size(t.total_size)} • {t.status}"
-            if t.status == T.DOWNLOADING and not is_tor:
-                # segment count is HTTP-only; torrents have no segments
-                status_str += " • " + str(sum(1 for s in t.segments if not s.complete)) + " connections"
+            if t.status == T.DOWNLOADING and is_tor:
+                # torrents report swarm size, not HTTP segments
+                peers = getattr(t, "tor_conns", 0)
+                seeds = getattr(t, "tor_seeds", 0)
+                status_str += (f" • {peers} peer{'' if peers == 1 else 's'}"
+                               f" • {seeds} seed{'' if seeds == 1 else 's'}")
+            elif t.status == T.DOWNLOADING and not is_tor:
+                # segment count is HTTP-only; show only when there are live ones
+                conns = sum(1 for s in t.segments if not s.complete)
+                if conns:
+                    status_str += f" • {conns} connection{'s' if conns != 1 else ''}"
         painter.drawText(QRect(tx, card_rect.bottom() - 26, tw, 16), int(Qt.AlignVCenter | Qt.AlignLeft), status_str)
         
         # Progress Bar
@@ -325,25 +333,7 @@ class CircularSpeedGraphWidget(QWidget):
         
         painter.setPen(QPen(QColor(ACCENT), 6, Qt.SolidLine, Qt.RoundCap))
         painter.drawArc(rect, startAngle, spanAngle * ratio)
-        
-        # Draw Line Graph inside the circle
-        graph_rect = QRect(20, 30, w - 40, h - 50)
-        gw = graph_rect.width()
-        gh = graph_rect.height()
-        
-        path = QPainterPath()
-        dx = gw / (self.max_points - 1)
-        
-        for i, val in enumerate(self.data):
-            x = graph_rect.left() + i * dx
-            y = graph_rect.bottom() - (val / max_val) * gh
-            if i == 0:
-                path.moveTo(x, y)
-            else:
-                path.lineTo(x, y)
-                
-        painter.setPen(QPen(QColor(ACCENT_2), 2))
-        painter.drawPath(path)
+        # ring only — the inner line graph overflowed the gauge and was redundant
 
 class SidebarItemDelegate(QStyledItemDelegate):
     def sizeHint(self, option, index):

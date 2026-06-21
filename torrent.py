@@ -16,6 +16,7 @@ python-libtorrent wheels are flaky to install and painful to freeze.
 import os
 import re
 import sys
+import time
 import shutil
 import threading
 import subprocess
@@ -94,6 +95,18 @@ def parse_progress(line):
     return done, total
 
 
+# CN = connected peers, SD = seeders in aria2's readout, e.g. "CN:51 SD:13"
+_PEERS_RE = re.compile(r"CN:(\d+).*?SD:(\d+)", re.I)
+
+
+def parse_peers(line):
+    """Return (connected_peers, seeders) from an aria2c readout line, or None."""
+    m = _PEERS_RE.search(line or "")
+    if not m:
+        return None
+    return int(m.group(1)), int(m.group(2))
+
+
 class ARIA2_MISSING(RuntimeError):
     pass
 
@@ -153,6 +166,7 @@ class TorrentDownloader:
               or self.t.filename.endswith((".torrent", ".bin"))):
             self.t.filename = "torrent"
 
+        self._started = time.time()           # used by the save_path fallback
         try:
             self._proc = subprocess.Popen(
                 self._build_cmd(exe, out_dir),
@@ -164,16 +178,56 @@ class TorrentDownloader:
             self.t.error = f"failed to start aria2c: {e}"
             return
 
-        # reader thread keeps the latest readout line; the control loop below
-        # parses it without blocking on readline (so pause/cancel stay snappy)
-        last = {"line": ""}
+        # The reader parses each readout line AS IT ARRIVES and writes progress
+        # straight onto the task. aria2's --summary-interval prints a 3-line
+        # block per tick (the "[#.. X/Y(%)..]" progress line, then a "FILE:"
+        # line, then a "----" separator), so the old "keep only the latest line
+        # and sample it from the control loop" approach almost always sampled
+        # the FILE:/separator line and missed the progress line entirely —
+        # leaving the task pinned at 0% until completion. Parse in place instead.
         tail = []
+        seen = {"top": ""}
+        # epoch tying this reader to this run: downloader.py builds a fresh
+        # TorrentDownloader on every resume against the SAME task, so an old
+        # reader draining a dying aria2 could clobber the new run's progress.
+        # Each run bumps the task's epoch; a reader only writes while it's still
+        # the current one AND the task is still downloading.
+        gen = getattr(self.t, "_tor_gen", 0) + 1
+        self.t._tor_gen = gen
+        # aria2 always prints this footer/legend on a non-zero exit — it is NOT
+        # a real error, so drop it from the message we surface.
+        FOOTER = ("(OK):", "aria2 will resume", "If there are any errors",
+                  "See '-l'", "Download Results", "Status Legend", "===", "gid ")
 
         def reader():
             for ln in self._proc.stdout:
-                last["line"] = ln
-                if _PROG_RE.search(ln) is None:    # keep non-progress lines for errors
-                    tail.append(ln.strip())
+                if self.t._tor_gen != gen:         # a newer run owns the task now
+                    return
+                prog = parse_progress(ln)
+                if prog is not None:
+                    if self.t.status == T.DOWNLOADING:
+                        done, total = prog
+                        # accept once the real payload is known (a FILE: line was
+                        # seen) or the size is clearly payload-sized — this skips
+                        # the magnet METADATA flash (a few KB at 100%) without
+                        # pinning genuinely small torrents at 0%.
+                        if seen["top"] or total >= 1_000_000:
+                            self.t.downloaded, self.t.total_size = done, total
+                        peers = parse_peers(ln)
+                        if peers:
+                            self.t.tor_conns, self.t.tor_seeds = peers
+                    continue
+                s = ln.strip()
+                if s.startswith("FILE:"):
+                    # capture the torrent's real top-level entry so save_path can
+                    # be repointed at the actual download (not the placeholder)
+                    if not seen["top"]:
+                        top = self._top_entry(s[5:], out_dir)
+                        if top:
+                            seen["top"] = top
+                    continue
+                if s and not any(k in s for k in FOOTER):   # keep real errors only
+                    tail.append(s)
                     if len(tail) > 20:
                         tail.pop(0)
 
@@ -183,21 +237,17 @@ class TorrentDownloader:
         while self._proc.poll() is None:
             if self.t.cancel_requested or self.t.pause_requested:
                 self._stop()
-                self.t.status = T.CANCELLED if self.t.cancel_requested else T.PAUSED
-                return
-            prog = parse_progress(last["line"])
-            if prog:
-                self.t.downloaded, self.t.total_size = prog
+                break
             try:
                 self._proc.wait(timeout=POLL)
             except subprocess.TimeoutExpired:
                 pass
 
-        rt.join(timeout=1)
-        # final progress sample
-        prog = parse_progress(last["line"])
-        if prog:
-            self.t.downloaded, self.t.total_size = prog
+        # stop this run's reader before finalizing so a late buffered line can't
+        # overwrite the final progress / completion state.
+        if self.t._tor_gen == gen:
+            self.t._tor_gen = gen + 1
+        rt.join(timeout=2)
 
         if self.t.cancel_requested:
             self.t.status = T.CANCELLED
@@ -205,14 +255,68 @@ class TorrentDownloader:
         if self.t.pause_requested:
             self.t.status = T.PAUSED
             return
-        if self._proc.returncode == 0:
+
+        # aria2 can exit non-zero even when the payload finished (seeding
+        # interrupted, a non-fatal per-file error). Trust the bytes: if it's all
+        # there, it's complete.
+        complete = (self._proc.returncode == 0
+                    or (self.t.total_size and self.t.downloaded >= self.t.total_size))
+        if complete:
+            self.t.status = T.COMPLETED        # set first: stops a stray reader write
             if self.t.total_size:
                 self.t.downloaded = self.t.total_size
-            self.t.status = T.COMPLETED
+            # repoint save_path at the real on-disk entry aria2 created (a folder
+            # for multi-file torrents, a file for single) so Properties and
+            # "Open File" work — the placeholder download.bin never existed.
+            self._resolve_save_path(out_dir, seen["top"])
         else:
             self.t.status = T.ERROR
-            self.t.error = ("torrent failed: "
-                            + (" | ".join(tail[-3:]) or f"aria2c exit {self._proc.returncode}"))
+            msg = " | ".join(tail[-3:])
+            self.t.error = "torrent failed" + (f": {msg}" if msg
+                                               else f" (aria2 exit {self._proc.returncode})")
+
+    @staticmethod
+    def _top_entry(path, out_dir):
+        """Top-level entry name under out_dir from an aria2 'FILE:' line value
+        like ' C:/dir/TorrentName/sub/file.ext (12 more)'. '' if unresolved."""
+        path = re.sub(r"\s*\(\d+\s*more\)\s*$", "", path or "", flags=re.I)
+        path = path.strip().strip('"')
+        if not path:
+            return ""
+        try:
+            rel = os.path.relpath(path, out_dir)
+        except ValueError:                         # different drive, etc.
+            return os.path.basename(path.rstrip("/\\"))
+        first = rel.replace("\\", "/").split("/")[0]
+        if first in ("", ".", ".."):
+            return os.path.basename(path.rstrip("/\\"))
+        return first
+
+    def _resolve_save_path(self, out_dir, top):
+        """Point self.t.save_path at the real downloaded entry. Prefer the name
+        captured from aria2's FILE: output; else fall back to the newest entry
+        TOUCHED DURING THIS RUN (so we don't grab an unrelated, pre-existing
+        file in a shared download folder). Leaves save_path unchanged if nothing
+        qualifies — the dialogs then fall back to opening the folder."""
+        if top and os.path.exists(os.path.join(out_dir, top)):
+            self.t.save_path = os.path.join(out_dir, top)
+            return
+        started = getattr(self, "_started", 0)
+        newest = None
+        try:
+            for name in os.listdir(out_dir):
+                if name.endswith((".aria2", ".torrent", ".hfdownload", ".tmp")) or ".part" in name:
+                    continue
+                p = os.path.join(out_dir, name)
+                mt = os.path.getmtime(p)
+                if mt + 2 < started:               # existed before this run began
+                    continue
+                if newest is None or mt > newest[0]:
+                    newest = (mt, name)
+        except OSError:
+            newest = None
+        if newest:
+            self.t.save_path = os.path.join(out_dir, newest[1])
 
     def _stop(self):
         p = self._proc

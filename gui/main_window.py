@@ -17,7 +17,7 @@ from PySide6.QtWidgets import (
     QLineEdit, QSpinBox, QFileDialog, QMessageBox, QAbstractItemView,
     QFrame, QButtonGroup, QGridLayout, QSplitter, QSizePolicy, QComboBox, QMenu, QInputDialog,
     QCheckBox, QListWidget, QListWidgetItem, QTableView, QStyledItemDelegate, QStyle, QListView,
-    QSystemTrayIcon
+    QSystemTrayIcon, QStackedWidget
 )
 from PySide6.QtCore import (
     Qt, QTimer, QModelIndex, QAbstractTableModel, QSortFilterProxyModel, QRect, QSize, QEvent, QPropertyAnimation, QEasingCurve
@@ -26,6 +26,7 @@ from PySide6.QtGui import QColor, QFont, QIcon, QPainter, QPainterPath, QBrush, 
 
 import task as T
 import utils
+import torrent as _torrent
 import crash_reporter
 import updater
 from queue_manager import QueueManager
@@ -216,8 +217,17 @@ class DownloadApp(QWidget):
         main = QWidget()
         main.setObjectName("mainPane")
         main_layout = QVBoxLayout(main)
-        main_layout.setContentsMargins(24, 20, 24, 10)
-        main_layout.setSpacing(16)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setSpacing(0)
+
+        # Content stack: page 0 = downloads list. Settings is added as a
+        # transient page in on_settings() so it lives INSIDE the app rather than
+        # popping a separate modal window.
+        self.content_stack = QStackedWidget()
+        self.page_downloads = QWidget()
+        dl_layout = QVBoxLayout(self.page_downloads)
+        dl_layout.setContentsMargins(24, 20, 24, 10)
+        dl_layout.setSpacing(16)
 
         # ---- top bar (Add + Search) ----
         top_bar = QHBoxLayout()
@@ -250,9 +260,9 @@ class DownloadApp(QWidget):
         self.btn_open = QPushButton()
         self.btn_settings = QPushButton()
         self.limit_combo = QComboBox()
-        
-        main_layout.addLayout(top_bar)
-        
+
+        dl_layout.addLayout(top_bar)
+
         # ---- filter pills ----
         filter_bar = QHBoxLayout()
         filter_bar.setSpacing(8)
@@ -269,8 +279,8 @@ class DownloadApp(QWidget):
             filter_bar.addWidget(btn)
         filter_bar.addStretch()
         self.filter_group.idClicked.connect(self._on_filter_pill_clicked)
-        
-        main_layout.addLayout(filter_bar)
+
+        dl_layout.addLayout(filter_bar)
 
         # ---- virtualized list view (model/view: custom CardDelegate) ----
         self.model = TaskTableModel(self)
@@ -296,8 +306,8 @@ class DownloadApp(QWidget):
             lambda *_: self._update_action_buttons())
         self.list_view.doubleClicked.connect(self._on_double_clicked)
         
-        main_layout.addWidget(self.list_view, 1)
-        
+        dl_layout.addWidget(self.list_view, 1)
+
         # We also override self.table so old references don't crash
         self.table = self.list_view
 
@@ -322,6 +332,9 @@ class DownloadApp(QWidget):
         empty_lay.addWidget(sub_lbl)
         
         self.empty.hide()
+
+        self.content_stack.addWidget(self.page_downloads)
+        main_layout.addWidget(self.content_stack, 1)
 
         root.addWidget(main, 1)
 
@@ -362,7 +375,7 @@ class DownloadApp(QWidget):
             None, # CATEGORIES
             ("archive", "Compressed", "Compressed"),
             ("cog", "Programs", "Programs"),
-            ("film", "Videos", "Videos"),
+            ("film", "Videos", "Video"),
             ("music", "Music", "Music"),
             ("file-text", "Documents", "Documents"),
             ("folder", "Other", "Other"),
@@ -372,16 +385,12 @@ class DownloadApp(QWidget):
         for q in sorted(self.queue.queues.keys()):
             if q != "Main":
                 items.append(("list", q, f"Queue:{q}"))
-        items.extend([
-            None, # STATUS
-            ("arrow-down", "Active", "Active"),
-            ("pause", "Paused", "Paused"),
-            ("check", "Completed", "Done"),
-            ("alert-circle", "Failed", "Failed")
-        ])
+        items.append(("plus", "Add Queue", "__addqueue__"))   # opens the new-queue dialog
+        # Status (Active/Paused/Completed/Failed) lives in the top filter pills
+        # now — no duplicate STATUS section in the sidebar.
         return items
 
-    SECTION_TITLES = ["DOWNLOADS", "CATEGORIES", "QUEUES", "STATUS"]
+    SECTION_TITLES = ["DOWNLOADS", "CATEGORIES", "QUEUES"]
     
     def _get_icon_for_sidebar(self, icon_name):
         mapping = {
@@ -393,6 +402,7 @@ class DownloadApp(QWidget):
             "file-text": ("📄", "#80D8FF"),
             "folder": ("📁", "#B5B5B5"),
             "list": ("≡", "#B5B5B5"),
+            "plus": ("＋", "#00E676"),
             "arrow-down": ("↓", "#00E676"),
             "pause": ("⏸", "#FF9100"),
             "check": ("✓", "#00E676"),
@@ -408,8 +418,8 @@ class DownloadApp(QWidget):
         self.rail.setMinimumWidth(0)
         self.rail.setMaximumWidth(260)
         lay = QVBoxLayout(self.rail)
-        lay.setContentsMargins(16, 10, 16, 16)
-        lay.setSpacing(8)
+        lay.setContentsMargins(16, 4, 16, 16)     # tight top: no logo lives here
+        lay.setSpacing(6)
 
         # Header — no brand name/icon, just a compact collapse button (right).
         # No reserved logo space, no extra spacing below.
@@ -418,9 +428,13 @@ class DownloadApp(QWidget):
         self.title_lbl = QLabel("")          # kept (hidden) so _toggle refs don't break
         self.title_lbl.hide()
 
-        self.btn_collapse = QPushButton("◀")
-        self.btn_collapse.setFixedSize(28, 28)
-        self.btn_collapse.setStyleSheet(f"color: {MUTED}; font-size: 14px; background: transparent; border: none; font-weight: 700;")
+        self.btn_collapse = QPushButton("☰")
+        self.btn_collapse.setFixedSize(36, 32)
+        self.btn_collapse.setToolTip("Show / hide sidebar")
+        self.btn_collapse.setStyleSheet(
+            f"QPushButton {{ color: {TEXT}; font-size: 20px; background: {SURFACE_2};"
+            f" border: 1px solid {BORDER}; border-radius: 8px; font-weight: 800; }}"
+            f"QPushButton:hover {{ background: {ACCENT}; color: white; border-color: {ACCENT}; }}")
         self.btn_collapse.setCursor(Qt.PointingHandCursor)
         self.btn_collapse.clicked.connect(self._toggle_sidebar)
 
@@ -522,7 +536,7 @@ class DownloadApp(QWidget):
                 QPushButton {{ color: {TEXT}; text-align: center; padding: 12px; font-weight: 700; font-size: 16px; border-radius: 8px; }}
                 QPushButton:hover {{ background: {SURFACE_2}; }}
             """)
-            self.btn_collapse.setText("▶")
+            self.btn_collapse.setText("☰")
             self.graph_container.hide()        # hide the whole stats card (no blob)
         else:
             # Expand it
@@ -535,7 +549,7 @@ class DownloadApp(QWidget):
                 QPushButton {{ color: {TEXT}; text-align: left; padding: 12px 16px; font-weight: 700; font-size: 14px; border-radius: 8px; }}
                 QPushButton:hover {{ background: {SURFACE_2}; }}
             """)
-            self.btn_collapse.setText("◀")
+            self.btn_collapse.setText("☰")
             self.graph_container.show()        # restore the stats card
 
         self.nav.viewport().update() # trigger redraw
@@ -565,6 +579,10 @@ class DownloadApp(QWidget):
                 self._nav_groups[current_header_row] = []
                 if current_header_row not in self._nav_header_state:
                     self._nav_header_state[current_header_row] = True
+                # show the expand/collapse chevron from the start (was only set
+                # on click, so the show/hide affordance looked invisible)
+                exp = self._nav_header_state[current_header_row]
+                hdr.setText(f"{title}   {'⌄' if exp else '›'}")
                 continue
                 
             icon, label, key = entry
@@ -594,32 +612,49 @@ class DownloadApp(QWidget):
         self.nav.blockSignals(was_blocked)
 
     def _refresh_nav_counts(self):
-        import task as T
+        """Live per-item counts. Nav keys (from _get_nav_items) must match the
+        keys used here: category keys = utils.CATEGORIES + "Other"; status keys
+        = Active/Paused/Done/Failed. Counts are stored on Qt.UserRole+4 — the
+        SidebarItemDelegate reads them from there (item text is ignored)."""
         counts = {k: 0 for k in self._nav_count_items}
         with self.queue.cond:
-            counts["All"] = len(self.queue.tasks)
-            for t in self.queue.tasks:
-                if f"Queue:{t.queue_name}" in counts:
-                    counts[f"Queue:{t.queue_name}"] += 1
-                cat = t.category
-                if cat in counts:
-                    counts[cat] += 1
-                
+            tasks = list(self.queue.tasks)
+        counts["All"] = len(tasks)
+        for t in tasks:
+            qkey = f"Queue:{getattr(t, 'queue_name', 'Main')}"
+            if qkey in counts:
+                counts[qkey] += 1
+            cat = utils.category_for(t.filename)
+            if cat in counts:
+                counts[cat] += 1
+
+            if t.status in (T.DOWNLOADING, T.QUEUED, T.SCHEDULED):
+                status_key = "Active"
+            elif t.status == T.PAUSED:
+                status_key = "Paused"
+            elif t.status == T.COMPLETED:
+                status_key = "Done"
+            elif t.status in (T.ERROR, T.CANCELLED):
+                status_key = "Failed"
+            else:
                 status_key = ""
-                if t.status in (T.DOWNLOADING, T.QUEUED, T.SCHEDULED):
-                    status_key = "Active"
-                elif t.status == T.PAUSED:
-                    status_key = "Paused"
-                elif t.status == T.COMPLETED:
-                    status_key = "Done"
-                elif t.status == T.ERROR:
-                    status_key = "Failed"
-                    
-                if status_key in counts:
-                    counts[status_key] += 1
-                    
+            if status_key in counts:
+                counts[status_key] += 1
+
         for k, it in self._nav_count_items.items():
-            it.setData(Qt.UserRole + 4, counts[k])
+            it.setData(Qt.UserRole + 4, counts.get(k, 0))
+
+        # Home-page filter pills (separate widget set, by lowercase label).
+        if hasattr(self, "filter_pills"):
+            pill_counts = {
+                "all": len(tasks),
+                "active": sum(1 for t in tasks if t.status in (T.DOWNLOADING, T.QUEUED, T.SCHEDULED)),
+                "paused": sum(1 for t in tasks if t.status == T.PAUSED),
+                "completed": sum(1 for t in tasks if t.status == T.COMPLETED),
+                "failed": sum(1 for t in tasks if t.status in (T.ERROR, T.CANCELLED)),
+            }
+            for key, btn in self.filter_pills.items():
+                btn.setText(f"{key.capitalize()}  {pill_counts.get(key, 0)}")
 
     def eventFilter(self, obj, event):
         if obj == self.nav.viewport() and event.type() == QEvent.MouseButtonRelease:
@@ -630,7 +665,7 @@ class DownloadApp(QWidget):
                     is_expanded = not self._nav_header_state.get(row, True)
                     self._nav_header_state[row] = is_expanded
                     title = item.data(Qt.UserRole + 2)
-                    item.setText(f"{title}  {'▼' if is_expanded else '▶'}")
+                    item.setText(f"{title}   {'⌄' if is_expanded else '›'}")
                     for child_row in self._nav_groups[row]:
                         self.nav.setRowHidden(child_row, not is_expanded)
                 return True
@@ -687,45 +722,6 @@ class DownloadApp(QWidget):
                 break
         self._flash(f"Created queue '{name}'.")
 
-    def _refresh_nav_counts(self):
-        """Live per-item counts shown right-aligned, like ABDM's '0'."""
-        # one pass over tasks per tick, cheap.
-        tasks = list(self.queue.tasks)
-        by_cat = {}
-        for t in tasks:
-            by_cat[utils.category_for(t.filename)] = by_cat.get(utils.category_for(t.filename), 0) + 1
-        unfinished = sum(1 for t in tasks if t.status in (T.DOWNLOADING, T.QUEUED, T.PAUSED))
-        finished = sum(1 for t in tasks if t.status in (T.COMPLETED, T.ERROR, T.CANCELLED))
-        counts = {
-            "All": len(tasks),
-            "Compressed": by_cat.get("Compressed", 0),
-            "Programs": by_cat.get("Programs", 0),
-            "Video": by_cat.get("Video", 0),
-            "Music": by_cat.get("Music", 0),
-            "Documents": by_cat.get("Documents", 0),
-            "Other": by_cat.get("Other", 0),
-            "Unfinished": unfinished,
-            "Finished": finished,
-        }
-        for q in self.queue.queues.values():
-            counts[f"Queue:{q.name}"] = sum(1 for t in tasks if getattr(t, "queue_name", "Main") == q.name)
-        labels = {k: (icon, label) for (icon, label, k) in (e for e in self._get_nav_items() if e)}
-        for key, item in self._nav_count_items.items():
-            n = counts.get(key, 0)
-            icon, label = labels[key]
-            item.setText(f"   {label}" + (f"   · {n}" if n else ""))
-
-        if hasattr(self, "filter_pills"):
-            pill_counts = {
-                "all": len(tasks),
-                "active": sum(1 for t in tasks if t.status in (T.DOWNLOADING, T.QUEUED, T.SCHEDULED)),
-                "paused": sum(1 for t in tasks if t.status == T.PAUSED),
-                "completed": sum(1 for t in tasks if t.status == T.COMPLETED),
-                "failed": sum(1 for t in tasks if t.status == T.ERROR)
-            }
-            for key, btn in self.filter_pills.items():
-                btn.setText(f"{key.capitalize()}  {pill_counts.get(key, 0)}")
-
     def _on_search(self, text):
         self._search = text.strip().lower()
         self.refresh()
@@ -760,10 +756,12 @@ class DownloadApp(QWidget):
             tasks = [t for t in tasks if t.status in (T.DOWNLOADING, T.QUEUED)]
         elif f == "Paused":
             tasks = [t for t in tasks if t.status == T.PAUSED]
-        elif f in ("Done", "Finished"):
+        elif f == "Done":
+            tasks = [t for t in tasks if t.status == T.COMPLETED]
+        elif f == "Finished":
             tasks = [t for t in tasks if t.status in (T.COMPLETED, T.ERROR, T.CANCELLED)]
         elif f == "Failed":
-            tasks = [t for t in tasks if t.status == T.ERROR]
+            tasks = [t for t in tasks if t.status in (T.ERROR, T.CANCELLED)]
         elif f == "Unfinished":
             tasks = [t for t in tasks if t.status in (T.DOWNLOADING, T.QUEUED, T.PAUSED)]
         elif f in utils.CATEGORIES or f == "Other":
@@ -1131,32 +1129,55 @@ class DownloadApp(QWidget):
             subprocess.Popen(["explorer", self.save_dir])
 
     def on_settings(self):
+        """Open Settings as an in-app page (swapped into the content stack)
+        rather than a separate modal window. Reuses SettingsDialog with its
+        window-ness stripped (Qt.Widget); its Save/Cancel buttons fire the
+        dialog's accepted/rejected signals which we hook to apply + return."""
+        # already showing a settings page? don't stack a second one
+        if getattr(self, "_settings_page", None) is not None:
+            self.content_stack.setCurrentWidget(self._settings_page)
+            return
         dlg = SettingsDialog(self, self.save_dir, self.max_concurrent, self.segments,
                              verify_tls=self.verify_tls, pair_token=self.pair_token,
                              theme=self.theme,
                              sched_en=self.scheduler_enabled,
                              sched_start=self.scheduler_start,
                              sched_stop=self.scheduler_stop)
-        if dlg.exec() != QDialog.Accepted:
-            return
-        d, conc, segs, verify, theme, s_en, s_start, s_stop = dlg.values()
-        if os.path.isdir(d):
-            self.save_dir = d
-        self.max_concurrent = conc
-        self.segments = segs
-        # concurrency now lives per-Queue; update the actual scheduling source
-        # (and notify the parked scheduler) instead of a dead QueueManager attr.
-        self.queue.set_max_concurrent("Main", conc)
-        self.queue.segments = segs
-        self.verify_tls = verify
-        utils.VERIFY_TLS = verify
-        if theme != self.theme:
-            self._apply_theme(theme)
-        self.scheduler_enabled = s_en
-        self.scheduler_start = s_start
-        self.scheduler_stop = s_stop
-        self._save_settings()
-        self._check_scheduler()
+        dlg.setWindowFlags(Qt.Widget)              # embed as child, not a window
+        dlg.setMinimumSize(0, 0)                   # let it fit the content pane
+        self._settings_page = dlg
+        self.content_stack.addWidget(dlg)
+        self.content_stack.setCurrentWidget(dlg)
+
+        def _close():
+            self.content_stack.setCurrentWidget(self.page_downloads)
+            self.content_stack.removeWidget(dlg)
+            dlg.deleteLater()
+            self._settings_page = None
+
+        def _apply():
+            d, conc, segs, verify, theme, s_en, s_start, s_stop = dlg.values()
+            if os.path.isdir(d):
+                self.save_dir = d
+            self.max_concurrent = conc
+            self.segments = segs
+            # concurrency now lives per-Queue; update the actual scheduling source
+            # (and notify the parked scheduler) instead of a dead QueueManager attr.
+            self.queue.set_max_concurrent("Main", conc)
+            self.queue.segments = segs
+            self.verify_tls = verify
+            utils.VERIFY_TLS = verify
+            if theme != self.theme:
+                self._apply_theme(theme)
+            self.scheduler_enabled = s_en
+            self.scheduler_start = s_start
+            self.scheduler_stop = s_stop
+            self._save_settings()
+            self._check_scheduler()
+            _close()
+
+        dlg.accepted.connect(_apply)
+        dlg.rejected.connect(_close)
 
     def _check_scheduler(self):
         if not getattr(self, "scheduler_enabled", False):
@@ -1220,37 +1241,49 @@ class DownloadApp(QWidget):
         menu = QMenu(self.table)
         menu.setStyleSheet(f"QMenu {{ background: {SURFACE}; color: {TEXT}; border: 1px solid {BORDER}; }}"
                            f"QMenu::item:selected {{ background: {HOVER}; }}")
-        
+
+        # --- open (finished downloads) ---
+        if t.status == T.COMPLETED:
+            menu.addAction("📂  Open File", lambda: self._open_task_file(t))
+            menu.addAction("📁  Open Folder", lambda: self._open_task_folder(t))
+            menu.addSeparator()
+
+        # --- run control ---
+        if t.status == T.DOWNLOADING:
+            menu.addAction("⏸  Pause", lambda: self._ctx_pause(t))
+        if t.status in (T.PAUSED, T.ERROR, T.SCHEDULED):
+            menu.addAction("▶  Resume", lambda: self._ctx_resume(t))
         if t.status in (T.QUEUED, T.PAUSED, T.SCHEDULED, T.ERROR):
             menu.addAction("🚀  Force Download", lambda: self._force_download(t))
-            menu.addSeparator()
-        
-        limit_menu = menu.addMenu("Set Speed Limit...")
-        
-        actions = [
-            ("Unlimited", 0),
-            ("100 Kb/s", 100 * 1000 // 8),
-            ("500 Kb/s", 500 * 1000 // 8),
-            ("1 Mb/s", 1000 * 1000 // 8),
-            ("5 Mb/s", 5 * 1000 * 1000 // 8),
-            ("Custom...", -1)
-        ]
-        
-        for name, bps in actions:
-            act = limit_menu.addAction(name)
-            act.setCheckable(True)
-            if bps == t.speed_limit or (bps == -1 and t.speed_limit not in [a[1] for a in actions[:-1]]):
-                act.setChecked(True)
-            
-            act.triggered.connect(lambda checked=False, val=bps, task=t: self._set_task_limit(task, val))
-            
+
+        # --- per-task speed limit (not meaningful once finished) ---
+        if t.status != T.COMPLETED:
+            limit_menu = menu.addMenu("Set Speed Limit...")
+            actions = [
+                ("Unlimited", 0),
+                ("100 Kb/s", 100 * 1000 // 8),
+                ("500 Kb/s", 500 * 1000 // 8),
+                ("1 Mb/s", 1000 * 1000 // 8),
+                ("5 Mb/s", 5 * 1000 * 1000 // 8),
+                ("Custom...", -1)
+            ]
+            for name, bps in actions:
+                act = limit_menu.addAction(name)
+                act.setCheckable(True)
+                if bps == t.speed_limit or (bps == -1 and t.speed_limit not in [a[1] for a in actions[:-1]]):
+                    act.setChecked(True)
+                act.triggered.connect(lambda checked=False, val=bps, task=t: self._set_task_limit(task, val))
+
+        # --- reorder within a queue (only QUEUED tasks still waiting in the heap;
+        #     move() is a no-op for running/paused/finished tasks) ---
         if t.status == T.QUEUED:
             menu.addSeparator()
             menu.addAction("⬆  Move to top", lambda: self._move_task(t, "top"))
             menu.addAction("↑  Move up", lambda: self._move_task(t, "up"))
             menu.addAction("↓  Move down", lambda: self._move_task(t, "down"))
             menu.addAction("⬇  Move to bottom", lambda: self._move_task(t, "bottom"))
-            
+
+        # --- move between queues ---
         menu.addSeparator()
         q_menu = menu.addMenu("Move to Queue")
         for q in self.queue.queues.values():
@@ -1261,10 +1294,54 @@ class DownloadApp(QWidget):
                 act.setEnabled(False)
             act.triggered.connect(lambda checked=False, name=q.name, task=t: self._move_task_to_queue(task, name))
 
+        # --- misc ---
         menu.addSeparator()
+        menu.addAction("🔗  Copy URL", lambda: QApplication.clipboard().setText(t.url or ""))
+        menu.addAction("ℹ  Properties", lambda: PropertiesDialog(self, t).exec())
         menu.addAction("🗑  Remove", lambda: self._remove_task(t))
 
         menu.exec(self.table.viewport().mapToGlobal(pos))
+
+    def _ctx_pause(self, t):
+        self.queue.pause_task(t)
+        self._save_tick = 10
+        self.refresh()
+
+    def _ctx_resume(self, t):
+        self.queue.resume_task(t)
+        self._save_tick = 10
+        self.refresh()
+
+    def _open_task_file(self, t):
+        """Open the downloaded file; for a torrent (save_path is a placeholder,
+        payload is a folder) open the destination folder instead."""
+        target = t.save_path
+        if not os.path.exists(target):
+            folder = os.path.dirname(t.save_path) or "."
+            target = folder if (_torrent.is_torrent_task(t.url, t.filename)
+                                and os.path.isdir(folder)) else ""
+        if not target:
+            self._flash("File not found — it may have been moved or deleted.")
+            return
+        try:
+            os.startfile(target)
+        except OSError:
+            pass
+
+    def _open_task_folder(self, t):
+        path = os.path.normpath(t.save_path)
+        try:
+            if os.path.isdir(path):
+                os.startfile(path)                  # torrent folder: open its contents
+            elif os.path.exists(path):
+                subprocess.Popen(["explorer", "/select,", path])
+            else:
+                os.startfile(os.path.dirname(path) or ".")
+        except OSError:
+            try:
+                os.startfile(os.path.dirname(path) or ".")
+            except OSError:
+                pass
 
     def _force_download(self, task):
         self.queue.force_start(task)

@@ -56,7 +56,9 @@ def test_filters(win):
     win._set_filter("Paused")
     assert win.model.rowCount() == 1       # paused (no longer hidden under Active)
     win._set_filter("Done")
-    assert win.model.rowCount() == 2       # completed + error
+    assert win.model.rowCount() == 1       # completed only (Failed is separate now)
+    win._set_filter("Failed")
+    assert win.model.rowCount() == 1       # error
     win._set_filter("All")
 
 

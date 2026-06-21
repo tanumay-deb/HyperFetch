@@ -18,6 +18,11 @@ Conventions:
 
 | SHA | Summary |
 |---|---|
+| _(uncommitted)_ | **v2 GUI rewrite (`gui2/`, behind `python main.py --v2`).** Clean widget-based View; backend reused untouched. Real `DownloadCardWidget` (not a paint delegate → kills the v1 overflow/collapsed/hit-test bug class), grouped Active/Paused/Completed/Failed list, sidebar w/ counts + circular speed gauge, tabbed New Download (URL/Torrent/Magnet), slide-in Details Drawer (Overview/Files/Connections/Headers/Logs), 6-section Settings, Complete popup + notification toasts. **Parity pack:** system tray (minimize/close-to-tray + notify), scheduler timer (enforced both windows), full right-click menu (open/pause/resume/force/speed-limit/move/move-to-queue/copy/properties/remove), multi-select + bulk (ctrl/shift), per-task speed limit. **Polish:** selected-card highlight, keyboard shortcuts (list-scoped so search isn't hijacked), state-colored progress, drag-drop overlay, remember window size + last filter. **New:** duplicate detection, clipboard prefill + monitor, open-on-complete. One-source QSS palette (fixes v1 stale-theme bug). v1 untouched + default; 164 tests green; adversarial review (partial, session-capped) → 1 low finding fixed (deterministic shift-range anchor). Deferred: light theme, SHA-256 verify, yt-dlp, Queue/Category manager dialogs. |
+| _(uncommitted)_ | **Sidebar + torrent swarm batch.** Sidebar: collapse button now a clear high-contrast **☰** (was an easy-to-miss `«`); added an **"＋ Add Queue"** nav item (the only add-queue path was an unreachable handler); section headers show an expand/collapse **chevron (⌄/›) from the start**. Torrent: a non-zero aria2 exit whose bytes are all present is now treated as **COMPLETED** (fixes "torrent failed: (OK):download completed…" — that text is aria2's always-printed exit legend, now filtered from error messages); **peers/seeders shown in the card** for torrent downloads (parsed from aria2 `CN:`/`SD:`). Folded in adversarial-review fixes: reader-thread epoch + terminal-status guard so a stale reader can't clobber progress on resume/completion; metadata-flash suppression no longer pins sub-1 MB torrents at 0% (gates on FILE: seen, not a hard size floor); `_resolve_save_path` fallback only picks entries touched during this run; `task.from_dict` `is_scheduled` dead-code fixed; Open Folder opens a torrent folder's contents directly. |
+| _(uncommitted)_ | **Torrent progress + UX batch.** Fixed torrents stuck at 0% then jumping to a complete popup — root cause: the aria2 reader stored only the *latest* readout line, and aria2's `--summary-interval` block prints the `[#.. X/Y(%)..]` progress line **then** a `FILE:`/`----` line, so the control-loop sample almost always missed the progress line → `downloaded/total` stayed 0. Reader now parses progress in place off each line (verified live: 0→26%); magnet metadata flash (<1 MB total) suppressed. Torrent `save_path` now repointed to the real on-disk entry (`_top_entry`/`_resolve_save_path`) instead of the placeholder `download.bin` → Properties path correct and **Open File works** (dialogs also fall back to the folder for old/placeholder entries). Right-click menu enriched: Open File/Folder (completed), Pause/Resume, Copy URL, Properties (Move up/down stays QUEUED-only since `queue.move()` only touches heap tasks). Removed the duplicate **STATUS** section from the sidebar (top filter pills cover it) and tightened the empty top margin. |
+| _(uncommitted)_ | GUI bug batch: removed redundant inner line-graph from the circular speed gauge (ring only); connection count shows real live-segment count for active HTTP downloads, hidden when 0/torrent; visible sidebar collapse button («/» toggle, styled); **Settings now an in-app page** (swapped into a content `QStackedWidget`, no separate modal); **per-category nav counts** on `Qt.UserRole+4`; consolidated the duplicate `_refresh_nav_counts`; fixed nav key `"Videos"`≠category `"Video"` mismatch that made the Video filter show ALL tasks (root cause of torrents appearing in both Videos and Other). |
+| `f5f1f76` | **Release v1.2.1** — GUI redesign (CardDelegate cards, sidebar nav, circular speed gauge, sectioned Settings, scheduler) + torrent peer-discovery fix (public trackers + PEX + LPD) + UX fixes (top-bar layout, torrent metadata status, collapsed-sidebar stats card). |
 | `0f94ba0` | Tier 4: **BitTorrent / magnet** via aria2c sidecar — `torrent.py` `TorrentDownloader` drives a per-task aria2c subprocess (pause=terminate+resume via .aria2, progress parsed from readout); `downloader.run()` delegates magnet/.torrent; `magnet:` scheme allowed; spec bundles `bin/aria2c.exe`. **Needs `bin/aria2c.exe` shipped + a real-swarm smoke test.** |
 | `59a5a3b` | Tier 2: HLS variant picker via app-side `/probe` — extension POSTs the master URL to the app (real Referer/cookies/UA, no CORS), `hls.probe_variants` returns the quality list; SW fetch kept as fallback. Fixes pickers missing on referer-gated CDNs. |
 | `41253f5` | Fix theme not switching back to dark (`self.theme` read a stale `import *` `THEME` copy) + cap absurd ETA ("18808h" → "—" beyond 99h). |
@@ -65,9 +70,11 @@ _(empty — pick from below or file as discovered)_
 
 ---
 
-## Bugs / regressions (none open)
+## Bugs / regressions
 
-_(none currently — the arch-batch review found 10 real bugs incl. 1 blocker, all fixed in `29f760d`; the prior review found 11, all fixed in `05fdc02`.)_
+- [ ] **Responsive layout breaks on resize.** When the window is resized the layouts get mixed up / overlap. Needs a pass over the main pane + sidebar + card delegate sizing at narrow and very-wide widths.
+
+_(Earlier: the arch-batch review found 10 real bugs incl. 1 blocker, all fixed in `29f760d`; the prior review found 11, all fixed in `05fdc02`.)_
 
 ---
 
@@ -99,9 +106,6 @@ _(none currently — the arch-batch review found 10 real bugs incl. 1 blocker, a
 4. **Bugs found in review:** if confirmed real, file under **Bugs** with the file:line and the fix path. If declined, file under **Watch** with the reason.
 
 Three adversarial reviews so far have each found ~10 real bugs in newly-committed code (incl. a download-hangs-forever blocker in the multi-queue/Auto-segments batch). Treat every architectural change as an invitation for adversarial review before declaring done — "tests pass" is necessary, not sufficient.
-
-Bugs: 
-when the app size is changing the layouts are getting mixed up 
 
 2nd SS - i only see Error but no error description - when double clicking it should show what error
 
