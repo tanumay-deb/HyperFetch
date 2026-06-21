@@ -105,6 +105,13 @@ class NewDownloadDialog(QDialog):
         self.referer = QLineEdit(self._headers.get("Referer", "")); av.addWidget(self.referer, 1, 1)
         av.addWidget(self._label("User-Agent"), 2, 0, 1, 2)
         self.ua = QLineEdit(self._headers.get("User-Agent", "")); av.addWidget(self.ua, 3, 0, 1, 2)
+        from yt_dl import is_ytdlp_url
+        self.use_ytdlp = QCheckBox("Use yt-dlp (YouTube & video sites)")
+        self.use_ytdlp.setChecked(is_ytdlp_url(url))
+        av.addWidget(self.use_ytdlp, 4, 0, 1, 2)
+        # auto-tick when a known media URL is typed/pasted (never auto-untick)
+        self.url_edit.textChanged.connect(
+            lambda t: self.use_ytdlp.setChecked(True) if is_ytdlp_url(t) else None)
         lay.addWidget(self.adv)
 
         # ---- footer ----
@@ -179,5 +186,6 @@ class NewDownloadDialog(QDialog):
             "priority": prio,
             "connections": self.conns.value(),
             "start_now": self.start_now.isChecked(),
+            "use_ytdlp": self.use_ytdlp.isChecked(),
             "headers": h,
         }

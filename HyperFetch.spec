@@ -6,11 +6,17 @@ from PyInstaller.utils.hooks import collect_all, collect_submodules
 # cryptography is imported lazily inside hls.py -> pull it in explicitly
 crypto_datas, crypto_binaries, crypto_hidden = collect_all('cryptography')
 
+# yt-dlp is imported lazily inside yt_dl.py -> pull it + its extractors in
+try:
+    ytdlp_datas, ytdlp_binaries, ytdlp_hidden = collect_all('yt_dlp')
+except Exception:
+    ytdlp_datas, ytdlp_binaries, ytdlp_hidden = [], [], []
+
 hidden = (
     # local modules reached via lazy `import` inside functions
     ['hls', 'downloader', 'queue_manager', 'api_server', 'task', 'utils',
-     'crash_reporter', 'updater', 'torrent']
-    + crypto_hidden
+     'crash_reporter', 'updater', 'torrent', 'yt_dl']
+    + crypto_hidden + ytdlp_hidden
     + collect_submodules('flask_cors')
 )
 
@@ -27,9 +33,9 @@ elif os.path.isfile(os.path.join('bin', 'aria2c')):
 a = Analysis(
     ['main.py'],
     pathex=[],
-    binaries=crypto_binaries,
+    binaries=crypto_binaries + ytdlp_binaries,
     datas=[('assets/icon.ico', 'assets'), ('assets/icon.png', 'assets'),
-           ('assets/icons', 'assets/icons')] + extra_datas + crypto_datas,
+           ('assets/icons', 'assets/icons')] + extra_datas + crypto_datas + ytdlp_datas,
     hiddenimports=hidden,
     hookspath=[],
     runtime_hooks=[],

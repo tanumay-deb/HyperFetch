@@ -334,6 +334,13 @@ class Downloader:
             torrent.TorrentDownloader(self.t).run()
             return
 
+        # media pages (YouTube etc.) -> yt-dlp; forced via the New Download toggle
+        # or auto-detected by host. Not a direct file, so it can't be byte-split.
+        import yt_dl
+        if getattr(self.t, "use_ytdlp", False) or yt_dl.is_ytdlp_url(self.t.url):
+            yt_dl.YtDlpDownloader(self.t).run()
+            return
+
         # HLS (.m3u8) playlists need segment fetch+concat, not a byte download
         import hls
         if hls.is_hls(self.t.url, self.t.filename, self._probe_ctype):

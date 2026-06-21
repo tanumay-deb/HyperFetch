@@ -542,6 +542,7 @@ class DownloadAppV2(QWidget):
         t = T.DownloadTask(v["url"], save_path, filename=filename,
                            headers=v["headers"], priority=v["priority"],
                            queue_name=v["queue"])
+        t.use_ytdlp = v.get("use_ytdlp", False)     # route through yt-dlp engine
         self.queue.segments = v["connections"]      # active per-download connections
         if v["start_now"]:
             self.queue.add_task(t)
