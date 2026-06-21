@@ -271,6 +271,8 @@ class DetailsDrawer(QFrame):
         self.ov_done.setText(human_size(t.downloaded))
         eta = fmt_eta((t.total_size - t.downloaded) / bps) if bps > 0 and t.total_size else ""
         self.ov_eta.setText(eta or "—")
+        self.ov_hash.setText({"ok": "✓ verified", "fail": "✗ mismatch",
+                              "nohash": "no checksum"}.get(getattr(t, "hash_status", ""), "—"))
         self.graph.push(bps if t.status == T.DOWNLOADING else 0.0)
 
         # Connections

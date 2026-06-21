@@ -102,6 +102,8 @@ class DownloadTask:
         # live torrent swarm stats (transient; set by TorrentDownloader's reader)
         self.tor_conns = 0          # connected peers
         self.tor_seeds = 0          # seeders
+        # SHA-256 verification result (transient): "", "ok", "fail", "nohash"
+        self.hash_status = ""
 
         self.speed_limit = speed_limit
         self._limiter = utils.RateLimiter()

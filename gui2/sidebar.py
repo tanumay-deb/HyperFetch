@@ -94,6 +94,7 @@ class Sidebar(QFrame):
     newDownload = Signal()
     openSettings = Signal()
     toggleCollapse = Signal()
+    manageQueues = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -147,6 +148,13 @@ class Sidebar(QFrame):
 
         # status lives in the main-window filter pills — not in the sidebar.
         lay.addStretch()
+
+        # ---- queues ----
+        self.btn_queues = QPushButton("🗂  Queues")
+        self.btn_queues.setObjectName("navItem")
+        self.btn_queues.setCursor(Qt.PointingHandCursor)
+        self.btn_queues.clicked.connect(self.manageQueues)
+        lay.addWidget(self.btn_queues)
 
         # ---- stats card (compact; gauge stays visible when collapsed) ----
         self.stats = QFrame()
@@ -230,4 +238,5 @@ class Sidebar(QFrame):
         for row in self._rows.values():
             row.set_collapsed(on)
         self.btn_new.setText("＋" if on else "＋  New Download")
+        self.btn_queues.setText("🗂" if on else "🗂  Queues")
         self.btn_settings.setText("⚙" if on else "⚙  Settings")

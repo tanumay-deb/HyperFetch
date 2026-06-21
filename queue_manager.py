@@ -6,10 +6,13 @@ up in the same list. Uses a Condition (no busy-spin) and tracks every task in
 """
 import time
 import heapq
+import logging
 import threading
 
 import task as T
 from downloader import Downloader
+
+log = logging.getLogger("hyperfetch")
 
 
 class Queue:
@@ -267,7 +270,12 @@ class QueueManager:
     def _execute(self, task, started_queue):
         try:
             if not task.cancel_requested:
+                log.info("start: %s (%s) queue=%s", task.filename, task.id[:8], started_queue)
                 Downloader(task, segments=self.segments).run()
+                log.info("end: %s status=%s%s", task.filename, task.status,
+                         f" error={task.error}" if task.error else "")
+        except Exception:
+            log.exception("task crashed: %s", task.filename)
         finally:
             with self.cond:
                 q = self.queues.get(started_queue)

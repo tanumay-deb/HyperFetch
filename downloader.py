@@ -428,6 +428,48 @@ class Downloader:
                     except OSError:
                         pass
                 return  # leave temp_path in %TEMP% for a retry
+            if utils.HASH_CHECK and self._verify_hash() is False:
+                self.t.status = T.ERROR
+                self.t.error = "SHA-256 mismatch — the file may be corrupt"
+                return
             self.t.status = T.COMPLETED
         else:
             self.t.status = T.PAUSED
+
+    def _fetch_expected_hash(self):
+        """Look for a <url>.sha256 / .sha256sum sidecar; return the 64-hex digest
+        or None if absent/unreachable."""
+        import re as _re
+        for suffix in (".sha256", ".sha256sum"):
+            try:
+                r = requests.get(self.t.url + suffix, headers=self._base_headers,
+                                 timeout=10, verify=utils.VERIFY_TLS, proxies=utils.PROXIES)
+                if r.status_code == 200:
+                    m = _re.search(r"\b([a-fA-F0-9]{64})\b", r.text)
+                    if m:
+                        return m.group(1)
+            except requests.RequestException:
+                pass
+        return None
+
+    def _verify_hash(self):
+        """Verify the finished file's SHA-256 against the sidecar digest.
+        Returns True (match), False (mismatch), or None (no sidecar / unreadable)."""
+        import hashlib
+        expected = self._fetch_expected_hash()
+        if not expected:
+            self.t.hash_status = "nohash"
+            return None
+        h = hashlib.sha256()
+        try:
+            with open(self.t.save_path, "rb") as f:
+                for chunk in iter(lambda: f.read(1024 * 1024), b""):
+                    if self.t.cancel_requested:
+                        return None
+                    h.update(chunk)
+        except OSError:
+            self.t.hash_status = "nohash"
+            return None
+        ok = h.hexdigest().lower() == expected.lower()
+        self.t.hash_status = "ok" if ok else "fail"
+        return ok

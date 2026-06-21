@@ -161,6 +161,7 @@ class DownloadAppV2(QWidget):
         self.sidebar.newDownload.connect(self._new_download)
         self.sidebar.openSettings.connect(self._open_settings)
         self.sidebar.toggleCollapse.connect(self._toggle_sidebar)
+        self.sidebar.manageQueues.connect(self._open_queues)
         root.addWidget(self.sidebar)
         # animate min AND max together so the width is exact every frame (child
         # min-widths can't fight it) -> a smooth slide instead of a jumpy reflow
@@ -499,6 +500,12 @@ class DownloadAppV2(QWidget):
         s = (s or "").strip().lower()
         return s.startswith(("http://", "https://", "magnet:")) or s.endswith(".torrent")
 
+    def _open_queues(self):
+        from gui2.dialogs.queues import QueueManagerDialog
+        QueueManagerDialog(self, self.queue).exec()
+        self._save_settings()        # persist queue list + concurrencies
+        self.refresh()
+
     def _new_download(self):
         clip = QApplication.clipboard().text().strip()
         prefill = clip if self._looks_like_url(clip) else ""
@@ -598,6 +605,8 @@ class DownloadAppV2(QWidget):
         utils.LISTEN_PORT = int(ex.get("listen_port", 0) or 0)
         utils.DISK_CACHE = bool(ex.get("disk_cache", True))
         utils.PREALLOCATE = bool(ex.get("preallocate", False))
+        utils.HASH_CHECK = bool(ex.get("hash_check", False))
+        utils.setup_logging(bool(ex.get("debug_log", False)))
         ctype = ex.get("connection_type", "Default (Auto)")
         purl = (ex.get("proxy") or "").strip()
         if ctype == "Direct":

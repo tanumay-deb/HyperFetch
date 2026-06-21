@@ -22,6 +22,7 @@ import task as T
 import utils
 
 PORT = 5000
+log = logging.getLogger("hyperfetch")
 
 
 def create_app(queue, save_dir, pending=None, token=None):
@@ -85,6 +86,7 @@ def create_app(queue, save_dir, pending=None, token=None):
             return jsonify({"status": "error", "message": "invalid url"}), 400
 
         suggested = data.get("filename") or ""
+        log.info("server received download: %s", url)
 
         # browser context for auth-gated hosts (Google Drive etc.)
         headers = {}

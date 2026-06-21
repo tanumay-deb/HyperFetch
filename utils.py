@@ -3,6 +3,7 @@ plus security primitives (pairing token, TLS-verify flag, sensitive-header strip
 import os
 import re
 import json
+import logging
 import secrets
 import urllib.parse
 
@@ -16,6 +17,7 @@ MAX_CONNECTIONS = 0       # global ceiling on per-download segments (0 = unlimit
 LISTEN_PORT = 0           # torrent listen port (0 = aria2 default)
 DISK_CACHE = True         # aria2 --disk-cache on/off
 PREALLOCATE = False       # aria2 file pre-allocation
+HASH_CHECK = False        # verify SHA-256 against a <url>.sha256 sidecar on finish
 
 # Request headers that must NEVER be written to disk (account-level secrets).
 SENSITIVE_HEADERS = {"cookie", "authorization", "proxy-authorization"}
@@ -229,3 +231,32 @@ class RateLimiter:
                 self._lock.acquire()
 
 global_limiter = RateLimiter()
+
+
+# ----------------------------------------------------------------- debug logging
+def setup_logging(debug=False):
+    """Configure the 'hyperfetch' logger. When debug is on, write a detailed log
+    to %APPDATA%\\HyperFetch\\hyperfetch.log; when off, stay silent. Idempotent —
+    call on startup and whenever the Settings toggle changes."""
+    logger = logging.getLogger("hyperfetch")
+    for h in list(logger.handlers):
+        logger.removeHandler(h)
+        try:
+            h.close()
+        except Exception:
+            pass
+    logger.propagate = False
+    if debug:
+        logger.setLevel(logging.DEBUG)
+        try:
+            fh = logging.FileHandler(os.path.join(app_data_dir(), "hyperfetch.log"),
+                                     encoding="utf-8")
+            fh.setFormatter(logging.Formatter(
+                "%(asctime)s %(levelname)s [%(name)s] %(message)s", "%H:%M:%S"))
+            logger.addHandler(fh)
+        except OSError:
+            logger.addHandler(logging.NullHandler())
+    else:
+        logger.setLevel(logging.WARNING)
+        logger.addHandler(logging.NullHandler())
+    return logger
