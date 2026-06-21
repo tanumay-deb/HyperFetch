@@ -96,6 +96,28 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
 });
 
+// Capture browser-initiated downloads (clicking a Download button/link) and
+// route them to the app instead of Chrome. Respects the on/off toggle. The
+// Chrome download is cancelled ONLY after the app accepts it, so when the app
+// is offline/unpaired the browser download just proceeds normally — no capture
+// loop and no lost file. Already-downloaded files don't re-fire onCreated, so
+// this never resurrects the old "surprise dialog for old files" problem.
+if (chrome.downloads && chrome.downloads.onCreated) {
+  chrome.downloads.onCreated.addListener((item) => {
+    if (!captureEnabled) return;
+    const url = item.finalUrl || item.url || "";
+    if (!/^https?:\/\//i.test(url)) return;      // skip blob:/data:/extension URLs
+    const name = (item.filename || "").split(/[\\/]/).pop()
+              || url.split("?")[0].split("/").pop() || "";
+    sendToApp(url, name, "", (ok) => {
+      if (ok) chrome.downloads.cancel(item.id, () => {
+        ignoreErr();
+        chrome.downloads.erase({ id: item.id }, ignoreErr);
+      });
+    });
+  });
+}
+
 // --- Media Sniffer ---
 // HLS/DASH playlists (the actual "grab the video" targets) and direct media.
 const PLAYLIST_RE = /\.(m3u8|mpd)(\?.*)?$/i;

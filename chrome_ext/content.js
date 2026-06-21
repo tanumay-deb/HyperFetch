@@ -32,6 +32,22 @@ function sendToApp(url, suggestedName = null) {
   });
 }
 
+// Capture clicks on magnet: / .torrent links so they go to HyperFetch only,
+// instead of the OS default handler (uTorrent etc.) also firing. An explicit
+// click fits the manual-capture model; preventDefault stops the navigation that
+// would otherwise hand the magnet to the system handler.
+document.addEventListener("click", (e) => {
+  if (!captureEnabled) return;
+  const a = e.target && e.target.closest && e.target.closest("a[href]");
+  if (!a) return;
+  const href = a.href || "";
+  if (href.startsWith("magnet:") || /\.torrent(\?.*)?$/i.test(href)) {
+    e.preventDefault();
+    e.stopPropagation();
+    sendToApp(href);
+  }
+}, true);
+
 function showToast(msg) {
   const toast = document.createElement("div");
   toast.textContent = msg;

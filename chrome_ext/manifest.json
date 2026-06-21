@@ -2,11 +2,12 @@
   "manifest_version": 3,
   "name": "HyperFetch",
   "description": "Sends downloads to the HyperFetch desktop app for accelerated multi-segment downloading.",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "permissions": [
     "contextMenus",
     "storage",
     "webRequest",
+    "downloads",
     "cookies"
   ],
   "host_permissions": [

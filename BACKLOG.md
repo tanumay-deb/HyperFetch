@@ -3,6 +3,8 @@
 Simple running list. Newest first. Keep entries to one line.
 
 ## Done
+- _(uncommitted)_ — Extension capture: browser downloads (Download buttons) routed to the app via `chrome.downloads.onCreated` (toggle-gated, cancel-after-accept so app-offline falls back to Chrome); magnet/`.torrent` clicks intercepted → app only (no uTorrent). Mirrored to edge_ext; manifest 1.2.0 + `downloads` permission.
+- _(uncommitted)_ — yt-dlp engine (`yt_dl.py`): YouTube/Vimeo/etc. delegate to yt-dlp; auto-detect by host + a New Download "Use yt-dlp" toggle; resolves real title/file. Added to requirements + spec.
 - _(uncommitted)_ — v2 Queue Manager (🗂 Queues in sidebar): add/delete queues + per-queue concurrency.
 - _(uncommitted)_ — Debug logging: Settings → Advanced toggle writes `hyperfetch.log` (task lifecycle, errors, server downloads).
 - _(uncommitted)_ — SHA-256 verification: on finish, fetch `<url>.sha256` sidecar, compare, mismatch → Error (Settings → Advanced toggle).
@@ -25,7 +27,6 @@ Simple running list. Newest first. Keep entries to one line.
 
 ## Ideas
 - Light theme (v2 is dark-only).
-- yt-dlp integration (YouTube etc.).
 - Per-host rules (cookies/segments per host).
 
 ## Decided to keep light (not building)
