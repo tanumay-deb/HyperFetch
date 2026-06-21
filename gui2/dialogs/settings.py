@@ -173,8 +173,10 @@ class SettingsDialogV2(QDialog):
         self._row(g, "Listen Port", "Port for incoming (torrent) connections", self.listen_port)
         self.upnp = self._toggle(ex.get("upnp", True))
         self._row(g, "Use UPnP / NAT-PMP", "Allow automatic port mapping", self.upnp)
-        proxy_btn = QPushButton("Configure")
-        self._row(g, "Proxy Settings", "Configure a proxy for downloads", proxy_btn)
+        self._proxy_url = (ex.get("proxy") or "").strip()
+        self.proxy_btn = QPushButton("Configure" if not self._proxy_url else "Edit")
+        self.proxy_btn.clicked.connect(self._config_proxy)
+        self._row(g, "Proxy Settings", "Configure a proxy for downloads", self.proxy_btn)
         self.dns_https = self._toggle(ex.get("dns_https", False))
         self._row(g, "DNS over HTTPS", "Use secure DNS for resolving addresses", self.dns_https)
         v.addWidget(f); v.addStretch()
@@ -286,6 +288,15 @@ class SettingsDialogV2(QDialog):
         if d:
             self.dir_lbl.setText(d)
 
+    def _config_proxy(self):
+        from PySide6.QtWidgets import QInputDialog
+        text, ok = QInputDialog.getText(
+            self, "Proxy", "Proxy URL (e.g. http://host:port) — leave blank for none:",
+            text=self._proxy_url)
+        if ok:
+            self._proxy_url = text.strip()
+            self.proxy_btn.setText("Edit" if self._proxy_url else "Configure")
+
     def _check_updates(self):
         self.upd_lbl.setText("Checking…"); QApplication.processEvents()
         import urllib.request, json
@@ -335,6 +346,7 @@ class SettingsDialogV2(QDialog):
             "upnp": self.upnp.isChecked(),
             "dns_https": self.dns_https.isChecked(),
             "preallocate": self.preallocate.isChecked(),
+            "proxy": self._proxy_url,
             "ui_density": self.density.currentText(),
             "font_size": self.font_size.currentText(),
             "disk_cache": self.disk_cache.isChecked(),

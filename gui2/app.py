@@ -111,6 +111,7 @@ class DownloadAppV2(QWidget):
         self.scheduler_enabled = bool(s.get("scheduler_enabled", False))
         self.scheduler_start = s.get("scheduler_start", "02:00")
         self.scheduler_stop = s.get("scheduler_stop", "08:00")
+        self._apply_network_settings()
 
     def _save_settings(self):
         data = dict(getattr(self, "_extras", {}))
@@ -327,8 +328,11 @@ class DownloadAppV2(QWidget):
                 if self.tray and self.tray.isVisible():
                     self.tray.showMessage("Download Complete", t.filename or "download",
                                           QSystemTrayIcon.Information, 4000)
-                if self._extras.get("open_on_complete"):
+                wc = self._extras.get("when_complete", "Show notification")
+                if wc == "Open file" or self._extras.get("open_on_complete"):
                     self._open_file(t)
+                elif wc == "Open folder":
+                    self._open_folder(t)
                 dlg = CompleteDialog(self, t)
                 dlg.viewInList.connect(lambda *_: self._set_filter("All"))
                 dlg.show()
@@ -581,8 +585,27 @@ class DownloadAppV2(QWidget):
         self.scheduler_start = v["sched_start"]
         self.scheduler_stop = v["sched_stop"]
         self._extras.update(v)
+        self._apply_network_settings()
         self._save_settings()
         self.refresh()
+
+    def _apply_network_settings(self):
+        """Push persisted Network/Advanced prefs into the backend globals the
+        downloader + torrent engine read each request/launch."""
+        ex = self._extras
+        mc = ex.get("max_connections")
+        utils.MAX_CONNECTIONS = int(mc) if mc else 0
+        utils.LISTEN_PORT = int(ex.get("listen_port", 0) or 0)
+        utils.DISK_CACHE = bool(ex.get("disk_cache", True))
+        utils.PREALLOCATE = bool(ex.get("preallocate", False))
+        ctype = ex.get("connection_type", "Default (Auto)")
+        purl = (ex.get("proxy") or "").strip()
+        if ctype == "Direct":
+            utils.PROXIES = {}                       # force direct, ignore env proxies
+        elif purl:
+            utils.PROXIES = {"http": purl, "https": purl}
+        else:
+            utils.PROXIES = None                     # auto / system / env
 
     def resizeEvent(self, e):
         super().resizeEvent(e)

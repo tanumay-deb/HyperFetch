@@ -40,7 +40,7 @@ def probe_info(url, headers=None):
     base = {**HEADERS, **(headers or {})}
     try:
         r = requests.head(url, headers=base, allow_redirects=True,
-                          timeout=10, verify=utils.VERIFY_TLS)
+                          timeout=10, verify=utils.VERIFY_TLS, proxies=utils.PROXIES)
         info["size"] = int(r.headers.get("Content-Length", 0))
         info["type"] = r.headers.get("Content-Type", "").split(";")[0].strip()
     except (requests.RequestException, ValueError):
@@ -52,7 +52,7 @@ def probe_info(url, headers=None):
         try:
             with requests.get(url, headers={**base, "Range": "bytes=0-0"},
                               stream=True, allow_redirects=True,
-                              timeout=10, verify=utils.VERIFY_TLS) as r:
+                              timeout=10, verify=utils.VERIFY_TLS, proxies=utils.PROXIES) as r:
                 cr = r.headers.get("Content-Range", "")
                 if "/" in cr:
                     total = cr.split("/")[-1]
@@ -71,6 +71,10 @@ class Downloader:
     def __init__(self, dtask: "T.DownloadTask", segments=DEFAULT_SEGMENTS):
         self.t = dtask
         self.num_segments = max(0, segments)
+        # global ceiling from Settings -> Network -> Max Connections (0 = off).
+        # Only clamps an explicit count; Auto mode (0) is left untouched.
+        if utils.MAX_CONNECTIONS > 0 and self.num_segments > 0:
+            self.num_segments = min(self.num_segments, utils.MAX_CONNECTIONS)
         # browser-supplied headers (Cookie/Referer/UA) merged into every request
         self._base_headers = {**HEADERS, **(getattr(dtask, "headers", None) or {})}
         self._probe_ctype = ""
@@ -118,7 +122,7 @@ class Downloader:
         try:
             r = requests.head(self.t.url, headers=self._base_headers,
                               allow_redirects=True,
-                              timeout=CONNECT_TIMEOUT, verify=utils.VERIFY_TLS)
+                              timeout=CONNECT_TIMEOUT, verify=utils.VERIFY_TLS, proxies=utils.PROXIES)
             size = int(r.headers.get("Content-Length", 0))
             accept = r.headers.get("Accept-Ranges", "none").lower()
             self._probe_ctype = r.headers.get("Content-Type", "").split(";")[0].strip().lower()
@@ -131,7 +135,7 @@ class Downloader:
                 r = requests.get(self.t.url,
                                  headers={**self._base_headers, "Range": "bytes=0-0"},
                                  stream=True, allow_redirects=True,
-                                 timeout=CONNECT_TIMEOUT, verify=utils.VERIFY_TLS)
+                                 timeout=CONNECT_TIMEOUT, verify=utils.VERIFY_TLS, proxies=utils.PROXIES)
                 if r.status_code == 206:
                     accept = "bytes"
                     cr = r.headers.get("Content-Range", "")
@@ -248,7 +252,7 @@ class Downloader:
                 # path — incl. raise_for_status() failures and mid-stream errors
                 with requests.get(self.t.url, headers=headers, stream=True,
                                   allow_redirects=True, timeout=CONNECT_TIMEOUT,
-                                  verify=utils.VERIFY_TLS) as r:
+                                  verify=utils.VERIFY_TLS, proxies=utils.PROXIES) as r:
                     r.raise_for_status()
                     with open(temp_path, mode) as f:
                         if mode == "r+b":

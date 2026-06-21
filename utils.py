@@ -10,6 +10,13 @@ import urllib.parse
 # the saved setting; downloader/hls/probe read it for every request.
 VERIFY_TLS = True
 
+# Network / advanced settings wired from the GUI (Settings). Defaults = inactive.
+PROXIES = None            # requests proxies: None=auto/env, {}=force-direct, {...}=custom
+MAX_CONNECTIONS = 0       # global ceiling on per-download segments (0 = unlimited)
+LISTEN_PORT = 0           # torrent listen port (0 = aria2 default)
+DISK_CACHE = True         # aria2 --disk-cache on/off
+PREALLOCATE = False       # aria2 file pre-allocation
+
 # Request headers that must NEVER be written to disk (account-level secrets).
 SENSITIVE_HEADERS = {"cookie", "authorization", "proxy-authorization"}
 

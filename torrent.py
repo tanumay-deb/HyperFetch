@@ -23,6 +23,7 @@ import subprocess
 import urllib.parse
 
 import task as T
+import utils
 
 POLL = 0.3            # seconds between pause/cancel checks
 STOP_GRACE = 5        # seconds to wait after terminate before kill
@@ -118,7 +119,7 @@ class TorrentDownloader:
 
     def _build_cmd(self, exe, out_dir):
         src = self.t.url
-        return [
+        cmd = [
             exe,
             "--dir", out_dir,
             "--seed-time=0",              # don't seed after completing
@@ -135,8 +136,20 @@ class TorrentDownloader:
             "--bt-enable-lpd=true",       # local peer discovery
             "--bt-max-peers=0",           # unlimited peers
             "--bt-tracker=" + ",".join(PUBLIC_TRACKERS),
-            src,
         ]
+        # --- settings wired from the GUI (Settings -> Network / Advanced) ---
+        if utils.LISTEN_PORT:
+            cmd += [f"--listen-port={utils.LISTEN_PORT}",
+                    f"--dht-listen-port={utils.LISTEN_PORT}"]
+        if not utils.DISK_CACHE:
+            cmd.append("--disk-cache=0")
+        cmd.append("--file-allocation=" + ("prealloc" if utils.PREALLOCATE else "none"))
+        if utils.PROXIES:
+            purl = utils.PROXIES.get("https") or utils.PROXIES.get("http")
+            if purl:
+                cmd.append(f"--all-proxy={purl}")
+        cmd.append(src)
+        return cmd
 
     def run(self):
         self.t.status = T.DOWNLOADING

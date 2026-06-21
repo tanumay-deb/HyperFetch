@@ -108,7 +108,7 @@ def _get(session, url, headers, **kw):
     for _ in range(SEG_RETRIES):
         try:
             r = session.get(url, headers=headers, timeout=TIMEOUT,
-                            verify=utils.VERIFY_TLS, allow_redirects=True, **kw)
+                            verify=utils.VERIFY_TLS, proxies=utils.PROXIES, allow_redirects=True, **kw)
             r.raise_for_status()
             return r
         except requests.RequestException as e:
