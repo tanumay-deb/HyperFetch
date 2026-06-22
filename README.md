@@ -10,6 +10,7 @@ or grab streaming video from the in-page badge.
   server supports HTTP `Range`), falls back to a single stream otherwise.
 - **BitTorrent & Magnet Links** — built-in support for downloading torrents and magnet links directly, without needing a separate client.
 - **HLS (.m3u8) Grabber** — native support for fetching, decrypting (AES-128), and concatenating HTTP Live Streaming videos.
+- **yt-dlp engine** — media pages (YouTube, Vimeo, Twitch, TikTok, etc.) are downloaded via yt-dlp; auto-detected by host or forced with the **Use yt-dlp** toggle in New Download.
 - **IDM-style dialogs** — every new download shows a *Download File Info* dialog
   (probed size/type, editable filename, save-to folder, priority,
   Download Now / Download Later). Double-click any row for full *Properties*
@@ -22,24 +23,36 @@ or grab streaming video from the in-page badge.
   `%APPDATA%\HyperFetch\`.
 - **Advanced Queueing & Scheduling** — priority ordering, bounded concurrency limits, a global **Time-based Scheduler** (start/stop overnight), and **Force Download** to bypass all limits.
 - **Global Speed Limit** — throttle the application's maximum download speed so it doesn't saturate your entire network while you game or stream.
+- **Multi-queue manager** — create named queues with their own concurrency, move tasks between them; the sidebar **Queues** dialog manages them.
+- **SHA-256 verification** — optionally fetch a `<url>.sha256` sidecar after a download and flag a mismatch as failed (Settings → Advanced).
+- **Network controls** — global proxy, DNS-over-HTTPS, torrent listen port, UPnP/NAT-PMP port mapping, disk cache, pre-allocation (Settings → Network/Advanced).
+- **Debug logging** — optional `hyperfetch.log` for troubleshooting (Settings → Advanced).
 - **Rate-limit aware** — retries with exponential backoff (honors `Retry-After`),
   adaptively halves parallel connections on HTTP 429, staggers connection starts.
 - **Browser integration** — right-click any link/image/media → **Download with
   HyperFetch**, or click the in-page badge on a streaming video, to send it to
-  the app over a local Flask server; the file-info dialog pops up exactly like
-  IDM. Nothing is auto-intercepted, so files already on disk never re-prompt.
-  Toggle capture on/off from the extension popup.
+  the app over a local Flask server. With capture on, the extension also routes
+  **browser-initiated downloads** (clicking a Download button) and **magnet /
+  `.torrent` link clicks** to the app instead of the browser/OS handler — and
+  hands a download to the app only after it accepts, so with the app closed the
+  browser download just proceeds. Toggle capture on/off from the extension popup.
 
 ## Architecture
 | File | Role |
 |------|------|
 | `task.py` | `DownloadTask` + `Segment` state model, control flags, (de)serialization |
-| `downloader.py` | segmented HTTP downloader (probe, ranges, retry/backoff, 429 throttle, merge) |
+| `downloader.py` | segmented HTTP downloader (probe, ranges, retry/backoff, 429 throttle, merge); delegates magnet/torrent/HLS/media-page engines |
+| `torrent.py` | BitTorrent/magnet via an aria2c sidecar (`bin/aria2c.exe`) |
+| `hls.py` | HLS (.m3u8) fetch + AES-128 decrypt + concat |
+| `yt_dl.py` | yt-dlp engine for media pages (YouTube etc.) |
+| `doh.py` / `upnp.py` | DNS-over-HTTPS resolver / UPnP IGD port mapping |
 | `queue_manager.py` | priority queue, concurrency, scheduler (Condition-based) |
-| `utils.py` | app-data dir, JSON persistence, filename derivation, unique paths |
-| `api_server.py` | Flask `POST /download` + `GET /ping` for the extension |
-| `main.py` | PySide6 GUI: table, dialogs, settings, embedded Flask server |
-| `chrome_ext/` | MV3 browser extension (background worker, popup, content script) |
+| `utils.py` | app-data dir, JSON persistence, filenames, TLS/proxy/network globals, logging |
+| `api_server.py` | Flask `POST /download` + `/probe` + `GET /ping` for the extension |
+| `main.py` | entry point; `--v2` for the new GUI, `--selftest`, headless flags |
+| `gui/` | v1 GUI (default) — `main_window`, `models`, `delegates`, `dialogs`, `theme`, `icons` |
+| `gui2/` | v2 GUI (`--v2`) — widget cards, sidebar, drawer, tabbed dialogs, settings, toasts |
+| `chrome_ext/` / `edge_ext/` | MV3 browser extension (kept in sync) |
 
 GUI and server share **one** queue, so browser-sent downloads appear in the
 window alongside manually added ones.
@@ -47,7 +60,8 @@ window alongside manually added ones.
 ## Run
 ```powershell
 pip install -r requirements.txt
-python main.py          # or double-click IDM.bat
+python main.py          # v1 GUI (default), or double-click IDM.bat
+python main.py --v2     # v2 GUI (clean widget-based rewrite)
 ```
 The window opens and a local server starts at `http://127.0.0.1:5000`.
 
@@ -88,7 +102,7 @@ This is a localhost-only desktop app; it never listens off-machine. Defenses:
 ## Tests
 ```powershell
 pip install -r requirements-dev.txt
-pytest                 # 101 tests, fully offline (local HTTP servers)
+pytest                 # 164 tests, fully offline (local HTTP servers)
 pytest -m "not network"  # same — no test needs the internet
 ```
 CI (`.github/workflows/ci.yml`) runs the suite on Windows + Linux, Python 3.10
@@ -109,9 +123,10 @@ Signing needs your own Authenticode certificate and the Windows SDK `signtool`.
 The unsigned build runs fine for personal use; Windows SmartScreen will warn on
 first launch until the binary is signed and has reputation.
 
-`HyperFetch.spec` drives PyInstaller (onedir, windowed, bundles the
-icon + cryptography + the lazily-imported `hls` module). CI uploads the built
-app as a downloadable artifact on every push.
+`HyperFetch.spec` drives PyInstaller (onedir, windowed, bundles the icon,
+cryptography, yt-dlp, the lazily-imported `hls`/`doh`/`upnp` modules, and
+`bin/aria2c.exe` when present). CI uploads the built app as a downloadable
+artifact on every push.
 
 ## Notes
 - Settings and download state live in `%APPDATA%\HyperFetch\`.

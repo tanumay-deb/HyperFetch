@@ -3,6 +3,8 @@
 Simple running list. Newest first. Keep entries to one line.
 
 ## Done
+- _(uncommitted)_ — DNS-over-HTTPS (`doh.py`): when on, overrides `socket.getaddrinfo` so in-process HTTP downloads resolve via Cloudflare (1.1.1.1, no recursion); cached, best-effort fallback. Wired to the Network toggle. (Torrents/aria2 unaffected.)
+- _(uncommitted)_ — UPnP/NAT-PMP (`upnp.py`): pure-Python SSDP + IGD SOAP opens the torrent listen port (TCP+UDP) on the router; best-effort, threaded. Wired to the Network toggle + Listen Port.
 - _(uncommitted)_ — Extension capture: browser downloads (Download buttons) routed to the app via `chrome.downloads.onCreated` (toggle-gated, cancel-after-accept so app-offline falls back to Chrome); magnet/`.torrent` clicks intercepted → app only (no uTorrent). Mirrored to edge_ext; manifest 1.2.0 + `downloads` permission.
 - _(uncommitted)_ — yt-dlp engine (`yt_dl.py`): YouTube/Vimeo/etc. delegate to yt-dlp; auto-detect by host + a New Download "Use yt-dlp" toggle; resolves real title/file. Added to requirements + spec.
 - _(uncommitted)_ — v2 Queue Manager (🗂 Queues in sidebar): add/delete queues + per-queue concurrency.
@@ -17,9 +19,8 @@ Simple running list. Newest first. Keep entries to one line.
 - `59a5a3b` — HLS quality variant picker.
 - earlier — ABDM-style UI overhaul, multi-queue + adaptive segments, crash reporter + update check, v1.2.0 release.
 
-## Next — settings that save but don't act yet
-- UPnP / NAT-PMP — needs a UPnP library (aria2 has no port-map flag).
-- DNS-over-HTTPS — needs a custom resolver (`requests` has no native DoH).
+## Next
+- _(all wired — see Done; remaining toggles act on the engine now)_
 
 ## Bugs
 - Responsive layout breaks on window resize (v1; v2 should be better — verify).

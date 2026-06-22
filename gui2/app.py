@@ -608,6 +608,14 @@ class DownloadAppV2(QWidget):
         utils.PREALLOCATE = bool(ex.get("preallocate", False))
         utils.HASH_CHECK = bool(ex.get("hash_check", False))
         utils.setup_logging(bool(ex.get("debug_log", False)))
+        # DNS-over-HTTPS: override the resolver for all in-process HTTP downloads
+        import doh
+        doh.enable(bool(ex.get("dns_https", False)))
+        # UPnP: open the torrent listen port on the router (best-effort, threaded)
+        if bool(ex.get("upnp", True)) and utils.LISTEN_PORT:
+            import upnp
+            threading.Thread(target=upnp.map_port, args=(utils.LISTEN_PORT,),
+                             daemon=True).start()
         ctype = ex.get("connection_type", "Default (Auto)")
         purl = (ex.get("proxy") or "").strip()
         if ctype == "Direct":
