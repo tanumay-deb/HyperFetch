@@ -30,6 +30,7 @@ from queue_manager import QueueManager
 from api_server import run_server, PORT
 
 from gui.theme import APP_VERSION, apply_theme, resource_path, human_speed
+from gui.icons import themed_icon
 from gui.dialogs import PropertiesDialog
 from gui2.dialogs.settings import SettingsDialogV2
 from gui2.dialogs.complete import CompleteDialog
@@ -226,7 +227,7 @@ class DownloadAppV2(QWidget):
         self._toasts = ToastManager(self)
 
         # drag-drop overlay (shown while a link hovers over the window)
-        self._drag_overlay = QLabel("⬇  Drop a link to add", self)
+        self._drag_overlay = QLabel("Drop a link to add", self)
         self._drag_overlay.setAlignment(Qt.AlignCenter)
         self._drag_overlay.setStyleSheet(
             f"background: rgba(124,92,255,0.12); color: {palette.COLORS['text']};"
@@ -298,6 +299,8 @@ class DownloadAppV2(QWidget):
         self.list.set_tasks(self._visible_tasks(), speeds)
         self.sidebar.set_counts(self._counts())
         self.sidebar.set_stats(total_bps, conns)
+        if getattr(self, "_active_settings_dlg", None):
+            self._active_settings_dlg.update_live(total_bps, conns)
         if self.drawer.isVisible() and self.drawer._tid:
             dt = self.queue.get_task(self.drawer._tid)
             if dt:
@@ -422,27 +425,28 @@ class DownloadAppV2(QWidget):
     def _card_menu(self, t):
         sel = self.list.selected_ids()
         # bulk menu when right-clicking inside a multi-selection
+        ico = lambda n: themed_icon(n, "text")
         if t.id in sel and len(sel) > 1:
             ts = [x for x in (self.queue.get_task(i) for i in sel) if x]
             m = self._menu()
-            m.addAction(f"⏸  Pause {len(ts)} selected", lambda: self._bulk(ts, self.queue.pause_task))
-            m.addAction(f"▶  Resume {len(ts)} selected", lambda: self._bulk(ts, self.queue.resume_task))
+            m.addAction(ico("pause"), f"Pause {len(ts)} selected", lambda: self._bulk(ts, self.queue.pause_task))
+            m.addAction(ico("play"), f"Resume {len(ts)} selected", lambda: self._bulk(ts, self.queue.resume_task))
             m.addSeparator()
-            m.addAction(f"🗑  Remove {len(ts)} selected", lambda: self._bulk(ts, self.queue.remove_task))
+            m.addAction(ico("trash"), f"Remove {len(ts)} selected", lambda: self._bulk(ts, self.queue.remove_task))
             m.exec(self.cursor().pos())
             return
 
         m = self._menu()
         if t.status == T.COMPLETED:
-            m.addAction("📂  Open File", lambda: self._open_file(t))
-            m.addAction("📁  Open Folder", lambda: self._open_folder(t))
+            m.addAction(ico("open"), "Open File", lambda: self._open_file(t))
+            m.addAction(ico("folder"), "Open Folder", lambda: self._open_folder(t))
             m.addSeparator()
         if t.status == T.DOWNLOADING:
-            m.addAction("⏸  Pause", lambda: self._do(self.queue.pause_task, t))
+            m.addAction(ico("pause"), "Pause", lambda: self._do(self.queue.pause_task, t))
         if t.status in (T.PAUSED, T.ERROR, T.SCHEDULED):
-            m.addAction("▶  Resume", lambda: self._do(self.queue.resume_task, t))
+            m.addAction(ico("play"), "Resume", lambda: self._do(self.queue.resume_task, t))
         if t.status in (T.QUEUED, T.PAUSED, T.SCHEDULED, T.ERROR):
-            m.addAction("🚀  Force Download", lambda: self._do(self.queue.force_start, t))
+            m.addAction(ico("force"), "Force Download", lambda: self._do(self.queue.force_start, t))
         if t.status != T.COMPLETED:
             sl = m.addMenu("Set Speed Limit")
             for label, bps in (("Unlimited", 0), ("100 Kb/s", 100 * 1000 // 8),
@@ -451,9 +455,9 @@ class DownloadAppV2(QWidget):
                 sl.addAction(label, lambda b=bps: self._set_task_limit(t, b))
         if t.status == T.QUEUED:
             m.addSeparator()
-            for label, where in (("⬆  Move to top", "top"), ("↑  Move up", "up"),
-                                 ("↓  Move down", "down"), ("⬇  Move to bottom", "bottom")):
-                m.addAction(label, lambda w=where: self._move_task(t, w))
+            for ic_name, label, where in (("arrow-top", "Move to top", "top"), ("arrow-up", "Move up", "up"),
+                                          ("arrow-down", "Move down", "down"), ("arrow-bottom", "Move to bottom", "bottom")):
+                m.addAction(ico(ic_name), label, lambda w=where: self._move_task(t, w))
         if len(self.queue.queues) > 1:
             qm = m.addMenu("Move to Queue")
             for q in self.queue.queues.values():
@@ -462,9 +466,9 @@ class DownloadAppV2(QWidget):
                     act.setEnabled(False)
                 act.triggered.connect(lambda _=False, n=q.name: self._move_task_to_queue(t, n))
         m.addSeparator()
-        m.addAction("ℹ  Properties", lambda: (self.list.set_selection({t.id}), self.drawer.open_for(t)))
-        m.addAction("🔗  Copy URL", lambda: QApplication.clipboard().setText(t.url or ""))
-        m.addAction("🗑  Remove", lambda: self._do(self.queue.remove_task, t))
+        m.addAction(ico("info"), "Properties", lambda: (self.list.set_selection({t.id}), self.drawer.open_for(t)))
+        m.addAction(ico("link"), "Copy URL", lambda: QApplication.clipboard().setText(t.url or ""))
+        m.addAction(ico("trash"), "Remove", lambda: self._do(self.queue.remove_task, t))
         m.exec(self.cursor().pos())
 
     def _on_selection_changed(self, ids):
@@ -561,7 +565,10 @@ class DownloadAppV2(QWidget):
             theme=self.theme, accent=cur_accent, sched_en=self.scheduler_enabled,
             sched_start=self.scheduler_start, sched_stop=self.scheduler_stop,
             extras=getattr(self, "_extras", {}))
-        if dlg.exec() != QDialog.Accepted:
+        self._active_settings_dlg = dlg
+        res = dlg.exec()
+        self._active_settings_dlg = None
+        if res != QDialog.Accepted:
             return
         self._apply_settings(dlg.values())
 
@@ -854,5 +861,23 @@ def _self_test_v2():
     app = QApplication.instance() or QApplication(sys.argv)
     win = DownloadAppV2()
     win.refresh()
+    
+    # Extended UI testing
+    from gui2.dialogs.settings import SettingsDialogV2
+    from gui2.dialogs.complete import CompleteDialog
+    from gui2.palette import ACCENTS, COLORS
+    import task as T
+    
+    cur_accent = next((k for k, v in ACCENTS.items() if v == COLORS["accent"]), "purple")
+    s_dlg = SettingsDialogV2(
+        win, save_dir=win.save_dir, max_concurrent=win.max_concurrent,
+        segments=win.segments, verify_tls=win.verify_tls, pair_token=win.pair_token,
+        theme=win.theme, accent=cur_accent, sched_en=win.scheduler_enabled,
+        sched_start=win.scheduler_start, sched_stop=win.scheduler_stop,
+        extras=getattr(win, "_extras", {}))
+        
+    dt = T.DownloadTask("http://test.com", "test.bin")
+    c_dlg = CompleteDialog(win, dt)
+
     print(f"v2 selftest OK v{APP_VERSION}")
     return 0

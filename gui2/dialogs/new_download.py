@@ -13,6 +13,7 @@ from PySide6.QtCore import Qt
 
 import utils
 from gui2.palette import COLORS
+from gui.icons import themed_icon
 
 _PRIORITIES = [("High", -10), ("Normal", 0), ("Low", 10)]
 
@@ -31,7 +32,8 @@ class NewDownloadDialog(QDialog):
         lay.setSpacing(14)
 
         head = QHBoxLayout()
-        ic = QLabel("⚡"); ic.setStyleSheet(f"font-size: 18px; color: {COLORS['accent']}; background: transparent;")
+        ic = QLabel(); ic.setStyleSheet("background: transparent;")
+        ic.setPixmap(themed_icon("bolt", COLORS['accent']).pixmap(18, 18))
         title = QLabel("New Download"); title.setObjectName("dlgTitle")
         head.addWidget(ic); head.addWidget(title); head.addStretch()
         lay.addLayout(head)
@@ -44,11 +46,11 @@ class NewDownloadDialog(QDialog):
         urow = QHBoxLayout()
         self.url_edit = QLineEdit(url); self.url_edit.setPlaceholderText("https://example.com/file.zip")
         self.url_edit.setClearButtonEnabled(True)
-        paste = QPushButton("📋"); paste.setObjectName("iconbtn"); paste.setFixedSize(38, 38)
+        paste = QPushButton(); paste.setIcon(themed_icon("clipboard", "text")); paste.setObjectName("iconbtn"); paste.setFixedSize(38, 38)
         paste.setToolTip("Paste"); paste.clicked.connect(self._paste)
         urow.addWidget(self.url_edit, 1); urow.addWidget(paste)
         ut.addLayout(urow); ut.addStretch()
-        self.tabs.addTab(url_tab, "🔗  URL")
+        self.tabs.addTab(url_tab, themed_icon("link", "muted"), "URL")
         # Torrent
         tor_tab = QWidget(); tt = QVBoxLayout(tor_tab); tt.setContentsMargins(0, 14, 0, 0); tt.setSpacing(6)
         tt.addWidget(self._label("Torrent file"))
@@ -57,14 +59,14 @@ class NewDownloadDialog(QDialog):
         browse_tor = QPushButton("Browse…"); browse_tor.clicked.connect(self._browse_torrent)
         trow.addWidget(self.tor_edit, 1); trow.addWidget(browse_tor)
         tt.addLayout(trow); tt.addStretch()
-        self.tabs.addTab(tor_tab, "➕  Torrent")
+        self.tabs.addTab(tor_tab, themed_icon("plus-circle", "muted"), "Torrent")
         # Magnet
         mag_tab = QWidget(); mt = QVBoxLayout(mag_tab); mt.setContentsMargins(0, 14, 0, 0); mt.setSpacing(6)
         mt.addWidget(self._label("Magnet link"))
         self.mag_edit = QLineEdit(); self.mag_edit.setPlaceholderText("magnet:?xt=urn:btih:…")
         self.mag_edit.setClearButtonEnabled(True)
         mt.addWidget(self.mag_edit); mt.addStretch()
-        self.tabs.addTab(mag_tab, "🧲  Magnet")
+        self.tabs.addTab(mag_tab, themed_icon("magnet", "muted"), "Magnet")
         lay.addWidget(self.tabs)
 
         # ---- Save to ----
@@ -92,7 +94,8 @@ class NewDownloadDialog(QDialog):
         lay.addLayout(grid)
 
         # ---- advanced (collapsible) ----
-        self.adv_btn = QPushButton("▸  Advanced Options"); self.adv_btn.setObjectName("ghost")
+        self.adv_btn = QPushButton("  Advanced Options"); self.adv_btn.setObjectName("ghost")
+        self.adv_btn.setIcon(themed_icon("chevron-right", "muted"))
         self.adv_btn.setStyleSheet(f"text-align: left; color: {COLORS['muted']}; font-weight: 700;")
         self.adv_btn.setCursor(Qt.PointingHandCursor); self.adv_btn.clicked.connect(self._toggle_adv)
         lay.addWidget(self.adv_btn)
@@ -119,7 +122,7 @@ class NewDownloadDialog(QDialog):
         self.start_now = QCheckBox("Start download immediately"); self.start_now.setChecked(True)
         foot.addWidget(self.start_now); foot.addStretch()
         cancel = QPushButton("Cancel"); cancel.clicked.connect(self.reject)
-        dl = QPushButton("⬇  Download"); dl.setObjectName("primary"); dl.clicked.connect(self._accept)
+        dl = QPushButton("  Download"); dl.setIcon(themed_icon("download", "white")); dl.setObjectName("primary"); dl.clicked.connect(self._accept)
         foot.addWidget(cancel); foot.addWidget(dl)
         lay.addLayout(foot)
 
@@ -153,7 +156,7 @@ class NewDownloadDialog(QDialog):
     def _toggle_adv(self):
         on = not self.adv.isVisible()
         self.adv.setVisible(on)
-        self.adv_btn.setText(("▾" if on else "▸") + "  Advanced Options")
+        self.adv_btn.setIcon(themed_icon("chevron-down" if on else "chevron-right", "muted"))
         self.adjustSize()
 
     def _source_url(self):

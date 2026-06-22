@@ -10,6 +10,7 @@ from PySide6.QtCore import Qt, Signal
 import task as T
 from gui2.download_card import DownloadCardWidget
 from gui2.palette import COLORS
+from gui.icons import themed_icon
 
 _GROUPS = [
     ("Active",    (T.DOWNLOADING, T.QUEUED, T.SCHEDULED)),
@@ -45,8 +46,10 @@ class DownloadList(QScrollArea):
     # ---- empty state ----
     def _make_empty(self):
         w = QWidget(); v = QVBoxLayout(w); v.setAlignment(Qt.AlignCenter); v.setContentsMargins(0, 80, 0, 0)
-        for text, st in (("⬇", f"font-size:44px;color:{COLORS['faint']};background:transparent;"),
-                         ("No downloads yet", f"font-size:17px;font-weight:700;color:{COLORS['text']};background:transparent;"),
+        icon = QLabel(); icon.setAlignment(Qt.AlignCenter); icon.setStyleSheet("background: transparent;")
+        icon.setPixmap(themed_icon("download", COLORS['faint']).pixmap(44, 44))
+        v.addWidget(icon)
+        for text, st in (("No downloads yet", f"font-size:17px;font-weight:700;color:{COLORS['text']};background:transparent;"),
                          ("Paste a URL or drag & drop a link to get started.", f"font-size:13px;color:{COLORS['muted']};background:transparent;")):
             l = QLabel(text); l.setStyleSheet(st); l.setAlignment(Qt.AlignCenter); v.addWidget(l)
         return w

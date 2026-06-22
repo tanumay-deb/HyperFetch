@@ -229,29 +229,20 @@ class DownloadApp(QWidget):
         dl_layout.setContentsMargins(24, 20, 24, 10)
         dl_layout.setSpacing(16)
 
-        # ---- top bar (Add + Search) ----
+        # ---- top bar (Search only) ----
         top_bar = QHBoxLayout()
         top_bar.setSpacing(12)
-        
-        self.btn_add = QPushButton("＋  New Download")
-        self.btn_add.setObjectName("primary")
-        self.btn_add.setMinimumHeight(32)
-        self.btn_add.setFixedWidth(170)        # pinned left, fixed width
-        top_bar.addWidget(self.btn_add)
-
-        top_bar.addStretch()                   # push search to the right edge
-
-        # right-aligned search; 300px fits comfortably at the 850px min window
-        # (only two widgets in this bar now, so no overlap risk).
+        top_bar.addStretch()
         self.search = QLineEdit()
-        self.search.setPlaceholderText("Search downloads... (Ctrl+F)")
+        self.search.setPlaceholderText("Search downloads...")
         self.search.setClearButtonEnabled(True)
         self.search.setMinimumHeight(32)
-        self.search.setFixedWidth(300)
+        self.search.setFixedWidth(240)
         self.search.textChanged.connect(self._on_search)
+        self.search.setStyleSheet(f"background: {SURFACE_2}; border: 1px solid {BORDER}; border-radius: 6px; padding: 0 10px; color: {TEXT};")
         top_bar.addWidget(self.search)
         
-        # Keep old buttons hidden so we don't break existing signal connections/refs
+        # Keep old buttons hidden
         self.btn_pause = QPushButton()
         self.btn_resume = QPushButton()
         self.btn_cancel = QPushButton()
@@ -263,7 +254,7 @@ class DownloadApp(QWidget):
 
         dl_layout.addLayout(top_bar)
 
-        # ---- filter pills ----
+        # ---- filter pills & sort ----
         filter_bar = QHBoxLayout()
         filter_bar.setSpacing(8)
         
@@ -277,7 +268,14 @@ class DownloadApp(QWidget):
             self.filter_group.addButton(btn, i)
             self.filter_pills[text.lower()] = btn
             filter_bar.addWidget(btn)
+            
         filter_bar.addStretch()
+        
+        self.sort_combo = QComboBox()
+        self.sort_combo.addItems(["Sort by", "Name", "Date Added", "Size", "Status"])
+        self.sort_combo.setStyleSheet(f"QComboBox {{ background: {SURFACE_2}; border: 1px solid {BORDER}; border-radius: 6px; padding: 4px 10px; color: {TEXT}; }}")
+        filter_bar.addWidget(self.sort_combo)
+        
         self.filter_group.idClicked.connect(self._on_filter_pill_clicked)
 
         dl_layout.addLayout(filter_bar)
@@ -413,34 +411,40 @@ class DownloadApp(QWidget):
     def _build_sidebar(self):
         self.rail = QFrame()
         self.rail.setObjectName("sidebar")
-        # min 0 + animate maximumWidth so collapse actually shrinks the rail.
-        # setFixedWidth pinned max=260, so animating minimumWidth did nothing.
         self.rail.setMinimumWidth(0)
         self.rail.setMaximumWidth(260)
         lay = QVBoxLayout(self.rail)
-        lay.setContentsMargins(16, 4, 16, 16)     # tight top: no logo lives here
-        lay.setSpacing(6)
+        lay.setContentsMargins(16, 20, 16, 20)
+        lay.setSpacing(8)
 
-        # Header — no brand name/icon, just a compact collapse button (right).
-        # No reserved logo space, no extra spacing below.
+        # Header
         h_row = QHBoxLayout()
         h_row.setContentsMargins(0, 0, 0, 0)
-        self.title_lbl = QLabel("")          # kept (hidden) so _toggle refs don't break
-        self.title_lbl.hide()
-
-        self.btn_collapse = QPushButton("☰")
-        self.btn_collapse.setFixedSize(36, 32)
-        self.btn_collapse.setToolTip("Show / hide sidebar")
-        self.btn_collapse.setStyleSheet(
-            f"QPushButton {{ color: {TEXT}; font-size: 20px; background: {SURFACE_2};"
-            f" border: 1px solid {BORDER}; border-radius: 8px; font-weight: 800; }}"
-            f"QPushButton:hover {{ background: {ACCENT}; color: white; border-color: {ACCENT}; }}")
+        self.title_icon = QLabel("⚡")
+        self.title_icon.setStyleSheet(f"color: {ACCENT}; font-size: 24px; font-weight: 800; background: transparent;")
+        self.title_lbl = QLabel("HyperFetch")
+        self.title_lbl.setStyleSheet(f"color: {TEXT}; font-size: 20px; font-weight: 800; background: transparent;")
+        
+        self.btn_collapse = QPushButton("◀")
+        self.btn_collapse.setStyleSheet(f"color: {MUTED}; font-size: 16px; background: transparent; border: none; font-weight: 700;")
         self.btn_collapse.setCursor(Qt.PointingHandCursor)
         self.btn_collapse.clicked.connect(self._toggle_sidebar)
-
+        
+        h_row.addWidget(self.title_icon)
+        h_row.addWidget(self.title_lbl)
         h_row.addStretch()
         h_row.addWidget(self.btn_collapse)
         lay.addLayout(h_row)
+        
+        lay.addSpacing(16)
+
+        # New Download Button
+        self.btn_add = QPushButton("＋ New Download")
+        self.btn_add.setObjectName("primary")
+        self.btn_add.setMinimumHeight(44)
+        lay.addWidget(self.btn_add)
+        
+        lay.addSpacing(8)
 
         from gui.delegates import SidebarItemDelegate, CircularSpeedGraphWidget
         self.nav = QListWidget()

@@ -8,6 +8,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt
 
 from gui2.palette import COLORS
+from gui.icons import themed_icon
 
 
 class QueueManagerDialog(QDialog):
@@ -35,7 +36,7 @@ class QueueManagerDialog(QDialog):
         ah = QHBoxLayout(add); ah.setContentsMargins(12, 10, 12, 10); ah.setSpacing(8)
         self.name_edit = QLineEdit(); self.name_edit.setPlaceholderText("New queue name")
         self.conc_edit = QSpinBox(); self.conc_edit.setRange(1, 16); self.conc_edit.setValue(3); self.conc_edit.setFixedWidth(64)
-        add_btn = QPushButton("＋ Add"); add_btn.setObjectName("primary"); add_btn.clicked.connect(self._add)
+        add_btn = QPushButton("  Add"); add_btn.setIcon(themed_icon("plus", "white")); add_btn.setObjectName("primary"); add_btn.clicked.connect(self._add)
         self.name_edit.returnPressed.connect(self._add)
         ah.addWidget(self.name_edit, 1); ah.addWidget(QLabel("slots")); ah.addWidget(self.conc_edit); ah.addWidget(add_btn)
         v.addWidget(add)
@@ -63,7 +64,7 @@ class QueueManagerDialog(QDialog):
         spin.valueChanged.connect(lambda n, name=q.name: self.queue.set_max_concurrent(name, n))
         h.addWidget(name, 1); h.addWidget(active); h.addWidget(QLabel("slots")); h.addWidget(spin)
         if q.name != "Main":
-            dele = QPushButton("🗑"); dele.setObjectName("iconbtn"); dele.setFixedSize(30, 28)
+            dele = QPushButton(); dele.setIcon(themed_icon("trash", "muted")); dele.setObjectName("iconbtn"); dele.setFixedSize(30, 28)
             dele.setToolTip("Delete queue (its tasks move to Main)")
             dele.clicked.connect(lambda _=False, name=q.name: self._del(name))
             h.addWidget(dele)

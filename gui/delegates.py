@@ -57,14 +57,18 @@ class CardDelegate(QStyledItemDelegate):
     def sizeHint(self, option, index):
         from gui.models import TaskTableModel
         t = index.data(TaskTableModel.TASK_ROLE)
-        height = 80
+        height = 96
         if t and self._is_first_in_group(index, t):
             height += 40
         return QSize(option.rect.width(), height)
 
     def paint(self, painter, option, index):
         from gui.models import TaskTableModel
+        from gui.theme import STATUS_COLORS, ACCENT, SURFACE, BORDER, TEXT, MUTED, BG, SURFACE_2, HOVER
         import task as T
+        from utils import category_for, human_size, format_time
+        import torrent as _torrent
+        
         t = index.data(TaskTableModel.TASK_ROLE)
         if not t:
             return super().paint(painter, option, index)
@@ -76,105 +80,147 @@ class CardDelegate(QStyledItemDelegate):
         is_first = self._is_first_in_group(index, t)
         if is_first:
             group_name = self._get_group(t.status)
-            header_rect = QRect(r.left() + 8, r.top() + 10, r.width() - 16, 20)
-            painter.setPen(QColor(MUTED))
-            header_f = QFont(); header_f.setPixelSize(13); header_f.setBold(True)
-            painter.setFont(header_f)
-            painter.drawText(header_rect, int(Qt.AlignBottom | Qt.AlignLeft), group_name)
+            # Count the items in this group
+            model = index.model()
+            count = 0
+            for row in range(model.rowCount()):
+                dt = model.index(row, 0).data(TaskTableModel.TASK_ROLE)
+                if dt and self._get_group(dt.status) == group_name:
+                    count += 1
             
-            # Offset card rect by 40 pixels
+            header_str = f"{group_name} ({count})"
+            header_rect = QRect(r.left() + 8, r.top() + 10, r.width() - 16, 20)
+            painter.setPen(QColor(TEXT))
+            header_f = QFont(); header_f.setPixelSize(14); header_f.setBold(True)
+            painter.setFont(header_f)
+            painter.drawText(header_rect, int(Qt.AlignBottom | Qt.AlignLeft), header_str)
+            
             card_rect = r.adjusted(4, 44, -4, -4)
         else:
             card_rect = r.adjusted(4, 4, -4, -4)
         
-        # Card Background
-        if option.state & QStyle.State_Selected:
-            painter.fillRect(card_rect, QColor(SEL))
-        else:
-            painter.fillRect(card_rect, QColor(SURFACE))
-        
+        # Background
+        painter.fillRect(card_rect, QColor(SURFACE_2 if option.state & QStyle.State_Selected else SURFACE))
         painter.setPen(QPen(QColor(BORDER), 1))
         painter.setBrush(Qt.NoBrush)
-        painter.drawRoundedRect(card_rect, 8, 8)
+        painter.drawRoundedRect(card_rect, 12, 12)
         
-        # Icon — torrents get a distinct magnet glyph; else category icon
+        # --- Left Icon Box ---
+        cat = category_for(t.filename)
+        ICON_MAP = {
+            "Compressed": ("archive", "#B388FF"),
+            "Programs": ("program", "#82B1FF"),
+            "Video": ("video", "#FF80AB"),
+            "Music": ("music", "#FF8A80"),
+            "Documents": ("document", "#80D8FF"),
+            "Other": ("folder", "#B5B5B5")
+        }
+        icon_name, icon_color_hex = ICON_MAP.get(cat, ("folder", "#B5B5B5"))
+        if _torrent.is_torrent_task(t.url, t.filename):
+            icon_name = "magnet"
+            icon_color_hex = "#B388FF"
+            
+        icon_box_rect = QRect(card_rect.left() + 16, card_rect.top() + 20, 48, 48)
+        base_color = QColor(icon_color_hex)
+        bg_color = QColor(base_color)
+        bg_color.setAlpha(30) # 12% opacity
+        
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(bg_color)
+        painter.drawRoundedRect(icon_box_rect, 8, 8)
+        
         from gui.icons import themed_icon
-        import torrent as _torrent
-        cat = utils.category_for(t.filename)
-        icon_rect = QRect(card_rect.left() + 16, card_rect.top() + 16, 24, 24)
-        ICONS = {"Compressed": "archive", "Programs": "program", "Video": "video", "Music": "music", "Documents": "document", "Other": "folder"}
-        icon_name = "magnet" if _torrent.is_torrent_task(t.url, t.filename) else ICONS.get(cat, "folder")
-        themed_icon(icon_name, "accent", 24).paint(painter, icon_rect, Qt.AlignCenter)
+        themed_icon(icon_name, icon_color_hex, 24).paint(painter, icon_box_rect, Qt.AlignCenter)
         
-        # Filename
-        tx = card_rect.left() + 56
-        tw = max(40, card_rect.width() - 150)   # reserve right side for action buttons; never negative
-        name_f = QFont(); name_f.setPixelSize(13); name_f.setBold(True)
+        # --- Action Buttons on Right ---
+        btn_margin = 16
+        btn_size = 32
+        
+        btn_more_rect = QRect(card_rect.right() - btn_margin - btn_size, card_rect.top() + (card_rect.height() - btn_size)//2, btn_size, btn_size)
+        btn_action_rect = QRect(btn_more_rect.left() - 8 - btn_size, btn_more_rect.top(), btn_size, btn_size)
+        
+        # More Button
+        painter.setBrush(QColor(SURFACE_2))
+        painter.setPen(QPen(QColor(BORDER), 1))
+        painter.drawRoundedRect(btn_more_rect, 16, 16)
+        painter.setPen(QColor(TEXT))
+        font = QFont(); font.setPixelSize(12); font.setBold(True); painter.setFont(font)
+        painter.drawText(QRect(btn_more_rect.left(), btn_more_rect.top()-4, btn_more_rect.width(), btn_more_rect.height()), Qt.AlignCenter, "...")
+        
+        # Action Button (Pause/Play)
+        painter.setBrush(QColor(SURFACE_2))
+        painter.setPen(QPen(QColor(BORDER), 1))
+        painter.drawRoundedRect(btn_action_rect, 16, 16)
+        painter.setPen(QColor(TEXT))
+        action_sym = "||" if t.status in (T.DOWNLOADING, T.QUEUED) else "▶"
+        if t.status == T.COMPLETED: action_sym = "✓"
+        painter.drawText(btn_action_rect, Qt.AlignCenter, action_sym)
+        
+        # --- Title ---
+        tx = icon_box_rect.right() + 16
+        tw = btn_action_rect.left() - tx - 24 # width available
+        
+        name_f = QFont(); name_f.setPixelSize(14); name_f.setBold(True)
         painter.setFont(name_f)
         painter.setPen(QColor(TEXT))
-        # the magnet icon already marks torrents -> no "[Torrent]" name prefix
-        display_name = t.filename or ""
-        name = painter.fontMetrics().elidedText(display_name, Qt.ElideMiddle, tw)
-        painter.drawText(QRect(tx, card_rect.top() + 14, tw, 20), int(Qt.AlignVCenter | Qt.AlignLeft), name)
+        display_name = t.filename or "Unknown Download"
+        name = painter.fontMetrics().elidedText(display_name, Qt.ElideRight, tw)
+        painter.drawText(QRect(tx, card_rect.top() + 20, tw, 20), int(Qt.AlignVCenter | Qt.AlignLeft), name)
         
-        # Status text + speed
-        sub_f = QFont(); sub_f.setPixelSize(11)
-        painter.setFont(sub_f)
-        painter.setPen(QColor(MUTED))
-        is_tor = _torrent.is_torrent_task(t.url, t.filename)
-        if is_tor and t.status == T.DOWNLOADING and not t.total_size:
-            # magnet metadata phase: only while actually downloading + size unknown
-            status_str = f"Fetching metadata… • {t.status}"
-        else:
-            status_str = f"{human_size(t.downloaded)} / {human_size(t.total_size)} • {t.status}"
-            if t.status == T.DOWNLOADING and is_tor:
-                # torrents report swarm size, not HTTP segments
-                peers = getattr(t, "tor_conns", 0)
-                seeds = getattr(t, "tor_seeds", 0)
-                status_str += (f" • {peers} peer{'' if peers == 1 else 's'}"
-                               f" • {seeds} seed{'' if seeds == 1 else 's'}")
-            elif t.status == T.DOWNLOADING and not is_tor:
-                # segment count is HTTP-only; show only when there are live ones
-                conns = sum(1 for s in t.segments if not s.complete)
-                if conns:
-                    status_str += f" • {conns} connection{'s' if conns != 1 else ''}"
-        painter.drawText(QRect(tx, card_rect.bottom() - 26, tw, 16), int(Qt.AlignVCenter | Qt.AlignLeft), status_str)
+        # --- Progress Bar & Percentage ---
+        pct = 100 if t.status == T.COMPLETED else max(0, min(100, t.percent))
         
-        # Progress Bar
-        bar_y = card_rect.top() + 40
-        barw = tw
-        bar = QRect(tx, bar_y, barw, 4)
+        # Percentage text floating above right edge of progress bar
+        pct_str = f"{int(pct)}%"
+        pct_f = QFont(); pct_f.setPixelSize(12); pct_f.setBold(True)
+        painter.setFont(pct_f)
+        painter.setPen(QColor(TEXT))
+        painter.drawText(QRect(tx, card_rect.top() + 20, tw, 20), int(Qt.AlignVCenter | Qt.AlignRight), pct_str)
+        
+        # Bar
+        bar_y = card_rect.top() + 48
+        bar = QRect(tx, bar_y, tw, 6)
         painter.setPen(Qt.NoPen)
         painter.setBrush(QColor(BG))
-        painter.drawRoundedRect(bar, 2, 2)
-        # a finished task is 100% even if size was never reported (torrents)
-        pct = 100 if t.status == T.COMPLETED else max(0, min(100, t.percent))
+        painter.drawRoundedRect(bar, 3, 3)
+        
         if pct > 0:
             fill = QRect(bar.left(), bar.top(), int(bar.width() * pct / 100), bar.height())
             color = ACCENT if t.status == T.DOWNLOADING else (STATUS_COLORS.get(T.PAUSED) if t.status == T.PAUSED else STATUS_COLORS.get(T.COMPLETED))
             if t.status == T.ERROR: color = STATUS_COLORS.get(T.ERROR)
             painter.setBrush(QColor(color))
-            painter.drawRoundedRect(fill, 2, 2)
+            painter.drawRoundedRect(fill, 3, 3)
             
-        # Action Buttons
-        btn_x = card_rect.right() - 44
-        btn_f = QFont()
-        btn_f.setPixelSize(24)
-        btn_f.setBold(True)
-        painter.setFont(btn_f)
-        painter.setPen(QColor(TEXT))
+        # --- Subtext ---
+        sub_f = QFont(); sub_f.setPixelSize(11)
+        painter.setFont(sub_f)
+        painter.setPen(QColor(MUTED))
         
-        painter.drawText(QRect(btn_x, card_rect.top(), 36, card_rect.height()), int(Qt.AlignCenter), "⋮")
+        is_tor = _torrent.is_torrent_task(t.url, t.filename)
+        status_str = ""
         
-        if t.status in (T.DOWNLOADING, T.QUEUED, T.SCHEDULED):
-            painter.drawText(QRect(btn_x - 36, card_rect.top(), 36, card_rect.height()), int(Qt.AlignCenter), "⏸")
-        elif t.status in (T.PAUSED, T.ERROR):
-            painter.drawText(QRect(btn_x - 36, card_rect.top(), 36, card_rect.height()), int(Qt.AlignCenter), "▶")
+        if t.status == T.COMPLETED:
+            status_str = f"{human_size(t.total_size)}  •  Completed"
+        elif is_tor and t.status == T.DOWNLOADING and not t.total_size:
+            status_str = f"Fetching metadata…  •  {t.status}"
+        else:
+            speed_str = f"{human_size(t.speed)}/s" if hasattr(t, 'speed') else "0 B/s"
+            status_str = f"{human_size(t.downloaded)} / {human_size(t.total_size)}  •  {speed_str}"
+            
+            eta_str = ""
+            if hasattr(t, 'speed') and getattr(t, 'speed') > 0 and t.total_size > 0:
+                rem = t.total_size - t.downloaded
+                secs = rem / t.speed
+                eta_str = f"  •  ETA {format_time(secs)}"
+                
+            status_str += eta_str
+            
+        painter.drawText(QRect(tx, card_rect.bottom() - 26, tw, 16), int(Qt.AlignVCenter | Qt.AlignLeft), status_str)
         
         painter.restore()
 
     def editorEvent(self, event, model, option, index):
-        from PySide6.QtCore import QEvent
+        from PySide6.QtCore import QEvent, QRect
         from PySide6.QtGui import QMouseEvent
         from gui.models import TaskTableModel
         import task as T
@@ -189,10 +235,11 @@ class CardDelegate(QStyledItemDelegate):
             else:
                 card_rect = r.adjusted(4, 4, -4, -4)
                 
-            btn_x = card_rect.right() - 44
+            btn_margin = 16
+            btn_size = 32
             
-            menu_rect = QRect(btn_x, card_rect.top(), 36, card_rect.height())
-            action_rect = QRect(btn_x - 36, card_rect.top(), 36, card_rect.height())
+            menu_rect = QRect(card_rect.right() - btn_margin - btn_size, card_rect.top() + (card_rect.height() - btn_size)//2, btn_size, btn_size)
+            action_rect = QRect(menu_rect.left() - 8 - btn_size, menu_rect.top(), btn_size, btn_size)
             
             pos = event.pos()
             main_window = self.parent().window() if self.parent() else None
@@ -214,6 +261,7 @@ class CardDelegate(QStyledItemDelegate):
                 return True
                 
         return super().editorEvent(event, model, option, index)
+
 class SpeedGraphWidget(QWidget):
     def __init__(self, parent=None, max_points=120):
         super().__init__(parent)

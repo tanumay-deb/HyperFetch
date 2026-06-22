@@ -5,7 +5,7 @@ the app applies the actionable keys and persists the rest.
 from PySide6.QtWidgets import (
     QDialog, QHBoxLayout, QVBoxLayout, QGridLayout, QLabel, QPushButton, QLineEdit,
     QComboBox, QSlider, QSpinBox, QListWidget, QListWidgetItem, QStackedWidget, QWidget,
-    QFrame, QFileDialog, QTimeEdit, QScrollArea, QApplication
+    QFrame, QFileDialog, QTimeEdit, QScrollArea, QApplication, QSizePolicy
 )
 from PySide6.QtCore import Qt, QTime
 
@@ -16,6 +16,7 @@ try:
 except Exception:                       # fallback if unavailable
     from PySide6.QtWidgets import QCheckBox as AnimatedToggle
 from gui2.palette import COLORS, ACCENTS, set_accent
+from gui.icons import themed_icon
 
 _SECTIONS = ["General", "Downloads", "Network", "Browser", "Appearance", "Advanced", "About"]
 _SLIDER_QSS = (
@@ -39,15 +40,77 @@ class SettingsDialogV2(QDialog):
         outer = QVBoxLayout(self); outer.setContentsMargins(0, 0, 0, 0); outer.setSpacing(0)
         body = QHBoxLayout(); body.setContentsMargins(0, 0, 0, 0); body.setSpacing(0)
 
-        # left nav
-        self.nav = QListWidget(); self.nav.setFixedWidth(190)
+        # left nav container
+        nav_container = QWidget(); nav_container.setFixedWidth(220)
+        nav_container.setStyleSheet(f"background:{COLORS['surface']};border-right:1px solid {COLORS['border']};")
+        nv_lay = QVBoxLayout(nav_container); nv_lay.setContentsMargins(16, 24, 16, 16); nv_lay.setSpacing(16)
+        
+        # Brand
+        brand_lay = QHBoxLayout()
+        class BrandLogo(QLabel):
+            def __init__(self, parent=None):
+                super().__init__(parent)
+                self.setFixedSize(28, 28)
+            def paintEvent(self, e):
+                from PySide6.QtGui import QPainter, QColor
+                p = QPainter(self); p.setRenderHint(QPainter.Antialiasing)
+                p.setBrush(QColor(COLORS["accent"])); p.setPen(Qt.NoPen)
+                p.drawEllipse(self.rect())
+                ic = themed_icon("bolt", "white").pixmap(16, 16)
+                p.drawPixmap((self.width()-16)//2, (self.height()-16)//2, ic)
+                p.end()
+        logo = BrandLogo()
+        title = QLabel("HyperFetch"); title.setStyleSheet(f"font-size: 18px; font-weight: 800; color: {COLORS['text']}; background: transparent; border: none;")
+        brand_lay.addWidget(logo); brand_lay.addWidget(title); brand_lay.addStretch()
+        nv_lay.addLayout(brand_lay)
+        nv_lay.addSpacing(8)
+
+        self.nav = QListWidget()
+        self.nav.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.nav.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.nav.setStyleSheet(
-            f"QListWidget{{background:{COLORS['surface']};border:none;border-right:1px solid {COLORS['border']};outline:none;padding:14px 8px;}}"
-            f"QListWidget::item{{padding:10px 12px;border-radius:8px;color:{COLORS['muted']};font-weight:600;margin-bottom:3px;}}"
+            f"QListWidget{{background:transparent;border:none;outline:none;}}"
+            f"QListWidget::item{{padding:12px 14px;border-radius:8px;color:{COLORS['muted']};font-weight:700;margin-bottom:4px;}}"
             f"QListWidget::item:selected{{background:{COLORS['accent']};color:white;}}")
-        for s in _SECTIONS:
-            QListWidgetItem(s, self.nav)
-        body.addWidget(self.nav)
+            
+        icons = ["settings", "download", "link", "open", "program", "menu", "info"]
+        for s, ic in zip(_SECTIONS, icons):
+            item = QListWidgetItem(themed_icon(ic, "muted"), s)
+            self.nav.addItem(item)
+        nv_lay.addWidget(self.nav)
+        
+        # Mini Speed Graph
+        nv_lay.addStretch()
+        self.mini_speed_lbl = QLabel("Total Speed\n0 b/s")
+        self.mini_speed_lbl.setStyleSheet(f"color:{COLORS['text']}; font-size: 11px; font-weight: 600; background: transparent; border: none;")
+        nv_lay.addWidget(self.mini_speed_lbl)
+        
+        from gui2.details_drawer import SpeedGraph
+        self.mini_graph = SpeedGraph(history=40); self.mini_graph.setFixedHeight(60)
+        self.mini_graph.setStyleSheet("background: transparent; border: none;")
+        nv_lay.addWidget(self.mini_graph)
+        
+        self.mini_conns_lbl = QLabel("Active Connections\n0")
+        self.mini_conns_lbl.setStyleSheet(f"color:{COLORS['muted']}; font-size: 11px; background: transparent; border: none;")
+        nv_lay.addWidget(self.mini_conns_lbl)
+        
+        body.addWidget(nav_container)
+
+        # Right side container
+        right_container = QWidget()
+        right_lay = QVBoxLayout(right_container); right_lay.setContentsMargins(0, 0, 0, 0); right_lay.setSpacing(0)
+        
+        # Header Search
+        head = QFrame(); head.setFixedHeight(72)
+        head.setStyleSheet(f"background: {COLORS['bg']}; border-bottom: 1px solid {COLORS['border']};")
+        hl = QHBoxLayout(head); hl.setContentsMargins(32, 0, 32, 0)
+        hl.addStretch()
+        self.search = QLineEdit(); self.search.setPlaceholderText("🔍 Search settings...")
+        self.search.setFixedSize(260, 36)
+        self.search.setStyleSheet(f"QLineEdit {{ background: {COLORS['surface2']}; border: 1px solid {COLORS['border']}; border-radius: 18px; padding: 0 16px; color: {COLORS['text']}; font-weight: 600; }}")
+        self.search.textChanged.connect(self._do_search)
+        hl.addWidget(self.search)
+        right_lay.addWidget(head)
 
         self.stack = QStackedWidget()
         self.stack.addWidget(self._p_general(save_dir, ex))
@@ -57,10 +120,11 @@ class SettingsDialogV2(QDialog):
         self.stack.addWidget(self._p_appearance(theme, accent, ex))
         self.stack.addWidget(self._p_advanced(verify_tls, sched_en, sched_start, sched_stop, ex))
         self.stack.addWidget(self._p_about())
-        body.addWidget(self.stack, 1)
+        right_lay.addWidget(self.stack, 1)
+        body.addWidget(right_container, 1)
         outer.addLayout(body, 1)
 
-        self.nav.currentRowChanged.connect(self.stack.setCurrentIndex)
+        self.nav.currentRowChanged.connect(self._on_tab_changed)
         self.nav.setCurrentRow(0)
 
         # footer
@@ -71,6 +135,51 @@ class SettingsDialogV2(QDialog):
         save = QPushButton("Save Changes"); save.setObjectName("primary"); save.clicked.connect(self.accept)
         foot.addWidget(reset); foot.addWidget(save)
         outer.addLayout(foot)
+
+    def _on_tab_changed(self, idx):
+        self.stack.setCurrentIndex(idx)
+        self._apply_search()
+
+    def _do_search(self, _text=None):
+        self._apply_search()
+
+    def _apply_search(self):
+        """Filter settings across ALL sections: hide non-matching rows, hide
+        panels left empty, narrow the nav to sections with a hit, and jump to
+        the first matching section when the current one has none."""
+        if getattr(self, "_searching", False):
+            return
+        self._searching = True
+        try:
+            q = self.search.text().strip().lower()
+            first_match = None
+            for i in range(self.stack.count()):
+                inner = self.stack.widget(i).widget()
+                page_match = False
+                for panel in inner.findChildren(QFrame):
+                    if panel.objectName() != "panel":
+                        continue
+                    rows = panel.findChildren(QWidget, "settingRow")
+                    if rows:
+                        shown = False
+                        for rw in rows:
+                            m = (not q) or (q in (rw.property("searchText") or ""))
+                            rw.setVisible(m)
+                            shown = shown or m
+                        panel.setVisible(shown)
+                        page_match = page_match or shown
+                    else:   # panel without tagged rows (e.g. accent swatches)
+                        m = (not q) or any(q in l.text().lower() for l in panel.findChildren(QLabel))
+                        panel.setVisible(m)
+                        page_match = page_match or m
+                self.nav.setRowHidden(i, bool(q) and not page_match)
+                if page_match and first_match is None:
+                    first_match = i
+            cur = self.nav.currentRow()
+            if q and first_match is not None and (cur < 0 or self.nav.isRowHidden(cur)):
+                self.nav.setCurrentRow(first_match)
+        finally:
+            self._searching = False
 
     # ---- small builders ----
     def _page(self, title, subtitle):
@@ -88,7 +197,11 @@ class SettingsDialogV2(QDialog):
         return f, g
 
     def _row(self, layout, label, desc, widget):
-        r = QHBoxLayout()
+        # wrap each setting in a widget so search can hide individual rows, and
+        # tag it with its searchable text (label + description).
+        rw = QWidget(); rw.setObjectName("settingRow")
+        rw.setProperty("searchText", f"{label} {desc or ''}".lower())
+        r = QHBoxLayout(rw); r.setContentsMargins(0, 0, 0, 0)
         col = QVBoxLayout(); col.setSpacing(1)
         l = QLabel(label); l.setStyleSheet(f"font-weight:700;background:transparent;color:{COLORS['text']};")
         col.addWidget(l)
@@ -96,7 +209,7 @@ class SettingsDialogV2(QDialog):
             d = QLabel(desc); d.setStyleSheet(f"color:{COLORS['muted']};font-size:11px;background:transparent;")
             col.addWidget(d)
         r.addLayout(col); r.addStretch(); r.addWidget(widget)
-        layout.addLayout(r)
+        layout.addWidget(rw)
 
     def _toggle(self, on):
         t = AnimatedToggle()
@@ -185,7 +298,7 @@ class SettingsDialogV2(QDialog):
     def _p_browser(self, ex):
         sa, v = self._page("Browser Integration", "Integrate with your web browser")
         f, g = self._card()
-        get = QPushButton("Get Extension ↗")
+        get = QPushButton("  Get Extension"); get.setIcon(themed_icon("open", "text"))
         self._row(g, "Browser Extension", "Install the HyperFetch extension to catch downloads", get)
         v.addWidget(f)
         f2, g2 = self._card()
@@ -208,8 +321,33 @@ class SettingsDialogV2(QDialog):
     def _p_appearance(self, theme, accent, ex):
         sa, v = self._page("Appearance", "Customize the look and feel")
         f, g = self._card()
-        self.theme = self._combo(["Dark", "Light", "System"], (theme or "dark").capitalize())
-        self._row(g, "Theme", "Preferred theme", self.theme)
+        
+        # Custom visual theme cards
+        self._sel_theme = (theme or "dark").capitalize()
+        t_row = QHBoxLayout(); t_row.setSpacing(16)
+        self.t_btns = {}
+        
+        def _make_tcard(name):
+            btn = QPushButton(name)
+            btn.setFixedSize(130, 84)
+            btn.setCursor(Qt.PointingHandCursor)
+            bg = COLORS['surface2'] if name == "Dark" else ("#f8fafc" if name == "Light" else COLORS['surface'])
+            fg = "white" if name == "Dark" else ("black" if name == "Light" else COLORS['text'])
+            btn.setStyleSheet(f"QPushButton {{ background: {bg}; color: {fg}; border: 2px solid transparent; border-radius: 8px; font-weight: 700; font-size: 14px; }}"
+                              f"QPushButton:hover {{ border: 2px solid {COLORS['accent2']}; }}")
+            btn.clicked.connect(lambda _, n=name: self._set_theme(n))
+            return btn
+            
+        for n in ["Dark", "Light", "System"]:
+            btn = _make_tcard(n)
+            self.t_btns[n] = btn
+            t_row.addWidget(btn)
+        t_row.addStretch()
+        self._set_theme(self._sel_theme) # apply border to active
+        
+        lbl = QLabel("Theme"); lbl.setStyleSheet(f"font-weight:700;color:{COLORS['text']};background:transparent;")
+        g.addWidget(lbl); g.addLayout(t_row); g.addSpacing(8)
+        
         # accent swatches
         srow = QHBoxLayout(); srow.setSpacing(8)
         self._accent_btns = {}
@@ -283,6 +421,16 @@ class SettingsDialogV2(QDialog):
         for k, b in self._accent_btns.items():
             b.setStyleSheet(self._swatch_style(ACCENTS[k], k == key))
 
+    def _set_theme(self, name):
+        self._sel_theme = name
+        for k, b in self.t_btns.items():
+            bg = COLORS['surface2'] if k == "Dark" else ("#f8fafc" if k == "Light" else COLORS['surface'])
+            fg = "white" if k == "Dark" else ("black" if k == "Light" else COLORS['text'])
+            border = COLORS['accent'] if k == name else COLORS['border']
+            b.setStyleSheet(f"QPushButton {{ background: {bg}; color: {fg}; border: 2px solid {border}; border-radius: 8px; font-weight: 700; font-size: 14px; }}"
+                            f"QPushButton:hover {{ border: 2px solid {COLORS['accent2']}; }}")
+
+
     def _browse(self):
         d = QFileDialog.getExistingDirectory(self, "Default download folder", self.dir_lbl.text())
         if d:
@@ -318,13 +466,19 @@ class SettingsDialogV2(QDialog):
             except OSError:
                 pass
 
+    def update_live(self, bps, conns):
+        from gui.theme import human_speed
+        self.mini_speed_lbl.setText(f"Total Speed\n{human_speed(bps) or '0 b/s'}")
+        self.mini_conns_lbl.setText(f"Active Connections\n{conns}")
+        self.mini_graph.push(bps)
+
     def values(self):
         return {
             "save_dir": self.dir_lbl.text(),
             "max_concurrent": self.conc._slider.value(),
             "segments": self.conns._slider.value(),
             "verify_tls": self.verify.isChecked(),
-            "theme": self.theme.currentText().lower(),
+            "theme": self._sel_theme.lower(),
             "accent": self._accent,
             "sched_en": self.sched.isChecked(),
             "sched_start": self.t_start.time().toString("HH:mm"),

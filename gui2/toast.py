@@ -5,11 +5,12 @@ from PySide6.QtWidgets import QFrame, QHBoxLayout, QVBoxLayout, QLabel, QPushBut
 from PySide6.QtCore import Qt, QTimer
 
 from gui2.palette import COLORS
+from gui.icons import themed_icon
 
 _KIND = {
-    "success": ("✓", COLORS["success"]),
-    "error":   ("!", COLORS["error"]),
-    "info":    ("i", COLORS["info"]),
+    "success": ("check", COLORS["success"]),
+    "error":   ("alert", COLORS["error"]),
+    "info":    ("info", COLORS["info"]),
 }
 
 
@@ -17,19 +18,20 @@ class Toast(QFrame):
     def __init__(self, parent, kind, title, msg, on_close):
         super().__init__(parent)
         self.setFixedWidth(330)
-        icon, color = _KIND.get(kind, _KIND["info"])
+        icon_name, color = _KIND.get(kind, _KIND["info"])
         self.setStyleSheet(
             f"QFrame{{background:{COLORS['surface2']};border:1px solid {COLORS['border']};"
             f"border-left:3px solid {color};border-radius:10px;}}")
         h = QHBoxLayout(self); h.setContentsMargins(12, 10, 10, 10); h.setSpacing(10)
-        ic = QLabel(icon); ic.setFixedSize(22, 22); ic.setAlignment(Qt.AlignCenter)
-        ic.setStyleSheet(f"background:{color}33;color:{color};border-radius:11px;font-weight:800;")
+        ic = QLabel(); ic.setFixedSize(22, 22); ic.setAlignment(Qt.AlignCenter)
+        ic.setPixmap(themed_icon(icon_name, color).pixmap(15, 15))
+        ic.setStyleSheet(f"background:{color}33;border-radius:11px;")
         col = QVBoxLayout(); col.setSpacing(1)
         t = QLabel(title); t.setStyleSheet("font-weight:700;background:transparent;")
         m = QLabel(msg); m.setWordWrap(True)
         m.setStyleSheet(f"color:{COLORS['muted']};font-size:11px;background:transparent;")
         col.addWidget(t); col.addWidget(m)
-        x = QPushButton("✕"); x.setObjectName("iconbtn"); x.setFixedSize(22, 22)
+        x = QPushButton(); x.setIcon(themed_icon("close", "muted")); x.setObjectName("iconbtn"); x.setFixedSize(22, 22)
         x.setCursor(Qt.PointingHandCursor); x.clicked.connect(on_close)
         h.addWidget(ic); h.addLayout(col, 1); h.addWidget(x, 0, Qt.AlignTop)
 

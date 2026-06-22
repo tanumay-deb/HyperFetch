@@ -9,21 +9,22 @@ from PySide6.QtCore import Qt, Signal
 from gui2.palette import COLORS
 from gui2.speed_gauge import CircularSpeedGauge
 from gui.theme import human_speed
+from gui.icons import themed_icon
 
 # (icon, label, key, icon_color)
 _CATEGORIES = [
-    ("🗜", "Compressed", "Compressed", None),
-    ("⚙", "Programs", "Programs", None),
-    ("🎬", "Videos", "Video", None),
-    ("🎵", "Music", "Music", None),
-    ("📄", "Documents", "Documents", None),
-    ("📁", "Other", "Other", None),
+    ("archive", "Compressed", "Compressed", None),
+    ("program", "Programs", "Programs", None),
+    ("video", "Videos", "Video", None),
+    ("music", "Music", "Music", None),
+    ("document", "Documents", "Documents", None),
+    ("folder", "Other", "Other", None),
 ]
 _STATUS = [
-    ("▶", "Active", "Active", "#22c55e"),
-    ("⏸", "Paused", "Paused", "#f59e0b"),
-    ("✓", "Completed", "Completed", "#22c55e"),
-    ("✕", "Failed", "Failed", "#ef4444"),
+    ("play", "Active", "Active", "#22c55e"),
+    ("pause", "Paused", "Paused", "#f59e0b"),
+    ("check", "Completed", "Completed", "#22c55e"),
+    ("x-circle", "Failed", "Failed", "#ef4444"),
 ]
 
 
@@ -39,10 +40,11 @@ class NavRow(QFrame):
         h = QHBoxLayout(self)
         h.setContentsMargins(12, 8, 12, 8)
         h.setSpacing(12)
-        self.ic = QLabel(icon)
+        self.ic = QLabel()
+        self.ic_name = icon
+        self.ic_color = icon_color
         self.ic.setFixedWidth(22)
         self.ic.setAlignment(Qt.AlignCenter)
-        self.ic.setStyleSheet(f"font-size: 15px; background: transparent; color: {icon_color or COLORS['muted']};")
         self.lbl = QLabel(label)
         self.lbl.setStyleSheet(f"background: transparent; font-weight: 600; color: {COLORS['muted']};")
         self.cnt = QLabel("")
@@ -68,6 +70,10 @@ class NavRow(QFrame):
         self._restyle()
 
     def _restyle(self):
+        color_val = self.ic_color or ("text" if self._active else "muted")
+        pm = themed_icon(self.ic_name, color_val).pixmap(16, 16)
+        self.ic.setPixmap(pm)
+        
         if self._active:
             self.setStyleSheet(
                 f"NavRow {{ background: {COLORS['surface2']}; border-radius: 9px;"
@@ -109,16 +115,17 @@ class Sidebar(QFrame):
 
         # ---- brand + collapse ----
         top = QHBoxLayout()
-        self.brand_icon = QLabel("⚡")
-        self.brand_icon.setStyleSheet(f"font-size: 20px; color: {COLORS['accent']}; background: transparent;")
+        self.brand_icon = QLabel()
+        self.brand_icon.setPixmap(themed_icon("bolt", COLORS['accent']).pixmap(20, 20))
+        self.brand_icon.setStyleSheet("background: transparent;")
         self.brand = QLabel("HyperFetch")
         self.brand.setObjectName("brand")
         self.brand.setStyleSheet("background: transparent; font-size: 18px; font-weight: 800;")
-        self.btn_collapse = QPushButton("☰")
+        self.btn_collapse = QPushButton()
+        self.btn_collapse.setIcon(themed_icon("menu", "text"))
         self.btn_collapse.setObjectName("iconbtn")
         self.btn_collapse.setFixedSize(32, 30)
         self.btn_collapse.setCursor(Qt.PointingHandCursor)
-        self.btn_collapse.setStyleSheet("font-size: 18px;")
         self.btn_collapse.clicked.connect(self.toggleCollapse)
         top.addWidget(self.brand_icon)
         top.addWidget(self.brand)
@@ -127,7 +134,8 @@ class Sidebar(QFrame):
         lay.addLayout(top)
 
         # ---- new download ----
-        self.btn_new = QPushButton("＋  New Download")
+        self.btn_new = QPushButton("  New Download")
+        self.btn_new.setIcon(themed_icon("plus", "white"))
         self.btn_new.setObjectName("primary")
         self.btn_new.setCursor(Qt.PointingHandCursor)
         self.btn_new.clicked.connect(self.newDownload)
@@ -137,7 +145,7 @@ class Sidebar(QFrame):
         # ---- DOWNLOADS ----
         self.t_dl = self._section("DOWNLOADS")
         lay.addWidget(self.t_dl)
-        all_row = NavRow("▦", "All", "All")
+        all_row = NavRow("all", "All", "All")
         self._add_row(lay, all_row)
 
         # ---- CATEGORIES ----
@@ -150,7 +158,8 @@ class Sidebar(QFrame):
         lay.addStretch()
 
         # ---- queues ----
-        self.btn_queues = QPushButton("🗂  Queues")
+        self.btn_queues = QPushButton("   Queues")
+        self.btn_queues.setIcon(themed_icon("queue", "muted"))
         self.btn_queues.setObjectName("navItem")
         self.btn_queues.setCursor(Qt.PointingHandCursor)
         self.btn_queues.clicked.connect(self.manageQueues)
@@ -185,7 +194,8 @@ class Sidebar(QFrame):
         lay.addWidget(self.stats)
 
         # ---- settings ----
-        self.btn_settings = QPushButton("⚙  Settings")
+        self.btn_settings = QPushButton("  Settings")
+        self.btn_settings.setIcon(themed_icon("settings", "muted"))
         self.btn_settings.setObjectName("ghost")
         self.btn_settings.setCursor(Qt.PointingHandCursor)
         self.btn_settings.setStyleSheet(f"text-align: left; padding: 10px 12px; font-weight: 700; color: {COLORS['text']};")
@@ -237,6 +247,6 @@ class Sidebar(QFrame):
         self.gauge.setFixedSize(48, 48) if on else self.gauge.setFixedSize(72, 72)
         for row in self._rows.values():
             row.set_collapsed(on)
-        self.btn_new.setText("＋" if on else "＋  New Download")
-        self.btn_queues.setText("🗂" if on else "🗂  Queues")
-        self.btn_settings.setText("⚙" if on else "⚙  Settings")
+        self.btn_new.setText("" if on else "  New Download")
+        self.btn_queues.setText("" if on else "  Queues")
+        self.btn_settings.setText("" if on else "  Settings")

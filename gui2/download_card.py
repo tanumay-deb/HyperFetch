@@ -13,11 +13,12 @@ import task as T
 import utils
 import torrent as _torrent
 from gui.theme import human_size, human_speed, fmt_eta, humanize_age
+from gui.icons import themed_icon
 from gui2.palette import COLORS
 
 _CAT_ICON = {
-    "Video": "🎬", "Music": "🎵", "Compressed": "🗜", "Programs": "⚙",
-    "Documents": "📄", "Other": "📁",
+    "Video": ("video", "#FF80AB"), "Music": ("music", "#FF8A80"), "Compressed": ("archive", "#B388FF"),
+    "Programs": ("program", "#82B1FF"), "Documents": ("document", "#80D8FF"), "Other": ("folder", "#B5B5B5"),
 }
 # progress-bar chunk colour by state (fast visual scanning)
 _BAR_COLOR = {
@@ -29,8 +30,8 @@ _BAR_COLOR = {
 
 def _icon_for(t):
     if _torrent.is_torrent_task(t.url, t.filename):
-        return "🧲"
-    return _CAT_ICON.get(utils.category_for(t.filename), "📁")
+        return ("magnet", "#B388FF")
+    return _CAT_ICON.get(utils.category_for(t.filename), ("folder", "#B5B5B5"))
 
 
 class DownloadCardWidget(QFrame):
@@ -49,10 +50,12 @@ class DownloadCardWidget(QFrame):
         root.setContentsMargins(16, 12, 14, 12)
         root.setSpacing(14)
 
-        self.icon = QLabel(_icon_for(task))
+        ic_name, ic_color = _icon_for(task)
+        self.icon = QLabel()
         self.icon.setFixedSize(40, 40)
         self.icon.setAlignment(Qt.AlignCenter)
-        self.icon.setStyleSheet(f"font-size: 20px; background: {COLORS['surface2']}; border-radius: 8px;")
+        self.icon.setPixmap(themed_icon(ic_name, "white").pixmap(24, 24))
+        self.icon.setStyleSheet(f"background: {ic_color}; border-radius: 8px;")
         root.addWidget(self.icon, 0, Qt.AlignVCenter)
 
         mid = QVBoxLayout(); mid.setSpacing(6)
@@ -74,16 +77,18 @@ class DownloadCardWidget(QFrame):
         root.addLayout(mid, 1)
 
         actions = QHBoxLayout(); actions.setSpacing(4)
-        self.btn_primary = self._iconbtn("⏸", "pause")
-        self.btn_more = self._iconbtn("⋯", "more")
+        self.btn_primary = self._iconbtn("pause", "pause")
+        self.btn_more = self._iconbtn("more", "more")
         actions.addWidget(self.btn_primary); actions.addWidget(self.btn_more)
         root.addLayout(actions)
 
         self.update_task(task, 0.0)
 
-    def _iconbtn(self, glyph, action):
-        b = QPushButton(glyph); b.setObjectName("iconbtn"); b.setFixedSize(32, 30)
-        b.setCursor(Qt.PointingHandCursor); b.setStyleSheet("font-size: 15px;")
+    def _iconbtn(self, icon_name, action):
+        b = QPushButton(); b.setObjectName("iconbtn"); b.setFixedSize(36, 26)
+        b.setIcon(themed_icon(icon_name, "text"))
+        b.setCursor(Qt.PointingHandCursor)
+        b.setStyleSheet(f"background: {COLORS['surface2']}; border: 1px solid {COLORS['border']}; border-radius: 13px;")
         is_primary = action == "pause"
         b.clicked.connect(
             lambda: self.action.emit(self._primary_action if is_primary else action, self.task_id))
@@ -115,7 +120,9 @@ class DownloadCardWidget(QFrame):
 
     def update_task(self, t, bps):
         self.name.setText(t.filename or "download")
-        self.icon.setText(_icon_for(t))
+        ic_name, ic_color = _icon_for(t)
+        self.icon.setPixmap(themed_icon(ic_name, "white").pixmap(24, 24))
+        self.icon.setStyleSheet(f"background: {ic_color}; border-radius: 8px;")
         is_tor = _torrent.is_torrent_task(t.url, t.filename)
         done = t.status == T.COMPLETED
 
@@ -150,16 +157,16 @@ class DownloadCardWidget(QFrame):
                         parts.append(f"ETA {eta}")
             else:
                 parts.append(str(t.status))
-            self.sub.setText("  •  ".join(parts))
+            self.sub.setText("  -  ".join(parts))
 
         if t.status == T.DOWNLOADING:
             self._primary_action = "pause"
-            self.btn_primary.setText("⏸"); self.btn_primary.setToolTip("Pause"); self.btn_primary.show()
+            self.btn_primary.setIcon(themed_icon("pause", "text")); self.btn_primary.setToolTip("Pause"); self.btn_primary.show()
         elif t.status in (T.PAUSED, T.ERROR, T.QUEUED, T.SCHEDULED):
             self._primary_action = "resume"
-            self.btn_primary.setText("▶"); self.btn_primary.setToolTip("Resume"); self.btn_primary.show()
+            self.btn_primary.setIcon(themed_icon("play", "text")); self.btn_primary.setToolTip("Resume"); self.btn_primary.show()
         elif done:
             self._primary_action = "open"
-            self.btn_primary.setText("📂"); self.btn_primary.setToolTip("Open file"); self.btn_primary.show()
+            self.btn_primary.setIcon(themed_icon("open", "text")); self.btn_primary.setToolTip("Open file"); self.btn_primary.show()
         else:
             self.btn_primary.hide()

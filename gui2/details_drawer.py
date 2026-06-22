@@ -19,6 +19,7 @@ import task as T
 import utils
 import torrent as _torrent
 from gui.theme import human_size, human_speed, fmt_eta, humanize_age
+from gui.icons import themed_icon
 from gui2.palette import COLORS
 
 WIDTH = 440
@@ -37,12 +38,22 @@ class ProgressRing(QWidget):
     def paintEvent(self, _e):
         p = QPainter(self); p.setRenderHint(QPainter.Antialiasing)
         c = COLORS
-        m = 10
+        m = 12
         rect = QRectF(m, m, self.width() - 2 * m, self.height() - 2 * m)
+        
         pen = QPen(QColor(c["border2"]), 9, Qt.SolidLine, Qt.RoundCap)
         p.setPen(pen); p.drawArc(rect, 90 * 16, -360 * 16)
+        
+        glow_pen = QPen(QColor(c["accent"]), 18, Qt.SolidLine, Qt.RoundCap)
+        glow_color = glow_pen.color()
+        glow_color.setAlpha(40)
+        glow_pen.setColor(glow_color)
+        p.setPen(glow_pen)
+        p.drawArc(rect, 90 * 16, int(-360 * (self._pct / 100.0) * 16))
+
         pen.setColor(QColor(c["accent"])); p.setPen(pen)
         p.drawArc(rect, 90 * 16, int(-360 * (self._pct / 100.0) * 16))
+        
         p.setPen(QColor(c["text"]))
         f = p.font(); f.setPixelSize(26); f.setBold(True); p.setFont(f)
         p.drawText(self.rect(), Qt.AlignCenter, f"{self._pct}%")
@@ -84,8 +95,12 @@ class SpeedGraph(QWidget):
                 (path.moveTo(x, y) if i == 0 else path.lineTo(x, y))
                 fill.lineTo(x, y)
             fill.lineTo(w, h); fill.closeSubpath()
-            fillc = QColor(c["accent"]); fillc.setAlpha(40)   # translucent accent
-            p.fillPath(fill, fillc)
+            from PySide6.QtGui import QLinearGradient
+            grad = QLinearGradient(0, 0, 0, h)
+            c_top = QColor(c["accent"]); c_top.setAlpha(120)
+            c_bot = QColor(c["accent"]); c_bot.setAlpha(0)
+            grad.setColorAt(0, c_top); grad.setColorAt(1, c_bot)
+            p.fillPath(fill, grad)
             p.setPen(QPen(QColor(c["accent"]), 2, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
             p.drawPath(path)
         p.end()
@@ -117,15 +132,25 @@ class DetailsDrawer(QFrame):
         lay.setSpacing(12)
 
         head = QHBoxLayout()
-        self.h_icon = QLabel("📄"); self.h_icon.setStyleSheet("font-size: 18px; background: transparent;")
+        self.h_icon = QLabel(); self.h_icon.setStyleSheet("background: transparent;")
+        self.h_icon.setPixmap(themed_icon("document", "text").pixmap(18, 18))
         self.h_name = QLabel(""); self.h_name.setStyleSheet("font-weight: 800; font-size: 14px; background: transparent;")
         self.h_name.setWordWrap(True)
-        close = QPushButton("✕"); close.setObjectName("iconbtn"); close.setFixedSize(28, 28)
+        close = QPushButton(); close.setIcon(themed_icon("close", "muted")); close.setObjectName("iconbtn"); close.setFixedSize(28, 28)
         close.setCursor(Qt.PointingHandCursor); close.clicked.connect(self.close_drawer)
         head.addWidget(self.h_icon); head.addWidget(self.h_name, 1); head.addWidget(close)
         lay.addLayout(head)
 
         self.tabs = QTabWidget()
+        self.tabs.setStyleSheet(f"""
+            QTabWidget::pane {{ border: none; top: -1px; }}
+            QTabBar::tab {{
+                background: transparent; color: {COLORS['muted']};
+                padding: 6px 14px; margin: 0 4px 12px 0; border-radius: 12px; font-weight: 700;
+            }}
+            QTabBar::tab:hover {{ background: {COLORS['surface2']}; color: {COLORS['text']}; }}
+            QTabBar::tab:selected {{ background: {COLORS['accent']}; color: white; }}
+        """)
         self.tabs.addTab(self._overview_tab(), "Overview")
         self.tabs.addTab(self._scroll_tab("files"), "Files")
         self.tabs.addTab(self._scroll_tab("conns"), "Connections")
@@ -134,8 +159,12 @@ class DetailsDrawer(QFrame):
         lay.addWidget(self.tabs, 1)
 
         foot = QHBoxLayout()
-        self.btn_primary = QPushButton("⏸  Pause"); self.btn_primary.clicked.connect(self._primary)
-        self.btn_more = QPushButton("More  ▾"); self.btn_more.clicked.connect(lambda: self.action.emit("more", self._tid))
+        self.btn_primary = QPushButton(" Pause"); self.btn_primary.setIcon(themed_icon("pause", "text"))
+        self.btn_primary.setStyleSheet(f"QPushButton {{ padding: 8px 16px; font-weight: 600; background: {COLORS['surface2']}; border: 1px solid {COLORS['border']}; border-radius: 8px; }} QPushButton:hover {{ background: {COLORS['card_hover']}; }}")
+        self.btn_primary.clicked.connect(self._primary)
+        self.btn_more = QPushButton(" More"); self.btn_more.setIcon(themed_icon("chevron-down", "text"))
+        self.btn_more.setStyleSheet(f"QPushButton {{ padding: 8px 16px; font-weight: 600; background: {COLORS['surface2']}; border: 1px solid {COLORS['border']}; border-radius: 8px; }} QPushButton:hover {{ background: {COLORS['card_hover']}; }}")
+        self.btn_more.clicked.connect(lambda: self.action.emit("more", self._tid))
         foot.addWidget(self.btn_primary); foot.addStretch(); foot.addWidget(self.btn_more)
         lay.addLayout(foot)
 
@@ -145,15 +174,22 @@ class DetailsDrawer(QFrame):
 
     # ---- tab builders ----
     def _overview_tab(self):
-        w = QWidget(); v = QVBoxLayout(w); v.setContentsMargins(0, 12, 0, 0); v.setSpacing(14)
-        top = QHBoxLayout(); top.setSpacing(16)
+        w = QWidget(); v = QVBoxLayout(w); v.setContentsMargins(0, 16, 0, 0); v.setSpacing(16)
+        from PySide6.QtWidgets import QGraphicsOpacityEffect
+        self.op_effect = QGraphicsOpacityEffect(w)
+        w.setGraphicsEffect(self.op_effect)
+        self.op_anim = QPropertyAnimation(self.op_effect, b"opacity")
+        self.op_anim.setDuration(400)
+        self.op_anim.setEasingCurve(QEasingCurve.OutCubic)
+        
+        top = QHBoxLayout(); top.setSpacing(20)
         self.ring = ProgressRing()
         top.addWidget(self.ring)
         info = QVBoxLayout(); info.setSpacing(4)
-        self.ov_size = QLabel("—"); self.ov_size.setStyleSheet("font-weight: 700; background: transparent;")
-        self.ov_speed = QLabel("—"); self.ov_speed.setStyleSheet(f"color: {COLORS['muted']}; background: transparent;")
+        self.ov_size = QLabel("—"); self.ov_size.setStyleSheet(f"color: {COLORS['text']}; font-weight: 800; font-size: 16px; background: transparent;")
+        self.ov_speed = QLabel("—"); self.ov_speed.setStyleSheet(f"color: {COLORS['accent']}; font-weight: 600; background: transparent;")
         info.addWidget(self.ov_size); info.addWidget(self.ov_speed)
-        info.addSpacing(6)
+        info.addSpacing(12)
         r1, self.ov_eta = _kv("ETA", "—"); info.addLayout(r1)
         r2, self.ov_done = _kv("Downloaded", "—"); info.addLayout(r2)
         info.addStretch()
@@ -162,12 +198,14 @@ class DetailsDrawer(QFrame):
 
         self.graph = SpeedGraph(); v.addWidget(self.graph)
 
-        grid = QVBoxLayout(); grid.setSpacing(8)
+        glass_panel = QFrame()
+        glass_panel.setStyleSheet(f"QFrame {{ background: rgba(255, 255, 255, 0.02); border: 1px solid rgba(255, 255, 255, 0.05); border-radius: 12px; }}")
+        grid = QVBoxLayout(glass_panel); grid.setContentsMargins(16, 16, 16, 16); grid.setSpacing(12)
         r, self.ov_path = _kv("Save Location", "—"); grid.addLayout(r)
         r, self.ov_created = _kv("Created", "—"); grid.addLayout(r)
         r, self.ov_conns = _kv("Connections", "—"); grid.addLayout(r)
         r, self.ov_hash = _kv("Hash (SHA-256)", "—"); grid.addLayout(r)
-        v.addLayout(grid)
+        v.addWidget(glass_panel)
         v.addStretch()
         return w
 
@@ -209,6 +247,11 @@ class DetailsDrawer(QFrame):
         end = QPoint(self.parent().width() - WIDTH, 0)
         self.move(start)
         self.anim.stop(); self.anim.setStartValue(start); self.anim.setEndValue(end); self.anim.start()
+        if hasattr(self, 'op_anim'):
+            self.op_anim.stop()
+            self.op_anim.setStartValue(0.0)
+            self.op_anim.setEndValue(1.0)
+            self.op_anim.start()
 
     def close_drawer(self):
         self._tid = None
@@ -229,7 +272,14 @@ class DetailsDrawer(QFrame):
     def _populate_static(self, t):
         self.h_name.setText(t.filename or "download")
         is_tor = _torrent.is_torrent_task(t.url, t.filename)
-        self.h_icon.setText("🧲" if is_tor else "📄")
+        try:
+            from gui2.download_card import _CAT_ICON
+            cat = utils.category_for(t.filename)
+            ic_name, ic_color = _CAT_ICON.get(cat, ("document", COLORS['muted']))
+            if is_tor: ic_name, ic_color = "magnet", COLORS['accent']
+        except Exception:
+            ic_name, ic_color = "document", COLORS['muted']
+        self.h_icon.setPixmap(themed_icon(ic_name, ic_color).pixmap(22, 22))
         self.ov_path.setText(t.save_path or "—")
         self.ov_created.setText(humanize_age(getattr(t, "added", 0)) or "—")
 
@@ -271,7 +321,7 @@ class DetailsDrawer(QFrame):
         self.ov_done.setText(human_size(t.downloaded))
         eta = fmt_eta((t.total_size - t.downloaded) / bps) if bps > 0 and t.total_size else ""
         self.ov_eta.setText(eta or "—")
-        self.ov_hash.setText({"ok": "✓ verified", "fail": "✗ mismatch",
+        self.ov_hash.setText({"ok": "verified", "fail": "mismatch",
                               "nohash": "no checksum"}.get(getattr(t, "hash_status", ""), "—"))
         self.graph.push(bps if t.status == T.DOWNLOADING else 0.0)
 
@@ -294,10 +344,13 @@ class DetailsDrawer(QFrame):
 
         # primary button
         if t.status == T.DOWNLOADING:
-            self._primary_action = "pause"; self.btn_primary.setText("⏸  Pause")
+            self._primary_action = "pause"
+            self.btn_primary.setIcon(themed_icon("pause", "text")); self.btn_primary.setText("  Pause")
         elif t.status in (T.PAUSED, T.ERROR, T.QUEUED, T.SCHEDULED):
-            self._primary_action = "resume"; self.btn_primary.setText("▶  Resume")
+            self._primary_action = "resume"
+            self.btn_primary.setIcon(themed_icon("play", "text")); self.btn_primary.setText("  Resume")
         elif t.status == T.COMPLETED:
-            self._primary_action = "open"; self.btn_primary.setText("📂  Open File")
+            self._primary_action = "open"
+            self.btn_primary.setIcon(themed_icon("open", "text")); self.btn_primary.setText("  Open File")
         else:
             self._primary_action = "details"
