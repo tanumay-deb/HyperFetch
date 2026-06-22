@@ -77,6 +77,7 @@ class DownloadAppV2(QWidget):
         self._build_ui()
         self._setup_tray()
         self._setup_shortcuts()
+        self._apply_appearance()
         self._load_state()
         self._start_server()
         self._restore_window()
@@ -519,6 +520,10 @@ class DownloadAppV2(QWidget):
         queues = list(self.queue.queues.keys()) or ["Main"]
         dlg = NewDownloadDialog(self, self.save_dir, queues, self.segments,
                                 url=url, suggested=suggested, headers=headers)
+        dq = self._extras.get("default_queue")          # Settings -> Downloads
+        if dq and dq in queues:
+            dlg.q.setCurrentText(dq)
+        dlg.start_now.setChecked(bool(self._extras.get("auto_start", True)))
         if flash:
             dlg.setWindowFlag(Qt.WindowStaysOnTopHint, True)
             self.raise_(); self.activateWindow()
@@ -601,8 +606,16 @@ class DownloadAppV2(QWidget):
         self.scheduler_stop = v["sched_stop"]
         self._extras.update(v)
         self._apply_network_settings()
+        self._apply_appearance()
         self._save_settings()
         self.refresh()
+
+    def _apply_appearance(self):
+        """Apply the Appearance font-size setting to the whole app."""
+        pt = {"Small": 9, "Medium": 10, "Large": 12}.get(self._extras.get("font_size", "Medium"), 10)
+        app = QApplication.instance()
+        if app:
+            f = app.font(); f.setPointSize(pt); app.setFont(f)
 
     def _apply_network_settings(self):
         """Push persisted Network/Advanced prefs into the backend globals the
@@ -850,7 +863,14 @@ def run_v2():
     from PySide6.QtGui import QFont
     app.setFont(QFont("Segoe UI", 10))
     win = DownloadAppV2()
-    win.show()
+    # launch behavior (Settings -> General -> On application launch)
+    launch = win._extras.get("launch", "Show main window")
+    if launch == "Start in tray" and win.tray and win.tray.isVisible():
+        pass                                   # stay hidden in the tray
+    elif launch == "Start minimized":
+        win.showMinimized()
+    else:
+        win.show()
     return app.exec()
 
 

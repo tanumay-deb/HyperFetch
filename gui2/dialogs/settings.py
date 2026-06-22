@@ -45,8 +45,7 @@ class SettingsDialogV2(QDialog):
         nav_container.setStyleSheet(f"background:{COLORS['surface']};border-right:1px solid {COLORS['border']};")
         nv_lay = QVBoxLayout(nav_container); nv_lay.setContentsMargins(16, 24, 16, 16); nv_lay.setSpacing(16)
         
-        # Brand
-        brand_lay = QHBoxLayout()
+        # Brand logo — defined here, shown in the header beside the search.
         class BrandLogo(QLabel):
             def __init__(self, parent=None):
                 super().__init__(parent)
@@ -57,13 +56,9 @@ class SettingsDialogV2(QDialog):
                 p.setBrush(QColor(COLORS["accent"])); p.setPen(Qt.NoPen)
                 p.drawEllipse(self.rect())
                 ic = themed_icon("bolt", "white").pixmap(16, 16)
-                p.drawPixmap((self.width()-16)//2, (self.height()-16)//2, ic)
+                p.drawPixmap((self.width() - 16) // 2, (self.height() - 16) // 2, ic)
                 p.end()
-        logo = BrandLogo()
-        title = QLabel("HyperFetch"); title.setStyleSheet(f"font-size: 18px; font-weight: 800; color: {COLORS['text']}; background: transparent; border: none;")
-        brand_lay.addWidget(logo); brand_lay.addWidget(title); brand_lay.addStretch()
-        nv_lay.addLayout(brand_lay)
-        nv_lay.addSpacing(8)
+        self._BrandLogo = BrandLogo
 
         self.nav = QListWidget()
         self.nav.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
@@ -77,10 +72,10 @@ class SettingsDialogV2(QDialog):
         for s, ic in zip(_SECTIONS, icons):
             item = QListWidgetItem(themed_icon(ic, "muted"), s)
             self.nav.addItem(item)
-        nv_lay.addWidget(self.nav)
-        
-        # Mini Speed Graph
-        nv_lay.addStretch()
+        nv_lay.addWidget(self.nav, 1)
+
+        # Mini Speed Graph (pinned below the nav; nav fills the rest so its
+        # items never scroll)
         self.mini_speed_lbl = QLabel("Total Speed\n0 b/s")
         self.mini_speed_lbl.setStyleSheet(f"color:{COLORS['text']}; font-size: 11px; font-weight: 600; background: transparent; border: none;")
         nv_lay.addWidget(self.mini_speed_lbl)
@@ -103,11 +98,15 @@ class SettingsDialogV2(QDialog):
         # Header Search
         head = QFrame(); head.setFixedHeight(72)
         head.setStyleSheet(f"background: {COLORS['bg']}; border-bottom: 1px solid {COLORS['border']};")
-        hl = QHBoxLayout(head); hl.setContentsMargins(32, 0, 32, 0)
+        hl = QHBoxLayout(head); hl.setContentsMargins(20, 0, 20, 0); hl.setSpacing(10)
+        hl.addWidget(self._BrandLogo())
+        brand = QLabel("HyperFetch")
+        brand.setStyleSheet(f"font-size: 18px; font-weight: 800; color: {COLORS['text']}; background: transparent; border: none;")
+        hl.addWidget(brand)
         hl.addStretch()
-        self.search = QLineEdit(); self.search.setPlaceholderText("🔍 Search settings...")
-        self.search.setFixedSize(260, 36)
-        self.search.setStyleSheet(f"QLineEdit {{ background: {COLORS['surface2']}; border: 1px solid {COLORS['border']}; border-radius: 18px; padding: 0 16px; color: {COLORS['text']}; font-weight: 600; }}")
+        self.search = QLineEdit(); self.search.setPlaceholderText("Search settings…")
+        self.search.setClearButtonEnabled(True)
+        self.search.setFixedWidth(280)        # flat style from the global QSS — same as the main search
         self.search.textChanged.connect(self._do_search)
         hl.addWidget(self.search)
         right_lay.addWidget(head)
@@ -130,10 +129,10 @@ class SettingsDialogV2(QDialog):
         # footer
         sep = QFrame(); sep.setFixedHeight(1); sep.setStyleSheet(f"background:{COLORS['border']};")
         outer.addWidget(sep)
-        foot = QHBoxLayout(); foot.setContentsMargins(20, 12, 20, 12); foot.addStretch()
+        foot = QHBoxLayout(); foot.setContentsMargins(20, 12, 20, 12)
         reset = QPushButton("Reset"); reset.clicked.connect(self.reject)
         save = QPushButton("Save Changes"); save.setObjectName("primary"); save.clicked.connect(self.accept)
-        foot.addWidget(reset); foot.addWidget(save)
+        foot.addWidget(reset); foot.addStretch(); foot.addWidget(save)
         outer.addLayout(foot)
 
     def _on_tab_changed(self, idx):
@@ -246,8 +245,6 @@ class SettingsDialogV2(QDialog):
         self._row(g2, "Minimize to system tray", "Keep HyperFetch running in the background", self.min_tray)
         self.close_beh = self._combo(["Ask every time", "Minimize to tray", "Exit"], ex.get("close_behavior"))
         self._row(g2, "Close button behavior", "When clicking the close button", self.close_beh)
-        self.lang = self._combo(["System Default", "English"], ex.get("language"))
-        self._row(g2, "Language", "Preferred language", self.lang)
         self.clip_mon = self._toggle(ex.get("clipboard_monitor", False))
         self._row(g2, "Monitor clipboard", "Notify when a download link is copied", self.clip_mon)
         v.addWidget(f2); v.addStretch()
@@ -359,8 +356,6 @@ class SettingsDialogV2(QDialog):
         srow.addStretch()
         acc_l = QLabel("Accent Color"); acc_l.setStyleSheet("font-weight:700;background:transparent;")
         g.addWidget(acc_l); g.addLayout(srow)
-        self.density = self._combo(["Compact", "Comfortable"], ex.get("ui_density"))
-        self._row(g, "UI Density", "Spacing of interface elements", self.density)
         self.font_size = self._combo(["Small", "Medium", "Large"], ex.get("font_size"))
         self._row(g, "Font Size", "Application font size", self.font_size)
         v.addWidget(f); v.addStretch()
@@ -487,7 +482,6 @@ class SettingsDialogV2(QDialog):
             "launch": self.launch.currentText(),
             "minimize_tray": self.min_tray.isChecked(),
             "close_behavior": self.close_beh.currentText(),
-            "language": self.lang.currentText(),
             "default_queue": self.def_queue.currentText(),
             "auto_start": self.auto_start.isChecked(),
             "speed_limit": self.speed_limit.currentText(),
@@ -501,7 +495,6 @@ class SettingsDialogV2(QDialog):
             "dns_https": self.dns_https.isChecked(),
             "preallocate": self.preallocate.isChecked(),
             "proxy": self._proxy_url,
-            "ui_density": self.density.currentText(),
             "font_size": self.font_size.currentText(),
             "disk_cache": self.disk_cache.isChecked(),
             "hash_check": self.hash_check.isChecked(),
