@@ -17,6 +17,7 @@ except Exception:                       # fallback if unavailable
     from PySide6.QtWidgets import QCheckBox as AnimatedToggle
 from gui2.palette import COLORS, ACCENTS, set_accent
 from gui.icons import themed_icon
+from gui2.brand import BrandLogo
 
 _SECTIONS = ["General", "Downloads", "Network", "Browser", "Appearance", "Advanced", "About"]
 _SLIDER_QSS = (
@@ -43,29 +44,14 @@ class SettingsDialogV2(QDialog):
         # left nav container
         nav_container = QWidget(); nav_container.setFixedWidth(220)
         nav_container.setStyleSheet(f"background:{COLORS['surface']};border-right:1px solid {COLORS['border']};")
-        nv_lay = QVBoxLayout(nav_container); nv_lay.setContentsMargins(16, 24, 16, 16); nv_lay.setSpacing(16)
+        nv_lay = QVBoxLayout(nav_container); nv_lay.setContentsMargins(12, 14, 12, 12); nv_lay.setSpacing(8)
         
-        # Brand logo — defined here, shown in the header beside the search.
-        class BrandLogo(QLabel):
-            def __init__(self, parent=None):
-                super().__init__(parent)
-                self.setFixedSize(28, 28)
-            def paintEvent(self, e):
-                from PySide6.QtGui import QPainter, QColor
-                p = QPainter(self); p.setRenderHint(QPainter.Antialiasing)
-                p.setBrush(QColor(COLORS["accent"])); p.setPen(Qt.NoPen)
-                p.drawEllipse(self.rect())
-                ic = themed_icon("bolt", "white").pixmap(16, 16)
-                p.drawPixmap((self.width() - 16) // 2, (self.height() - 16) // 2, ic)
-                p.end()
-        self._BrandLogo = BrandLogo
-
         self.nav = QListWidget()
         self.nav.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.nav.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.nav.setStyleSheet(
             f"QListWidget{{background:transparent;border:none;outline:none;}}"
-            f"QListWidget::item{{padding:12px 14px;border-radius:8px;color:{COLORS['muted']};font-weight:700;margin-bottom:4px;}}"
+            f"QListWidget::item{{padding:7px 12px;border-radius:8px;color:{COLORS['muted']};font-weight:700;margin-bottom:2px;}}"
             f"QListWidget::item:selected{{background:{COLORS['accent']};color:white;}}")
             
         icons = ["settings", "download", "link", "open", "program", "menu", "info"]
@@ -74,21 +60,33 @@ class SettingsDialogV2(QDialog):
             self.nav.addItem(item)
         nv_lay.addWidget(self.nav, 1)
 
-        # Mini Speed Graph (pinned below the nav; nav fills the rest so its
-        # items never scroll)
-        self.mini_speed_lbl = QLabel("Total Speed\n0 b/s")
-        self.mini_speed_lbl.setStyleSheet(f"color:{COLORS['text']}; font-size: 11px; font-weight: 600; background: transparent; border: none;")
-        nv_lay.addWidget(self.mini_speed_lbl)
-        
-        from gui2.details_drawer import SpeedGraph
-        self.mini_graph = SpeedGraph(history=40); self.mini_graph.setFixedHeight(60)
-        self.mini_graph.setStyleSheet("background: transparent; border: none;")
-        nv_lay.addWidget(self.mini_graph)
-        
-        self.mini_conns_lbl = QLabel("Active Connections\n0")
-        self.mini_conns_lbl.setStyleSheet(f"color:{COLORS['muted']}; font-size: 11px; background: transparent; border: none;")
-        nv_lay.addWidget(self.mini_conns_lbl)
-        
+        # stats card — identical to the main-window sidebar (graph + readout)
+        from gui2.speed_gauge import SpeedGraph
+        self.stats = QFrame()
+        self.stats.setObjectName("statsCard")
+        sv = QVBoxLayout(self.stats)
+        sv.setContentsMargins(12, 10, 12, 10)
+        sv.setSpacing(8)
+        self.graph = SpeedGraph()
+        self.graph.setFixedHeight(54)
+        sv.addWidget(self.graph)
+        gtext = QWidget(); gtext.setStyleSheet("background: transparent;")
+        gt = QHBoxLayout(gtext); gt.setContentsMargins(0, 0, 0, 0)
+        scol = QVBoxLayout(); scol.setSpacing(0)
+        self.lbl_speed = QLabel("0 B/s")
+        self.lbl_speed.setStyleSheet(f"font-size: 16px; font-weight: 800; background: transparent; color: {COLORS['text']};")
+        cap1 = QLabel("Current Speed"); cap1.setStyleSheet(f"font-size: 11px; color: {COLORS['muted']}; background: transparent;")
+        scol.addWidget(self.lbl_speed); scol.addWidget(cap1)
+        ccol = QVBoxLayout(); ccol.setSpacing(0)
+        self.lbl_conns = QLabel("0"); self.lbl_conns.setAlignment(Qt.AlignRight)
+        self.lbl_conns.setStyleSheet(f"font-size: 16px; font-weight: 800; background: transparent; color: {COLORS['text']};")
+        cap2 = QLabel("Connections"); cap2.setAlignment(Qt.AlignRight)
+        cap2.setStyleSheet(f"font-size: 11px; color: {COLORS['muted']}; background: transparent;")
+        ccol.addWidget(self.lbl_conns); ccol.addWidget(cap2)
+        gt.addLayout(scol); gt.addStretch(); gt.addLayout(ccol)
+        sv.addWidget(gtext)
+        nv_lay.addWidget(self.stats)
+
         body.addWidget(nav_container)
 
         # Right side container
@@ -99,7 +97,7 @@ class SettingsDialogV2(QDialog):
         head = QFrame(); head.setFixedHeight(72)
         head.setStyleSheet(f"background: {COLORS['bg']}; border-bottom: 1px solid {COLORS['border']};")
         hl = QHBoxLayout(head); hl.setContentsMargins(20, 0, 20, 0); hl.setSpacing(10)
-        hl.addWidget(self._BrandLogo())
+        hl.addWidget(BrandLogo(26))
         brand = QLabel("HyperFetch")
         brand.setStyleSheet(f"font-size: 18px; font-weight: 800; color: {COLORS['text']}; background: transparent; border: none;")
         hl.addWidget(brand)
@@ -182,11 +180,10 @@ class SettingsDialogV2(QDialog):
 
     # ---- small builders ----
     def _page(self, title, subtitle):
+        # title/subtitle intentionally omitted — the section name already shows
+        # in the sidebar, so the page goes straight to its cards.
         sa = QScrollArea(); sa.setWidgetResizable(True)
-        w = QWidget(); v = QVBoxLayout(w); v.setContentsMargins(28, 24, 32, 24); v.setSpacing(8)
-        t = QLabel(title); t.setObjectName("dlgTitle")
-        s = QLabel(subtitle); s.setStyleSheet(f"color:{COLORS['muted']};background:transparent;")
-        v.addWidget(t); v.addWidget(s); v.addSpacing(10)
+        w = QWidget(); v = QVBoxLayout(w); v.setContentsMargins(28, 22, 32, 22); v.setSpacing(10)
         sa.setWidget(w); sa._v = v
         return sa, v
 
@@ -463,9 +460,9 @@ class SettingsDialogV2(QDialog):
 
     def update_live(self, bps, conns):
         from gui.theme import human_speed
-        self.mini_speed_lbl.setText(f"Total Speed\n{human_speed(bps) or '0 b/s'}")
-        self.mini_conns_lbl.setText(f"Active Connections\n{conns}")
-        self.mini_graph.push(bps)
+        self.lbl_speed.setText(human_speed(bps) or "0 b/s")
+        self.lbl_conns.setText(str(conns))
+        self.graph.push(bps)
 
     def values(self):
         return {

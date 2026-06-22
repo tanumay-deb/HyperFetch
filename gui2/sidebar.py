@@ -10,6 +10,7 @@ from gui2.palette import COLORS
 from gui2.speed_gauge import SpeedGraph
 from gui.theme import human_speed
 from gui.icons import themed_icon
+from gui2.brand import BrandLogo
 
 # (icon, label, key, icon_color)
 _CATEGORIES = [
@@ -116,9 +117,7 @@ class Sidebar(QFrame):
 
         # ---- brand + collapse ----
         top = QHBoxLayout()
-        self.brand_icon = QLabel()
-        self.brand_icon.setPixmap(themed_icon("bolt", COLORS['accent']).pixmap(20, 20))
-        self.brand_icon.setStyleSheet("background: transparent;")
+        self.brand_icon = BrandLogo(26)
         self.brand = QLabel("HyperFetch")
         self.brand.setObjectName("brand")
         self.brand.setStyleSheet("background: transparent; font-size: 18px; font-weight: 800;")

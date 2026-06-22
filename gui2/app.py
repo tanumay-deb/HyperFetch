@@ -53,10 +53,8 @@ class DownloadAppV2(QWidget):
         self.setMinimumSize(940, 560)
         self.resize(1180, 720)               # default; _restore_window overrides if saved
         self.setAcceptDrops(True)
-        for ic in (resource_path("assets", "icon.ico"), resource_path("assets", "icon.png")):
-            if os.path.exists(ic):
-                self.setWindowIcon(QIcon(ic))
-                break
+        from gui2.brand import brand_icon
+        self.setWindowIcon(brand_icon())     # same logo as the in-app brand + settings
 
         self._settings_path = os.path.join(utils.app_data_dir(), "settings.json")
         self._state_path = os.path.join(utils.app_data_dir(), "downloads.json")
