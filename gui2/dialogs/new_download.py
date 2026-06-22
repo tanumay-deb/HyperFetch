@@ -32,8 +32,8 @@ class NewDownloadDialog(QDialog):
         lay.setSpacing(14)
 
         head = QHBoxLayout()
-        ic = QLabel(); ic.setStyleSheet("background: transparent;")
-        ic.setPixmap(themed_icon("bolt", COLORS['accent']).pixmap(18, 18))
+        from gui2.brand import BrandLogo
+        ic = BrandLogo(20)
         title = QLabel("New Download"); title.setObjectName("dlgTitle")
         head.addWidget(ic); head.addWidget(title); head.addStretch()
         lay.addLayout(head)
