@@ -141,6 +141,8 @@ def unique_path(directory, filename):
 CATEGORIES = {
     "Video": {".mp4", ".mkv", ".webm", ".avi", ".mov", ".ts", ".m3u8", ".m4v", ".flv"},
     "Music": {".mp3", ".m4a", ".flac", ".wav", ".ogg"},
+    "Images": {".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp", ".svg",
+               ".heic", ".heif", ".tiff", ".ico", ".avif"},
     "Compressed": {".zip", ".rar", ".7z", ".tar", ".gz", ".bz2", ".xz"},
     "Programs": {".exe", ".msi", ".dmg", ".pkg", ".appimage", ".apk", ".deb", ".rpm"},
     "Documents": {".pdf", ".docx", ".xlsx", ".pptx", ".epub", ".txt"}

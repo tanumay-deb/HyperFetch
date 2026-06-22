@@ -17,10 +17,9 @@ def _read(name):
 def test_manifest_valid():
     m = json.loads(_read("manifest.json"))
     assert m["manifest_version"] == 3
-    for perm in ("contextMenus", "storage"):
+    # capture browser downloads (Download buttons) needs the downloads API
+    for perm in ("contextMenus", "storage", "downloads"):
         assert perm in m["permissions"]
-    # manual capture only — the downloads API (and its auto-intercept) is gone
-    assert "downloads" not in m["permissions"]
     assert m["background"]["service_worker"] == "background.js"
     assert m["action"]["default_popup"] == "popup.html"
 
@@ -30,14 +29,18 @@ def test_icons_exist():
         assert os.path.exists(os.path.join(EXT, "icons", f"icon{size}.png"))
 
 
-def test_manual_capture_only():
-    """No auto-interception: browser downloads and link clicks are not hijacked.
-    A download reaches the app only via the right-click menu or a video badge."""
+def test_capture_is_toggle_gated():
+    """Capture routes browser downloads (Download buttons) and magnet/.torrent
+    clicks to the app, but is gated by the on/off toggle; the right-click menu
+    stays. Already-downloaded files don't re-fire onCreated, so the old
+    surprise-dialog problem doesn't return."""
     bg = _read("background.js")
     ct = _read("content.js")
-    assert "chrome.downloads.onCreated" not in bg            # no browser-download grab
-    assert 'document.addEventListener("click"' not in ct     # no link-click hijack
-    assert "chrome.contextMenus.create" in bg                # manual menu registered
+    assert "chrome.downloads.onCreated" in bg                # browser-download capture
+    assert "captureEnabled" in bg                            # ...gated by the toggle
+    assert 'document.addEventListener("click"' in ct         # magnet/.torrent click capture
+    assert "magnet:" in ct
+    assert "chrome.contextMenus.create" in bg                # manual menu still registered
     assert "chrome.contextMenus.onClicked" in bg
 
 

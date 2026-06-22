@@ -18,7 +18,8 @@ from gui2.palette import COLORS
 
 _CAT_ICON = {
     "Video": ("video", "#FF80AB"), "Music": ("music", "#FF8A80"), "Compressed": ("archive", "#B388FF"),
-    "Programs": ("program", "#82B1FF"), "Documents": ("document", "#80D8FF"), "Other": ("folder", "#B5B5B5"),
+    "Programs": ("program", "#82B1FF"), "Documents": ("document", "#80D8FF"),
+    "Images": ("image", "#4DD0E1"), "Other": ("folder", "#B5B5B5"),
 }
 # progress-bar chunk colour by state (fast visual scanning)
 _BAR_COLOR = {

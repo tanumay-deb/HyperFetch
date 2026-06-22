@@ -7,7 +7,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, Signal
 
 from gui2.palette import COLORS
-from gui2.speed_gauge import CircularSpeedGauge
+from gui2.speed_gauge import SpeedGraph
 from gui.theme import human_speed
 from gui.icons import themed_icon
 
@@ -17,6 +17,7 @@ _CATEGORIES = [
     ("program", "Programs", "Programs", None),
     ("video", "Videos", "Video", None),
     ("music", "Music", "Music", None),
+    ("image", "Images", "Images", None),
     ("document", "Documents", "Documents", None),
     ("folder", "Other", "Other", None),
 ]
@@ -165,32 +166,35 @@ class Sidebar(QFrame):
         self.btn_queues.clicked.connect(self.manageQueues)
         lay.addWidget(self.btn_queues)
 
-        # ---- stats card (compact; gauge stays visible when collapsed) ----
+        # ---- stats card: line graph + speed/connections readout ----
         self.stats = QFrame()
         self.stats.setObjectName("statsCard")
-        sc = QHBoxLayout(self.stats)
-        sc.setContentsMargins(10, 10, 10, 10)
-        sc.setSpacing(8)
-        self.gauge = CircularSpeedGauge()
-        self.gauge.setFixedSize(72, 72)
-        sc.addWidget(self.gauge, 0, Qt.AlignVCenter)
+        sv = QVBoxLayout(self.stats)
+        sv.setContentsMargins(12, 10, 12, 10)
+        sv.setSpacing(8)
+        self.graph = SpeedGraph()
+        self.graph.setFixedHeight(54)
+        sv.addWidget(self.graph)
         self.g_text = QWidget()
         self.g_text.setStyleSheet("background: transparent;")
-        stext = QVBoxLayout(self.g_text)
-        stext.setContentsMargins(0, 0, 0, 0)
-        stext.setSpacing(0)
+        gt = QHBoxLayout(self.g_text)
+        gt.setContentsMargins(0, 0, 0, 0)
+        scol = QVBoxLayout(); scol.setSpacing(0)
         self.lbl_speed = QLabel("0 B/s")
         self.lbl_speed.setStyleSheet(f"font-size: 16px; font-weight: 800; background: transparent; color: {COLORS['text']};")
         cap1 = QLabel("Current Speed")
         cap1.setStyleSheet(f"font-size: 11px; color: {COLORS['muted']}; background: transparent;")
+        scol.addWidget(self.lbl_speed); scol.addWidget(cap1)
+        ccol = QVBoxLayout(); ccol.setSpacing(0)
         self.lbl_conns = QLabel("0")
+        self.lbl_conns.setAlignment(Qt.AlignRight)
         self.lbl_conns.setStyleSheet(f"font-size: 16px; font-weight: 800; background: transparent; color: {COLORS['text']};")
         cap2 = QLabel("Connections")
+        cap2.setAlignment(Qt.AlignRight)
         cap2.setStyleSheet(f"font-size: 11px; color: {COLORS['muted']}; background: transparent;")
-        stext.addWidget(self.lbl_speed); stext.addWidget(cap1)
-        stext.addSpacing(3)
-        stext.addWidget(self.lbl_conns); stext.addWidget(cap2)
-        sc.addWidget(self.g_text, 1)
+        ccol.addWidget(self.lbl_conns); ccol.addWidget(cap2)
+        gt.addLayout(scol); gt.addStretch(); gt.addLayout(ccol)
+        sv.addWidget(self.g_text)
         lay.addWidget(self.stats)
 
         # ---- settings ----
@@ -231,7 +235,7 @@ class Sidebar(QFrame):
     def set_stats(self, bps, conns):
         self.lbl_speed.setText(human_speed(bps) or "0 b/s")
         self.lbl_conns.setText(str(conns))
-        self.gauge.push(bps)
+        self.graph.push(bps)
 
     def set_collapsed(self, on):
         # width is animated by the app (DownloadAppV2._toggle_sidebar); here we
@@ -241,10 +245,9 @@ class Sidebar(QFrame):
         self.brand_icon.setVisible(not on)
         for t in (self.t_dl, self.t_cat):
             t.setVisible(not on)
-        # keep the speed gauge visible when collapsed (compact, text hidden)
+        # keep the speed graph visible when collapsed (text hidden)
         self.stats.setVisible(True)
         self.g_text.setVisible(not on)
-        self.gauge.setFixedSize(48, 48) if on else self.gauge.setFixedSize(72, 72)
         for row in self._rows.values():
             row.set_collapsed(on)
         self.btn_new.setText("" if on else "  New Download")

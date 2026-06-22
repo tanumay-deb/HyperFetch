@@ -65,3 +65,46 @@ class CircularSpeedGauge(QWidget):
             p.setPen(sp)
             p.drawPath(path)
         p.end()
+
+
+class SpeedGraph(QWidget):
+    """A flat line graph of recent speed (replaces the round gauge in the
+    sidebar). push(bytes_per_sec) each tick; keeps a rolling history."""
+    def __init__(self, parent=None, history=64):
+        super().__init__(parent)
+        self._hist = deque([0.0] * history, maxlen=history)
+        self._max = 1.0
+        self.setMinimumHeight(46)
+
+    def push(self, bps):
+        self._hist.append(max(0.0, float(bps)))
+        self._max = max(1.0, max(self._hist))
+        self.update()
+
+    def paintEvent(self, _e):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        c = COLORS
+        w, h = self.width(), self.height()
+        p.setPen(QPen(QColor(c["border"]), 1))
+        for i in range(1, 3):                       # faint gridlines
+            y = h * i / 3
+            p.drawLine(0, int(y), w, int(y))
+        n = len(self._hist)
+        if n >= 2:
+            line = QPainterPath()
+            fill = QPainterPath()
+            fill.moveTo(0, h)
+            for i, v in enumerate(self._hist):
+                x = w * i / (n - 1)
+                y = h - (v / self._max) * (h - 6) - 3
+                line.moveTo(x, y) if i == 0 else line.lineTo(x, y)
+                fill.lineTo(x, y)
+            fill.lineTo(w, h)
+            fill.closeSubpath()
+            fc = QColor(c["accent"])
+            fc.setAlpha(40)
+            p.fillPath(fill, fc)
+            p.setPen(QPen(QColor(c["accent"]), 2, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
+            p.drawPath(line)
+        p.end()
