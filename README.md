@@ -24,6 +24,7 @@ or grab streaming video from the in-page badge.
 - **Advanced Queueing & Scheduling** — priority ordering, bounded concurrency limits, a global **Time-based Scheduler** (start/stop overnight), and **Force Download** to bypass all limits.
 - **Global Speed Limit** — throttle the application's maximum download speed so it doesn't saturate your entire network while you game or stream.
 - **Multi-queue manager** — create named queues with their own concurrency, move tasks between them; the sidebar **Queues** dialog manages them.
+- **Auto-categorization** — downloads sort into Videos / Music / Images / Compressed / Programs / Documents / Other by file type (sidebar filters + optional per-category subfolders).
 - **SHA-256 verification** — optionally fetch a `<url>.sha256` sidecar after a download and flag a mismatch as failed (Settings → Advanced).
 - **Network controls** — global proxy, DNS-over-HTTPS, torrent listen port, UPnP/NAT-PMP port mapping, disk cache, pre-allocation (Settings → Network/Advanced).
 - **Debug logging** — optional `hyperfetch.log` for troubleshooting (Settings → Advanced).
@@ -74,12 +75,14 @@ python api_server.py
 1. Open `chrome://extensions` (or `edge://extensions`).
 2. Enable **Developer mode**.
 3. **Load unpacked** → select the `chrome_ext/` folder.
-4. **Pair it (one time):** in the app open **⚙ Settings → Security**, copy the
-   *pairing token*, then click the extension's toolbar icon and paste it into the
+4. **Pair it (one time):** in the app open **⚙ Settings → Browser Integration**, copy
+   the *pairing token*, then click the extension's toolbar icon and paste it into the
    **Pairing** box → Save.
 5. Keep `main.py` running. **Right-click** a link/image/media → **Download with
-   HyperFetch** (or click the badge on a streaming video) and the app shows the
-   file-info dialog. Normal browser downloads are left untouched.
+   HyperFetch** (or click the badge on a streaming video). With capture **on**, the
+   extension also routes browser-initiated downloads (Download buttons) and magnet/
+   `.torrent` link clicks to the app; with the app closed the browser download just
+   proceeds normally.
 6. The popup shows connection + pairing status, a capture on/off toggle, and a
    test download button.
 
