@@ -17,6 +17,16 @@ from gui.icons import themed_icon
 
 _PRIORITIES = [("High", -10), ("Normal", 0), ("Low", 10)]
 
+# yt-dlp quality presets -> format string. Single-file (progressive) selectors so
+# no ffmpeg merge is needed; "Best (auto)" defers to yt-dlp's default.
+_YT_QUALITY = [
+    ("Best (auto)", ""),
+    ("1080p", "b[height<=1080]"),
+    ("720p", "b[height<=720]"),
+    ("480p", "b[height<=480]"),
+    ("Audio only", "ba[ext=m4a]/bestaudio/best"),
+]
+
 
 class NewDownloadDialog(QDialog):
     def __init__(self, parent, save_dir, queues, segments,
@@ -112,6 +122,15 @@ class NewDownloadDialog(QDialog):
         self.use_ytdlp = QCheckBox("Use yt-dlp (YouTube & video sites)")
         self.use_ytdlp.setChecked(is_ytdlp_url(url))
         av.addWidget(self.use_ytdlp, 4, 0, 1, 2)
+        # quality picker — only meaningful for yt-dlp downloads
+        av.addWidget(self._label("Quality (yt-dlp)"), 5, 0)
+        self.quality = QComboBox(); self.quality.addItems([q[0] for q in _YT_QUALITY])
+        self.quality.setToolTip(
+            "Video/audio quality for media-page (yt-dlp) downloads.\n"
+            "Single-file formats — no ffmpeg needed.")
+        self.quality.setEnabled(self.use_ytdlp.isChecked())
+        self.use_ytdlp.toggled.connect(self.quality.setEnabled)
+        av.addWidget(self.quality, 5, 1)
         # auto-tick when a known media URL is typed/pasted (never auto-untick)
         self.url_edit.textChanged.connect(
             lambda t: self.use_ytdlp.setChecked(True) if is_ytdlp_url(t) else None)
@@ -190,5 +209,6 @@ class NewDownloadDialog(QDialog):
             "connections": self.conns.value(),
             "start_now": self.start_now.isChecked(),
             "use_ytdlp": self.use_ytdlp.isChecked(),
+            "yt_format": dict(_YT_QUALITY).get(self.quality.currentText(), ""),
             "headers": h,
         }

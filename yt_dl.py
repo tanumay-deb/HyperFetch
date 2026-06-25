@@ -89,6 +89,11 @@ class YtDlpDownloader:
         }
         if http_headers:
             opts["http_headers"] = http_headers
+        # quality selector chosen in New Download (single-file formats so no
+        # ffmpeg merge is required); "" keeps yt-dlp's default best.
+        fmt = (getattr(self.t, "yt_format", "") or "").strip()
+        if fmt:
+            opts["format"] = fmt
         # respect the global TLS + proxy settings
         import utils
         if not utils.VERIFY_TLS:

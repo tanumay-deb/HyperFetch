@@ -171,4 +171,18 @@ QScrollBar::add-line, QScrollBar::sub-line {{ height: 0; }}
 QScrollBar::add-page, QScrollBar::sub-page {{ background: transparent; }}
 
 QToolTip {{ background: {c['surface2']}; color: {c['text']}; border: 1px solid {c['border']}; padding: 4px; }}
+
+/* ---------- tables (History) ---------- */
+QTableWidget, QTableView {{
+    background: {c['surface']}; alternate-background-color: {c['surface2']};
+    color: {c['text']}; border: 1px solid {c['border']}; border-radius: 10px;
+    gridline-color: {c['border']}; outline: none;
+}}
+QTableWidget::item, QTableView::item {{ padding: 6px 8px; border: none; }}
+QTableWidget::item:selected, QTableView::item:selected {{ background: {c['accent']}; color: white; }}
+QHeaderView::section {{
+    background: {c['bg']}; color: {c['muted']}; border: none;
+    border-bottom: 1px solid {c['border']}; padding: 7px 8px; font-weight: 700;
+}}
+QTableCornerButton::section {{ background: {c['bg']}; border: none; }}
 """

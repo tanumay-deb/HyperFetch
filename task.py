@@ -66,7 +66,7 @@ class DownloadTask:
                  segments=None, downloaded=0, supports_range=True,
                  status=QUEUED, error="", task_id=None, speed_limit=0,
                  headers=None, priority=0, added=_NO_TIMESTAMP,
-                 seg_total=0, seg_done=0, queue_name="Main"):
+                 seg_total=0, seg_done=0, queue_name="Main", yt_format=""):
         self.id = task_id or uuid.uuid4().hex
         self.queue_name = queue_name
         # Brand-new tasks stamp `added=time.time()`; from_dict passes the saved
@@ -98,6 +98,11 @@ class DownloadTask:
         # instead of restarting from segment 0.
         self.seg_total = seg_total
         self.seg_done = seg_done
+
+        # yt-dlp format selector ("" = best/auto); chosen in New Download, used
+        # by YtDlpDownloader and persisted so a paused media download resumes
+        # at the same quality.
+        self.yt_format = yt_format
 
         # live torrent swarm stats (transient; set by TorrentDownloader's reader)
         self.tor_conns = 0          # connected peers
@@ -175,6 +180,7 @@ class DownloadTask:
             "seg_total": self.seg_total,
             "seg_done": self.seg_done,
             "queue_name": self.queue_name,
+            "yt_format": self.yt_format,
             "is_scheduled": getattr(self, "is_scheduled", False),
             # never write cookies/auth to disk; keep only safe headers (Referer/UA)
             "headers": utils.strip_sensitive(self.headers)
@@ -204,7 +210,8 @@ class DownloadTask:
             added=d.get("added"),
             seg_total=d.get("seg_total", 0),
             seg_done=d.get("seg_done", 0),
-            queue_name=d.get("queue_name", "Main")
+            queue_name=d.get("queue_name", "Main"),
+            yt_format=d.get("yt_format", "")
         )
         t.is_scheduled = d.get("is_scheduled", False)
         return t

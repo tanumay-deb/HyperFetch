@@ -10,7 +10,7 @@ or grab streaming video from the in-page badge.
   server supports HTTP `Range`), falls back to a single stream otherwise.
 - **BitTorrent & Magnet Links** — built-in support for downloading torrents and magnet links directly, without needing a separate client.
 - **HLS (.m3u8) Grabber** — native support for fetching, decrypting (AES-128), and concatenating HTTP Live Streaming videos.
-- **yt-dlp engine** — media pages (YouTube, Vimeo, Twitch, TikTok, etc.) are downloaded via yt-dlp; auto-detected by host or forced with the **Use yt-dlp** toggle in New Download.
+- **yt-dlp engine** — media pages (YouTube, Vimeo, Twitch, TikTok, etc.) are downloaded via yt-dlp; auto-detected by host or forced with the **Use yt-dlp** toggle in New Download, with a **quality picker** (Best / 1080p / 720p / 480p / Audio only) that uses single-file formats so no ffmpeg merge is required.
 - **IDM-style dialogs** — every new download shows a *Download File Info* dialog
   (probed size/type, editable filename, save-to folder, priority,
   Download Now / Download Later). Double-click any row for full *Properties*
@@ -25,6 +25,7 @@ or grab streaming video from the in-page badge.
 - **Global Speed Limit** — throttle the application's maximum download speed so it doesn't saturate your entire network while you game or stream.
 - **Multi-queue manager** — create named queues with their own concurrency, move tasks between them; the sidebar **Queues** dialog manages them.
 - **Auto-categorization** — downloads sort into Videos / Music / Images / Compressed / Programs / Documents / Other by file type (sidebar filters + optional per-category subfolders).
+- **Download history & stats** — completed downloads are logged to `history.json`; the sidebar **History** dialog shows lifetime totals (bytes downloaded, files completed, top category) and a searchable list with Open Folder / Copy URL / Clear.
 - **SHA-256 verification** — optionally fetch a `<url>.sha256` sidecar after a download and flag a mismatch as failed (Settings → Advanced).
 - **Network controls** — global proxy, DNS-over-HTTPS, torrent listen port, UPnP/NAT-PMP port mapping, disk cache, pre-allocation (Settings → Network/Advanced).
 - **Debug logging** — optional `hyperfetch.log` for troubleshooting (Settings → Advanced).
@@ -48,11 +49,12 @@ or grab streaming video from the in-page badge.
 | `yt_dl.py` | yt-dlp engine for media pages (YouTube etc.) |
 | `doh.py` / `upnp.py` | DNS-over-HTTPS resolver / UPnP IGD port mapping |
 | `queue_manager.py` | priority queue, concurrency, scheduler (Condition-based) |
+| `history.py` | completed-download log + stats (persisted to `history.json`) |
 | `utils.py` | app-data dir, JSON persistence, filenames, TLS/proxy/network globals, logging |
 | `api_server.py` | Flask `POST /download` + `/probe` + `GET /ping` for the extension |
-| `main.py` | entry point; `--v2` for the new GUI, `--selftest`, headless flags |
-| `gui/` | v1 GUI (default) — `main_window`, `models`, `delegates`, `dialogs`, `theme`, `icons` |
-| `gui2/` | v2 GUI (`--v2`) — widget cards, sidebar, drawer, tabbed dialogs, settings, toasts |
+| `main.py` | entry point; v2 GUI by default, `--v1` for the legacy GUI, `--selftest`, headless flags |
+| `gui/` | legacy GUI (`--v1`) — `main_window`, `models`, `delegates`, `dialogs`, `theme`, `icons` |
+| `gui2/` | v2 GUI (default) — widget cards, sidebar, drawer, tabbed dialogs, settings, toasts |
 | `chrome_ext/` / `edge_ext/` | MV3 browser extension (kept in sync) |
 
 GUI and server share **one** queue, so browser-sent downloads appear in the
@@ -61,8 +63,8 @@ window alongside manually added ones.
 ## Run
 ```powershell
 pip install -r requirements.txt
-python main.py          # v1 GUI (default), or double-click IDM.bat
-python main.py --v2     # v2 GUI (clean widget-based rewrite)
+python main.py          # v2 GUI (default), or double-click IDM.bat
+python main.py --v1     # legacy table-based GUI
 ```
 The window opens and a local server starts at `http://127.0.0.1:5000`.
 
@@ -132,7 +134,8 @@ cryptography, yt-dlp, the lazily-imported `hls`/`doh`/`upnp` modules, and
 artifact on every push.
 
 ## Notes
-- Settings and download state live in `%APPDATA%\HyperFetch\`.
+- Settings, download state, and completed-download history live in
+  `%APPDATA%\HyperFetch\` (`settings.json`, `downloads.json`, `history.json`).
 - Closing the app with active downloads asks for confirmation, pauses them,
   and resumes from disk on the next start.
 

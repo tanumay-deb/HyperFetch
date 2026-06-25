@@ -103,6 +103,7 @@ class Sidebar(QFrame):
     openSettings = Signal()
     toggleCollapse = Signal()
     manageQueues = Signal()
+    openHistory = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -156,6 +157,14 @@ class Sidebar(QFrame):
 
         # status lives in the main-window filter pills — not in the sidebar.
         lay.addStretch()
+
+        # ---- history ----
+        self.btn_history = QPushButton("   History")
+        self.btn_history.setIcon(themed_icon("history", "muted"))
+        self.btn_history.setObjectName("navItem")
+        self.btn_history.setCursor(Qt.PointingHandCursor)
+        self.btn_history.clicked.connect(self.openHistory)
+        lay.addWidget(self.btn_history)
 
         # ---- queues ----
         self.btn_queues = QPushButton("   Queues")
@@ -250,5 +259,6 @@ class Sidebar(QFrame):
         for row in self._rows.values():
             row.set_collapsed(on)
         self.btn_new.setText("" if on else "  New Download")
+        self.btn_history.setText("" if on else "   History")
         self.btn_queues.setText("" if on else "  Queues")
         self.btn_settings.setText("" if on else "  Settings")

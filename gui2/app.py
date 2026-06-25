@@ -162,6 +162,7 @@ class DownloadAppV2(QWidget):
         self.sidebar.openSettings.connect(self._open_settings)
         self.sidebar.toggleCollapse.connect(self._toggle_sidebar)
         self.sidebar.manageQueues.connect(self._open_queues)
+        self.sidebar.openHistory.connect(self._open_history)
         root.addWidget(self.sidebar)
         # animate min AND max together so the width is exact every frame (child
         # min-widths can't fight it) -> a smooth slide instead of a jumpy reflow
@@ -327,6 +328,11 @@ class DownloadAppV2(QWidget):
             return
         for t in self.queue.tasks:
             if t.status == T.COMPLETED and t.id not in self._completed_seen:
+                try:
+                    import history
+                    history.record(t)
+                except Exception:
+                    pass
                 self._toasts.show("success", "Download Complete", t.filename or "download")
                 if self.tray and self.tray.isVisible():
                     self.tray.showMessage("Download Complete", t.filename or "download",
@@ -509,6 +515,10 @@ class DownloadAppV2(QWidget):
         self._save_settings()        # persist queue list + concurrencies
         self.refresh()
 
+    def _open_history(self):
+        from gui2.dialogs.history import HistoryDialog
+        HistoryDialog(self).exec()
+
     def _new_download(self):
         clip = QApplication.clipboard().text().strip()
         prefill = clip if self._looks_like_url(clip) else ""
@@ -550,6 +560,7 @@ class DownloadAppV2(QWidget):
                            headers=v["headers"], priority=v["priority"],
                            queue_name=v["queue"])
         t.use_ytdlp = v.get("use_ytdlp", False)     # route through yt-dlp engine
+        t.yt_format = v.get("yt_format", "")        # chosen quality/format string
         self.queue.segments = v["connections"]      # active per-download connections
         if v["start_now"]:
             self.queue.add_task(t)
