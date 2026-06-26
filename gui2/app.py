@@ -211,6 +211,7 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, QW
         self.list.action.connect(self._on_card_action)
         self.list.selectionChanged.connect(self._on_selection_changed)
         self.list.quickAction.connect(self._quick_action)
+        self.list.blankClicked.connect(self._on_blank_clicked)
         mlay.addWidget(self.list, 1)
 
         root.addWidget(main, 1)

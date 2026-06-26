@@ -143,7 +143,17 @@ class ActionsMixin:
         m.exec(self.cursor().pos())
 
     def _on_selection_changed(self, ids):
-        pass        # reserved for a future bulk action bar; selection highlight is automatic
+        # when the details drawer is open, selecting another single card retargets it
+        if self.drawer.isVisible() and len(ids) == 1:
+            t = self.queue.get_task(next(iter(ids)))
+            if t:
+                self.drawer.retarget(t)
+
+    def _on_blank_clicked(self):
+        # left-click on empty list space clears the selection and closes the drawer
+        if self.drawer.isVisible():
+            self.drawer.close_drawer()
+        self.list.clear_selection()
 
     def _open_file(self, t):
         target = t.save_path

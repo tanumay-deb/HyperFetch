@@ -236,11 +236,15 @@ class DetailsDrawer(QFrame):
         lay.addStretch()
 
     # ---- open / close ----
-    def open_for(self, t):
+    def _load(self, t):
+        """Point the drawer at a task and refresh its content (no slide)."""
         self._tid = t.id
         self.graph.reset()
         self._populate_static(t)
         self.update_live(t, 0.0)
+
+    def open_for(self, t):
+        self._load(t)
         self.reposition()
         self.show(); self.raise_()
         start = QPoint(self.parent().width(), 0)
@@ -250,6 +254,18 @@ class DetailsDrawer(QFrame):
         if hasattr(self, 'op_anim'):
             self.op_anim.stop()
             self.op_anim.setStartValue(0.0)
+            self.op_anim.setEndValue(1.0)
+            self.op_anim.start()
+
+    def retarget(self, t):
+        """Swap to another task while already open — quick cross-fade, no slide."""
+        if not self.isVisible() or t.id == self._tid:
+            return
+        self._load(t)
+        self.raise_()
+        if hasattr(self, 'op_anim'):
+            self.op_anim.stop()
+            self.op_anim.setStartValue(0.35)
             self.op_anim.setEndValue(1.0)
             self.op_anim.start()
 

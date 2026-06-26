@@ -124,6 +124,8 @@ class DownloadCardWidget(QFrame):
             mode = ("toggle" if mods & Qt.ControlModifier
                     else "range" if mods & Qt.ShiftModifier else "single")
             self.selectRequested.emit(self.task_id, mode)
+            e.accept()            # consume so a card click isn't seen as a blank-space click
+            return
         super().mousePressEvent(e)
 
     def mouseDoubleClickEvent(self, _e):

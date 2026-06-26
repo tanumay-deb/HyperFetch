@@ -26,6 +26,7 @@ class DownloadList(QScrollArea):
     action = Signal(str, str)            # forwarded from cards
     selectionChanged = Signal(object)    # set of selected task ids
     quickAction = Signal(str)            # empty-state buttons: new/torrent/magnet
+    blankClicked = Signal()              # left-click on empty list space (not a card)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -45,6 +46,12 @@ class DownloadList(QScrollArea):
 
         self._empty = self._make_empty()
         self._lay.insertWidget(0, self._empty)
+
+    def mousePressEvent(self, e):
+        # cards accept their own clicks, so anything reaching here is empty space
+        if e.button() == Qt.LeftButton:
+            self.blankClicked.emit()
+        super().mousePressEvent(e)
 
     # ---- empty state ----
     def _make_empty(self):
