@@ -148,7 +148,7 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, QW
             a.setEasingCurve(QEasingCurve.InOutCubic)
             self.sidebar_anim.addAnimation(a)
         self._sidebar_target = 260
-        self.sidebar_anim.finished.connect(lambda: self.sidebar.setFixedWidth(self._sidebar_target))
+        self.sidebar_anim.finished.connect(self._on_sidebar_anim_done)
 
         main = QWidget()
         main.setObjectName("mainPane")
@@ -507,7 +507,11 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, QW
         self._sidebar_collapsed = not self._sidebar_collapsed
         target = 72 if self._sidebar_collapsed else 260
         self._sidebar_target = target
-        self.sidebar.set_collapsed(self._sidebar_collapsed)
+        # Collapsing: hide labels BEFORE shrinking so text never clips mid-slide.
+        # Expanding: keep the rail look until the slide finishes (see _on_sidebar_anim_done),
+        # otherwise labels pop in at narrow width and clip during the widen.
+        if self._sidebar_collapsed:
+            self.sidebar.set_collapsed(True)
         cur = self.sidebar.width()
         self.sidebar.setMinimumWidth(0)
         self.sidebar.setMaximumWidth(16777215)        # free both bounds before tween
@@ -516,6 +520,11 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, QW
             a.setStartValue(cur)
             a.setEndValue(target)
         self.sidebar_anim.start()
+
+    def _on_sidebar_anim_done(self):
+        self.sidebar.setFixedWidth(self._sidebar_target)
+        if not self._sidebar_collapsed:
+            self.sidebar.set_collapsed(False)         # reveal labels only once fully wide
 
     # ------------------------------------------------------------- drag & drop
     def dragEnterEvent(self, e):

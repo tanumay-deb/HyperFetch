@@ -36,12 +36,15 @@ class NavRow(QFrame):
     def __init__(self, icon, label, key, icon_color=None):
         super().__init__()
         self.key = key
+        self._label = label
+        self._count = 0
         self._active = False
         self._collapsed = False
         self.setCursor(Qt.PointingHandCursor)
-        h = QHBoxLayout(self)
-        h.setContentsMargins(12, 8, 12, 8)
-        h.setSpacing(12)
+        self.setToolTip(label)                     # hover shows the label (esp. collapsed)
+        self._h = QHBoxLayout(self)
+        self._h.setContentsMargins(12, 8, 12, 8)
+        self._h.setSpacing(12)
         self.ic = QLabel()
         self.ic_name = icon
         self.ic_color = icon_color
@@ -51,14 +54,16 @@ class NavRow(QFrame):
         self.lbl.setStyleSheet(f"background: transparent; font-weight: 600; color: {COLORS['muted']};")
         self.cnt = QLabel("")
         self.cnt.setStyleSheet(f"background: transparent; color: {COLORS['faint']}; font-size: 12px;")
-        h.addWidget(self.ic)
-        h.addWidget(self.lbl)
-        h.addStretch()
-        h.addWidget(self.cnt)
+        self._h.addWidget(self.ic)
+        self._h.addWidget(self.lbl)
+        self._h.addStretch()
+        self._h.addWidget(self.cnt)
         self._restyle()
 
     def set_count(self, n):
-        self.cnt.setText(str(n) if n is not None else "")
+        self._count = n or 0
+        self.cnt.setText(str(n) if n else "")
+        self.setToolTip(f"{self._label}  ·  {self._count}" if self._count else self._label)
 
     def set_active(self, on):
         self._active = on
@@ -68,18 +73,23 @@ class NavRow(QFrame):
         self._collapsed = on
         self.lbl.setVisible(not on)
         self.cnt.setVisible(not on)
-        self.ic.setFixedWidth(44 if on else 22)   # center the icon in the rail
+        # symmetric margins + full-width icon so the glyph truly centers in the rail
+        self._h.setContentsMargins(0, 8, 0, 8) if on else self._h.setContentsMargins(12, 8, 12, 8)
+        self.ic.setFixedWidth(44 if on else 22)
         self._restyle()
 
     def _restyle(self):
         color_val = self.ic_color or ("text" if self._active else "muted")
-        pm = themed_icon(self.ic_name, color_val).pixmap(16, 16)
-        self.ic.setPixmap(pm)
-        
+        self.ic.setPixmap(themed_icon(self.ic_name, color_val).pixmap(16, 16))
         if self._active:
-            self.setStyleSheet(
-                f"NavRow {{ background: {COLORS['surface2']}; border-radius: 9px;"
-                f" border-left: 3px solid {COLORS['accent']}; }}")
+            # collapsed → centered pill (a left-border looks detached on a centered
+            # icon); expanded → the left accent bar
+            if self._collapsed:
+                self.setStyleSheet(f"NavRow {{ background: {COLORS['surface2']}; border-radius: 10px; }}")
+            else:
+                self.setStyleSheet(
+                    f"NavRow {{ background: {COLORS['surface2']}; border-radius: 9px;"
+                    f" border-left: 3px solid {COLORS['accent']}; }}")
             self.lbl.setStyleSheet(f"background: transparent; font-weight: 700; color: {COLORS['text']};")
         else:
             self.setStyleSheet("NavRow { background: transparent; border-radius: 9px; }")
@@ -127,6 +137,7 @@ class Sidebar(QFrame):
         self.btn_collapse.setObjectName("iconbtn")
         self.btn_collapse.setFixedSize(32, 30)
         self.btn_collapse.setCursor(Qt.PointingHandCursor)
+        self.btn_collapse.setToolTip("Collapse / expand sidebar")
         self.btn_collapse.clicked.connect(self.toggleCollapse)
         top.addWidget(self.brand_icon)
         top.addWidget(self.brand)
@@ -139,6 +150,7 @@ class Sidebar(QFrame):
         self.btn_new.setIcon(themed_icon("plus", "white"))
         self.btn_new.setObjectName("primary")
         self.btn_new.setCursor(Qt.PointingHandCursor)
+        self.btn_new.setToolTip("New Download")
         self.btn_new.clicked.connect(self.newDownload)
         lay.addWidget(self.btn_new)
         lay.addSpacing(4)
@@ -156,6 +168,7 @@ class Sidebar(QFrame):
         self.btn_history.setIcon(themed_icon("history", "muted"))
         self.btn_history.setObjectName("navItem")
         self.btn_history.setCursor(Qt.PointingHandCursor)
+        self.btn_history.setToolTip("History")
         self.btn_history.clicked.connect(self.openHistory)
         lay.addWidget(self.btn_history)
 
@@ -164,6 +177,7 @@ class Sidebar(QFrame):
         self.btn_queues.setIcon(themed_icon("queue", "muted"))
         self.btn_queues.setObjectName("navItem")
         self.btn_queues.setCursor(Qt.PointingHandCursor)
+        self.btn_queues.setToolTip("Queues")
         self.btn_queues.clicked.connect(self.manageQueues)
         lay.addWidget(self.btn_queues)
 
@@ -203,7 +217,9 @@ class Sidebar(QFrame):
         self.btn_settings.setIcon(themed_icon("settings", "muted"))
         self.btn_settings.setObjectName("ghost")
         self.btn_settings.setCursor(Qt.PointingHandCursor)
-        self.btn_settings.setStyleSheet(f"text-align: left; padding: 10px 12px; font-weight: 700; color: {COLORS['text']};")
+        self._settings_qss = f"text-align: left; padding: 10px 12px; font-weight: 700; color: {COLORS['text']};"
+        self.btn_settings.setStyleSheet(self._settings_qss)
+        self.btn_settings.setToolTip("Settings")
         self.btn_settings.clicked.connect(self.openSettings)
         lay.addWidget(self.btn_settings)
 
@@ -228,9 +244,11 @@ class Sidebar(QFrame):
             row.set_count(counts.get(key, 0))
 
     def set_stats(self, bps, conns):
-        self.lbl_speed.setText(human_speed(bps) or "0 b/s")
+        sp = human_speed(bps) or "0 B/s"
+        self.lbl_speed.setText(sp)
         self.lbl_conns.setText(str(conns))
         self.graph.push(bps)
+        self.stats.setToolTip(f"Speed {sp}  ·  {conns} connection{'s' if conns != 1 else ''}")
 
     def set_collapsed(self, on):
         # width is animated by the app (DownloadAppV2._toggle_sidebar); here we
@@ -247,3 +265,10 @@ class Sidebar(QFrame):
         self.btn_history.setText("" if on else "   History")
         self.btn_queues.setText("" if on else "  Queues")
         self.btn_settings.setText("" if on else "  Settings")
+        # center the icons in the rail when collapsed (navItem/ghost default to
+        # left-aligned text, which leaves the icon hugging the left edge)
+        center = "text-align: center; padding-left: 0; padding-right: 0;"
+        self.btn_history.setStyleSheet(center if on else "")
+        self.btn_queues.setStyleSheet(center if on else "")
+        self.btn_settings.setStyleSheet(
+            (self._settings_qss + center) if on else self._settings_qss)
