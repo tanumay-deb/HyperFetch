@@ -1,8 +1,5 @@
-"""HyperFetch - IDM-style GUI.
-
-Multi-segment downloads with a live queue, pause/resume/cancel, IDM-style
-file-info dialogs, persistent state, and an embedded Flask server so the
-browser extension feeds downloads into this same window.
+"""Shared theme helpers: palette, the size/speed/age formatters, the SVG icon
+colours, and ``apply_theme`` (used by the GUI and the PropertiesDialog).
 """
 import os
 import sys
@@ -84,12 +81,10 @@ def palette_for(name):
 # color names propagated to consumer modules on a theme switch (see below)
 _COLOR_NAMES = ("ACCENT", "ACCENT_2", "BG", "SURFACE", "SURFACE_2",
                 "BORDER", "HOVER", "PRESSED", "ALT", "SEL", "TEXT", "MUTED")
-# modules that do `from gui.theme import *` and read the colors at paint/style
-# time. After main.py was split into the gui/ package these copies stopped
-# tracking apply_theme's rebinds, so a runtime theme switch left delegates /
-# graph / dialogs stale. Re-pushing the values keeps the single-namespace
+# modules that do `from gui.theme import *` and read the colours at paint/style
+# time. Re-pushing the values on a theme switch keeps the single-namespace
 # `import *` ergonomics without the staleness.
-_THEME_CONSUMERS = ("gui.delegates", "gui.models", "gui.dialogs", "gui.main_window")
+_THEME_CONSUMERS = ("gui.dialogs",)
 
 
 def apply_theme(name):
@@ -285,7 +280,7 @@ QSplitter::handle:hover {{
 """
 
 
-apply_theme("dark")   # default; DownloadApp re-applies the saved choice at startup
+apply_theme("dark")   # default; the app re-applies the saved choice at startup
 
 
 def human_size(n):

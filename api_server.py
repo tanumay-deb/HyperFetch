@@ -10,7 +10,7 @@ Security model (localhost-only desktop app):
 
 Two modes:
 - GUI mode (``pending`` given): requests land in a deque; the GUI pops them and
-  shows the IDM-style file-info dialog before anything is queued.
+  shows the file-info dialog before anything is queued.
 - Headless mode (``python api_server.py``): tasks are queued immediately.
 """
 import logging

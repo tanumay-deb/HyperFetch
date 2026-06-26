@@ -1,60 +1,25 @@
-"""HyperFetch - IDM-style GUI.
+"""HyperFetch — multi-segment download accelerator.
 
-Multi-segment downloads with a live queue, pause/resume/cancel, IDM-style
-file-info dialogs, persistent state, and an embedded Flask server so the
-browser extension feeds downloads into this same window.
+Entry point: launches the desktop GUI and the localhost server the browser
+extension talks to. Flags: ``--version``, ``--selftest`` (headless smoke check).
+Headless queueing without a GUI lives in ``api_server.py``.
 """
-import os
 import sys
-import time
-import threading
-import subprocess
-from collections import deque
 
-from PySide6.QtWidgets import (
-    QApplication, QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel,
-    QTableWidget, QTableWidgetItem, QHeaderView, QProgressBar, QDialog,
-    QLineEdit, QSpinBox, QFileDialog, QMessageBox, QAbstractItemView,
-    QFrame, QButtonGroup, QGridLayout, QSplitter, QSizePolicy, QComboBox, QMenu, QInputDialog,
-    QCheckBox, QListWidget, QListWidgetItem, QTableView, QStyledItemDelegate, QStyle
-)
-from PySide6.QtCore import (
-    Qt, QTimer, QModelIndex, QAbstractTableModel, QSortFilterProxyModel, QRect, QSize
-)
-from PySide6.QtGui import QColor, QFont, QIcon, QPainter, QPainterPath, QBrush, QPen, QLinearGradient
-
-import task as T
-import utils
 import crash_reporter
-import updater
-from queue_manager import QueueManager
-from api_server import run_server, PORT
-
-
-from gui.main_window import DownloadApp, _self_test
-from gui.theme import apply_theme, APP_VERSION
+from gui.theme import APP_VERSION
 
 if __name__ == "__main__":
     if "--version" in sys.argv:
         print(f"HyperFetch {APP_VERSION}")
         sys.exit(0)
+
     if "--selftest" in sys.argv:
-        if "--v1" in sys.argv:
-            _self_test()
-            sys.exit(0)
         from gui2.app import _self_test_v2
         sys.exit(_self_test_v2())
 
-    # install BEFORE QApplication so a Qt construction crash is captured too
+    # install BEFORE the GUI so a Qt construction crash is captured too
     crash_reporter.install(APP_VERSION)
 
-    # v2 GUI is the default; pass --v1 for the legacy table-based GUI
-    if "--v1" not in sys.argv:
-        from gui2.app import run_v2
-        sys.exit(run_v2())
-
-    app = QApplication(sys.argv)
-    app.setFont(QFont("Segoe UI", 10))
-    win = DownloadApp()
-    win.show()
-    sys.exit(app.exec())
+    from gui2.app import run_v2
+    sys.exit(run_v2())

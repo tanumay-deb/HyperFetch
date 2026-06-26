@@ -97,6 +97,36 @@ Everything runs locally on your computer — no accounts, no servers, no trackin
 
 ---
 
+## Remote code (Code-readiness tab)
+
+Answer: **No, I am not using remote code.** All executable JS is bundled; the
+extension only fetches *data* (localhost JSON + HLS `.m3u8` text it parses, never
+executes). If the automated scan force-flags it, paste this on the Privacy
+practices tab:
+
+> HyperFetch does not load or execute remote code. All JavaScript ships inside the
+> package: popup.html references only the bundled popup.js, and there are no
+> external <script> tags. The code contains no eval(), new Function(),
+> importScripts(), or dynamic import(). Its network requests fetch DATA only — JSON
+> to the user's local companion app at http://127.0.0.1:5000 to hand off a
+> download, and HLS (.m3u8) playlist TEXT from the current media site, which is
+> parsed with string/regex operations and never executed. DOM HTML is assigned
+> only from static, in-package string literals. Nothing executable is downloaded,
+> evaluated, or run from any remote origin.
+
+## Data use disclosures — checkbox answers
+- **Authentication information:** YES — reads session cookies, forwards them to
+  the local app for one user-initiated download.
+- **Website content:** YES (conservative) — reads the page to find the media URL +
+  title and transmits the download hyperlink/filename to the local app.
+- Everything else (PII, health, financial, personal communications, location,
+  web history, user activity): **NO.**
+- Certify all three disclosures: not sold/transferred to third parties (the local
+  app is the user's own software, the single-purpose use case), not used for
+  unrelated purposes, not used for creditworthiness.
+
+---
+
 ## Reviewer notes / known friction
 - The `cookies` + `<all_urls>` + `webRequest` combination triggers extra review.
   All three are core to the single purpose (forward authenticated downloads from
