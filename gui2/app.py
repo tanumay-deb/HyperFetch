@@ -163,6 +163,8 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, QW
 
         self.search = QLineEdit()
         self.search.setPlaceholderText("Search downloads…")
+        self.search.setToolTip("Search by name/URL, or filter with tokens:\n"
+                               "status:downloading · category:video · size:>100mb")
         self.search.setClearButtonEnabled(True)
         self.search.textChanged.connect(self._on_search)
         top.addWidget(self.search, 1)
@@ -208,6 +210,7 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, QW
         self.list = DownloadList()
         self.list.action.connect(self._on_card_action)
         self.list.selectionChanged.connect(self._on_selection_changed)
+        self.list.quickAction.connect(self._quick_action)
         mlay.addWidget(self.list, 1)
 
         root.addWidget(main, 1)
@@ -263,8 +266,8 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, QW
                  utils.category_for(t.filename) == self._filter]
                  
         if getattr(self, "_search", ""):
-            q = self._search.lower()
-            tasks = [t for t in tasks if q in t.filename.lower() or q in t.url.lower()]
+            from gui2 import search
+            tasks = search.filter_tasks(tasks, self._search)
 
         idx = getattr(self, "_last_sort_idx", 0)
         asc = getattr(self, "_sort_asc", False)
@@ -388,6 +391,22 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, QW
         clip = QApplication.clipboard().text().strip()
         prefill = clip if self._looks_like_url(clip) else ""
         self._add_download(prefill, "", None, flash=False)
+
+    def _quick_action(self, kind):
+        """Empty-state quick buttons: new / paste / torrent / magnet."""
+        if kind in ("new", "paste"):
+            self._new_download()                 # New Download dialog (prefills clipboard URL)
+        elif kind == "torrent":
+            from PySide6.QtWidgets import QFileDialog
+            f, _ = QFileDialog.getOpenFileName(self, "Open Torrent", self.save_dir,
+                                               "Torrent files (*.torrent)")
+            if f:
+                self._add_download(f, "", None)  # NewDownloadDialog opens on the Torrent tab
+        elif kind == "magnet":
+            clip = QApplication.clipboard().text().strip()
+            # use the clipboard magnet if present (opens on the Magnet tab), else
+            # the normal dialog so the user can paste one
+            self._add_download(clip if clip.lower().startswith("magnet:") else "", "", None)
 
     def _add_download(self, url, suggested, headers, flash=False):
         queues = list(self.queue.queues.keys()) or ["Main"]

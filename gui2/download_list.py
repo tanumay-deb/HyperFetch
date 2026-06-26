@@ -4,7 +4,9 @@ Groups into Active / Paused / Completed / Failed sections. Cards are cached by
 task id and updated in place; the layout is rebuilt only when group membership
 changes. Supports multi-select (single / ctrl-toggle / shift-range).
 """
-from PySide6.QtWidgets import QScrollArea, QWidget, QVBoxLayout, QLabel
+from PySide6.QtWidgets import (
+    QScrollArea, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton
+)
 from PySide6.QtCore import Qt, Signal
 
 import task as T
@@ -23,6 +25,7 @@ _GROUPS = [
 class DownloadList(QScrollArea):
     action = Signal(str, str)            # forwarded from cards
     selectionChanged = Signal(object)    # set of selected task ids
+    quickAction = Signal(str)            # empty-state buttons: new/torrent/magnet
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -45,13 +48,47 @@ class DownloadList(QScrollArea):
 
     # ---- empty state ----
     def _make_empty(self):
-        w = QWidget(); v = QVBoxLayout(w); v.setAlignment(Qt.AlignCenter); v.setContentsMargins(0, 80, 0, 0)
-        icon = QLabel(); icon.setAlignment(Qt.AlignCenter); icon.setStyleSheet("background: transparent;")
-        icon.setPixmap(themed_icon("download", COLORS['faint']).pixmap(44, 44))
-        v.addWidget(icon)
-        for text, st in (("No downloads yet", f"font-size:17px;font-weight:700;color:{COLORS['text']};background:transparent;"),
-                         ("Paste a URL or drag & drop a link to get started.", f"font-size:13px;color:{COLORS['muted']};background:transparent;")):
-            l = QLabel(text); l.setStyleSheet(st); l.setAlignment(Qt.AlignCenter); v.addWidget(l)
+        w = QWidget()
+        v = QVBoxLayout(w); v.setAlignment(Qt.AlignCenter)
+        v.setContentsMargins(0, 64, 0, 0); v.setSpacing(6)
+
+        # illustration: brand-accent glyph in a soft rounded tile
+        icon = QLabel(); icon.setAlignment(Qt.AlignCenter); icon.setFixedSize(96, 96)
+        icon.setPixmap(themed_icon("download", COLORS['accent']).pixmap(52, 52))
+        icon.setStyleSheet(
+            f"background: {COLORS['surface2']}; border: 1px solid {COLORS['border']};"
+            "border-radius: 24px;")
+        ihold = QHBoxLayout(); ihold.addStretch(); ihold.addWidget(icon); ihold.addStretch()
+        v.addLayout(ihold)
+        v.addSpacing(6)
+
+        title = QLabel("No downloads yet"); title.setAlignment(Qt.AlignCenter)
+        title.setStyleSheet(f"font-size:19px;font-weight:800;color:{COLORS['text']};background:transparent;")
+        sub = QLabel("Paste a link, drop a file, or start one below."); sub.setAlignment(Qt.AlignCenter)
+        sub.setStyleSheet(f"font-size:13px;color:{COLORS['muted']};background:transparent;")
+        v.addWidget(title); v.addWidget(sub)
+        v.addSpacing(14)
+
+        # quick actions
+        row = QHBoxLayout(); row.setSpacing(10); row.setAlignment(Qt.AlignCenter)
+        for label, kind, icon_name, primary in (
+                ("New Download", "new", "plus", True),
+                ("Open Torrent", "torrent", "plus-circle", False),
+                ("Open Magnet", "magnet", "magnet", False)):
+            b = QPushButton("  " + label)
+            if primary:
+                b.setObjectName("primary")
+            b.setIcon(themed_icon(icon_name, "white" if primary else "text"))
+            b.setCursor(Qt.PointingHandCursor)
+            b.clicked.connect(lambda _=False, k=kind: self.quickAction.emit(k))
+            row.addWidget(b)
+        rw = QWidget(); rw.setLayout(row)
+        rh = QHBoxLayout(); rh.addStretch(); rh.addWidget(rw); rh.addStretch()
+        v.addLayout(rh)
+
+        hint = QLabel("or drag files & links anywhere in the window"); hint.setAlignment(Qt.AlignCenter)
+        hint.setStyleSheet(f"font-size:11px;color:{COLORS['faint']};background:transparent;")
+        v.addSpacing(10); v.addWidget(hint)
         return w
 
     def _header(self, title, count):

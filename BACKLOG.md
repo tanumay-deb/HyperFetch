@@ -3,6 +3,7 @@
 Simple running list. Newest first. Keep entries to one line.
 
 ## Done
+- _(uncommitted)_ — Empty state: illustration tile + quick actions (New Download · Open Torrent · Open Magnet) + drag hint, wired via `DownloadList.quickAction`. Richer search: `status:`/`category:`/`size:` tokens (`gui2/search.py`, unit-tested) on top of name/URL text.
 - `bb7e2e9` — code hygiene: split `app.py` (1011→624) into mixins; dedup engine helpers (`utils.DEFAULT_HEADERS`/`temp_download_path`); palette-ize semantic colours; benefit-first README/store copy.
 - `d16875b` — removed the legacy v1 GUI (table-based) + `--v1`; `gui/` is now shared helpers only; dropped "IDM" branding; rename IDM.bat → HyperFetch.bat.
 - `2a7b981` — v1.2.2: file sizes in bytes + speed-unit setting; per-queue item view; slim sidebar; Chrome ext store package + promo/screenshot assets.
@@ -24,9 +25,9 @@ Simple running list. Newest first. Keep entries to one line.
 - earlier — ABDM-style UI overhaul, multi-queue + adaptive segments, crash reporter + update check, v1.2.0 release.
 
 ## Next (UX & polish — planned)
-- Empty state: large illustration + quick actions (Paste URL · Open Torrent · Open Magnet · drag-hint) + recent URLs — first-run delight. [high value, low risk]
 - Watch Folder: auto-import downloads / `.torrent` files dropped into a monitored folder (IDM parity). [med]
-- Richer search: filter tokens (`status:` `category:` `size>` `date`) beyond filename/URL substring. [med]
+- Empty state follow-ups: Recent URLs list + Watch-Folder shortcut. [low]
+- Search follow-up: add `date:` token + remember recent searches. [low]
 - Dialog polish: unified `DialogHeader` + design tokens (radius/spacing/margins) in palette; consolidate inline QSS. [med — from code audit]
 - Module splits (from code audit): `settings.py` page-builder mixin; shared `finalize_download()` for downloader+hls. [med]
 - Card density polish: cards already show icon · file · % · progress · speed · ETA · status — tighten layout for faster at-a-glance scan. [low-med refinement]
