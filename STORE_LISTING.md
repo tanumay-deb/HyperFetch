@@ -43,6 +43,12 @@ Everything runs locally on your computer — no accounts, no servers, no trackin
 
 ## Permission justifications (paste into the dashboard)
 
+**`contextMenus`**
+> Used to add a single right-click menu item, "Download with HyperFetch", on
+> links, images, audio, and video. This is the primary user-initiated way to send
+> a download to the desktop app. The extension creates only this one menu entry
+> and reads nothing from the page; it acts only when the user clicks it.
+
 **`downloads`**
 > Used to detect when the browser starts a download and to cancel the browser's
 > copy once the desktop app accepts it, so the file isn't downloaded twice.
