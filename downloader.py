@@ -10,28 +10,73 @@ import shutil
 import tempfile
 import threading
 
+class ResizableSemaphore:
+    def __init__(self, value):
+        self.cond = threading.Condition()
+        self.value = value
+        self.active = 0
+    def acquire(self, timeout=None):
+        with self.cond:
+            if timeout is None:
+                while self.active >= self.value:
+                    self.cond.wait()
+            else:
+                import time
+                end = time.time() + timeout
+                while self.active >= self.value:
+                    rem = end - time.time()
+                    if rem <= 0:
+                        return False
+                    self.cond.wait(rem)
+            self.active += 1
+            return True
+    def release(self):
+        with self.cond:
+            self.active -= 1
+            self.cond.notify()
+    def set_limit(self, value):
+        with self.cond:
+            self.value = value
+            self.cond.notify_all()
+
+
 import requests
 import urllib3
+from requests.adapters import HTTPAdapter
 
 import utils
 import task as T
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
+
+def _make_session(pool):
+    """A keep-alive session whose connection pool is sized to the segment count.
+    Reusing one session across a download's segments and retries avoids a fresh
+    TCP+TLS handshake per request — the biggest single throughput win on HTTPS
+    and high-latency links. urllib3's pools are thread-safe for our per-thread
+    GETs; sizing the pool to the segment count avoids 'pool is full' churn that
+    would silently discard (and not reuse) connections."""
+    s = requests.Session()
+    ad = HTTPAdapter(pool_connections=pool, pool_maxsize=pool, max_retries=0)
+    s.mount("http://", ad)
+    s.mount("https://", ad)
+    return s
+
 CHUNK = 1048576        # 1 MiB read size
 DEFAULT_SEGMENTS = 8   # parallel connections when the server supports ranges
 HEADERS = {"User-Agent": "Mozilla/5.0 (HyperFetch)"}
 CONNECT_TIMEOUT = 15
 MAX_RETRIES = 5        # per-segment attempts before the task errors
-STAGGER = 0.05         # delay between segment thread starts (rate-limit friendly)
+STAGGER = 0.01         # delay between segment thread starts (rate-limit friendly)
 
 # Process-wide cap on concurrent segment connections across ALL downloads.
 # Without it, N concurrent tasks each open `segments` sockets (N×8), and those
 # 30-50 connections starve each other on one uplink — total throughput collapses
 # to roughly a single connection's worth. Bounding the total keeps each live
 # connection fed. 16 saturates a fast link without thrashing.
-GLOBAL_MAX_CONNS = 16
-_GLOBAL_CONNS = threading.Semaphore(GLOBAL_MAX_CONNS)
+GLOBAL_MAX_CONNS = 64
+_GLOBAL_CONNS = ResizableSemaphore(GLOBAL_MAX_CONNS)
 
 
 def probe_info(url, headers=None):
@@ -85,6 +130,9 @@ class Downloader:
         self._conn_cv = threading.Condition()
         self._active_conns = 0
         self._max_conns = max(1, self.num_segments)
+        # one keep-alive session for this download's probe + all segment threads.
+        # Auto mode (num_segments==0) can fan out to 32 segments, so size for that.
+        self._session = _make_session(max(8, self.num_segments or 32))
 
     # ------------------------------------------------------------ conn gate
     def _acquire_conn(self):
@@ -120,7 +168,7 @@ class Downloader:
     def _probe(self):
         """One request to learn total size + range support, following redirects."""
         try:
-            r = requests.head(self.t.url, headers=self._base_headers,
+            r = self._session.head(self.t.url, headers=self._base_headers,
                               allow_redirects=True,
                               timeout=CONNECT_TIMEOUT, verify=utils.VERIFY_TLS, proxies=utils.PROXIES)
             size = int(r.headers.get("Content-Length", 0))
@@ -132,7 +180,7 @@ class Downloader:
         # Some servers lie on HEAD; confirm with a tiny ranged GET.
         if size == 0 or accept == "none":
             try:
-                r = requests.get(self.t.url,
+                r = self._session.get(self.t.url,
                                  headers={**self._base_headers, "Range": "bytes=0-0"},
                                  stream=True, allow_redirects=True,
                                  timeout=CONNECT_TIMEOUT, verify=utils.VERIFY_TLS, proxies=utils.PROXIES)
@@ -250,7 +298,7 @@ class Downloader:
             try:
                 # with-block guarantees the response/socket closes on every
                 # path — incl. raise_for_status() failures and mid-stream errors
-                with requests.get(self.t.url, headers=headers, stream=True,
+                with self._session.get(self.t.url, headers=headers, stream=True,
                                   allow_redirects=True, timeout=CONNECT_TIMEOUT,
                                   verify=utils.VERIFY_TLS, proxies=utils.PROXIES) as r:
                     r.raise_for_status()
@@ -328,6 +376,15 @@ class Downloader:
 
     # ------------------------------------------------------------- run
     def run(self):
+        try:
+            self._run()
+        finally:
+            try:
+                self._session.close()
+            except Exception:
+                pass
+
+    def _run(self):
         # magnet / .torrent -> aria2c sidecar engine, not an HTTP byte download
         import torrent
         if torrent.is_torrent_task(self.t.url, self.t.filename):
@@ -449,7 +506,7 @@ class Downloader:
         import re as _re
         for suffix in (".sha256", ".sha256sum"):
             try:
-                r = requests.get(self.t.url + suffix, headers=self._base_headers,
+                r = self._session.get(self.t.url + suffix, headers=self._base_headers,
                                  timeout=10, verify=utils.VERIFY_TLS, proxies=utils.PROXIES)
                 if r.status_code == 200:
                     m = _re.search(r"\b([a-fA-F0-9]{64})\b", r.text)

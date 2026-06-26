@@ -79,6 +79,37 @@ def test_cookies_forwarded_to_task(tmp_path):
     assert h["Cookie"] == "s=1" and h["Referer"] == "https://ref" and h["User-Agent"] == "UA"
 
 
+def test_auto_capture_allowlist(tmp_path, monkeypatch):
+    """auto=true downloads are filtered by utils.CAPTURE_EXTS; manual ones and
+    magnets are never filtered."""
+    import utils
+    monkeypatch.setattr(utils, "CAPTURE_EXTS", ["zip", "mp4"])
+    pend = deque()
+    c = create_app(_FakeQueue(), str(tmp_path), pending=pend).test_client()
+
+    # auto + extension NOT in list -> ignored, nothing queued
+    r = c.post("/download", json={"url": "https://x/p.html", "filename": "p.html", "auto": True})
+    assert r.get_json()["status"] == "ignored" and len(pend) == 0
+    # auto + allowed extension -> queued
+    r = c.post("/download", json={"url": "https://x/c.mp4", "filename": "c.mp4", "auto": True})
+    assert r.get_json()["status"] == "queued" and len(pend) == 1
+    # manual (no auto flag) -> queued regardless of extension
+    c.post("/download", json={"url": "https://x/p.html", "filename": "p.html"})
+    assert len(pend) == 2
+    # magnet + auto -> always allowed (no extension)
+    c.post("/download", json={"url": "magnet:?xt=urn:btih:abc", "auto": True})
+    assert len(pend) == 3
+
+
+def test_auto_capture_empty_list_allows_all(tmp_path, monkeypatch):
+    import utils
+    monkeypatch.setattr(utils, "CAPTURE_EXTS", [])
+    pend = deque()
+    c = create_app(_FakeQueue(), str(tmp_path), pending=pend).test_client()
+    c.post("/download", json={"url": "https://x/anything.xyz", "filename": "anything.xyz", "auto": True})
+    assert len(pend) == 1
+
+
 def test_probe_returns_variants(tmp_path, monkeypatch):
     import hls
     monkeypatch.setattr(hls, "probe_variants",

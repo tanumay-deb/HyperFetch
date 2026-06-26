@@ -23,7 +23,7 @@ chrome.storage.onChanged.addListener((ch) => {
 // Authenticated with the pairing token (read fresh from storage so a freshly
 // woken service worker never sends an empty one) so only this paired extension
 // can queue.
-function sendToApp(url, filename, referrer, done) {
+function sendToApp(url, filename, referrer, done, extra) {
   chrome.storage.local.get({ token: "" }, ({ token }) => {
     chrome.cookies.getAll({ url }, (cookies) => {
       ignoreErr();
@@ -31,17 +31,19 @@ function sendToApp(url, filename, referrer, done) {
       fetch(APP, {
         method: "POST",
         headers: { "Content-Type": "application/json", "X-HyperFetch-Token": token },
-        body: JSON.stringify({
+        body: JSON.stringify(Object.assign({
           url,
           filename: filename || "",
           cookies: cookieStr,
           referrer: referrer || "",
           userAgent: navigator.userAgent,
           token
-        })
+        }, extra || {}))
       })
-        .then((r) => done(r.ok, r.status))
-        .catch(() => done(false, 0));
+        .then((r) => r.json().then(
+          (j) => done(r.ok, r.status, j),
+          () => done(r.ok, r.status, {})))
+        .catch(() => done(false, 0, {}));
     });
   });
 }
@@ -109,12 +111,15 @@ if (chrome.downloads && chrome.downloads.onCreated) {
     if (!/^https?:\/\//i.test(url)) return;      // skip blob:/data:/extension URLs
     const name = (item.filename || "").split(/[\\/]/).pop()
               || url.split("?")[0].split("/").pop() || "";
-    sendToApp(url, name, "", (ok) => {
-      if (ok) chrome.downloads.cancel(item.id, () => {
+    // auto=true lets the app apply the Settings allowlist; it replies status
+    // "ignored" for file types not on the list, so we leave the browser download
+    // alone. Only cancel the browser's copy once the app has actually queued it.
+    sendToApp(url, name, "", (ok, status, body) => {
+      if (ok && body && body.status === "queued") chrome.downloads.cancel(item.id, () => {
         ignoreErr();
         chrome.downloads.erase({ id: item.id }, ignoreErr);
       });
-    });
+    }, { auto: true });
   });
 }
 

@@ -86,6 +86,16 @@ def create_app(queue, save_dir, pending=None, token=None):
             return jsonify({"status": "error", "message": "invalid url"}), 400
 
         suggested = data.get("filename") or ""
+
+        # Auto-capture allowlist: the extension's browser-download capture sends
+        # auto=true. Reject (so the browser keeps the file) when its extension is
+        # not in the Settings allowlist. Manual menu/badge/magnet captures have no
+        # auto flag and are never filtered. magnet: links carry no extension and
+        # are always allowed.
+        if data.get("auto") and url.lower().startswith(("http://", "https://")) \
+                and not utils.capture_allowed(suggested or url):
+            return jsonify({"status": "ignored", "reason": "extension not in capture list"})
+
         log.info("server received download: %s", url)
 
         # browser context for auth-gated hosts (Google Drive etc.)

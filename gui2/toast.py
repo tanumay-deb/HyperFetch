@@ -19,10 +19,12 @@ class Toast(QFrame):
         super().__init__(parent)
         self.setFixedWidth(330)
         icon_name, color = _KIND.get(kind, _KIND["info"])
+        self.setObjectName("toast")
         self.setStyleSheet(
-            f"QFrame{{background:{COLORS['surface2']};border:1px solid {COLORS['border']};"
-            f"border-left:3px solid {color};border-radius:10px;}}")
-        h = QHBoxLayout(self); h.setContentsMargins(12, 10, 10, 10); h.setSpacing(10)
+            f"#toast {{ background:{COLORS['surface2']}; border:1px solid {COLORS['border']}; "
+            f"border-left:4px solid {color}; border-radius:8px; }}"
+        )
+        h = QHBoxLayout(self); h.setContentsMargins(14, 12, 12, 12); h.setSpacing(12)
         ic = QLabel(); ic.setFixedSize(22, 22); ic.setAlignment(Qt.AlignCenter)
         ic.setPixmap(themed_icon(icon_name, color).pixmap(15, 15))
         ic.setStyleSheet(f"background:{color}33;border-radius:11px;")

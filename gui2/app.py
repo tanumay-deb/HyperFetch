@@ -136,6 +136,17 @@ class DownloadAppV2(QWidget):
                 self.queue.add_task(T.DownloadTask.from_dict(d), start=False)
             except (KeyError, TypeError, ValueError):
                 continue
+        # Orphan .hfdownload sweep — clean up temp files from crashed sessions
+        import glob, tempfile
+        known_ids = {t.id for t in self.queue.tasks}
+        for pattern_dir in (tempfile.gettempdir(),):
+            for temp_file in glob.glob(os.path.join(pattern_dir, "*.hfdownload")):
+                tid = os.path.splitext(os.path.basename(temp_file))[0]
+                if tid not in known_ids:
+                    try:
+                        os.remove(temp_file)
+                    except OSError:
+                        pass
 
     def _save_state(self):
         utils.save_json(self._state_path,
@@ -208,10 +219,27 @@ class DownloadAppV2(QWidget):
             b.clicked.connect(lambda _=False, k=label: self._set_filter(k))
             top.addWidget(b)
 
-        self.sort = QComboBox()
-        self.sort.addItems(["Sort: Added", "Sort: Name", "Sort: Size", "Sort: Progress"])
-        self.sort.currentIndexChanged.connect(lambda *_: self.refresh())
+        self.sort = QPushButton("Sort: Added (↓)")
+        self.sort.setObjectName("pill")
+        self.sort.setCursor(Qt.PointingHandCursor)
+        from PySide6.QtWidgets import QMenu
+        menu = QMenu(self.sort)
+        menu.setStyleSheet(f"QMenu {{ background: {palette.COLORS['surface']}; color: {palette.COLORS['text']}; border: 1px solid {palette.COLORS['border']}; }} QMenu::item:selected {{ background: {palette.COLORS['surface2']}; }}")
+        for label in ["Added", "Name", "Size", "Progress"]:
+            # Need to capture the loop variable properly
+            action = menu.addAction(label)
+            action.triggered.connect(lambda checked=False, k=label: self._on_sort_changed(k))
+        self.sort.setMenu(menu)
+        self._last_sort_idx = 0
         top.addWidget(self.sort)
+        
+        self.del_btn = QPushButton("Delete")
+        self.del_btn.setObjectName("delBtn")
+        self.del_btn.setStyleSheet(f"color: white; background: #D93025; font-weight: 600; padding: 6px 16px; border-radius: 6px; border: none;")
+        self.del_btn.setCursor(Qt.PointingHandCursor)
+        self.del_btn.clicked.connect(self._del_selected)
+        top.addWidget(self.del_btn)
+        
         mlay.addLayout(top)
 
         self.list = DownloadList()
@@ -235,13 +263,28 @@ class DownloadAppV2(QWidget):
             "font-size: 20px; font-weight: 700;")
         self._drag_overlay.hide()
 
+    def _on_sort_changed(self, key):
+        """Toggle ascending/descending when the same sort is clicked again."""
+        keys = ["Added", "Name", "Size", "Progress"]
+        idx = keys.index(key)
+        
+        if not hasattr(self, "_sort_asc"):
+            self._sort_asc = False
+            
+        if idx == getattr(self, "_last_sort_idx", 0):
+            self._sort_asc = not getattr(self, "_sort_asc", False)
+        else:
+            self._sort_asc = False
+            self._last_sort_idx = idx
+            
+        arrow = "↑" if self._sort_asc else "↓"
+        self.sort.setText(f"Sort: {key} ({arrow})")
+        self.refresh()
+
     # ------------------------------------------------------------- filtering
     def _set_filter(self, key):
         self._filter = key
-        # keep the pills + sidebar in sync regardless of where the click came from
-        if key in self.pills:
-            self.pills[key].setChecked(True)
-        self.sidebar.set_active(key if key in self.sidebar._rows else "")
+        self.sidebar.set_active(self._filter)
         self.refresh()
 
     def _on_search(self, text):
@@ -249,29 +292,28 @@ class DownloadAppV2(QWidget):
         self.refresh()
 
     def _visible_tasks(self):
-        tasks = list(self.queue.tasks)
-        f = self._filter
-        if f == "Active":
-            tasks = [t for t in tasks if t.status in (T.DOWNLOADING, T.QUEUED, T.SCHEDULED)]
-        elif f == "Paused":
-            tasks = [t for t in tasks if t.status == T.PAUSED]
-        elif f == "Completed":
-            tasks = [t for t in tasks if t.status == T.COMPLETED]
-        elif f == "Failed":
-            tasks = [t for t in tasks if t.status in (T.ERROR, T.CANCELLED)]
-        elif f in utils.CATEGORIES or f == "Other":
-            tasks = [t for t in tasks if utils.category_for(t.filename) == f]
-        if self._search:
-            tasks = [t for t in tasks if self._search in (t.filename or "").lower()]
-        idx = self.sort.currentIndex()
-        if idx == 1:
-            tasks.sort(key=lambda t: (t.filename or "").lower())
-        elif idx == 2:
-            tasks.sort(key=lambda t: t.total_size, reverse=True)
-        elif idx == 3:
-            tasks.sort(key=lambda t: t.percent, reverse=True)
-        else:
-            tasks.sort(key=lambda t: getattr(t, "added", 0), reverse=True)
+        tasks = [t for t in self.queue.tasks if getattr(self, "_filter", "All") == "All" or 
+                 (self._filter == "Active" and t.status in (T.DOWNLOADING, T.QUEUED, T.SCHEDULED)) or
+                 (self._filter == "Paused" and t.status == T.PAUSED) or
+                 (self._filter == "Completed" and t.status == T.COMPLETED) or
+                 (self._filter == "Failed" and t.status in (T.ERROR, T.CANCELLED)) or
+                 utils.category_for(t.filename) == self._filter]
+                 
+        if getattr(self, "_search", ""):
+            q = self._search.lower()
+            tasks = [t for t in tasks if q in t.filename.lower() or q in t.url.lower()]
+
+        idx = getattr(self, "_last_sort_idx", 0)
+        asc = getattr(self, "_sort_asc", False)
+        
+        if idx == 1:   # Name
+            tasks.sort(key=lambda t: t.filename.lower(), reverse=not asc)
+        elif idx == 2: # Size
+            tasks.sort(key=lambda t: t.total_size, reverse=not asc)
+        elif idx == 3: # Progress
+            tasks.sort(key=lambda t: t.percent, reverse=not asc)
+        else:          # Added (default)
+            tasks.sort(key=lambda t: getattr(t, "added", 0), reverse=not asc)
         return tasks
 
     # ------------------------------------------------------------- refresh loop
@@ -326,6 +368,7 @@ class DownloadAppV2(QWidget):
         if self._completed_seen is None:           # seed on first tick; no popups on restore
             self._completed_seen, self._errored_seen = done, errd
             return
+        wc = self._extras.get("when_complete", "Show notification")
         for t in self.queue.tasks:
             if t.status == T.COMPLETED and t.id not in self._completed_seen:
                 try:
@@ -333,23 +376,25 @@ class DownloadAppV2(QWidget):
                     history.record(t)
                 except Exception:
                     pass
-                self._toasts.show("success", "Download Complete", t.filename or "download")
-                if self.tray and self.tray.isVisible():
-                    self.tray.showMessage("Download Complete", t.filename or "download",
-                                          QSystemTrayIcon.Information, 4000)
-                wc = self._extras.get("when_complete", "Show notification")
+                if wc != "Do nothing":
+                    self._toasts.show("success", "Download Complete", t.filename or "download")
+                    if self.tray and self.tray.isVisible():
+                        self.tray.showMessage("Download Complete", t.filename or "download",
+                                              QSystemTrayIcon.Information, 4000)
                 if wc == "Open file" or self._extras.get("open_on_complete"):
                     self._open_file(t)
                 elif wc == "Open folder":
                     self._open_folder(t)
-                dlg = CompleteDialog(self, t)
-                dlg.viewInList.connect(lambda *_: self._set_filter("All"))
-                dlg.show()
+                if wc != "Do nothing":
+                    dlg = CompleteDialog(self, t)
+                    dlg.viewInList.connect(lambda *_: self._set_filter("All"))
+                    dlg.show()
             elif t.status == T.ERROR and t.id not in self._errored_seen:
-                self._toasts.show("error", "Download Failed", (t.error or t.filename or "")[:60])
-                if self.tray and self.tray.isVisible():
-                    self.tray.showMessage("Download Failed", t.filename or "download",
-                                          QSystemTrayIcon.Critical, 4000)
+                if wc != "Do nothing":
+                    self._toasts.show("error", "Download Failed", (t.error or t.filename or "")[:60])
+                    if self.tray and self.tray.isVisible():
+                        self.tray.showMessage("Download Failed", t.filename or "download",
+                                              QSystemTrayIcon.Critical, 4000)
         self._completed_seen, self._errored_seen = done, errd
 
     def _drain_pending(self):
@@ -404,6 +449,17 @@ class DownloadAppV2(QWidget):
             fn(x)
         self._save_state(); self.refresh()
 
+    def _refresh_address(self, t):
+        new_url, ok = QInputDialog.getText(self, "Refresh Address", 
+                                           "Enter the new download URL:", 
+                                           QLineEdit.Normal, t.url)
+        if ok and new_url.strip() and new_url.strip() != t.url:
+            t.url = new_url.strip()
+            t.error = None
+            self.queue.resume_task(t)
+            self._save_state()
+            self.refresh()
+
     def _set_task_limit(self, t, bps):
         t.speed_limit = bps
         try:
@@ -450,6 +506,8 @@ class DownloadAppV2(QWidget):
             m.addAction(ico("pause"), "Pause", lambda: self._do(self.queue.pause_task, t))
         if t.status in (T.PAUSED, T.ERROR, T.SCHEDULED):
             m.addAction(ico("play"), "Resume", lambda: self._do(self.queue.resume_task, t))
+            if t.status in (T.PAUSED, T.ERROR):
+                m.addAction(ico("link"), "Refresh Address", lambda: self._refresh_address(t))
         if t.status in (T.QUEUED, T.PAUSED, T.SCHEDULED, T.ERROR):
             m.addAction(ico("force"), "Force Download", lambda: self._do(self.queue.force_start, t))
         if t.status != T.COMPLETED:
@@ -542,11 +600,13 @@ class DownloadAppV2(QWidget):
             return
         # duplicate detection — same URL already in the list
         existing = next((x for x in self.queue.tasks if x.url == v["url"]), None)
-        if existing and QMessageBox.question(
+        if existing:
+            ans = QMessageBox.question(
                 self, "Already added",
                 f"This URL is already in the list as “{existing.filename}”.\nAdd it again anyway?",
-                QMessageBox.Yes | QMessageBox.No, QMessageBox.No) != QMessageBox.Yes:
-            return
+                QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+            if ans not in (QMessageBox.Yes, QMessageBox.StandardButton.Yes):
+                return
         folder = v["save_dir"] if os.path.isdir(v["save_dir"]) else self.save_dir
         if v["category"] != "Auto":
             folder = os.path.join(folder, v["category"])
@@ -605,6 +665,9 @@ class DownloadAppV2(QWidget):
         self.global_speed_limit = bps
         utils.global_limiter.set_limit(bps)
         self.theme = v["theme"]
+        import downloader
+        if hasattr(downloader._GLOBAL_CONNS, "set_limit"):
+            downloader._GLOBAL_CONNS.set_limit(self.max_concurrent * self.segments)
         apply_theme(self.theme)
         if palette.ACCENTS.get(v["accent"]) != palette.COLORS["accent"]:
             palette.set_accent(v["accent"])
@@ -636,6 +699,10 @@ class DownloadAppV2(QWidget):
         utils.DISK_CACHE = bool(ex.get("disk_cache", True))
         utils.PREALLOCATE = bool(ex.get("preallocate", False))
         utils.HASH_CHECK = bool(ex.get("hash_check", False))
+        # Auto-capture allowlist (Settings -> Browser). The Flask /download endpoint
+        # reads utils.CAPTURE_EXTS to filter the extension's auto-captures.
+        ce = ex.get("capture_exts")
+        utils.CAPTURE_EXTS = list(ce) if isinstance(ce, list) else list(utils.DEFAULT_CAPTURE_EXTS)
         utils.setup_logging(bool(ex.get("debug_log", False)))
         # DNS-over-HTTPS: override the resolver for all in-process HTTP downloads
         import doh
@@ -663,25 +730,50 @@ class DownloadAppV2(QWidget):
         if getattr(self, "_drag_overlay", None) and self._drag_overlay.isVisible():
             self._drag_overlay.setGeometry(self.rect().adjusted(40, 40, -40, -40))
 
-    # ------------------------------------------------------------- shortcuts
     def _setup_shortcuts(self):
-        QShortcut(QKeySequence("Ctrl+F"), self).activated.connect(self.search.setFocus)
-        QShortcut(QKeySequence("Ctrl+N"), self).activated.connect(self._new_download)
-        # list-scoped so they don't hijack typing in the search box
-        for seq, fn in ((Qt.Key_Delete, self._del_selected),
-                        (Qt.Key_Space, self._space_selected),
-                        (Qt.Key_Return, self._enter_selected)):
+        from PySide6.QtGui import QKeySequence, QShortcut
+        for seq, fn in (("Delete", self._del_selected),
+                        ("Space", self._space_selected),
+                        ("Return", self._enter_selected)):
             sc = QShortcut(QKeySequence(seq), self.list)
             sc.setContext(Qt.WidgetWithChildrenShortcut)
             sc.activated.connect(fn)
+        
+        sc_all = QShortcut(QKeySequence("Ctrl+A"), self.list)
+        sc_all.setContext(Qt.WidgetWithChildrenShortcut)
+        sc_all.activated.connect(self._select_all_cards)
+
+    def _select_all_cards(self):
+        if not hasattr(self, "list") or not hasattr(self.list, "_cards"):
+            return
+        for w in self.list._cards.values():
+            if hasattr(w, "chk"):
+                w.chk.setChecked(True)
 
     def _sel_tasks(self):
         return [x for x in (self.queue.get_task(i) for i in self.list.selected_ids()) if x]
 
     def _del_selected(self):
         ts = self._sel_tasks()
-        if ts:
-            self._bulk(ts, self.queue.remove_task)
+        if not ts:
+            return
+            
+        finished = sum(1 for t in ts if t.status in (T.COMPLETED, T.ERROR, T.CANCELLED))
+        downloading = len(ts) - finished
+        
+        from gui2.dialogs.delete import DeleteDialog
+        dlg = DeleteDialog(finished=finished, downloading=downloading, parent=self)
+        if dlg.exec():
+            delete_disk = dlg.deleteDisk.isChecked()
+            for t in ts:
+                self.queue.remove_task(t)
+                if delete_disk and getattr(t, "save_path", None) and os.path.exists(t.save_path):
+                    try:
+                        os.remove(t.save_path)
+                    except OSError:
+                        pass
+            self._save_state()
+            self.refresh()
 
     def _space_selected(self):
         for t in self._sel_tasks():
@@ -861,6 +953,12 @@ class DownloadAppV2(QWidget):
         self._extras["geometry"] = bytes(self.saveGeometry().toBase64().data()).decode()
         self._extras["last_filter"] = self._filter
         self._save_settings()
+        # graceful: pause active downloads, shutdown scheduler, wait for writes
+        for t in self.queue.tasks:
+            if t.status in (T.DOWNLOADING, T.QUEUED):
+                t.request_pause()
+        self.queue.shutdown()
+        self.queue.wait_active(2.0)
         if self.tray:
             self.tray.hide()
         super().closeEvent(e)

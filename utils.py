@@ -19,6 +19,26 @@ DISK_CACHE = True         # aria2 --disk-cache on/off
 PREALLOCATE = False       # aria2 file pre-allocation
 HASH_CHECK = False        # verify SHA-256 against a <url>.sha256 sidecar on finish
 
+# Auto-capture allowlist (Settings -> Browser Integration). When the extension's
+# browser-download capture forwards an auto-captured file, the server only accepts
+# it if its extension is in this list. Empty list = capture everything. The
+# extension itself no longer holds the list — the app is the single source of truth.
+DEFAULT_CAPTURE_EXTS = ["zip", "rar", "7z", "iso", "tar", "gz", "exe", "msi",
+                        "deb", "jar", "apk", "bin", "mp3", "aac", "pdf", "mp4",
+                        "3gp", "avi", "mkv", "wav", "mpeg", "srt"]
+CAPTURE_EXTS = list(DEFAULT_CAPTURE_EXTS)
+
+
+def capture_allowed(name):
+    """True if an auto-captured download named/URL'd `name` may be accepted.
+    Empty CAPTURE_EXTS means accept everything."""
+    if not CAPTURE_EXTS:
+        return True
+    base = (name or "").split("?")[0].split("#")[0].rstrip("/")
+    base = base.rsplit("/", 1)[-1]
+    ext = base.rsplit(".", 1)[-1].lower() if "." in base else ""
+    return ext in CAPTURE_EXTS
+
 # Request headers that must NEVER be written to disk (account-level secrets).
 SENSITIVE_HEADERS = {"cookie", "authorization", "proxy-authorization"}
 

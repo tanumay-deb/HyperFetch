@@ -37,7 +37,10 @@ or grab streaming video from the in-page badge.
   **browser-initiated downloads** (clicking a Download button) and **magnet /
   `.torrent` link clicks** to the app instead of the browser/OS handler — and
   hands a download to the app only after it accepts, so with the app closed the
-  browser download just proceeds. Toggle capture on/off from the extension popup.
+  browser download just proceeds. Toggle capture on/off from the extension popup;
+  pick **which file types** are auto-captured in **Settings → Browser
+  Integration** (blank = capture everything). The app is the source of truth for
+  the allowlist — the extension only carries the on/off toggle.
 
 ## Architecture
 | File | Role |

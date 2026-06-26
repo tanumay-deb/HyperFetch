@@ -291,11 +291,12 @@ apply_theme("dark")   # default; DownloadApp re-applies the saved choice at star
 def human_size(n):
     if n <= 0:
         return "-"
-    for unit in ("B", "KB", "MB", "GB", "TB"):
-        if n < 1024:
-            return f"{n:.0f} {unit}" if unit == "B" else f"{n:.1f} {unit}"
-        n /= 1024
-    return f"{n:.1f} PB"
+    bits = n * 8
+    for unit in ("b", "Kb", "Mb", "Gb", "Tb"):
+        if bits < 1000:
+            return f"{bits:.0f} {unit}" if unit == "b" else f"{bits:.1f} {unit}"
+        bits /= 1000
+    return f"{bits:.1f} Pb"
 
 
 def human_speed(bytes_per_sec):

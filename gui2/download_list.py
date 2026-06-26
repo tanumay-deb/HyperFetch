@@ -74,6 +74,15 @@ class DownloadList(QScrollArea):
     def clear_selection(self):
         self.set_selection(set())
 
+    def _on_chk_toggled(self, tid, checked):
+        if checked:
+            self._selected.add(tid)
+        else:
+            self._selected.discard(tid)
+        self._anchor = tid
+        self._apply_selection()
+        self.selectionChanged.emit(set(self._selected))
+
     def _on_select(self, tid, mode):
         if mode == "toggle":
             self._selected ^= {tid}
@@ -90,7 +99,13 @@ class DownloadList(QScrollArea):
 
     def _apply_selection(self):
         for cid, card in self._cards.items():
-            card.set_selected(cid in self._selected)
+            is_sel = cid in self._selected
+            card.set_selected(is_sel)
+            # sync checkbox without retriggering the toggled signal
+            if hasattr(card, 'chk'):
+                card.chk.blockSignals(True)
+                card.chk.setChecked(is_sel)
+                card.chk.blockSignals(False)
 
     # ---- data ----
     def set_tasks(self, tasks, speeds):
@@ -136,14 +151,28 @@ class DownloadList(QScrollArea):
                 self._cards.pop(cid).deleteLater()
 
         self._lay.addWidget(self._empty)
+        sl_counter = 0
         for title, members in buckets:
             self._lay.addWidget(self._header(title, len(members)))
             for t in members:
+                sl_counter += 1
                 card = self._cards.get(t.id)
                 if card is None:
-                    card = DownloadCardWidget(t)
+                    card = DownloadCardWidget(t, sl_no=sl_counter)
                     card.action.connect(self.action)
                     card.selectRequested.connect(self._on_select)
+                    card.chk.toggled.connect(lambda checked, tid=t.id: self._on_chk_toggled(tid, checked))
                     self._cards[t.id] = card
+                else:
+                    card.sl_lbl.setText(f"#{sl_counter}")
                 self._lay.addWidget(card)
         self._lay.addStretch()
+
+    def _on_chk_toggled(self, tid, checked):
+        if checked:
+            self._selected.add(tid)
+        else:
+            self._selected.discard(tid)
+        self._anchor = tid
+        self._apply_selection()
+        self.selectionChanged.emit(set(self._selected))

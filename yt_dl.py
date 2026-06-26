@@ -53,6 +53,7 @@ class YtDlpDownloader:
             return
 
         out_dir = os.path.dirname(self.t.save_path) or "."
+        _pre_existing = set(os.listdir(out_dir)) if os.path.isdir(out_dir) else set()
         try:
             os.makedirs(out_dir, exist_ok=True)
         except OSError as e:
@@ -75,7 +76,7 @@ class YtDlpDownloader:
 
         hdrs = getattr(self.t, "headers", {}) or {}
         http_headers = {k: v for k, v in hdrs.items()
-                        if k.lower() in ("user-agent", "referer")}
+                        if k.lower() in ("user-agent", "referer", "cookie")}
 
         opts = {
             "outtmpl": os.path.join(out_dir, "%(title)s.%(ext)s"),
@@ -110,7 +111,7 @@ class YtDlpDownloader:
                     guess = ""
             path = guess if (guess and os.path.exists(guess)) else final["path"]
             if not (path and os.path.exists(path)):
-                path = self._newest(out_dir)
+                path = self._newest(out_dir, _pre_existing)
             if path and os.path.exists(path):
                 self.t.save_path = path
                 self.t.filename = os.path.basename(path)
@@ -128,13 +129,16 @@ class YtDlpDownloader:
             self.t.error = "yt-dlp: " + str(e)[:200]
 
     @staticmethod
-    def _newest(out_dir):
-        """Newest non-partial file in out_dir — fallback when the final path
-        can't be resolved from yt-dlp's info."""
+    def _newest(out_dir, pre_existing=None):
+        """Newest non-partial file in out_dir that was NOT in pre_existing —
+        prevents picking up unrelated files."""
+        pre = pre_existing or set()
         newest = None
         try:
             for name in os.listdir(out_dir):
                 if name.endswith((".part", ".ytdl", ".tmp")):
+                    continue
+                if name in pre:
                     continue
                 p = os.path.join(out_dir, name)
                 if not os.path.isfile(p):

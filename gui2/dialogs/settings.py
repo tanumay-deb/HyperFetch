@@ -10,6 +10,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, QTime
 
 import crash_reporter
+import utils
 from gui.theme import APP_VERSION
 try:
     from gui.dialogs import AnimatedToggle
@@ -253,7 +254,7 @@ class SettingsDialogV2(QDialog):
         self.conc = self._slider(1, 16, conc)
         self._row(g, "Concurrent Downloads", "Maximum downloads at the same time", self.conc)
         self.conns = self._slider(1, 32, segs)
-        self._row(g, "Connections per Download", "Maximum connections for each download", self.conns)
+        self._row(g, "Segments per Download", "Simultaneous HTTP range segments per file", self.conns)
         self.def_queue = self._combo(["Main"], ex.get("default_queue"))
         self._row(g, "Default Queue", "Where new downloads land", self.def_queue)
         self.auto_start = self._toggle(ex.get("auto_start", True))
@@ -309,8 +310,36 @@ class SettingsDialogV2(QDialog):
         trow.addWidget(tok, 1); trow.addWidget(copy)
         lab = QLabel("Browser Pairing Token"); lab.setStyleSheet("font-weight:700;background:transparent;")
         g3.addWidget(lab); g3.addLayout(trow)
-        v.addWidget(f3); v.addStretch()
+        v.addWidget(f3)
+
+        # ---- Auto Capture Links allowlist (the app is the source of truth; the
+        # extension only has the on/off toggle) ----
+        f4, g4 = self._card()
+        cap_lab = QLabel("Auto Capture Links"); cap_lab.setStyleSheet("font-weight:700;background:transparent;")
+        cap_hint = QLabel("When you click a link in your browser it is captured for "
+                          "download by the app. Only the file types below are captured "
+                          "(leave empty to capture everything).")
+        cap_hint.setWordWrap(True)
+        cap_hint.setStyleSheet(f"color:{COLORS['muted']};background:transparent;")
+        exts = ex.get("capture_exts")
+        if exts is None:
+            exts = utils.DEFAULT_CAPTURE_EXTS
+        self.capture_exts = QLineEdit(" ".join(exts))
+        self.capture_exts.setPlaceholderText("e.g. zip rar 7z iso exe mp4   —   space separated; empty = capture all")
+        g4.addWidget(cap_lab); g4.addWidget(cap_hint); g4.addWidget(self.capture_exts)
+        v.addWidget(f4); v.addStretch()
         return sa
+
+    @staticmethod
+    def _parse_exts(text):
+        """Split the capture-allowlist field into a clean, lowercase, de-dotted,
+        de-duplicated extension list."""
+        out = []
+        for tok in (text or "").replace(",", " ").split():
+            e = tok.lstrip(".").lower()
+            if e and e not in out:
+                out.append(e)
+        return out
 
     def _p_appearance(self, theme, accent, ex):
         sa, v = self._page("Appearance", "Customize the look and feel")
@@ -497,4 +526,5 @@ class SettingsDialogV2(QDialog):
             "hash_check": self.hash_check.isChecked(),
             "debug_log": self.debug_log.isChecked(),
             "browsers": {b: t.isChecked() for b, t in self.browsers.items()},
+            "capture_exts": self._parse_exts(self.capture_exts.text()),
         }

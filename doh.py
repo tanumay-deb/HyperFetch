@@ -7,8 +7,8 @@ system resolver. Best-effort: any DoH failure falls back to the normal resolver.
 
 Torrent traffic runs in the aria2 subprocess and is NOT affected.
 
-No recursion: the DoH endpoint is reached by IP literal (1.1.1.1), so resolving
-it never re-enters getaddrinfo's name path.
+Note: cloudflare-dns.com is resolved via the system resolver; the patched
+getaddrinfo skips DoH for that lookup to avoid recursion.
 """
 import time
 import socket
@@ -16,8 +16,8 @@ import threading
 
 import requests
 
-_DOH_URL = "https://1.1.1.1/dns-query"      # IP literal -> no getaddrinfo recursion
-_DOH_HOST = "cloudflare-dns.com"            # for the Host header / clarity
+_DOH_URL = "https://cloudflare-dns.com/dns-query"
+_DOH_HOST = "cloudflare-dns.com"            # resolved via the system resolver (no recursion)
 
 _real_getaddrinfo = socket.getaddrinfo
 _enabled = False
@@ -38,6 +38,8 @@ def _is_ip(host):
 
 def _resolve(host):
     """Return a list of IPv4 strings for host via DoH, or None on failure."""
+    if host == _DOH_HOST:
+        return None                          # never DoH-resolve the DoH endpoint
     now = time.time()
     with _lock:
         hit = _cache.get(host)
@@ -46,7 +48,7 @@ def _resolve(host):
     ips, ttl = [], 300
     try:
         r = requests.get(_DOH_URL, params={"name": host, "type": "A"},
-                         headers={"accept": "application/dns-json", "host": _DOH_HOST},
+                         headers={"accept": "application/dns-json"},
                          timeout=5)
         if not r.ok:
             return None
@@ -64,7 +66,8 @@ def _resolve(host):
 
 
 def _doh_getaddrinfo(host, port, family=0, type=0, proto=0, flags=0):
-    if _enabled and host and not _is_ip(host) and family in (0, socket.AF_INET):
+    if (_enabled and host and host != _DOH_HOST and not _is_ip(host)
+            and family in (0, socket.AF_INET)):
         ips = _resolve(host)
         if ips:
             st = type or socket.SOCK_STREAM

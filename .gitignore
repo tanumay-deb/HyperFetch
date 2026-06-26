@@ -9,7 +9,8 @@ venv/
 # Build artifacts
 build/
 dist/
-*.zip          # release zips (uploaded to GitHub Releases, not tracked)
+# release zips (uploaded to GitHub Releases, not tracked)
+*.zip
 *.spec
 # ...but keep the hand-maintained PyInstaller specs (canonical build descriptors)
 !HyperFetch.spec

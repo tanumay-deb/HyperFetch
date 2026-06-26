@@ -5,7 +5,7 @@ removes the whole class of v1 paint-delegate bugs (hand-computed rects, overflow
 collapsed-sidebar mess, fragile hit-testing). Tens of rows, so cost is irrelevant.
 """
 from PySide6.QtWidgets import (
-    QFrame, QHBoxLayout, QVBoxLayout, QLabel, QPushButton, QProgressBar, QSizePolicy
+    QFrame, QHBoxLayout, QVBoxLayout, QLabel, QPushButton, QProgressBar, QSizePolicy, QCheckBox
 )
 from PySide6.QtCore import Qt, Signal
 
@@ -39,7 +39,7 @@ class DownloadCardWidget(QFrame):
     action = Signal(str, str)            # (action, task_id): pause/resume/open/folder/more/details
     selectRequested = Signal(str, str)   # (task_id, mode): single/toggle/range
 
-    def __init__(self, task, parent=None):
+    def __init__(self, task, sl_no=0, parent=None):
         super().__init__(parent)
         self.setObjectName("card")
         self.task_id = task.id
@@ -50,6 +50,19 @@ class DownloadCardWidget(QFrame):
         root = QHBoxLayout(self)
         root.setContentsMargins(16, 12, 14, 12)
         root.setSpacing(14)
+
+        # checkbox
+        self.chk = QCheckBox()
+        self.chk.setStyleSheet(
+            f"QCheckBox::indicator {{ width: 18px; height: 18px; border-radius: 4px; "
+            f"border: 1px solid {COLORS['border']}; }}")
+        root.addWidget(self.chk, 0, Qt.AlignVCenter)
+
+        # serial number
+        self.sl_lbl = QLabel(f"#{sl_no}")
+        self.sl_lbl.setFixedWidth(30)
+        self.sl_lbl.setStyleSheet(f"color: {COLORS['muted']}; font-size: 11px; font-weight: 700; background: transparent;")
+        root.addWidget(self.sl_lbl, 0, Qt.AlignVCenter)
 
         ic_name, ic_color = _icon_for(task)
         self.icon = QLabel()
@@ -65,7 +78,15 @@ class DownloadCardWidget(QFrame):
         self.name.setStyleSheet(f"font-size: 14px; font-weight: 700; color: {COLORS['text']}; background: transparent;")
         self.pct = QLabel("")
         self.pct.setStyleSheet(f"font-size: 13px; font-weight: 700; color: {COLORS['muted']}; background: transparent;")
+        # queue badge — only shown when the task isn't in the default "Main" queue,
+        # so multi-queue membership is visible at a glance
+        self.qbadge = QLabel("")
+        self.qbadge.setStyleSheet(
+            f"font-size: 10px; font-weight: 700; color: {COLORS['accent2']}; "
+            f"background: {COLORS['surface2']}; border-radius: 6px; padding: 1px 7px;")
+        self.qbadge.setVisible(False)
         namerow.addWidget(self.name, 1)
+        namerow.addWidget(self.qbadge, 0)
         namerow.addWidget(self.pct, 0, Qt.AlignRight)
         mid.addLayout(namerow)
 
@@ -121,6 +142,9 @@ class DownloadCardWidget(QFrame):
 
     def update_task(self, t, bps):
         self.name.setText(t.filename or "download")
+        qn = getattr(t, "queue_name", "Main") or "Main"
+        self.qbadge.setText(qn)
+        self.qbadge.setVisible(qn != "Main")
         ic_name, ic_color = _icon_for(t)
         self.icon.setPixmap(themed_icon(ic_name, "white").pixmap(24, 24))
         self.icon.setStyleSheet(f"background: {ic_color}; border-radius: 8px;")

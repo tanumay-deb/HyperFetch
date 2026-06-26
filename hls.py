@@ -10,6 +10,7 @@ import os
 import re
 import time
 import shutil
+import logging
 import tempfile
 import struct
 import threading
@@ -24,10 +25,13 @@ import utils
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
+log = logging.getLogger("hyperfetch")
+
 HEADERS = {"User-Agent": "Mozilla/5.0 (HyperFetch)"}
 TIMEOUT = 20
 SEG_RETRIES = 3
-PARALLEL = 6          # concurrent segment downloads
+PARALLEL = 6          # default concurrent segment downloads (overridden by the
+                      # app's Max-connections setting when one is configured)
 
 
 def is_hls(url="", filename="", ctype=""):
@@ -103,7 +107,9 @@ def probe_variants(url, headers=None):
     return out
 
 
-def _get(session, url, headers, **kw):
+def _get(session, url, headers, stats=None, **kw):
+    """GET with retries. When a `stats` dict is passed, tally retry attempts and
+    the 403 / timeout breakdown for the end-of-download HLS log summary."""
     last = None
     for _ in range(SEG_RETRIES):
         try:
@@ -113,6 +119,13 @@ def _get(session, url, headers, **kw):
             return r
         except requests.RequestException as e:
             last = e
+            if stats is not None:
+                stats["retries"] += 1
+                if isinstance(e, requests.Timeout):
+                    stats["timeouts"] += 1
+                resp = getattr(e, "response", None)
+                if resp is not None and resp.status_code == 403:
+                    stats["http403"] += 1
             time.sleep(1)
     raise last
 
@@ -123,6 +136,8 @@ class HlsDownloader:
         self.headers = {**HEADERS, **(getattr(dtask, "headers", None) or {})}
         self.session = requests.Session()       # used for playlist/key fetches
         self._tls = threading.local()            # per-thread session for segments
+        # retry / failure tally for the end-of-download log summary
+        self._stats = {"retries": 0, "timeouts": 0, "http403": 0}
 
     def _seg_session(self):
         s = getattr(self._tls, "s", None)
@@ -257,7 +272,7 @@ class HlsDownloader:
 
     def _fetch_segment(self, url, seq, key):
         """Download + decrypt one segment (runs on a worker thread)."""
-        data = _get(self._seg_session(), url, self.headers).content
+        data = _get(self._seg_session(), url, self.headers, self._stats).content
         return self._decrypt(data, key, seq)
 
     # ----------------------------------------------------------- run
@@ -333,7 +348,14 @@ class HlsDownloader:
             self.t.error = f"HLS key fetch failed: {e}"
             return
 
-        workers = max(1, min(PARALLEL, max(1, len(segments))))
+        # parallelism follows the app's Max-connections setting when configured
+        # (Settings -> Network), else the built-in default.
+        cap = utils.MAX_CONNECTIONS if utils.MAX_CONNECTIONS > 0 else PARALLEL
+        workers = max(1, min(cap, max(1, len(segments))))
+        host = urllib.parse.urlparse(base).netloc
+        log.info("HLS start host=%s segments=%d parallel=%d%s",
+                 host, total, workers, " (resume)" if can_resume else "")
+        seg_t0 = time.time()
         try:
             with open(temp_path, open_mode) as f, \
                     ThreadPoolExecutor(max_workers=workers) as ex:
@@ -358,10 +380,18 @@ class HlsDownloader:
                             if resp is not None and resp.status_code == 403:
                                 self.t.status = T.ERROR
                                 self.t.error = "HTTP 403 Forbidden - URL expired"
+                                log.warning("HLS 403 host=%s at segment %d/%d "
+                                            "(retries=%d 403=%d timeouts=%d)",
+                                            host, done + i + 1, total, self._stats["retries"],
+                                            self._stats["http403"], self._stats["timeouts"])
                                 return
                             self.t.status = T.ERROR
                             # done+i is 0-based within remaining; +1 for human display
                             self.t.error = f"segment {done + i + 1}/{total} failed: {e}"
+                            log.warning("HLS fail host=%s segment %d/%d: %s "
+                                        "(retries=%d 403=%d timeouts=%d)",
+                                        host, done + i + 1, total, e, self._stats["retries"],
+                                        self._stats["http403"], self._stats["timeouts"])
                             return
                         f.write(data)
                         # flush BEFORE bumping seg_done so a sudden exit can never
@@ -411,6 +441,11 @@ class HlsDownloader:
         self.t.total_size = downloaded
         self.t.downloaded = downloaded
         self.t.status = T.COMPLETED
+        el = max(0.001, time.time() - seg_t0)
+        log.info("HLS done host=%s segments=%d %.1fMB in %.1fs (%.2f MB/s) "
+                 "retries=%d 403=%d timeouts=%d", host, total, downloaded / 1048576,
+                 el, (downloaded / el) / 1048576, self._stats["retries"],
+                 self._stats["http403"], self._stats["timeouts"])
 
     @staticmethod
     def _rm(path):
