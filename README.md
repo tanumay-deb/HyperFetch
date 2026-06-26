@@ -8,13 +8,13 @@ browser extension that sends your downloads straight to the app.
 
 ## Features
 
-- **Multi-connection downloads** — up to 16 parallel connections per file for big speedups (falls back to a single stream when the server doesn't support it).
-- **Pause, resume & queues** — resume continues from the bytes already on disk, even after a restart; organize downloads into named queues with their own limits.
-- **Streaming video** — grab HLS (`.m3u8`) streams and save them as one playable file; yt-dlp handles YouTube, Vimeo, Twitch, etc. with a quality picker.
-- **Torrents & magnets** — built in (aria2c), no separate client.
-- **Browser integration** — right-click any link, click the badge on a video, or auto-capture browser downloads by file type. The Chrome/Edge extension feeds them to the app.
-- **History & stats** — every completed download is logged with lifetime totals.
-- **Smart networking** — global proxy, DNS-over-HTTPS, UPnP, speed limits, and optional SHA-256 verification.
+- **Download large files much faster** — splits each file across up to 16 connections at once (auto-detects support; falls back to a single stream otherwise).
+- **Never lose progress** — pause and resume anytime, even across restarts; resume picks up from the bytes already on disk. Organize downloads into named queues with their own limits.
+- **Save streaming video** — capture HLS (`.m3u8`) streams as one playable file, and download from YouTube, Vimeo, Twitch and more with a quality picker.
+- **Torrents & magnets** — built in, no separate app needed.
+- **Grab downloads from your browser** — right-click a link, click the badge on a video, or auto-capture downloads by file type. The Chrome/Edge extension hands them to the app.
+- **Track everything** — every completed download is logged with lifetime totals and stats.
+- **Privacy & control** — set speed limits and a global proxy, encrypt DNS lookups (DNS-over-HTTPS), enable UPnP, and optionally verify file integrity with SHA-256.
 
 ## Install & run
 

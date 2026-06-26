@@ -21,7 +21,6 @@ class ResizableSemaphore:
                 while self.active >= self.value:
                     self.cond.wait()
             else:
-                import time
                 end = time.time() + timeout
                 while self.active >= self.value:
                     rem = end - time.time()
@@ -65,7 +64,7 @@ def _make_session(pool):
 
 CHUNK = 1048576        # 1 MiB read size
 DEFAULT_SEGMENTS = 8   # parallel connections when the server supports ranges
-HEADERS = {"User-Agent": "Mozilla/5.0 (HyperFetch)"}
+HEADERS = utils.DEFAULT_HEADERS
 CONNECT_TIMEOUT = 15
 MAX_RETRIES = 5        # per-segment attempts before the task errors
 STAGGER = 0.01         # delay between segment thread starts (rate-limit friendly)
@@ -211,7 +210,7 @@ class Downloader:
         Detects ENOSPC ("No space left on device") and reports the actual free
         bytes on the target volume so the user can pick a different drive in
         Settings and resume from the partial .hfdownload still on disk."""
-        import errno, shutil
+        import errno
         if getattr(exc, "errno", None) == errno.ENOSPC:
             try:
                 free = shutil.disk_usage(os.path.dirname(path) or ".").free
@@ -236,7 +235,7 @@ class Downloader:
 
     def _build_segments(self):
         """Create segments, pre-allocating the file if total size is known."""
-        temp_path = os.path.join(tempfile.gettempdir(), f"{self.t.id}.hfdownload")
+        temp_path = utils.temp_download_path(self.t.id)
 
         if self.t.total_size > 0:
             self._check_disk_space(temp_path, self.t.total_size)
@@ -271,7 +270,7 @@ class Downloader:
     # ------------------------------------------------------------- workers
     def _worker(self, seg):
         """Stream one segment, writing directly to the pre-allocated .hfdownload file."""
-        temp_path = os.path.join(tempfile.gettempdir(), f"{self.t.id}.hfdownload")
+        temp_path = utils.temp_download_path(self.t.id)
         attempts = 0
 
         while not self.t.pause_requested and not self.t.cancel_requested:
@@ -407,7 +406,7 @@ class Downloader:
         self.t.status = T.DOWNLOADING
         self.t.error = ""
         os.makedirs(os.path.dirname(self.t.save_path) or ".", exist_ok=True)
-        temp_path = os.path.join(tempfile.gettempdir(), f"{self.t.id}.hfdownload")
+        temp_path = utils.temp_download_path(self.t.id)
 
         try:
             if not self.t.segments:

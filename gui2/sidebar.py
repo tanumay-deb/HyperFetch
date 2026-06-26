@@ -23,10 +23,10 @@ _CATEGORIES = [
     ("folder", "Other", "Other", None),
 ]
 _STATUS = [
-    ("play", "Active", "Active", "#22c55e"),
-    ("pause", "Paused", "Paused", "#f59e0b"),
-    ("check", "Completed", "Completed", "#22c55e"),
-    ("x-circle", "Failed", "Failed", "#ef4444"),
+    ("play", "Active", "Active", COLORS["success"]),
+    ("pause", "Paused", "Paused", COLORS["warning"]),
+    ("check", "Completed", "Completed", COLORS["success"]),
+    ("x-circle", "Failed", "Failed", COLORS["error"]),
 ]
 
 

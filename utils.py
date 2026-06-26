@@ -5,7 +5,17 @@ import re
 import json
 import logging
 import secrets
+import tempfile
 import urllib.parse
+
+# Default request headers shared by the HTTP downloader, HLS grabber, and probe.
+DEFAULT_HEADERS = {"User-Agent": "Mozilla/5.0 (HyperFetch)"}
+
+
+def temp_download_path(task_id):
+    """The in-progress ``.hfdownload`` temp file for a task (one place defines the
+    convention; downloader + HLS both use it)."""
+    return os.path.join(tempfile.gettempdir(), f"{task_id}.hfdownload")
 
 # Global TLS-verification flag. Default ON (secure). The GUI may flip it from
 # the saved setting; downloader/hls/probe read it for every request.

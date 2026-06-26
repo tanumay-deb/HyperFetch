@@ -1,12 +1,12 @@
-"""HyperFetch v2 GUI shell (DownloadAppV2).
+"""The HyperFetch main window (DownloadAppV2).
 
-Owns the same backend wiring the v1 window did (settings, QueueManager, state
-restore, embedded Flask server, 500ms refresh) but with a clean, widget-based
-View: Sidebar | (top bar + grouped DownloadList). Backend modules are reused
-untouched. Some dialogs are still the v1 ones (New Download / Settings /
-Complete) until their v2 replacements land — the main screen is the rewrite.
+Owns the backend wiring (settings, QueueManager, state restore, embedded Flask
+server, 500ms refresh) behind a widget-based view: Sidebar | (top bar + grouped
+DownloadList). Task actions, settings application, keyboard shortcuts, and the
+tray/scheduler live in mixins (gui2/app_settings.py, app_actions.py,
+app_shortcuts.py, app_system.py) to keep this file focused on the view.
 
-Run with:  python main.py --v2
+Run with:  python main.py
 """
 import os
 import time
@@ -40,12 +40,14 @@ from gui2.sidebar import Sidebar
 from gui2.download_list import DownloadList
 from gui2.details_drawer import DetailsDrawer
 from gui2.dialogs.new_download import NewDownloadDialog
+from gui2.app_settings import SettingsMixin
+from gui2.app_actions import ActionsMixin
+from gui2.app_shortcuts import ShortcutsMixin
+from gui2.app_system import SystemMixin
 
-MAX_CONCURRENT = 3
-SEGMENTS = 8
 
 
-class DownloadAppV2(QWidget):
+class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, QWidget):
     def __init__(self):
         super().__init__()
         self.setObjectName("root")
@@ -91,45 +93,6 @@ class DownloadAppV2(QWidget):
         self.refresh()
 
     # ------------------------------------------------------------- settings/state
-    def _load_settings(self):
-        s = utils.load_json(self._settings_path, {})
-        self._extras = dict(s)               # preserves UI-only prefs across saves
-        self.save_dir = s.get("save_dir") or utils.default_download_dir()
-        if not os.path.isdir(self.save_dir):
-            self.save_dir = utils.default_download_dir()
-        self.max_concurrent = int(s.get("max_concurrent", MAX_CONCURRENT))
-        self.segments = int(s.get("segments", SEGMENTS))
-        self.global_speed_limit = int(s.get("global_speed_limit", 0))
-        utils.global_limiter.set_limit(self.global_speed_limit)
-        self.verify_tls = bool(s.get("verify_tls", True))
-        utils.VERIFY_TLS = self.verify_tls
-        self.theme = s.get("theme", "dark")
-        apply_theme(self.theme)                       # for reused v1 dialogs
-        palette.set_accent(s.get("accent", "purple"))  # v2 widgets
-        self.pair_token = utils.get_or_create_token()
-        self.queues_config = s.get("queues", [{"name": "Main", "max_concurrent": self.max_concurrent}])
-        self.scheduler_enabled = bool(s.get("scheduler_enabled", False))
-        self.scheduler_start = s.get("scheduler_start", "02:00")
-        self.scheduler_stop = s.get("scheduler_stop", "08:00")
-        self._apply_network_settings()
-
-    def _save_settings(self):
-        data = dict(getattr(self, "_extras", {}))
-        data.update({
-            "save_dir": self.save_dir,
-            "max_concurrent": self.max_concurrent,
-            "segments": self.segments,
-            "global_speed_limit": getattr(self, "global_speed_limit", 0),
-            "verify_tls": getattr(self, "verify_tls", True),
-            "theme": getattr(self, "theme", "dark"),
-            "accent": next((k for k, v in palette.ACCENTS.items() if v == palette.COLORS["accent"]), "purple"),
-            "queues": [{"name": q.name, "max_concurrent": q.max_concurrent} for q in self.queue.queues.values()],
-            "scheduler_enabled": getattr(self, "scheduler_enabled", False),
-            "scheduler_start": getattr(self, "scheduler_start", "02:00"),
-            "scheduler_stop": getattr(self, "scheduler_stop", "08:00"),
-        })
-        utils.save_json(self._settings_path, data)
-
     def _load_state(self):
         for d in utils.load_json(self._state_path, []):
             try:
@@ -235,7 +198,7 @@ class DownloadAppV2(QWidget):
         
         self.del_btn = QPushButton("Delete")
         self.del_btn.setObjectName("delBtn")
-        self.del_btn.setStyleSheet(f"color: white; background: #D93025; font-weight: 600; padding: 6px 16px; border-radius: 6px; border: none;")
+        self.del_btn.setStyleSheet(f"color: white; background: {palette.COLORS['error']}; font-weight: 600; padding: 6px 16px; border-radius: 6px; border: none;")
         self.del_btn.setCursor(Qt.PointingHandCursor)
         self.del_btn.clicked.connect(self._del_selected)
         top.addWidget(self.del_btn)
@@ -406,162 +369,6 @@ class DownloadAppV2(QWidget):
             self._add_download(url, item.get("filename", ""), item.get("headers"), flash=True)
 
     # ------------------------------------------------------------- actions
-    def _targets(self, t):
-        """The task plus the rest of the selection when acting on a selected
-        card (so pause/resume/cancel apply to all selected)."""
-        sel = self.list.selected_ids()
-        if t.id in sel and len(sel) > 1:
-            return [x for x in (self.queue.get_task(i) for i in sel) if x]
-        return [t]
-
-    def _on_card_action(self, action, task_id):
-        t = self.queue.get_task(task_id)
-        if not t:
-            return
-        if action == "pause":
-            for x in self._targets(t):
-                self.queue.pause_task(x)
-        elif action == "resume":
-            for x in self._targets(t):
-                self.queue.resume_task(x)
-        elif action == "cancel":
-            for x in self._targets(t):
-                self.queue.cancel_task(x)
-        elif action == "open":
-            self._open_file(t)
-        elif action == "folder":
-            self._open_folder(t)
-        elif action == "details":
-            self.list.set_selection({t.id})
-            self.drawer.open_for(t)
-            return
-        elif action == "more":
-            self._card_menu(t)
-            return
-        self._save_state()
-        self.refresh()
-
-    def _do(self, fn, t):
-        fn(t); self._save_state(); self.refresh()
-
-    def _bulk(self, ts, fn):
-        for x in ts:
-            fn(x)
-        self._save_state(); self.refresh()
-
-    def _refresh_address(self, t):
-        new_url, ok = QInputDialog.getText(self, "Refresh Address", 
-                                           "Enter the new download URL:", 
-                                           QLineEdit.Normal, t.url)
-        if ok and new_url.strip() and new_url.strip() != t.url:
-            t.url = new_url.strip()
-            t.error = None
-            self.queue.resume_task(t)
-            self._save_state()
-            self.refresh()
-
-    def _set_task_limit(self, t, bps):
-        t.speed_limit = bps
-        try:
-            t._limiter.set_limit(bps)
-        except Exception:
-            pass
-        self._save_state()
-
-    def _move_task(self, t, where):
-        self.queue.move(t, where); self.refresh()
-
-    def _move_task_to_queue(self, t, name):
-        self.queue.move_to_queue(t, name); self._save_state(); self.refresh()
-
-    def _menu(self):
-        m = QMenu(self)
-        c = palette.COLORS
-        m.setStyleSheet(
-            f"QMenu{{background:{c['surface']};color:{c['text']};border:1px solid {c['border']};padding:4px;}}"
-            f"QMenu::item{{padding:7px 16px;border-radius:6px;}}"
-            f"QMenu::item:selected{{background:{c['surface2']};}}")
-        return m
-
-    def _card_menu(self, t):
-        sel = self.list.selected_ids()
-        # bulk menu when right-clicking inside a multi-selection
-        ico = lambda n: themed_icon(n, "text")
-        if t.id in sel and len(sel) > 1:
-            ts = [x for x in (self.queue.get_task(i) for i in sel) if x]
-            m = self._menu()
-            m.addAction(ico("pause"), f"Pause {len(ts)} selected", lambda: self._bulk(ts, self.queue.pause_task))
-            m.addAction(ico("play"), f"Resume {len(ts)} selected", lambda: self._bulk(ts, self.queue.resume_task))
-            m.addSeparator()
-            m.addAction(ico("trash"), f"Remove {len(ts)} selected", lambda: self._bulk(ts, self.queue.remove_task))
-            m.exec(self.cursor().pos())
-            return
-
-        m = self._menu()
-        if t.status == T.COMPLETED:
-            m.addAction(ico("open"), "Open File", lambda: self._open_file(t))
-            m.addAction(ico("folder"), "Open Folder", lambda: self._open_folder(t))
-            m.addSeparator()
-        if t.status == T.DOWNLOADING:
-            m.addAction(ico("pause"), "Pause", lambda: self._do(self.queue.pause_task, t))
-        if t.status in (T.PAUSED, T.ERROR, T.SCHEDULED):
-            m.addAction(ico("play"), "Resume", lambda: self._do(self.queue.resume_task, t))
-            if t.status in (T.PAUSED, T.ERROR):
-                m.addAction(ico("link"), "Refresh Address", lambda: self._refresh_address(t))
-        if t.status in (T.QUEUED, T.PAUSED, T.SCHEDULED, T.ERROR):
-            m.addAction(ico("force"), "Force Download", lambda: self._do(self.queue.force_start, t))
-        if t.status != T.COMPLETED:
-            sl = m.addMenu("Set Speed Limit")
-            for label, bps in (("Unlimited", 0), ("100 Kb/s", 100 * 1000 // 8),
-                               ("500 Kb/s", 500 * 1000 // 8), ("1 Mb/s", 1000 * 1000 // 8),
-                               ("5 Mb/s", 5 * 1000 * 1000 // 8)):
-                sl.addAction(label, lambda b=bps: self._set_task_limit(t, b))
-        if t.status == T.QUEUED:
-            m.addSeparator()
-            for ic_name, label, where in (("arrow-top", "Move to top", "top"), ("arrow-up", "Move up", "up"),
-                                          ("arrow-down", "Move down", "down"), ("arrow-bottom", "Move to bottom", "bottom")):
-                m.addAction(ico(ic_name), label, lambda w=where: self._move_task(t, w))
-        if len(self.queue.queues) > 1:
-            qm = m.addMenu("Move to Queue")
-            for q in self.queue.queues.values():
-                act = qm.addAction(q.name)
-                if getattr(t, "queue_name", "Main") == q.name:
-                    act.setEnabled(False)
-                act.triggered.connect(lambda _=False, n=q.name: self._move_task_to_queue(t, n))
-        m.addSeparator()
-        m.addAction(ico("info"), "Properties", lambda: (self.list.set_selection({t.id}), self.drawer.open_for(t)))
-        m.addAction(ico("link"), "Copy URL", lambda: QApplication.clipboard().setText(t.url or ""))
-        m.addAction(ico("trash"), "Remove", lambda: self._do(self.queue.remove_task, t))
-        m.exec(self.cursor().pos())
-
-    def _on_selection_changed(self, ids):
-        pass        # reserved for a future bulk action bar; selection highlight is automatic
-
-    def _open_file(self, t):
-        target = t.save_path
-        if not os.path.exists(target):
-            folder = os.path.dirname(t.save_path) or "."
-            target = folder if (_torrent.is_torrent_task(t.url, t.filename) and os.path.isdir(folder)) else ""
-        if not target:
-            return
-        try:
-            os.startfile(target)
-        except OSError:
-            pass
-
-    def _open_folder(self, t):
-        path = os.path.normpath(t.save_path)
-        try:
-            if os.path.isdir(path):
-                os.startfile(path)
-            elif os.path.exists(path):
-                import subprocess
-                subprocess.Popen(["explorer", "/select,", path])
-            else:
-                os.startfile(os.path.dirname(path) or ".")
-        except OSError:
-            pass
-
     @staticmethod
     def _looks_like_url(s):
         s = (s or "").strip().lower()
@@ -646,82 +453,6 @@ class DownloadAppV2(QWidget):
             return
         self._apply_settings(dlg.values())
 
-    def _apply_settings(self, v):
-        if os.path.isdir(v["save_dir"]):
-            self.save_dir = v["save_dir"]
-        self.max_concurrent = v["max_concurrent"]
-        self.segments = v["segments"]
-        self.queue.set_max_concurrent("Main", v["max_concurrent"])
-        self.queue.segments = v["segments"]
-        self.verify_tls = v["verify_tls"]
-        utils.VERIFY_TLS = v["verify_tls"]
-        # global speed limit (combo "Unlimited" / "N Mb/s")
-        bps = 0
-        if "Mb/s" in v.get("speed_limit", ""):
-            try:
-                bps = int(v["speed_limit"].split()[0]) * 1000 * 1000 // 8
-            except ValueError:
-                bps = 0
-        self.global_speed_limit = bps
-        utils.global_limiter.set_limit(bps)
-        self.theme = v["theme"]
-        import downloader
-        if hasattr(downloader._GLOBAL_CONNS, "set_limit"):
-            downloader._GLOBAL_CONNS.set_limit(self.max_concurrent * self.segments)
-        apply_theme(self.theme)
-        if palette.ACCENTS.get(v["accent"]) != palette.COLORS["accent"]:
-            palette.set_accent(v["accent"])
-            self.setStyleSheet(palette.qss())        # live accent re-skin (QSS widgets)
-            self.sidebar.set_active(self._filter if self._filter in self.sidebar._rows else "All")
-        self.scheduler_enabled = v["sched_en"]
-        self.scheduler_start = v["sched_start"]
-        self.scheduler_stop = v["sched_stop"]
-        self._extras.update(v)
-        self._apply_network_settings()
-        self._apply_appearance()
-        self._save_settings()
-        self.refresh()
-
-    def _apply_appearance(self):
-        """Apply the Appearance font-size setting to the whole app."""
-        pt = {"Small": 9, "Medium": 10, "Large": 12}.get(self._extras.get("font_size", "Medium"), 10)
-        app = QApplication.instance()
-        if app:
-            f = app.font(); f.setPointSize(pt); app.setFont(f)
-
-    def _apply_network_settings(self):
-        """Push persisted Network/Advanced prefs into the backend globals the
-        downloader + torrent engine read each request/launch."""
-        ex = self._extras
-        mc = ex.get("max_connections")
-        utils.MAX_CONNECTIONS = int(mc) if mc else 0
-        utils.LISTEN_PORT = int(ex.get("listen_port", 0) or 0)
-        utils.DISK_CACHE = bool(ex.get("disk_cache", True))
-        utils.PREALLOCATE = bool(ex.get("preallocate", False))
-        utils.HASH_CHECK = bool(ex.get("hash_check", False))
-        # Auto-capture allowlist (Settings -> Browser). The Flask /download endpoint
-        # reads utils.CAPTURE_EXTS to filter the extension's auto-captures.
-        ce = ex.get("capture_exts")
-        utils.CAPTURE_EXTS = list(ce) if isinstance(ce, list) else list(utils.DEFAULT_CAPTURE_EXTS)
-        utils.SPEED_IN_BYTES = (ex.get("speed_units") == "bytes")
-        utils.setup_logging(bool(ex.get("debug_log", False)))
-        # DNS-over-HTTPS: override the resolver for all in-process HTTP downloads
-        import doh
-        doh.enable(bool(ex.get("dns_https", False)))
-        # UPnP: open the torrent listen port on the router (best-effort, threaded)
-        if bool(ex.get("upnp", True)) and utils.LISTEN_PORT:
-            import upnp
-            threading.Thread(target=upnp.map_port, args=(utils.LISTEN_PORT,),
-                             daemon=True).start()
-        ctype = ex.get("connection_type", "Default (Auto)")
-        purl = (ex.get("proxy") or "").strip()
-        if ctype == "Direct":
-            utils.PROXIES = {}                       # force direct, ignore env proxies
-        elif purl:
-            utils.PROXIES = {"http": purl, "https": purl}
-        else:
-            utils.PROXIES = None                     # auto / system / env
-
     def resizeEvent(self, e):
         super().resizeEvent(e)
         if hasattr(self, "drawer"):
@@ -730,124 +461,6 @@ class DownloadAppV2(QWidget):
             self._toasts.reposition()
         if getattr(self, "_drag_overlay", None) and self._drag_overlay.isVisible():
             self._drag_overlay.setGeometry(self.rect().adjusted(40, 40, -40, -40))
-
-    def _setup_shortcuts(self):
-        from PySide6.QtGui import QKeySequence, QShortcut
-        for seq, fn in (("Delete", self._del_selected),
-                        ("Space", self._space_selected),
-                        ("Return", self._enter_selected)):
-            sc = QShortcut(QKeySequence(seq), self.list)
-            sc.setContext(Qt.WidgetWithChildrenShortcut)
-            sc.activated.connect(fn)
-        
-        sc_all = QShortcut(QKeySequence("Ctrl+A"), self.list)
-        sc_all.setContext(Qt.WidgetWithChildrenShortcut)
-        sc_all.activated.connect(self._select_all_cards)
-
-    def _select_all_cards(self):
-        if not hasattr(self, "list") or not hasattr(self.list, "_cards"):
-            return
-        for w in self.list._cards.values():
-            if hasattr(w, "chk"):
-                w.chk.setChecked(True)
-
-    def _sel_tasks(self):
-        return [x for x in (self.queue.get_task(i) for i in self.list.selected_ids()) if x]
-
-    def _del_selected(self):
-        ts = self._sel_tasks()
-        if not ts:
-            return
-            
-        finished = sum(1 for t in ts if t.status in (T.COMPLETED, T.ERROR, T.CANCELLED))
-        downloading = len(ts) - finished
-        
-        from gui2.dialogs.delete import DeleteDialog
-        dlg = DeleteDialog(finished=finished, downloading=downloading, parent=self)
-        if dlg.exec():
-            delete_disk = dlg.deleteDisk.isChecked()
-            for t in ts:
-                self.queue.remove_task(t)
-                if delete_disk and getattr(t, "save_path", None) and os.path.exists(t.save_path):
-                    try:
-                        os.remove(t.save_path)
-                    except OSError:
-                        pass
-            self._save_state()
-            self.refresh()
-
-    def _space_selected(self):
-        for t in self._sel_tasks():
-            if t.status == T.DOWNLOADING:
-                self.queue.pause_task(t)
-            elif t.status in (T.PAUSED, T.ERROR, T.SCHEDULED):
-                self.queue.resume_task(t)
-        self._save_state(); self.refresh()
-
-    def _enter_selected(self):
-        ts = self._sel_tasks()
-        if len(ts) == 1:
-            t = ts[0]
-            self._open_file(t) if t.status == T.COMPLETED else self.drawer.open_for(t)
-
-    # ------------------------------------------------------------- system tray
-    def _setup_tray(self):
-        self.tray = None
-        if not QSystemTrayIcon.isSystemTrayAvailable():
-            return
-        self.tray = QSystemTrayIcon(self.windowIcon(), self)
-        self.tray.setToolTip("HyperFetch")
-        menu = self._menu()
-        menu.addAction("Show HyperFetch", self._show_from_tray)
-        menu.addAction("New Download", self._new_download)
-        menu.addSeparator()
-        menu.addAction("Quit", self._real_quit)
-        self.tray.setContextMenu(menu)
-        self.tray.activated.connect(self._on_tray_activated)
-        self.tray.show()
-
-    def _on_tray_activated(self, reason):
-        if reason == QSystemTrayIcon.Trigger:
-            self._show_from_tray()
-
-    def _show_from_tray(self):
-        self.showNormal(); self.raise_(); self.activateWindow()
-
-    def _real_quit(self):
-        self._quit_requested = True
-        self.close()
-
-    # ------------------------------------------------------------- scheduler
-    def _check_scheduler(self):
-        if not getattr(self, "scheduler_enabled", False):
-            self._scheduler_active = False
-            return
-        import datetime
-        now = datetime.datetime.now().time()
-        cur = now.hour * 60 + now.minute
-        try:
-            sh, sm = map(int, self.scheduler_start.split(":"))
-            eh, em = map(int, self.scheduler_stop.split(":"))
-        except (ValueError, AttributeError):
-            return
-        start, stop = sh * 60 + sm, eh * 60 + em
-        active = (start <= cur < stop) if start < stop else (cur >= start or cur < stop)
-        if active:
-            if not self._scheduler_active:        # window just opened: release scheduled
-                for t in self.queue.tasks:
-                    if t.status == T.SCHEDULED:
-                        t.is_scheduled = False
-                        self.queue.resume_task(t)
-                self._scheduler_active = True
-        else:
-            # enforce every tick (also catches downloads added while out of window)
-            for t in self.queue.tasks:
-                if t.status in (T.DOWNLOADING, T.QUEUED):
-                    self.queue.pause_task(t)
-                    t.status = T.SCHEDULED
-                    t.is_scheduled = True
-            self._scheduler_active = False
-        self.refresh()
 
     # ------------------------------------------------------------- window state
     def _restore_window(self):

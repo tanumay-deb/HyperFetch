@@ -22,7 +22,7 @@ desktop app, which downloads each file over multiple connections at once. It can
 also grab HLS streaming videos (`.m3u8`) and save them as a single playable file.
 
 Features:
-- Multi-connection (segmented) downloading for big files
+- Multi-connection downloading — large files finish much faster
 - One-click "Download" badge on videos, plus a media panel for streams
 - Saves files using the real video/page title
 - Works with login-gated downloads by forwarding your session for that one request

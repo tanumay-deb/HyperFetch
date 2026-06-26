@@ -27,7 +27,7 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 log = logging.getLogger("hyperfetch")
 
-HEADERS = {"User-Agent": "Mozilla/5.0 (HyperFetch)"}
+HEADERS = utils.DEFAULT_HEADERS
 TIMEOUT = 20
 SEG_RETRIES = 3
 PARALLEL = 6          # default concurrent segment downloads (overridden by the
@@ -119,13 +119,16 @@ def _get(session, url, headers, stats=None, **kw):
             return r
         except requests.RequestException as e:
             last = e
+            resp = getattr(e, "response", None)
             if stats is not None:
                 stats["retries"] += 1
                 if isinstance(e, requests.Timeout):
                     stats["timeouts"] += 1
-                resp = getattr(e, "response", None)
                 if resp is not None and resp.status_code == 403:
                     stats["http403"] += 1
+            # client errors (404/403/410…) won't succeed on retry — fail fast
+            if resp is not None and 400 <= resp.status_code < 500 and resp.status_code not in (408, 429):
+                raise
             time.sleep(1)
     raise last
 
@@ -286,7 +289,7 @@ class HlsDownloader:
             self.t.save_path = self.t.save_path[:-5] + ".ts"
             self.t.filename = os.path.basename(self.t.save_path)
         os.makedirs(os.path.dirname(self.t.save_path) or ".", exist_ok=True)
-        temp_path = os.path.join(tempfile.gettempdir(), f"{self.t.id}.hfdownload")
+        temp_path = utils.temp_download_path(self.t.id)
 
         try:
             text = self._fetch_text(self.t.url)
