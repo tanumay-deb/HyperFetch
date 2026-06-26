@@ -56,19 +56,39 @@ class QueueManagerDialog(QDialog):
 
     def _row(self, q):
         f = QFrame(); f.setObjectName("panel")
-        h = QHBoxLayout(f); h.setContentsMargins(12, 8, 12, 8); h.setSpacing(10)
+        outer = QVBoxLayout(f); outer.setContentsMargins(12, 8, 12, 8); outer.setSpacing(5)
+        h = QHBoxLayout(); h.setSpacing(10)
         name = QLabel(q.name); name.setStyleSheet("font-weight:700;background:transparent;")
-        n_tasks = sum(1 for t in self.queue.tasks if getattr(t, "queue_name", "Main") == q.name)
-        active = QLabel(f"{getattr(q, 'active', 0)} active · {n_tasks} task{'s' if n_tasks != 1 else ''}")
+        tasks = [t for t in self.queue.tasks if getattr(t, "queue_name", "Main") == q.name]
+        n = len(tasks)
+        active = QLabel(f"{getattr(q, 'active', 0)} active · {n} task{'s' if n != 1 else ''}")
         active.setStyleSheet(f"color:{COLORS['muted']};font-size:11px;background:transparent;")
         spin = QSpinBox(); spin.setRange(1, 16); spin.setValue(getattr(q, "max_concurrent", 3)); spin.setFixedWidth(64)
-        spin.valueChanged.connect(lambda n, name=q.name: self.queue.set_max_concurrent(name, n))
+        spin.valueChanged.connect(lambda val, name=q.name: self.queue.set_max_concurrent(name, val))
         h.addWidget(name, 1); h.addWidget(active); h.addWidget(QLabel("slots")); h.addWidget(spin)
         if q.name != "Main":
             dele = QPushButton(); dele.setIcon(themed_icon("trash", "muted")); dele.setObjectName("iconbtn"); dele.setFixedSize(30, 28)
             dele.setToolTip("Delete queue (its tasks move to Main)")
             dele.clicked.connect(lambda _=False, name=q.name: self._del(name))
             h.addWidget(dele)
+        outer.addLayout(h)
+
+        # the actual items in this queue, so the user can see what's where
+        if tasks:
+            CAP = 8
+            for t in tasks[:CAP]:
+                lbl = QLabel(f"  {t.filename or 'download'}  —  {t.status}")
+                lbl.setStyleSheet(f"color:{COLORS['muted']};font-size:11px;background:transparent;")
+                lbl.setMaximumWidth(400)
+                outer.addWidget(lbl)
+            if n > CAP:
+                more = QLabel(f"  +{n - CAP} more…")
+                more.setStyleSheet(f"color:{COLORS['faint']};font-size:11px;background:transparent;")
+                outer.addWidget(more)
+        else:
+            empty = QLabel("  no downloads in this queue")
+            empty.setStyleSheet(f"color:{COLORS['faint']};font-size:11px;background:transparent;")
+            outer.addWidget(empty)
         return f
 
     def _add(self):

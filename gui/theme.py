@@ -289,25 +289,35 @@ apply_theme("dark")   # default; DownloadApp re-applies the saved choice at star
 
 
 def human_size(n):
+    # File SIZE is always bytes (GB/MB/KB), regardless of the speed-unit setting.
     if n <= 0:
         return "-"
-    bits = n * 8
-    for unit in ("b", "Kb", "Mb", "Gb", "Tb"):
-        if bits < 1000:
-            return f"{bits:.0f} {unit}" if unit == "b" else f"{bits:.1f} {unit}"
-        bits /= 1000
-    return f"{bits:.1f} Pb"
+    for unit in ("B", "KB", "MB", "GB", "TB"):
+        if n < 1024:
+            return f"{n:.0f} {unit}" if unit == "B" else f"{n:.1f} {unit}"
+        n /= 1024
+    return f"{n:.1f} PB"
 
 
 def human_speed(bytes_per_sec):
     if bytes_per_sec <= 0:
         return ""
-    bits_per_sec = bytes_per_sec * 8
+    import utils
+    if utils.SPEED_IN_BYTES:
+        # bytes-per-second: B/s, KB/s, MB/s, GB/s (binary, /1024)
+        v = bytes_per_sec
+        for unit in ("B/s", "KB/s", "MB/s", "GB/s"):
+            if v < 1024:
+                return f"{v:.0f} {unit}" if unit == "B/s" else f"{v:.1f} {unit}"
+            v /= 1024
+        return f"{v:.1f} TB/s"
+    # bits-per-second: b/s, Kb/s, Mb/s, Gb/s (decimal, /1000)
+    v = bytes_per_sec * 8
     for unit in ("b/s", "Kb/s", "Mb/s", "Gb/s"):
-        if bits_per_sec < 1000:
-            return f"{bits_per_sec:.0f} {unit}" if unit == "b/s" else f"{bits_per_sec:.1f} {unit}"
-        bits_per_sec /= 1000
-    return f"{bits_per_sec:.1f} Tb/s"
+        if v < 1000:
+            return f"{v:.0f} {unit}" if unit == "b/s" else f"{v:.1f} {unit}"
+        v /= 1000
+    return f"{v:.1f} Tb/s"
 
 
 def humanize_age(epoch):

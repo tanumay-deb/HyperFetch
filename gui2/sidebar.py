@@ -143,15 +143,8 @@ class Sidebar(QFrame):
         lay.addWidget(self.btn_new)
         lay.addSpacing(4)
 
-        # ---- DOWNLOADS ----
-        self.t_dl = self._section("DOWNLOADS")
-        lay.addWidget(self.t_dl)
-        all_row = NavRow("all", "All", "All")
-        self._add_row(lay, all_row)
-
-        # ---- CATEGORIES ----
-        self.t_cat = self._section("CATEGORIES")
-        lay.addWidget(self.t_cat)
+        # ---- nav: All (acts as the list header) + categories, no section labels ----
+        self._add_row(lay, NavRow("all", "All", "All"))
         for ic, lbl, key, col in _CATEGORIES:
             self._add_row(lay, NavRow(ic, lbl, key, col))
 
@@ -217,12 +210,6 @@ class Sidebar(QFrame):
         self.set_collapsed(False)        # initial expanded state hides status icons
         self.set_active("All")
 
-    def _section(self, title):
-        l = QLabel(title)
-        l.setObjectName("sectionTitle")
-        l.setStyleSheet(f"color: {COLORS['muted']}; font-size: 11px; font-weight: 800; letter-spacing: 1px; background: transparent; padding: 8px 2px 2px;")
-        return l
-
     def _add_row(self, lay, row):
         row.clicked.connect(self._on_row)
         self._rows[row.key] = row
@@ -251,8 +238,6 @@ class Sidebar(QFrame):
         self._collapsed = on
         self.brand.setVisible(not on)
         self.brand_icon.setVisible(not on)
-        for t in (self.t_dl, self.t_cat):
-            t.setVisible(not on)
         # keep the speed graph visible when collapsed (text hidden)
         self.stats.setVisible(True)
         self.g_text.setVisible(not on)

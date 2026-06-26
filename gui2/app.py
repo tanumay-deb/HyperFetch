@@ -703,6 +703,7 @@ class DownloadAppV2(QWidget):
         # reads utils.CAPTURE_EXTS to filter the extension's auto-captures.
         ce = ex.get("capture_exts")
         utils.CAPTURE_EXTS = list(ce) if isinstance(ce, list) else list(utils.DEFAULT_CAPTURE_EXTS)
+        utils.SPEED_IN_BYTES = (ex.get("speed_units") == "bytes")
         utils.setup_logging(bool(ex.get("debug_log", False)))
         # DNS-over-HTTPS: override the resolver for all in-process HTTP downloads
         import doh

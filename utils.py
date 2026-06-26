@@ -18,6 +18,7 @@ LISTEN_PORT = 0           # torrent listen port (0 = aria2 default)
 DISK_CACHE = True         # aria2 --disk-cache on/off
 PREALLOCATE = False       # aria2 file pre-allocation
 HASH_CHECK = False        # verify SHA-256 against a <url>.sha256 sidecar on finish
+SPEED_IN_BYTES = False    # speed readout units: False = bits (Kb/s), True = bytes (KB/s)
 
 # Auto-capture allowlist (Settings -> Browser Integration). When the extension's
 # browser-download capture forwards an auto-captured file, the server only accepts

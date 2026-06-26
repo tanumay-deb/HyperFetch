@@ -384,6 +384,9 @@ class SettingsDialogV2(QDialog):
         g.addWidget(acc_l); g.addLayout(srow)
         self.font_size = self._combo(["Small", "Medium", "Large"], ex.get("font_size"))
         self._row(g, "Font Size", "Application font size", self.font_size)
+        su_cur = "Bytes (KB/s)" if ex.get("speed_units") == "bytes" else "Bits (Kb/s)"
+        self.speed_units = self._combo(["Bits (Kb/s)", "Bytes (KB/s)"], su_cur)
+        self._row(g, "Speed Units", "Show download speed in bits or bytes", self.speed_units)
         v.addWidget(f); v.addStretch()
         return sa
 
@@ -522,6 +525,7 @@ class SettingsDialogV2(QDialog):
             "preallocate": self.preallocate.isChecked(),
             "proxy": self._proxy_url,
             "font_size": self.font_size.currentText(),
+            "speed_units": "bytes" if self.speed_units.currentText().startswith("Bytes") else "bits",
             "disk_cache": self.disk_cache.isChecked(),
             "hash_check": self.hash_check.isChecked(),
             "debug_log": self.debug_log.isChecked(),

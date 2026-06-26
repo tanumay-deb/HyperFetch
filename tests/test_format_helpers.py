@@ -8,8 +8,8 @@ import pytest
 pytest.importorskip("PySide6")  # helpers live in gui.theme
 from gui.theme import human_size, human_speed, humanize_age, fmt_eta   # noqa: E402
 
-_UNITS_SIZE = ("b", "Kb", "Mb", "Gb", "Tb", "Pb")
-_UNITS_SPEED = ("b/s", "Kb/s", "Mb/s", "Gb/s", "Tb/s")
+_UNITS_SIZE = ("B", "KB", "MB", "GB", "TB", "PB")          # file size = bytes
+_UNITS_SPEED = ("b/s", "Kb/s", "Mb/s", "Gb/s", "Tb/s")     # default speed = bits
 
 
 def _samples():
@@ -45,16 +45,34 @@ def test_human_speed_never_raises():
 def test_human_size_is_non_decreasing_by_byte_value():
     """Decode the formatted value*unit back to bytes; it must track the input
     order (allowing rounding) so the Size column sorts sanely by eye."""
-    mult = {"b": 1, "Kb": 1000, "Mb": 1000**2, "Gb": 1000**3,
-            "Tb": 1000**4, "Pb": 1000**5}
+    mult = {"B": 1, "KB": 1024, "MB": 1024**2, "GB": 1024**3,
+            "TB": 1024**4, "PB": 1024**5}
     vals = sorted(random.Random(7).randint(1, 2**50) for _ in range(500))
     decoded = []
     for n in vals:
         num, unit = human_size(n).split()
-        decoded.append((float(num) * mult[unit]) / 8.0)
+        decoded.append(float(num) * mult[unit])
     # each decoded value within 1% of the true bytes (rounding to 1 decimal)
     for n, d in zip(vals, decoded):
         assert abs(d - n) <= max(1, n * 0.05), f"{n} -> {d}"
+
+
+def test_human_size_uses_bytes_units():
+    assert human_size(1500 * 1024 * 1024).endswith("GB")   # ~1.5 GiB -> GB
+    assert human_size(700 * 1024 * 1024).endswith("MB")
+    assert human_size(8192) == "8.0 KB"
+
+
+def test_human_speed_unit_toggle():
+    import utils
+    old = utils.SPEED_IN_BYTES
+    try:
+        utils.SPEED_IN_BYTES = False
+        assert human_speed(5_000_000).endswith("Mb/s")    # 40 Mb/s
+        utils.SPEED_IN_BYTES = True
+        assert human_speed(5_000_000).endswith("MB/s")    # ~4.8 MB/s
+    finally:
+        utils.SPEED_IN_BYTES = old
 
 
 def test_fmt_eta_invariants():
