@@ -3,6 +3,10 @@
 Simple running list. Newest first. Keep entries to one line.
 
 ## Done
+- `bb7e2e9` — code hygiene: split `app.py` (1011→624) into mixins; dedup engine helpers (`utils.DEFAULT_HEADERS`/`temp_download_path`); palette-ize semantic colours; benefit-first README/store copy.
+- `d16875b` — removed the legacy v1 GUI (table-based) + `--v1`; `gui/` is now shared helpers only; dropped "IDM" branding; rename IDM.bat → HyperFetch.bat.
+- `2a7b981` — v1.2.2: file sizes in bytes + speed-unit setting; per-queue item view; slim sidebar; Chrome ext store package + promo/screenshot assets.
+- `49c91cf` — engine keep-alive `requests.Session` (faster); DoH SNI/recursion fix; multi-queue visibility (badges + counts); HLS logging + settings-driven parallelism; capture allowlist moved into Settings; download History dashboard; yt-dlp quality picker; **v2 GUI is now the default**.
 - _(uncommitted)_ — DNS-over-HTTPS (`doh.py`): when on, overrides `socket.getaddrinfo` so in-process HTTP downloads resolve via Cloudflare (1.1.1.1, no recursion); cached, best-effort fallback. Wired to the Network toggle. (Torrents/aria2 unaffected.)
 - _(uncommitted)_ — UPnP/NAT-PMP (`upnp.py`): pure-Python SSDP + IGD SOAP opens the torrent listen port (TCP+UDP) on the router; best-effort, threaded. Wired to the Network toggle + Listen Port.
 - _(uncommitted)_ — Extension capture: browser downloads (Download buttons) routed to the app via `chrome.downloads.onCreated` (toggle-gated, cancel-after-accept so app-offline falls back to Chrome); magnet/`.torrent` clicks intercepted → app only (no uTorrent). Mirrored to edge_ext; manifest 1.2.0 + `downloads` permission.
@@ -19,16 +23,28 @@ Simple running list. Newest first. Keep entries to one line.
 - `59a5a3b` — HLS quality variant picker.
 - earlier — ABDM-style UI overhaul, multi-queue + adaptive segments, crash reporter + update check, v1.2.0 release.
 
-## Next
-- _(all wired — see Done; remaining toggles act on the engine now)_
+## Next (UX & polish — planned)
+- Empty state: large illustration + quick actions (Paste URL · Open Torrent · Open Magnet · drag-hint) + recent URLs — first-run delight. [high value, low risk]
+- Watch Folder: auto-import downloads / `.torrent` files dropped into a monitored folder (IDM parity). [med]
+- Richer search: filter tokens (`status:` `category:` `size>` `date`) beyond filename/URL substring. [med]
+- Dialog polish: unified `DialogHeader` + design tokens (radius/spacing/margins) in palette; consolidate inline QSS. [med — from code audit]
+- Module splits (from code audit): `settings.py` page-builder mixin; shared `finalize_download()` for downloader+hls. [med]
+- Card density polish: cards already show icon · file · % · progress · speed · ETA · status — tighten layout for faster at-a-glance scan. [low-med refinement]
+- Animation polish: card add/remove + group transitions + drawer/toast easing. [low-med]
+- In-app developer console: live log viewer (tail `hyperfetch.log`) + copy button. [low-med]
+- Better logging: structured levels + per-engine context (builds on the Debug-logging toggle). [low]
 
 ## Bugs
 - Responsive layout breaks on window resize (v1; v2 should be better — verify).
 - Verify in v2: errored row shows the message (double-click → drawer Logs), Delete works on a selection, Complete popup buttons open + close. (All fixed in v2 — confirm on a real run.)
 
 ## Ideas
-- Light theme (v2 is dark-only).
+- Light theme (dark-only today).
 - Per-host rules (cookies/segments per host).
+- DASH (`.mpd`) native support (or lean on yt-dlp).
+- Per-thread SOCKS5 proxies (beat per-IP CDN rate limits).
+- Throttle schedule (time-window speed caps, e.g. 1 MB/s 9–5).
+- Inline-on-page quality picker in the extension (near the video, not the panel).
 
 ## Decided to keep light (not building)
 - Auto-update — notify + open releases page (no installer-swap / signing).
