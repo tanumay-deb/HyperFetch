@@ -1,4 +1,4 @@
-# HyperFetch (IDM clone)
+# HyperFetch
 
 Multi-segment download accelerator with a desktop GUI, IDM-style download
 dialogs, persistent state, a download queue, and a Chrome/Edge extension that
