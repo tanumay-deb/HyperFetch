@@ -3,6 +3,7 @@
 Simple running list. Newest first. Keep entries to one line.
 
 ## Done
+- _(uncommitted)_ — Throttle schedule: Settings → Downloads "Scheduled speed limit" (window + limit); enforced each scheduler tick via `SystemMixin._apply_throttle` (overrides the global limit inside the window, reverts outside). Bugs section verified clean in v2.
 - _(uncommitted)_ — Empty state: illustration tile + quick actions (New Download · Open Torrent · Open Magnet) + drag hint, wired via `DownloadList.quickAction`. Richer search: `status:`/`category:`/`size:` tokens (`gui2/search.py`, unit-tested) on top of name/URL text.
 - `bb7e2e9` — code hygiene: split `app.py` (1011→624) into mixins; dedup engine helpers (`utils.DEFAULT_HEADERS`/`temp_download_path`); palette-ize semantic colours; benefit-first README/store copy.
 - `d16875b` — removed the legacy v1 GUI (table-based) + `--v1`; `gui/` is now shared helpers only; dropped "IDM" branding; rename IDM.bat → HyperFetch.bat.
@@ -36,15 +37,13 @@ Simple running list. Newest first. Keep entries to one line.
 - Better logging: structured levels + per-engine context (builds on the Debug-logging toggle). [low]
 
 ## Bugs
-- Responsive layout breaks on window resize (v1; v2 should be better — verify).
-- Verify in v2: errored row shows the message (double-click → drawer Logs), Delete works on a selection, Complete popup buttons open + close. (All fixed in v2 — confirm on a real run.)
+- _(none open)_ — verified in v2: responsive layout holds at min (940×560) and large (1500×900); errored row shows the message on the card + in the drawer Logs; Delete works on a selection; Complete popup has working buttons.
 
 ## Ideas
-- Light theme (dark-only today).
+- Light theme (the Settings theme selector is dark-only today — Light/System are no-ops in gui2; needs a light palette + qss() theming).
 - Per-host rules (cookies/segments per host).
 - DASH (`.mpd`) native support (or lean on yt-dlp).
 - Per-thread SOCKS5 proxies (beat per-IP CDN rate limits).
-- Throttle schedule (time-window speed caps, e.g. 1 MB/s 9–5).
 - Inline-on-page quality picker in the extension (near the video, not the panel).
 
 ## Decided to keep light (not building)

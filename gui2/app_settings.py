@@ -76,7 +76,6 @@ class SettingsMixin:
             except ValueError:
                 bps = 0
         self.global_speed_limit = bps
-        utils.global_limiter.set_limit(bps)
         self.theme = v["theme"]
         import downloader
         if hasattr(downloader._GLOBAL_CONNS, "set_limit"):
@@ -91,6 +90,7 @@ class SettingsMixin:
         self.scheduler_stop = v["sched_stop"]
         self._extras.update(v)
         self._apply_network_settings()
+        self._apply_throttle()           # throttle window may override the global limit
         self._apply_appearance()
         self._save_settings()
         self.refresh()

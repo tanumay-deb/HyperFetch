@@ -261,6 +261,16 @@ class SettingsDialogV2(QDialog):
         self._row(g, "Auto start downloads", "Start downloads immediately after adding", self.auto_start)
         self.speed_limit = self._combo(["Unlimited", "1 Mb/s", "5 Mb/s", "10 Mb/s"], ex.get("speed_limit"))
         self._row(g, "Download Speed Limit", "Global download speed limit", self.speed_limit)
+        self.throttle_en = self._toggle(ex.get("throttle_enabled", False))
+        self._row(g, "Scheduled speed limit", "Throttle to a slower speed during a daily time window", self.throttle_en)
+        trow = QHBoxLayout()
+        self.thr_start = QTimeEdit(QTime.fromString(ex.get("throttle_start", "09:00"), "HH:mm")); self.thr_start.setDisplayFormat("HH:mm")
+        self.thr_stop = QTimeEdit(QTime.fromString(ex.get("throttle_stop", "17:00"), "HH:mm")); self.thr_stop.setDisplayFormat("HH:mm")
+        self.thr_limit = self._combo(["1 Mb/s", "2 Mb/s", "5 Mb/s", "10 Mb/s"], ex.get("throttle_limit"))
+        trow.addWidget(QLabel("From")); trow.addWidget(self.thr_start)
+        trow.addSpacing(8); trow.addWidget(QLabel("to")); trow.addWidget(self.thr_stop)
+        trow.addSpacing(12); trow.addWidget(QLabel("limit")); trow.addWidget(self.thr_limit); trow.addStretch()
+        g.addLayout(trow)
         self.when_complete = self._combo(["Show notification", "Open file", "Open folder", "Do nothing"],
                                          ex.get("when_complete"))
         self._row(g, "When download is complete", "Action when a download finishes", self.when_complete)
@@ -514,6 +524,10 @@ class SettingsDialogV2(QDialog):
             "default_queue": self.def_queue.currentText(),
             "auto_start": self.auto_start.isChecked(),
             "speed_limit": self.speed_limit.currentText(),
+            "throttle_enabled": self.throttle_en.isChecked(),
+            "throttle_start": self.thr_start.time().toString("HH:mm"),
+            "throttle_stop": self.thr_stop.time().toString("HH:mm"),
+            "throttle_limit": self.thr_limit.currentText(),
             "open_on_complete": self.open_complete.isChecked(),
             "clipboard_monitor": self.clip_mon.isChecked(),
             "when_complete": self.when_complete.currentText(),
