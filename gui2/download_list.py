@@ -207,8 +207,10 @@ class DownloadList(QScrollArea):
                     card.selectRequested.connect(self._on_select)
                     card.chk.toggled.connect(lambda checked, tid=t.id: self._on_chk_toggled(tid, checked))
                     self._cards[t.id] = card
-                else:
-                    card.sl_lbl.setText(f"#{sl_counter}")
+                    self._lay.addWidget(card)
+                    card.fade_in()                       # soft entrance for new cards
+                    continue
+                card.sl_lbl.setText(f"#{sl_counter}")
                 self._lay.addWidget(card)
         self._lay.addStretch()
 

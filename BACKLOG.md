@@ -3,6 +3,7 @@
 Simple running list. Newest first. Keep entries to one line.
 
 ## Done
+- _(uncommitted)_ — Card density + animations: tighter card layout (smaller icon, less padding → more rows on screen); new cards fade in; toasts slide-in + fade (and fade out on dismiss).
 - _(uncommitted)_ — Module splits: shared `utils.finalize_download()` (cross-volume atomic move) replaces the duplicated finalize in downloader.py + hls.py; `settings.py` page builders extracted to `PageBuilderMixin` in settings_pages.py (568→225 lines). Dialog polish: shared `DialogHeader` + palette design tokens.
 - _(uncommitted)_ — Advanced search: `date:` / `ext:` tokens. Per-host rules (Settings → Network → Per-host rules): per host, override the segment count and/or force the yt-dlp engine; matches exact host or any subdomain. `utils.host_rule()` consulted in `Downloader.__init__` (segments, capped by Max Connections) and the engine delegation (ytdlp). Editor dialog + unit tests.
 - _(uncommitted)_ — In-app Developer Console (Settings → Advanced → Open Console): live tail of `hyperfetch.log` (incremental by offset), Verbose-debug toggle, Auto-scroll, Copy / Clear / Open-Folder.
@@ -34,8 +35,6 @@ Simple running list. Newest first. Keep entries to one line.
 - Empty state follow-ups: Recent URLs list + Watch-Folder shortcut. [low]
 - Search follow-up: remember recent searches (dropdown). [low]  _(date: + ext: tokens shipped)_
 - Dialog polish: unified `DialogHeader` + design tokens (radius/spacing/margins) in palette; consolidate inline QSS. [med — from code audit]
-- Card density polish: cards already show icon · file · % · progress · speed · ETA · status — tighten layout for faster at-a-glance scan. [low-med refinement]
-- Animation polish: card add/remove + group transitions + drawer/toast easing. [low-med]
 
 ## Bugs
 - _(none open)_ — verified in v2: responsive layout holds at min (940×560) and large (1500×900); errored row shows the message on the card + in the drawer Logs; Delete works on a selection; Complete popup has working buttons.

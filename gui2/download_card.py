@@ -48,8 +48,8 @@ class DownloadCardWidget(QFrame):
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
 
         root = QHBoxLayout(self)
-        root.setContentsMargins(16, 12, 14, 12)
-        root.setSpacing(14)
+        root.setContentsMargins(16, 9, 12, 9)        # tighter vertical padding -> more rows on screen
+        root.setSpacing(13)
 
         # checkbox
         self.chk = QCheckBox()
@@ -66,13 +66,13 @@ class DownloadCardWidget(QFrame):
 
         ic_name, ic_color = _icon_for(task)
         self.icon = QLabel()
-        self.icon.setFixedSize(40, 40)
+        self.icon.setFixedSize(36, 36)
         self.icon.setAlignment(Qt.AlignCenter)
-        self.icon.setPixmap(themed_icon(ic_name, "white").pixmap(24, 24))
+        self.icon.setPixmap(themed_icon(ic_name, "white").pixmap(22, 22))
         self.icon.setStyleSheet(f"background: {ic_color}; border-radius: 8px;")
         root.addWidget(self.icon, 0, Qt.AlignVCenter)
 
-        mid = QVBoxLayout(); mid.setSpacing(6)
+        mid = QVBoxLayout(); mid.setSpacing(4)
         namerow = QHBoxLayout(); namerow.setSpacing(8)
         self.name = QLabel(task.filename or "download")
         self.name.setStyleSheet(f"font-size: 14px; font-weight: 700; color: {COLORS['text']}; background: transparent;")
@@ -133,6 +133,18 @@ class DownloadCardWidget(QFrame):
 
     def contextMenuEvent(self, _e):
         self.action.emit("more", self.task_id)
+
+    def fade_in(self):
+        """Soft entrance when the card is first added to the list."""
+        from PySide6.QtWidgets import QGraphicsOpacityEffect
+        from PySide6.QtCore import QPropertyAnimation, QEasingCurve
+        eff = QGraphicsOpacityEffect(self); self.setGraphicsEffect(eff)
+        a = QPropertyAnimation(eff, b"opacity", self)
+        a.setDuration(220); a.setStartValue(0.0); a.setEndValue(1.0)
+        a.setEasingCurve(QEasingCurve.OutCubic)
+        a.finished.connect(lambda: self.setGraphicsEffect(None))   # drop effect after (no lingering repaint cost)
+        a.start()
+        self._fade_anim = a                                        # keep a ref alive
 
     def set_selected(self, on):
         if on == self._selected:
