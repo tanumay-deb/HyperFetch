@@ -3,6 +3,7 @@
 Simple running list. Newest first. Keep entries to one line.
 
 ## Done
+- _(uncommitted)_ — In-app Developer Console (Settings → Advanced → Open Console): live tail of `hyperfetch.log` (incremental by offset), Verbose-debug toggle, Auto-scroll, Copy / Clear / Open-Folder.
 - _(uncommitted)_ — Better logging: per-engine child loggers (`hyperfetch.downloader/.hls/.torrent/.ytdlp/.queue/.server`) so each line shows its source; `setup_logging` always captures warnings/errors to `hyperfetch.log` (created lazily) and adds DEBUG verbosity with the toggle; added structured logging to the byte downloader (start/retry/403/429/fail) + torrent/yt-dlp start·done·fail.
 - _(uncommitted)_ — Throttle schedule: Settings → Downloads "Scheduled speed limit" (window + limit); enforced each scheduler tick via `SystemMixin._apply_throttle` (overrides the global limit inside the window, reverts outside). Bugs section verified clean in v2.
 - _(uncommitted)_ — Empty state: illustration tile + quick actions (New Download · Open Torrent · Open Magnet) + drag hint, wired via `DownloadList.quickAction`. Richer search: `status:`/`category:`/`size:` tokens (`gui2/search.py`, unit-tested) on top of name/URL text.
@@ -34,7 +35,6 @@ Simple running list. Newest first. Keep entries to one line.
 - Module splits (from code audit): `settings.py` page-builder mixin; shared `finalize_download()` for downloader+hls. [med]
 - Card density polish: cards already show icon · file · % · progress · speed · ETA · status — tighten layout for faster at-a-glance scan. [low-med refinement]
 - Animation polish: card add/remove + group transitions + drawer/toast easing. [low-med]
-- In-app developer console: live log viewer (tail `hyperfetch.log`) + copy button. [low-med]
 
 ## Bugs
 - _(none open)_ — verified in v2: responsive layout holds at min (940×560) and large (1500×900); errored row shows the message on the card + in the drawer Logs; Delete works on a selection; Complete popup has working buttons.

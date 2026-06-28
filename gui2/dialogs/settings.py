@@ -421,8 +421,16 @@ class SettingsDialogV2(QDialog):
         self._row(g, "Enable hash verification", "Verify file integrity after download", self.hash_check)
         self.debug_log = self._toggle(ex.get("debug_log", False))
         self._row(g, "Debug logging", "Save detailed logs for troubleshooting", self.debug_log)
+        self.console_btn = QPushButton("  Open Console")
+        self.console_btn.setIcon(themed_icon("info", "text"))
+        self.console_btn.clicked.connect(self._open_console)
+        self._row(g, "Developer Console", "Live log viewer for troubleshooting", self.console_btn)
         v.addWidget(f); v.addStretch()
         return sa
+
+    def _open_console(self):
+        from gui2.dialogs.console import ConsoleDialog
+        ConsoleDialog(self).exec()
 
     def _p_about(self):
         sa, v = self._page("About", "")
