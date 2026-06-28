@@ -92,6 +92,15 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, QW
         QTimer.singleShot(1000, self._check_scheduler)
         self.refresh()
 
+        if not self._extras.get("welcomed"):     # first run -> pairing onboarding
+            QTimer.singleShot(500, self._show_welcome)
+
+    def _show_welcome(self):
+        from gui2.dialogs.welcome import WelcomeDialog
+        WelcomeDialog(self, self.pair_token, on_open_settings=self._open_settings).exec()
+        self._extras["welcomed"] = True
+        self._save_settings()
+
     # ------------------------------------------------------------- settings/state
     def _load_state(self):
         for d in utils.load_json(self._state_path, []):

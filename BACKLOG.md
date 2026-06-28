@@ -3,6 +3,7 @@
 Simple running list. Newest first. Keep entries to one line.
 
 ## Done
+- _(uncommitted)_ — Polish/stability: safe_filename hardened (Windows reserved names CON/NUL/COM1…, length cap with extension preserved, +tests); byte downloader fails fast on 4xx with actionable messages (403/410 → "right-click → Refresh Address", 401/407 login, 404 moved) and a clear "Connection lost — Resume to retry" on transient give-up; first-run Welcome dialog walks through extension pairing (shown once).
 - _(uncommitted)_ — Light theme: `palette.set_theme(dark/light/system)` swaps the active COLORS (light palette added); applied at startup before the UI builds, so it's consistent. Settings → Appearance Light/System now work (toast prompts a restart on change, since widgets bake colours at construction). System detects Windows light/dark.
 - _(uncommitted)_ — Card density + animations: tighter card layout (smaller icon, less padding → more rows on screen); new cards fade in; toasts slide-in + fade (and fade out on dismiss).
 - _(uncommitted)_ — Module splits: shared `utils.finalize_download()` (cross-volume atomic move) replaces the duplicated finalize in downloader.py + hls.py; `settings.py` page builders extracted to `PageBuilderMixin` in settings_pages.py (568→225 lines). Dialog polish: shared `DialogHeader` + palette design tokens.

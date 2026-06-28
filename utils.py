@@ -147,14 +147,29 @@ def strip_sensitive(headers):
     return {k: v for k, v in headers.items() if k.lower() not in SENSITIVE_HEADERS}
 
 
-def safe_filename(name):
-    """Filename guaranteed to contain no path separators or traversal — the
-    last line of defense before joining to a download directory."""
+# Windows refuses these as filenames even WITH an extension ("con.txt" fails).
+_WIN_RESERVED = {"con", "prn", "aux", "nul",
+                 *(f"com{i}" for i in range(1, 10)),
+                 *(f"lpt{i}" for i in range(1, 10))}
+
+
+def safe_filename(name, max_len=200):
+    """Filename guaranteed safe to create on disk — no path separators/traversal,
+    no Windows reserved device name, and capped in length (Windows MAX_PATH
+    headroom). The last line of defense before joining to a download directory."""
     name = os.path.basename(name or "")
     name = name.replace("\\", "_").replace("/", "_")
     name = sanitize(name)
     if name in ("", ".", ".."):
         name = "download"
+    # reserved device name (CON, NUL, COM1, …), with or without an extension
+    if name.split(".", 1)[0].lower() in _WIN_RESERVED:
+        name = "_" + name
+    # cap length, preserving the extension
+    if len(name) > max_len:
+        base, ext = os.path.splitext(name)
+        ext = ext[:24]                       # guard an absurdly long "extension"
+        name = (base[:max(1, max_len - len(ext))] or "download") + ext
     return name
 
 

@@ -35,6 +35,27 @@ def test_filename_illegal_chars_sanitized():
         assert ch not in n
 
 
+def test_safe_filename_windows_reserved():
+    # reserved device names (even with an extension) get a prefix so the OS accepts them
+    assert utils.safe_filename("nul.zip") == "_nul.zip"
+    assert utils.safe_filename("CON") == "_CON"
+    assert utils.safe_filename("com1.txt") == "_com1.txt"
+    # a name that merely contains a reserved word is fine
+    assert utils.safe_filename("console.log") == "console.log"
+
+
+def test_safe_filename_length_capped():
+    long = "a" * 400 + ".zip"
+    out = utils.safe_filename(long)
+    assert len(out) <= 200 and out.endswith(".zip")
+
+
+def test_safe_filename_traversal():
+    assert "/" not in utils.safe_filename("../../etc/passwd")
+    assert "\\" not in utils.safe_filename("..\\..\\windows\\system32")
+    assert utils.safe_filename("..") == "download"
+
+
 def test_unique_path_collisions(tmp_path):
     d = str(tmp_path)
     p1 = utils.unique_path(d, "a.zip")

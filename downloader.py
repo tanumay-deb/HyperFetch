@@ -331,22 +331,32 @@ class Downloader:
                 return
             except requests.RequestException as e:
                 resp = getattr(e, "response", None)
-                if resp is not None and resp.status_code == 403:
+                code = resp.status_code if resp is not None else None
+                # client errors won't succeed on retry — fail fast with an
+                # actionable message (no wasted retry/backoff on a 404/410/403).
+                if code is not None and 400 <= code < 500 and code not in (408, 429):
                     if not self.t.cancel_requested:
                         self.t.status = T.ERROR
-                        self.t.error = "HTTP 403 Forbidden - URL expired"
-                        log.warning("403 (URL expired) seg %d: %s", seg.index, self.t.filename)
+                        if code in (403, 410):
+                            self.t.error = f"URL expired (HTTP {code}) — right-click → Refresh Address"
+                        elif code in (401, 407):
+                            self.t.error = f"Login required (HTTP {code}) — use the browser extension"
+                        elif code == 404:
+                            self.t.error = "Not found (HTTP 404) — the file may have moved"
+                        else:
+                            self.t.error = f"HTTP {code} — the server refused the download"
+                        log.warning("HTTP %s seg %d: %s", code, seg.index, self.t.filename)
                     return
                 attempts += 1
                 if attempts > MAX_RETRIES:
                     if not self.t.cancel_requested:
                         self.t.status = T.ERROR
-                        self.t.error = str(e)
-                        log.error("seg %d of %s failed after %d retries: %s",
+                        # transient (timeout / connection reset) — resumes from disk
+                        self.t.error = "Connection lost — Resume to retry"
+                        log.error("seg %d of %s gave up after %d retries: %s",
                                   seg.index, self.t.filename, MAX_RETRIES, e)
                     return
-                resp = getattr(e, "response", None)
-                if resp is not None and resp.status_code == 429:
+                if code == 429:
                     self._throttle_conns()
                     log.warning("429 rate-limited: %s — halved to %d connections",
                                 self.t.filename, self._max_conns)
