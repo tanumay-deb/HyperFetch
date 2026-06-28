@@ -87,14 +87,15 @@ class SpeedGraph(QWidget):
             p.drawLine(0, int(y), w, int(y))
         n = len(self._hist)
         if n >= 2:
-            path = QPainterPath(); fill = QPainterPath()
-            fill.moveTo(0, h)
-            for i, v in enumerate(self._hist):
-                x = w * i / (n - 1)
-                y = h - (v / self._max) * (h - 6) - 3
-                (path.moveTo(x, y) if i == 0 else path.lineTo(x, y))
-                fill.lineTo(x, y)
-            fill.lineTo(w, h); fill.closeSubpath()
+            from gui2.graphing import moving_avg, smooth_path
+            vals = moving_avg(list(self._hist), 5)
+            pts = [QPoint(int(w * i / (n - 1)), int(h - (v / self._max) * (h - 6) - 3))
+                   for i, v in enumerate(vals)]
+            from PySide6.QtCore import QPointF
+            ptsf = [QPointF(pt) for pt in pts]
+            path = smooth_path(ptsf)
+            fill = QPainterPath(path)
+            fill.lineTo(ptsf[-1].x(), h); fill.lineTo(ptsf[0].x(), h); fill.closeSubpath()
             from PySide6.QtGui import QLinearGradient
             grad = QLinearGradient(0, 0, 0, h)
             c_top = QColor(c["accent"]); c_top.setAlpha(120)
@@ -155,7 +156,7 @@ class DetailsDrawer(QFrame):
         self.tabs.addTab(self._scroll_tab("files"), "Files")
         self.tabs.addTab(self._scroll_tab("conns"), "Connections")
         self.tabs.addTab(self._scroll_tab("headers"), "Headers")
-        self.tabs.addTab(self._scroll_tab("logs"), "Logs")
+        self.tabs.addTab(self._logs_tab(), "Logs")
         lay.addWidget(self.tabs, 1)
 
         foot = QHBoxLayout()
@@ -217,6 +218,29 @@ class DetailsDrawer(QFrame):
         setattr(self, f"_{key}_lay", lay)
         return sa
 
+    def _logs_tab(self):
+        """Logs with a Copy button — text is selectable, and Copy grabs the whole
+        log (status / URL / error) in one click for pasting into a bug report."""
+        self._log_lines = []
+        w = QWidget(); v = QVBoxLayout(w); v.setContentsMargins(0, 8, 0, 0); v.setSpacing(6)
+        bar = QHBoxLayout(); bar.addStretch()
+        copy = QPushButton("  Copy"); copy.setIcon(themed_icon("clipboard", "text"))
+        copy.setCursor(Qt.PointingHandCursor)
+        copy.setStyleSheet(
+            f"QPushButton {{ padding: 4px 12px; font-weight: 600; background: {COLORS['surface2']};"
+            f" border: 1px solid {COLORS['border']}; border-radius: 7px; }}"
+            f"QPushButton:hover {{ background: {COLORS['card_hover']}; }}")
+        copy.clicked.connect(self._copy_logs)
+        bar.addWidget(copy)
+        v.addLayout(bar)
+        sa = self._scroll_tab("logs")
+        v.addWidget(sa, 1)
+        return w
+
+    def _copy_logs(self):
+        from PySide6.QtWidgets import QApplication
+        QApplication.clipboard().setText("\n".join(self._log_lines))
+
     def _fill(self, key, lines):
         lay = getattr(self, f"_{key}_lay")
         while lay.count():
@@ -225,6 +249,9 @@ class DetailsDrawer(QFrame):
                 it.widget().deleteLater()
         for text, mono in lines:
             l = QLabel(text); l.setWordWrap(True)
+            # selectable so users can highlight + Ctrl+C an error / URL / header
+            l.setTextInteractionFlags(Qt.TextSelectableByMouse | Qt.TextSelectableByKeyboard)
+            l.setCursor(Qt.IBeamCursor)
             style = f"color: {COLORS['text']}; background: transparent;"
             if mono:
                 style += " font-family: Consolas, monospace; font-size: 11px;"
@@ -324,6 +351,7 @@ class DetailsDrawer(QFrame):
                 (f"URL: {t.url}", True)]
         if t.error:
             logs.append((f"Error: {t.error}", True))
+        self._log_lines = [text for text, _ in logs]
         self._fill("logs", logs)
 
     def update_live(self, t, bps):

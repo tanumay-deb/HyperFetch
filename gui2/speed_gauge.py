@@ -10,6 +10,7 @@ from PySide6.QtCore import Qt, QRectF, QPointF
 from PySide6.QtGui import QPainter, QPen, QColor, QPainterPath
 
 from gui2.palette import COLORS
+from gui2.graphing import moving_avg, smooth_path
 
 _SPAN = 270.0          # arc sweep in degrees (open at the bottom)
 _START = 225.0         # start angle (Qt: 0=3 o'clock, CCW positive)
@@ -56,11 +57,11 @@ class CircularSpeedGauge(QWidget):
             inset = side * 0.26
             spark = QRectF(x + inset, rect.center().y() - side * 0.10,
                            side - 2 * inset, side * 0.32)
-            path = QPainterPath()
-            for i, v in enumerate(self._hist):
-                px = spark.left() + (i / (n - 1)) * spark.width()
-                py = spark.bottom() - (v / self._max) * spark.height()
-                path.moveTo(px, py) if i == 0 else path.lineTo(px, py)
+            vals = moving_avg(list(self._hist), 5)
+            pts = [QPointF(spark.left() + (i / (n - 1)) * spark.width(),
+                           spark.bottom() - (v / self._max) * spark.height())
+                   for i, v in enumerate(vals)]
+            path = smooth_path(pts)
             sp = QPen(QColor(c["accent2"]), 1.6, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin)
             p.setPen(sp)
             p.drawPath(path)
@@ -92,16 +93,12 @@ class SpeedGraph(QWidget):
             p.drawLine(0, int(y), w, int(y))
         n = len(self._hist)
         if n >= 2:
-            line = QPainterPath()
-            fill = QPainterPath()
-            fill.moveTo(0, h)
-            for i, v in enumerate(self._hist):
-                x = w * i / (n - 1)
-                y = h - (v / self._max) * (h - 6) - 3
-                line.moveTo(x, y) if i == 0 else line.lineTo(x, y)
-                fill.lineTo(x, y)
-            fill.lineTo(w, h)
-            fill.closeSubpath()
+            vals = moving_avg(list(self._hist), 5)
+            pts = [QPointF(w * i / (n - 1), h - (v / self._max) * (h - 6) - 3)
+                   for i, v in enumerate(vals)]
+            line = smooth_path(pts)
+            fill = QPainterPath(line)
+            fill.lineTo(pts[-1].x(), h); fill.lineTo(pts[0].x(), h); fill.closeSubpath()
             fc = QColor(c["accent"])
             fc.setAlpha(40)
             p.fillPath(fill, fc)

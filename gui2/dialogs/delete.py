@@ -149,7 +149,7 @@ class DeleteDialog(QDialog):
         self.setStyleSheet(f"""
 #container{{
     background:{COLORS['surface2']};
-    border:1px solid rgba(255, 255, 255, 0.08);
+    border:1px solid {COLORS['border']};
     border-radius:16px;
 }}
 
