@@ -35,6 +35,32 @@ def _icon_for(t):
     return _CAT_ICON.get(utils.category_for(t.filename), ("folder", "#B5B5B5"))
 
 
+class ElideLabel(QLabel):
+    """A single-line label that elides its text with '…' to the width it's given,
+    so a long filename never forces the card wider than the list (which used to
+    push the pause/more buttons off-screen). Keeps the full text as a tooltip."""
+
+    def __init__(self, text="", parent=None):
+        super().__init__(parent)
+        self._full = text
+        self.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        self._elide()
+
+    def setText(self, text):
+        if text != self._full:
+            self._full = text
+            self.setToolTip(text)
+            self._elide()
+
+    def resizeEvent(self, e):
+        super().resizeEvent(e)
+        self._elide()
+
+    def _elide(self):
+        fm = self.fontMetrics()
+        super().setText(fm.elidedText(self._full, Qt.ElideRight, max(0, self.width())))
+
+
 class DownloadCardWidget(QFrame):
     action = Signal(str, str)            # (action, task_id): pause/resume/open/folder/more/details
     selectRequested = Signal(str, str)   # (task_id, mode): single/toggle/range
@@ -74,7 +100,7 @@ class DownloadCardWidget(QFrame):
 
         mid = QVBoxLayout(); mid.setSpacing(4)
         namerow = QHBoxLayout(); namerow.setSpacing(8)
-        self.name = QLabel(task.filename or "download")
+        self.name = ElideLabel(task.filename or "download")
         self.name.setStyleSheet(f"font-size: 14px; font-weight: 700; color: {COLORS['text']}; background: transparent;")
         self.pct = QLabel("")
         self.pct.setStyleSheet(f"font-size: 13px; font-weight: 700; color: {COLORS['muted']}; background: transparent;")
@@ -93,7 +119,7 @@ class DownloadCardWidget(QFrame):
         self.bar = QProgressBar(); self.bar.setTextVisible(False); self.bar.setRange(0, 100)
         mid.addWidget(self.bar)
 
-        self.sub = QLabel("")
+        self.sub = ElideLabel("")
         self.sub.setStyleSheet(f"font-size: 11px; color: {COLORS['muted']}; background: transparent;")
         mid.addWidget(self.sub)
         root.addLayout(mid, 1)
