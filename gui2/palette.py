@@ -38,6 +38,11 @@ COLORS = {
     "info":      "#38bdf8",
 }
 
+# ---- design tokens (use instead of scattered magic numbers) ----
+RADIUS_SM, RADIUS_MD, RADIUS_LG = 6, 9, 12          # corner rounding scale
+SPACE_XS, SPACE_SM, SPACE_MD, SPACE_LG, SPACE_XL = 2, 4, 8, 12, 16   # layout spacing
+DIALOG_MARGIN = (22, 20, 22, 18)                    # L, T, R, B — standard dialog padding
+
 
 def set_accent(key_or_hex):
     """Set the accent colour by ACCENTS key (e.g. 'green') or a raw hex."""

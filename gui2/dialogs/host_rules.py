@@ -11,7 +11,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt
 
 from gui2.palette import COLORS
-from gui2.brand import BrandLogo
+from gui2.dialogs.common import DialogHeader
 from gui.icons import themed_icon
 
 
@@ -24,10 +24,7 @@ class HostRulesDialog(QDialog):
         self.setStyleSheet(parent.styleSheet() if parent else "")
 
         v = QVBoxLayout(self); v.setContentsMargins(22, 20, 22, 18); v.setSpacing(14)
-        head = QHBoxLayout(); head.addWidget(BrandLogo(20))
-        title = QLabel("Per-host rules"); title.setObjectName("dlgTitle")
-        head.addWidget(title); head.addStretch()
-        v.addLayout(head)
+        v.addWidget(DialogHeader("Per-host rules"))
         sub = QLabel("Override the segment count or force yt-dlp for specific hosts.")
         sub.setStyleSheet(f"color:{COLORS['muted']};background:transparent;")
         v.addWidget(sub)

@@ -14,7 +14,7 @@ from PySide6.QtCore import Qt
 
 import history
 from gui2.palette import COLORS
-from gui2.brand import BrandLogo
+from gui2.dialogs.common import DialogHeader
 from gui.icons import themed_icon
 from gui.theme import human_size, humanize_age
 
@@ -31,11 +31,7 @@ class HistoryDialog(QDialog):
         v.setSpacing(14)
 
         # ---- header ----
-        head = QHBoxLayout()
-        head.addWidget(BrandLogo(20))
-        title = QLabel("Download History"); title.setObjectName("dlgTitle")
-        head.addWidget(title); head.addStretch()
-        v.addLayout(head)
+        v.addWidget(DialogHeader("Download History"))
 
         # ---- stat cards ----
         self.cards = QHBoxLayout(); self.cards.setSpacing(12)

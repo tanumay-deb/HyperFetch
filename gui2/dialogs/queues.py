@@ -7,7 +7,8 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Qt
 
-from gui2.palette import COLORS
+from gui2.palette import COLORS, DIALOG_MARGIN
+from gui2.dialogs.common import DialogHeader
 from gui.icons import themed_icon
 
 
@@ -20,12 +21,12 @@ class QueueManagerDialog(QDialog):
         self.setStyleSheet(parent.styleSheet() if parent else "")
 
         v = QVBoxLayout(self)
-        v.setContentsMargins(22, 20, 22, 18)
+        v.setContentsMargins(*DIALOG_MARGIN)
         v.setSpacing(14)
-        title = QLabel("Queue Manager"); title.setObjectName("dlgTitle")
+        v.addWidget(DialogHeader("Queue Manager"))
         sub = QLabel("Create queues and set how many downloads each runs at once.")
         sub.setStyleSheet(f"color:{COLORS['muted']};background:transparent;")
-        v.addWidget(title); v.addWidget(sub)
+        v.addWidget(sub)
 
         self._rows = QVBoxLayout(); self._rows.setSpacing(8)
         v.addLayout(self._rows)

@@ -14,8 +14,8 @@ from PySide6.QtWidgets import (
 from PySide6.QtGui import QTextCursor
 
 import utils
-from gui2.palette import COLORS
-from gui2.brand import BrandLogo
+from gui2.palette import COLORS, DIALOG_MARGIN
+from gui2.dialogs.common import DialogHeader
 from gui.icons import themed_icon
 
 
@@ -28,12 +28,10 @@ class ConsoleDialog(QDialog):
         self._path = os.path.join(utils.app_data_dir(), "hyperfetch.log")
         self._pos = 0
 
-        v = QVBoxLayout(self); v.setContentsMargins(22, 20, 22, 18); v.setSpacing(12)
+        v = QVBoxLayout(self); v.setContentsMargins(*DIALOG_MARGIN); v.setSpacing(12)
 
         head = QHBoxLayout()
-        head.addWidget(BrandLogo(20))
-        title = QLabel("Developer Console"); title.setObjectName("dlgTitle")
-        head.addWidget(title); head.addStretch()
+        head.addWidget(DialogHeader("Developer Console"), 1)
         self.verbose = QCheckBox("Verbose (debug)")
         self.verbose.setChecked(logging.getLogger("hyperfetch").level == logging.DEBUG)
         self.verbose.setToolTip("Record verbose DEBUG output for this session")

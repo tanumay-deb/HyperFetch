@@ -41,12 +41,8 @@ class NewDownloadDialog(QDialog):
         lay.setContentsMargins(22, 20, 22, 18)
         lay.setSpacing(14)
 
-        head = QHBoxLayout()
-        from gui2.brand import BrandLogo
-        ic = BrandLogo(20)
-        title = QLabel("New Download"); title.setObjectName("dlgTitle")
-        head.addWidget(ic); head.addWidget(title); head.addStretch()
-        lay.addLayout(head)
+        from gui2.dialogs.common import DialogHeader
+        lay.addWidget(DialogHeader("New Download"))
 
         # ---- tabs: URL / Torrent / Magnet ----
         self.tabs = QTabWidget()
