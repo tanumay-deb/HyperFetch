@@ -61,3 +61,28 @@ def test_combined_tokens_and_text():
 def test_unparseable_size_falls_back_to_text():
     # "sizefoo" isn't a valid size token -> treated as plain text (matches nothing)
     assert search.filter_tasks(TASKS, "size:huge") == []
+
+
+def test_ext_token():
+    assert names(search.filter_tasks(TASKS, "ext:iso")) == ["ubuntu-24.04.iso"]
+    assert names(search.filter_tasks(TASKS, "ext:mp4")) == ["movie.mp4"]
+    assert search.filter_tasks(TASKS, "ext:nope") == []
+
+
+def test_date_token():
+    import time
+    now = time.time()
+    recent = _mk("fresh.zip", 1000, T.PAUSED); recent.added = now - 3600          # 1h ago
+    old = _mk("ancient.zip", 1000, T.PAUSED); old.added = now - 20 * 86400         # 20 days ago
+    pool = [recent, old]
+    assert names(search.filter_tasks(pool, "date:today")) == ["fresh.zip"]
+    assert names(search.filter_tasks(pool, "date:7d")) == ["fresh.zip"]
+    assert names(search.filter_tasks(pool, "date:30d")) == ["ancient.zip", "fresh.zip"]
+    # bad date -> treated as text (matches nothing here)
+    assert search.filter_tasks(pool, "date:whenever") == []
+
+
+def test_combined_advanced():
+    import time
+    t = _mk("clip.mkv", 2_000_000_000, T.DOWNLOADING); t.added = time.time() - 1800
+    assert names(search.filter_tasks([t], "status:downloading ext:mkv date:today size:>1gb")) == ["clip.mkv"]

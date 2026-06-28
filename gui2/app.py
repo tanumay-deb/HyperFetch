@@ -164,7 +164,8 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, QW
         self.search = QLineEdit()
         self.search.setPlaceholderText("Search downloads…")
         self.search.setToolTip("Search by name/URL, or filter with tokens:\n"
-                               "status:downloading · category:video · size:>100mb")
+                               "status:downloading · category:video · size:>100mb\n"
+                               "date:today · date:7d · ext:zip")
         self.search.setClearButtonEnabled(True)
         self.search.textChanged.connect(self._on_search)
         top.addWidget(self.search, 1)

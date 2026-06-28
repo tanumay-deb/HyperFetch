@@ -6,10 +6,14 @@ add structured filters, AND-combined with the words and each other:
     status:downloading   status:paused   status:failed   status:active …
     category:video       cat:music
     size:>100mb          size:<1gb       size:>=500m
+    date:today           date:yesterday  date:7d   date:week   date:30d
+    ext:zip              ext:mp4
 
 `filter_tasks(tasks, query)` returns the matching tasks; pure + unit-tested.
 """
 import re
+import time
+import datetime
 
 import task as T
 import utils
@@ -59,8 +63,29 @@ _OPS = {
 }
 
 
+def _parse_date(expr):
+    """A predicate over a task's `added` epoch, or None. Supports today/yesterday,
+    week/month, and N-day / N-hour windows (e.g. 7d, 12h)."""
+    e = (expr or "").strip().lower()
+    now = time.time()
+    if e in ("today", "yesterday"):
+        d = datetime.date.today() - datetime.timedelta(days=1 if e == "yesterday" else 0)
+        start = time.mktime(d.timetuple())
+        return lambda a: start <= a < start + 86400
+    if e in ("week", "7d"):
+        return lambda a: a >= now - 7 * 86400
+    if e in ("month", "30d"):
+        return lambda a: a >= now - 30 * 86400
+    m = re.match(r"^(\d+)([dh])$", e)
+    if m:
+        secs = int(m.group(1)) * (86400 if m.group(2) == "d" else 3600)
+        return lambda a: a >= now - secs
+    return None
+
+
 def parse(query):
-    """Split a query into (words, filters). filters: {status, category, size}."""
+    """Split a query into (words, filters). filters keys: status, category, size,
+    date (predicate), ext."""
     words, filters = [], {}
     for tok in (query or "").split():
         low = tok.lower()
@@ -68,6 +93,14 @@ def parse(query):
             filters["status"] = low[7:]
         elif low.startswith("category:") or low.startswith("cat:"):
             filters["category"] = low.split(":", 1)[1]
+        elif low.startswith("ext:"):
+            filters["ext"] = low[4:].lstrip(".")
+        elif low.startswith("date:"):
+            dp = _parse_date(low[5:])
+            if dp:
+                filters["date"] = dp
+            else:
+                words.append(tok)            # unrecognized date -> plain word
         elif low.startswith("size:") or low.startswith("size"):
             sp = _parse_size(low.split(":", 1)[1] if ":" in low else low[4:])
             if sp:
@@ -96,6 +129,12 @@ def _matches(t, words, filters):
         op, thresh = size
         if not _OPS[op](float(getattr(t, "total_size", 0) or 0), thresh):
             return False
+    ext = filters.get("ext")
+    if ext and not (t.filename or "").lower().endswith("." + ext):
+        return False
+    date_pred = filters.get("date")
+    if date_pred is not None and not date_pred(float(getattr(t, "added", 0) or 0)):
+        return False
     return True
 
 

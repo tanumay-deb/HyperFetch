@@ -30,7 +30,7 @@ Simple running list. Newest first. Keep entries to one line.
 ## Next (UX & polish — planned)
 - Watch Folder: auto-import downloads / `.torrent` files dropped into a monitored folder (IDM parity). [med]
 - Empty state follow-ups: Recent URLs list + Watch-Folder shortcut. [low]
-- Search follow-up: add `date:` token + remember recent searches. [low]
+- Search follow-up: remember recent searches (dropdown). [low]  _(date: + ext: tokens shipped)_
 - Dialog polish: unified `DialogHeader` + design tokens (radius/spacing/margins) in palette; consolidate inline QSS. [med — from code audit]
 - Module splits (from code audit): `settings.py` page-builder mixin; shared `finalize_download()` for downloader+hls. [med]
 - Card density polish: cards already show icon · file · % · progress · speed · ETA · status — tighten layout for faster at-a-glance scan. [low-med refinement]
