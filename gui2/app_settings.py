@@ -33,6 +33,7 @@ class SettingsMixin:
         utils.VERIFY_TLS = self.verify_tls
         self.theme = s.get("theme", "dark")
         apply_theme(self.theme)                       # for the shared PropertiesDialog
+        palette.set_theme(self.theme)                 # v2 palette (dark / light / system)
         palette.set_accent(s.get("accent", "purple"))  # v2 widgets
         self.pair_token = utils.get_or_create_token()
         self.queues_config = s.get("queues", [{"name": "Main", "max_concurrent": self.max_concurrent}])
@@ -76,11 +77,17 @@ class SettingsMixin:
             except ValueError:
                 bps = 0
         self.global_speed_limit = bps
+        theme_changed = (v["theme"] != self.theme)
         self.theme = v["theme"]
         import downloader
         if hasattr(downloader._GLOBAL_CONNS, "set_limit"):
             downloader._GLOBAL_CONNS.set_limit(self.max_concurrent * self.segments)
         apply_theme(self.theme)
+        # A light/dark switch can't be applied live (widgets bake colours at build
+        # time) — persist it and prompt a restart for a clean re-skin.
+        if theme_changed and hasattr(self, "_toasts"):
+            self._toasts.show("info", "Theme change",
+                              "Restart HyperFetch to apply the new theme.")
         if palette.ACCENTS.get(v["accent"]) != palette.COLORS["accent"]:
             palette.set_accent(v["accent"])
             self.setStyleSheet(palette.qss())        # live accent re-skin (QSS widgets)

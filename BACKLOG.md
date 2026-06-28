@@ -3,6 +3,7 @@
 Simple running list. Newest first. Keep entries to one line.
 
 ## Done
+- _(uncommitted)_ — Light theme: `palette.set_theme(dark/light/system)` swaps the active COLORS (light palette added); applied at startup before the UI builds, so it's consistent. Settings → Appearance Light/System now work (toast prompts a restart on change, since widgets bake colours at construction). System detects Windows light/dark.
 - _(uncommitted)_ — Card density + animations: tighter card layout (smaller icon, less padding → more rows on screen); new cards fade in; toasts slide-in + fade (and fade out on dismiss).
 - _(uncommitted)_ — Module splits: shared `utils.finalize_download()` (cross-volume atomic move) replaces the duplicated finalize in downloader.py + hls.py; `settings.py` page builders extracted to `PageBuilderMixin` in settings_pages.py (568→225 lines). Dialog polish: shared `DialogHeader` + palette design tokens.
 - _(uncommitted)_ — Advanced search: `date:` / `ext:` tokens. Per-host rules (Settings → Network → Per-host rules): per host, override the segment count and/or force the yt-dlp engine; matches exact host or any subdomain. `utils.host_rule()` consulted in `Downloader.__init__` (segments, capped by Max Connections) and the engine delegation (ytdlp). Editor dialog + unit tests.
@@ -40,7 +41,6 @@ Simple running list. Newest first. Keep entries to one line.
 - _(none open)_ — verified in v2: responsive layout holds at min (940×560) and large (1500×900); errored row shows the message on the card + in the drawer Logs; Delete works on a selection; Complete popup has working buttons.
 
 ## Ideas
-- Light theme (the Settings theme selector is dark-only today — Light/System are no-ops in gui2; needs a light palette + qss() theming).
 - DASH (`.mpd`) native support (or lean on yt-dlp).
 - Per-thread SOCKS5 proxies (beat per-IP CDN rate limits).
 - Inline-on-page quality picker in the extension (near the video, not the panel).

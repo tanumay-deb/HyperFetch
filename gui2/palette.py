@@ -17,9 +17,10 @@ ACCENTS = {
     "pink":   "#ec4899",
 }
 
-# Mutable palette. set_accent() rebinds ACCENT/ACCENT_2; everything else fixed
-# (v2 ships dark-first; a light map can be added the same way later).
-COLORS = {
+# Two base palettes; set_theme() swaps the active one (accent kept). COLORS is the
+# live dict everything reads — qss() and inline styles. Theme is applied at
+# startup before the UI is built, so every read picks up the right palette.
+DARK = {
     "bg":        "#0a0e17",   # app background (deep navy)
     "surface":   "#11151f",   # sidebar / panels
     "surface2":  "#171c28",   # cards, inputs
@@ -37,11 +38,64 @@ COLORS = {
     "error":     "#ef4444",
     "info":      "#38bdf8",
 }
+LIGHT = {
+    "bg":        "#f4f6fb",   # app background (soft gray-blue)
+    "surface":   "#ffffff",   # sidebar / panels
+    "surface2":  "#eef1f7",   # cards, inputs
+    "card":      "#ffffff",   # download card
+    "card_hover":"#f1f4fa",
+    "border":    "#e4e8f1",
+    "border2":   "#d3d9e6",
+    "text":      "#0f1729",
+    "muted":     "#5b6678",
+    "faint":     "#98a2b3",
+    "accent":    "#7c5cff",
+    "accent2":   "#9277ff",
+    "success":   "#16a34a",
+    "warning":   "#d97706",
+    "error":     "#dc2626",
+    "info":      "#0284c7",
+}
+COLORS = dict(DARK)
+_THEME = "dark"
 
 # ---- design tokens (use instead of scattered magic numbers) ----
 RADIUS_SM, RADIUS_MD, RADIUS_LG = 6, 9, 12          # corner rounding scale
 SPACE_XS, SPACE_SM, SPACE_MD, SPACE_LG, SPACE_XL = 2, 4, 8, 12, 16   # layout spacing
 DIALOG_MARGIN = (22, 20, 22, 18)                    # L, T, R, B — standard dialog padding
+
+
+def _system_is_light():
+    """Best-effort Windows light/dark detection for the 'System' theme."""
+    try:
+        import winreg
+        k = winreg.OpenKey(winreg.HKEY_CURRENT_USER,
+                           r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize")
+        val, _ = winreg.QueryValueEx(k, "AppsUseLightTheme")
+        return bool(val)
+    except Exception:
+        return False
+
+
+def set_theme(name):
+    """Swap the active palette to 'dark' / 'light' (or resolve 'system'). Keeps
+    the current accent. Call BEFORE building the UI; a live switch needs a restart
+    because widgets bake colours into inline styles at construction."""
+    global _THEME
+    if name == "system":
+        name = "light" if _system_is_light() else "dark"
+    _THEME = "light" if name == "light" else "dark"
+    base = LIGHT if _THEME == "light" else DARK
+    acc, acc2 = COLORS.get("accent"), COLORS.get("accent2")
+    COLORS.clear()
+    COLORS.update(base)
+    if acc:
+        COLORS["accent"], COLORS["accent2"] = acc, acc2
+    return _THEME
+
+
+def active_theme():
+    return _THEME
 
 
 def set_accent(key_or_hex):
