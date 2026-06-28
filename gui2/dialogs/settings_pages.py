@@ -109,6 +109,9 @@ class PageBuilderMixin:
         self._row(g, "Default Queue", "Where new downloads land", self.def_queue)
         self.auto_start = self._toggle(ex.get("auto_start", True))
         self._row(g, "Auto start downloads", "Start downloads immediately after adding", self.auto_start)
+        self.categorize = self._toggle(ex.get("categorize", True))
+        self._row(g, "Organize into category folders",
+                  "Auto-sort into Video / Music / Images / … subfolders by file type", self.categorize)
         self.speed_limit = self._combo(["Unlimited", "1 Mb/s", "5 Mb/s", "10 Mb/s"], ex.get("speed_limit"))
         self._row(g, "Download Speed Limit", "Global download speed limit", self.speed_limit)
         self.throttle_en = self._toggle(ex.get("throttle_enabled", False))

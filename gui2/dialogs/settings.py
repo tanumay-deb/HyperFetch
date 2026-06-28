@@ -199,6 +199,7 @@ class SettingsDialogV2(PageBuilderMixin, QDialog):
             "close_behavior": self.close_beh.currentText(),
             "default_queue": self.def_queue.currentText(),
             "auto_start": self.auto_start.isChecked(),
+            "categorize": self.categorize.isChecked(),
             "speed_limit": self.speed_limit.currentText(),
             "throttle_enabled": self.throttle_en.isChecked(),
             "throttle_start": self.thr_start.time().toString("HH:mm"),
