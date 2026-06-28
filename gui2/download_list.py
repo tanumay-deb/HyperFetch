@@ -152,7 +152,8 @@ class DownloadList(QScrollArea):
                 card.chk.blockSignals(False)
 
     # ---- data ----
-    def set_tasks(self, tasks, speeds):
+    def set_tasks(self, tasks, speeds, histories=None):
+        histories = histories or {}
         buckets = []
         for title, statuses in _GROUPS:
             members = [t for t in tasks if t.status in statuses]
@@ -168,7 +169,7 @@ class DownloadList(QScrollArea):
         for t in tasks:
             card = self._cards.get(t.id)
             if card:
-                card.update_task(t, speeds.get(t.id, 0.0))
+                card.update_task(t, speeds.get(t.id, 0.0), histories.get(t.id))
 
         # prune selection for vanished tasks
         gone = self._selected - set(self._cards)

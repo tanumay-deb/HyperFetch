@@ -19,7 +19,8 @@ from PySide6.QtWidgets import (
     QLabel, QSystemTrayIcon
 )
 from PySide6.QtCore import (
-    Qt, QTimer, QPropertyAnimation, QParallelAnimationGroup, QEasingCurve, QByteArray, QEvent
+    Qt, QTimer, QPropertyAnimation, QParallelAnimationGroup, QEasingCurve, QByteArray, QEvent,
+    QPoint
 )
 from PySide6.QtGui import QIcon, QKeySequence, QShortcut, QAction, QFont
 
@@ -65,6 +66,7 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, QW
         self.queue = QueueManager(queues=self.queues_config, segments=self.segments)
         self.pending = deque()
         self._speed = {}              # id -> (last_dl, last_t, bps)
+        self._spark = {}              # id -> deque(bps) for the live card sparkline
         self._filter = "All"
         self._search = ""
         self._completed_seen = None
@@ -231,6 +233,19 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, QW
         self.drawer.action.connect(self._on_card_action)
         self._toasts = ToastManager(self)
 
+        # contextual bulk-action bar — a FLOATING overlay over the bottom of the
+        # list (child of the window, not in the layout), so showing it never
+        # reflows the rows: the item you clicked stays put.
+        from gui2.action_bar import ActionBar
+        self.action_bar = ActionBar(self)
+        self.action_bar.hide()
+        self.action_bar.pauseClicked.connect(lambda: self._bar_bulk(self.queue.pause_task))
+        self.action_bar.resumeClicked.connect(lambda: self._bar_bulk(self.queue.resume_task))
+        self.action_bar.forceClicked.connect(lambda: self._bar_bulk(self.queue.force_start))
+        self.action_bar.removeClicked.connect(self._del_selected)
+        self.action_bar.clearClicked.connect(lambda: self.list.clear_selection())
+        self.action_bar.moveClicked.connect(self._bar_move_menu)
+
         # drag-drop overlay (shown while a link hovers over the window)
         self._drag_overlay = QLabel("Drop a link to add", self)
         self._drag_overlay.setAlignment(Qt.AlignCenter)
@@ -303,11 +318,14 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, QW
             last_dl, last_t, bps = self._speed.get(t.id, (t.downloaded, now, 0.0))
             if t.status == T.DOWNLOADING and now > last_t:
                 inst = (t.downloaded - last_dl) / (now - last_t)
-                bps = 0.6 * bps + 0.4 * max(0.0, inst) if bps else max(0.0, inst)
+                bps = 0.7 * bps + 0.3 * max(0.0, inst) if bps else max(0.0, inst)
             elif t.status != T.DOWNLOADING:
                 bps = 0.0
+                self._spark.pop(t.id, None)        # reset trend when not running
             self._speed[t.id] = (t.downloaded, now, bps)
             if t.status == T.DOWNLOADING:
+                hist = self._spark.setdefault(t.id, deque(maxlen=40))
+                hist.append(bps)
                 total_bps += bps
                 if _torrent.is_torrent_task(t.url, t.filename):
                     conns += getattr(t, "tor_conns", 0)
@@ -315,9 +333,11 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, QW
                     conns += sum(1 for s in t.segments if not s.complete)
 
         speeds = {tid: v[2] for tid, v in self._speed.items()}
-        self.list.set_tasks(self._visible_tasks(), speeds)
+        histories = {tid: list(dq) for tid, dq in self._spark.items()}
+        self.list.set_tasks(self._visible_tasks(), speeds, histories)
         self.sidebar.set_counts(self._counts())
         self.sidebar.set_stats(total_bps, conns)
+        self._update_live_title(total_bps)
         if getattr(self, "_active_settings_dlg", None):
             self._active_settings_dlg.update_live(total_bps, conns)
         if self.drawer.isVisible() and self.drawer._tid:
@@ -327,6 +347,61 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, QW
             else:
                 self.drawer.close_drawer()
         self._check_completions()
+
+    def _open_command_palette(self):
+        from gui2.command_palette import CommandPalette
+        sel = self._sel_tasks if hasattr(self, "_sel_tasks") else (lambda: [])
+
+        def pause_all():
+            for t in self.queue.tasks:
+                if t.status == T.DOWNLOADING:
+                    self.queue.pause_task(t)
+            self._save_state(); self.refresh()
+
+        def resume_all():
+            for t in self.queue.tasks:
+                if t.status in (T.PAUSED, T.ERROR):
+                    self.queue.resume_task(t)
+            self._save_state(); self.refresh()
+
+        def clear_completed():
+            for t in [x for x in self.queue.tasks if x.status == T.COMPLETED]:
+                self.queue.remove_task(t)
+            self._save_state(); self.refresh()
+
+        actions = [
+            ("New Download", "add url link", "plus", self._new_download),
+            ("Pause all", "stop halt", "pause", pause_all),
+            ("Resume all", "start continue", "play", resume_all),
+            ("Clear completed", "remove finished done", "trash", clear_completed),
+            ("Open Settings", "preferences config", "settings", self._open_settings),
+            ("Manage Queues", "queue concurrency", "queue", self._open_queues),
+            ("Download History", "stats past completed", "history", self._open_history),
+            ("Filter: All", "show everything", "folder", lambda: self._set_filter("All")),
+            ("Filter: Active", "downloading", "download", lambda: self._set_filter("Active")),
+            ("Filter: Paused", "", "pause", lambda: self._set_filter("Paused")),
+            ("Filter: Completed", "done finished", "check", lambda: self._set_filter("Completed")),
+            ("Filter: Failed", "error", "alert", lambda: self._set_filter("Failed")),
+        ]
+        dlg = CommandPalette(self, actions)
+        # center near the top of the window
+        g = self.geometry()
+        dlg.move(g.center().x() - dlg.width() // 2, g.top() + 90)
+        dlg.exec()
+
+    def _update_live_title(self, total_bps):
+        """Surface aggregate speed + active count in the window title and tray
+        tooltip, so progress is visible even when the window is in the background."""
+        active = sum(1 for t in self.queue.tasks if t.status == T.DOWNLOADING)
+        if active:
+            title = f"↓ {human_speed(total_bps)}  ·  {active} active — HyperFetch"
+        else:
+            title = "HyperFetch"
+        if title != getattr(self, "_title_cache", None):
+            self.setWindowTitle(title)
+            self._title_cache = title
+        if getattr(self, "tray", None):
+            self.tray.setToolTip(title)
 
     def _counts(self):
         tasks = self.queue.tasks
@@ -444,14 +519,22 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, QW
                 QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
             if ans not in (QMessageBox.Yes, QMessageBox.StandardButton.Yes):
                 return
-        folder = v["save_dir"] if os.path.isdir(v["save_dir"]) else self.save_dir
-        if v["category"] != "Auto":
-            folder = os.path.join(folder, v["category"])
+        base = v["save_dir"] if os.path.isdir(v["save_dir"]) else self.save_dir
+        filename = utils.filename_from_url(v["url"], v["filename"] or suggested)
+        is_tor = _torrent.is_torrent_task(v["url"], filename)
+        folder = base
+        if v["category"] == "Auto":
+            # auto-sort by file type into Downloads/<Category> when enabled
+            # (skipped for torrents/magnets, which create their own folder)
+            if self._extras.get("categorize", True) and not is_tor:
+                folder = utils.get_category_dir(base, filename)
+        else:
+            # explicit category pick always wins
+            folder = os.path.join(base, v["category"])
             try:
                 os.makedirs(folder, exist_ok=True)
             except OSError:
-                folder = self.save_dir
-        filename = utils.filename_from_url(v["url"], v["filename"] or suggested)
+                folder = base
         save_path = utils.unique_path(folder, filename)
         t = T.DownloadTask(v["url"], save_path, filename=filename,
                            headers=v["headers"], priority=v["priority"],
@@ -483,12 +566,31 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, QW
             return
         self._apply_settings(dlg.values())
 
+    def _position_action_bar(self):
+        """Float the bulk-action bar near the bottom-centre of the list, clear of
+        the details drawer when it's open. Pure overlay — never touches list layout."""
+        bar = getattr(self, "action_bar", None)
+        if not bar:
+            return
+        bh = bar.sizeHint().height()
+        tl = self.list.mapTo(self, QPoint(0, 0))
+        lw, lh = self.list.width(), self.list.height()
+        right_inset = self.drawer.width() if (hasattr(self, "drawer") and self.drawer.isVisible()) else 0
+        margin = 16
+        avail = lw - right_inset - 2 * margin
+        bw = max(360, min(720, avail))
+        x = tl.x() + margin + max(0, (avail - bw) // 2)
+        y = tl.y() + lh - bh - margin
+        bar.setGeometry(x, y, bw, bh)
+
     def resizeEvent(self, e):
         super().resizeEvent(e)
         if hasattr(self, "drawer"):
             self.drawer.reposition()
         if hasattr(self, "_toasts"):
             self._toasts.reposition()
+        if getattr(self, "action_bar", None) and self.action_bar.isVisible():
+            self._position_action_bar()
         if getattr(self, "_drag_overlay", None) and self._drag_overlay.isVisible():
             self._drag_overlay.setGeometry(self.rect().adjusted(40, 40, -40, -40))
 

@@ -42,6 +42,7 @@ class ActionsMixin:
         elif action == "details":
             self.list.set_selection({t.id})
             self.drawer.open_for(t)
+            self._position_action_bar()      # re-dodge now that the drawer is visible
             return
         elif action == "more":
             self._card_menu(t)
@@ -143,11 +144,34 @@ class ActionsMixin:
         m.exec(self.cursor().pos())
 
     def _on_selection_changed(self, ids):
+        # contextual bulk-action bar: visible only while something is selected
+        bar = getattr(self, "action_bar", None)
+        if bar is not None:
+            if ids:
+                bar.set_count(len(ids))
+                self._position_action_bar()
+                bar.show(); bar.raise_()
+            else:
+                bar.hide()
         # when the details drawer is open, selecting another single card retargets it
         if self.drawer.isVisible() and len(ids) == 1:
             t = self.queue.get_task(next(iter(ids)))
             if t:
                 self.drawer.retarget(t)
+
+    def _bar_bulk(self, fn):
+        ts = [x for x in (self.queue.get_task(i) for i in self.list.selected_ids()) if x]
+        if ts:
+            self._bulk(ts, fn)
+
+    def _bar_move_menu(self):
+        ts = [x for x in (self.queue.get_task(i) for i in self.list.selected_ids()) if x]
+        if not ts or len(self.queue.queues) <= 1:
+            return
+        m = self._menu()
+        for q in self.queue.queues.values():
+            m.addAction(q.name, lambda n=q.name: self._bulk(ts, lambda x: self.queue.move_to_queue(x, n)))
+        m.exec(self.action_bar.move_btn.mapToGlobal(self.action_bar.move_btn.rect().bottomLeft()))
 
     def _on_blank_clicked(self):
         # left-click on empty list space clears the selection and closes the drawer

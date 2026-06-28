@@ -24,6 +24,10 @@ class ShortcutsMixin:
         sc_all.setContext(Qt.WidgetWithChildrenShortcut)
         sc_all.activated.connect(self._select_all_cards)
 
+        # command palette — application-wide so it opens from anywhere
+        sc_cmd = QShortcut(QKeySequence("Ctrl+K"), self)
+        sc_cmd.activated.connect(self._open_command_palette)
+
     def _select_all_cards(self):
         if not hasattr(self, "list") or not hasattr(self.list, "_cards"):
             return

@@ -5,9 +5,15 @@ removes the whole class of v1 paint-delegate bugs (hand-computed rects, overflow
 collapsed-sidebar mess, fragile hit-testing). Tens of rows, so cost is irrelevant.
 """
 from PySide6.QtWidgets import (
-    QFrame, QHBoxLayout, QVBoxLayout, QLabel, QPushButton, QProgressBar, QSizePolicy, QCheckBox
+    QFrame, QHBoxLayout, QVBoxLayout, QLabel, QPushButton, QProgressBar, QSizePolicy,
+    QCheckBox, QWidget
 )
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, Signal, QMimeData, QUrl, QPointF
+from PySide6.QtGui import (
+    QColor, QPainter, QPen, QPainterPath, QLinearGradient, QDrag
+)
+
+import os
 
 import task as T
 import utils
@@ -15,6 +21,7 @@ import torrent as _torrent
 from gui.theme import human_size, human_speed, fmt_eta, humanize_age
 from gui.icons import themed_icon
 from gui2.palette import COLORS
+from gui2.graphing import moving_avg, smooth_path
 
 _CAT_ICON = {
     "Video": ("video", "#FF80AB"), "Music": ("music", "#FF8A80"), "Compressed": ("archive", "#B388FF"),
@@ -61,6 +68,46 @@ class ElideLabel(QLabel):
         super().setText(fm.elidedText(self._full, Qt.ElideRight, max(0, self.width())))
 
 
+class Sparkline(QWidget):
+    """Tiny live speed graph drawn on a downloading card — a filled area + line
+    of the last ~40 speed samples, scaled to its own peak. Makes a download feel
+    alive at a glance (steady = filled, stalling = collapsing)."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setFixedSize(66, 22)
+        self._data = []
+        self.setAttribute(Qt.WA_TransparentForMouseEvents)   # never eat card clicks/drag
+
+    def set_data(self, data):
+        self._data = [float(x) for x in data][-40:]
+        self.update()
+
+    def paintEvent(self, _e):
+        if len(self._data) < 2:
+            return
+        w, h = self.width(), self.height()
+        vals = moving_avg(self._data, 5)
+        peak = max(vals) or 1.0
+        n = len(vals)
+        step = w / (n - 1)
+        pts = [QPointF(i * step, h - 2 - (v / peak) * (h - 4)) for i, v in enumerate(vals)]
+
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        line = smooth_path(pts)
+        area = QPainterPath(line)
+        area.lineTo(pts[-1].x(), h); area.lineTo(0, h); area.closeSubpath()
+
+        accent = QColor(COLORS["accent"])
+        grad = QLinearGradient(0, 0, 0, h)
+        c0 = QColor(accent); c0.setAlpha(90); c1 = QColor(accent); c1.setAlpha(0)
+        grad.setColorAt(0, c0); grad.setColorAt(1, c1)
+        p.fillPath(area, grad)
+        p.setPen(QPen(accent, 1.6)); p.drawPath(line)
+        p.end()
+
+
 class DownloadCardWidget(QFrame):
     action = Signal(str, str)            # (action, task_id): pause/resume/open/folder/more/details
     selectRequested = Signal(str, str)   # (task_id, mode): single/toggle/range
@@ -70,6 +117,9 @@ class DownloadCardWidget(QFrame):
         self.setObjectName("card")
         self.task_id = task.id
         self._selected = False
+        self._press_pos = None
+        self._drag_url = task.url or ""
+        self._drag_file = ""
         self.setFocusPolicy(Qt.StrongFocus)      # so list-scoped shortcuts work
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
 
@@ -111,8 +161,11 @@ class DownloadCardWidget(QFrame):
             f"font-size: 10px; font-weight: 700; color: {COLORS['accent2']}; "
             f"background: {COLORS['surface2']}; border-radius: 6px; padding: 1px 7px;")
         self.qbadge.setVisible(False)
+        self.spark = Sparkline()
+        self.spark.setVisible(False)
         namerow.addWidget(self.name, 1)
         namerow.addWidget(self.qbadge, 0)
+        namerow.addWidget(self.spark, 0, Qt.AlignVCenter)
         namerow.addWidget(self.pct, 0, Qt.AlignRight)
         mid.addLayout(namerow)
 
@@ -146,6 +199,7 @@ class DownloadCardWidget(QFrame):
     def mousePressEvent(self, e):
         if e.button() == Qt.LeftButton:
             self.setFocus()
+            self._press_pos = e.position().toPoint()
             mods = e.modifiers()
             mode = ("toggle" if mods & Qt.ControlModifier
                     else "range" if mods & Qt.ShiftModifier else "single")
@@ -153,6 +207,28 @@ class DownloadCardWidget(QFrame):
             e.accept()            # consume so a card click isn't seen as a blank-space click
             return
         super().mousePressEvent(e)
+
+    def mouseMoveEvent(self, e):
+        # past a small threshold with the button held -> drag the download OUT:
+        # a finished file drops into Explorer/apps; any card drops its URL as text.
+        if not (e.buttons() & Qt.LeftButton) or self._press_pos is None:
+            return super().mouseMoveEvent(e)
+        if (e.position().toPoint() - self._press_pos).manhattanLength() < 12:
+            return
+        mime = QMimeData()
+        if self._drag_url:
+            mime.setText(self._drag_url)
+        urls = []
+        if self._drag_file:
+            urls.append(QUrl.fromLocalFile(self._drag_file))
+        if urls:
+            mime.setUrls(urls)
+        if not mime.hasText() and not mime.hasUrls():
+            return
+        drag = QDrag(self); drag.setMimeData(mime)
+        drag.setPixmap(self.grab().scaledToWidth(220, Qt.SmoothTransformation))
+        self._press_pos = None
+        drag.exec(Qt.CopyAction)
 
     def mouseDoubleClickEvent(self, _e):
         self.action.emit("details", self.task_id)
@@ -180,8 +256,12 @@ class DownloadCardWidget(QFrame):
             f"#card {{ border: 1px solid {COLORS['accent']}; background: {COLORS['card_hover']}; }}"
             if on else "")
 
-    def update_task(self, t, bps):
+    def update_task(self, t, bps, history=None):
         self.name.setText(t.filename or "download")
+        self._drag_url = t.url or ""
+        done0 = t.status == T.COMPLETED
+        sp = getattr(t, "save_path", "") or ""
+        self._drag_file = sp if (done0 and sp and os.path.exists(sp)) else ""
         qn = getattr(t, "queue_name", "Main") or "Main"
         self.qbadge.setText(qn)
         self.qbadge.setVisible(qn != "Main")
@@ -223,6 +303,12 @@ class DownloadCardWidget(QFrame):
             else:
                 parts.append(str(t.status))
             self.sub.setText("  -  ".join(parts))
+
+        # live speed sparkline — only while actively downloading
+        if t.status == T.DOWNLOADING and history and len(history) >= 2:
+            self.spark.set_data(history); self.spark.setVisible(True)
+        else:
+            self.spark.setVisible(False)
 
         if t.status == T.DOWNLOADING:
             self._primary_action = "pause"
