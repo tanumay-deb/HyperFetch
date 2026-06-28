@@ -22,7 +22,7 @@ import task as T
 import utils
 
 PORT = 5000
-log = logging.getLogger("hyperfetch")
+log = logging.getLogger("hyperfetch.server")
 
 
 def create_app(queue, save_dir, pending=None, token=None):

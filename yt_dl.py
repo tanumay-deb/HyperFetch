@@ -7,8 +7,11 @@ raises to abort). yt-dlp is imported lazily (heavy dependency) — it's declared
 PyInstaller in HyperFetch.spec for the frozen build.
 """
 import os
+import logging
 
 import task as T
+
+log = logging.getLogger("hyperfetch.ytdlp")
 
 # media-page hosts where yt-dlp is the right engine (not a direct file URL)
 _SITES = (
@@ -45,6 +48,7 @@ class YtDlpDownloader:
         self.t.status = T.DOWNLOADING
         self.t.error = ""
         self.t.supports_range = False
+        log.info("yt-dlp start: %s", self.t.url)
         try:
             import yt_dlp
         except ImportError:
@@ -122,11 +126,13 @@ class YtDlpDownloader:
                 except OSError:
                     pass
             self.t.status = T.COMPLETED
+            log.info("yt-dlp done: %s", self.t.filename)
         except _Abort:
             self.t.status = T.CANCELLED if self.t.cancel_requested else T.PAUSED
         except Exception as e:
             self.t.status = T.ERROR
             self.t.error = "yt-dlp: " + str(e)[:200]
+            log.error("yt-dlp failed: %s — %s", self.t.url, str(e)[:200])
 
     @staticmethod
     def _newest(out_dir, pre_existing=None):

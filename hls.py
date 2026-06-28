@@ -25,7 +25,7 @@ import utils
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-log = logging.getLogger("hyperfetch")
+log = logging.getLogger("hyperfetch.hls")
 
 HEADERS = utils.DEFAULT_HEADERS
 TIMEOUT = 20

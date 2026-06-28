@@ -7,8 +7,11 @@ GUI (polling on a timer) reflects live progress.
 import os
 import time
 import shutil
+import logging
 import tempfile
 import threading
+
+log = logging.getLogger("hyperfetch.downloader")
 
 class ResizableSemaphore:
     def __init__(self, value):
@@ -324,16 +327,24 @@ class Downloader:
                     if not self.t.cancel_requested:
                         self.t.status = T.ERROR
                         self.t.error = "HTTP 403 Forbidden - URL expired"
+                        log.warning("403 (URL expired) seg %d: %s", seg.index, self.t.filename)
                     return
                 attempts += 1
                 if attempts > MAX_RETRIES:
                     if not self.t.cancel_requested:
                         self.t.status = T.ERROR
                         self.t.error = str(e)
+                        log.error("seg %d of %s failed after %d retries: %s",
+                                  seg.index, self.t.filename, MAX_RETRIES, e)
                     return
                 resp = getattr(e, "response", None)
                 if resp is not None and resp.status_code == 429:
                     self._throttle_conns()
+                    log.warning("429 rate-limited: %s — halved to %d connections",
+                                self.t.filename, self._max_conns)
+                else:
+                    log.debug("seg %d retry %d/%d: %s — %s",
+                              seg.index, attempts, MAX_RETRIES, self.t.filename, e)
                 retry_exc = e
             except OSError as e:
                 # disk full / file locked: not retryable, surface a useful
@@ -437,6 +448,9 @@ class Downloader:
         self._max_conns = max(1, len(self.t.segments))
 
         self.t.recompute_downloaded()
+        log.info("HTTP %s: %d segment(s), %d bytes, range=%s",
+                 self.t.filename, len(self.t.segments), self.t.total_size,
+                 self.t.supports_range)
 
         threads = []
         for i, seg in enumerate(self.t.segments):

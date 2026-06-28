@@ -267,10 +267,19 @@ global_limiter = RateLimiter()
 
 
 # ----------------------------------------------------------------- debug logging
+def get_logger(engine):
+    """A per-engine child logger ('hyperfetch.<engine>'). Its records inherit the
+    'hyperfetch' handler/level set by setup_logging, and the engine name shows up
+    in each line — so a log mixes downloader/hls/queue/server lines legibly."""
+    return logging.getLogger("hyperfetch." + engine)
+
+
 def setup_logging(debug=False):
-    """Configure the 'hyperfetch' logger. When debug is on, write a detailed log
-    to %APPDATA%\\HyperFetch\\hyperfetch.log; when off, stay silent. Idempotent —
-    call on startup and whenever the Settings toggle changes."""
+    """Configure the 'hyperfetch' logger tree. Warnings/errors are always written
+    to %APPDATA%\\HyperFetch\\hyperfetch.log (created lazily, so a clean run leaves
+    no file); the Debug-logging toggle additionally records verbose DEBUG output.
+    Per-engine context comes from child loggers (hyperfetch.downloader, .hls,
+    .queue, .server, …). Idempotent — safe to call on startup and on toggle."""
     logger = logging.getLogger("hyperfetch")
     for h in list(logger.handlers):
         logger.removeHandler(h)
@@ -279,17 +288,14 @@ def setup_logging(debug=False):
         except Exception:
             pass
     logger.propagate = False
-    if debug:
-        logger.setLevel(logging.DEBUG)
-        try:
-            fh = logging.FileHandler(os.path.join(app_data_dir(), "hyperfetch.log"),
-                                     encoding="utf-8")
-            fh.setFormatter(logging.Formatter(
-                "%(asctime)s %(levelname)s [%(name)s] %(message)s", "%H:%M:%S"))
-            logger.addHandler(fh)
-        except OSError:
-            logger.addHandler(logging.NullHandler())
-    else:
-        logger.setLevel(logging.WARNING)
+    logger.setLevel(logging.DEBUG if debug else logging.WARNING)
+    try:
+        # delay=True: the file is created only when something is actually logged
+        fh = logging.FileHandler(os.path.join(app_data_dir(), "hyperfetch.log"),
+                                 encoding="utf-8", delay=True)
+        fh.setFormatter(logging.Formatter(
+            "%(asctime)s %(levelname)-7s %(name)s: %(message)s", "%Y-%m-%d %H:%M:%S"))
+        logger.addHandler(fh)
+    except OSError:
         logger.addHandler(logging.NullHandler())
     return logger

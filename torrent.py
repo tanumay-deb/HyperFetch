@@ -18,12 +18,15 @@ import re
 import sys
 import time
 import shutil
+import logging
 import threading
 import subprocess
 import urllib.parse
 
 import task as T
 import utils
+
+log = logging.getLogger("hyperfetch.torrent")
 
 POLL = 0.3            # seconds between pause/cancel checks
 STOP_GRACE = 5        # seconds to wait after terminate before kill
@@ -155,6 +158,7 @@ class TorrentDownloader:
         self.t.status = T.DOWNLOADING
         self.t.error = ""
         self.t.supports_range = False
+        log.info("torrent start: %s", self.t.filename or self.t.url[:80])
 
         exe = aria2c_path()
         if not exe:
@@ -282,11 +286,13 @@ class TorrentDownloader:
             # for multi-file torrents, a file for single) so Properties and
             # "Open File" work — the placeholder download.bin never existed.
             self._resolve_save_path(out_dir, seen["top"])
+            log.info("torrent done: %s", self.t.filename)
         else:
             self.t.status = T.ERROR
             msg = " | ".join(tail[-3:])
             self.t.error = "torrent failed" + (f": {msg}" if msg
                                                else f" (aria2 exit {self._proc.returncode})")
+            log.warning("torrent failed: %s — %s", self.t.filename, self.t.error)
 
     @staticmethod
     def _top_entry(path, out_dir):

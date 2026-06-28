@@ -12,7 +12,7 @@ import threading
 import task as T
 from downloader import Downloader
 
-log = logging.getLogger("hyperfetch")
+log = logging.getLogger("hyperfetch.queue")
 
 
 class Queue:
