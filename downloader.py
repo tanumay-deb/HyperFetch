@@ -122,6 +122,14 @@ class Downloader:
         # Only clamps an explicit count; Auto mode (0) is left untouched.
         if utils.MAX_CONNECTIONS > 0 and self.num_segments > 0:
             self.num_segments = min(self.num_segments, utils.MAX_CONNECTIONS)
+        # per-host rule may force a segment count (some servers reject many
+        # parallel connections) — still capped by the global Max Connections.
+        _rule_segs = utils.host_rule(dtask.url).get("segments")
+        if _rule_segs:
+            self.num_segments = int(_rule_segs)
+            if utils.MAX_CONNECTIONS > 0:
+                self.num_segments = min(self.num_segments, utils.MAX_CONNECTIONS)
+            log.debug("host rule: %s -> %d segments", dtask.url, self.num_segments)
         # browser-supplied headers (Cookie/Referer/UA) merged into every request
         self._base_headers = {**HEADERS, **(getattr(dtask, "headers", None) or {})}
         self._probe_ctype = ""
@@ -404,7 +412,8 @@ class Downloader:
         # media pages (YouTube etc.) -> yt-dlp; forced via the New Download toggle
         # or auto-detected by host. Not a direct file, so it can't be byte-split.
         import yt_dl
-        if getattr(self.t, "use_ytdlp", False) or yt_dl.is_ytdlp_url(self.t.url):
+        if (getattr(self.t, "use_ytdlp", False) or yt_dl.is_ytdlp_url(self.t.url)
+                or utils.host_rule(self.t.url).get("ytdlp")):
             yt_dl.YtDlpDownloader(self.t).run()
             return
 

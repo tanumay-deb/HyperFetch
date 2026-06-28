@@ -117,6 +117,8 @@ class SettingsMixin:
         ce = ex.get("capture_exts")
         utils.CAPTURE_EXTS = list(ce) if isinstance(ce, list) else list(utils.DEFAULT_CAPTURE_EXTS)
         utils.SPEED_IN_BYTES = (ex.get("speed_units") == "bytes")
+        hr = ex.get("host_rules")
+        utils.HOST_RULES = dict(hr) if isinstance(hr, dict) else {}
         utils.setup_logging(bool(ex.get("debug_log", False)))
         # DNS-over-HTTPS: override the resolver for all in-process HTTP downloads
         import doh

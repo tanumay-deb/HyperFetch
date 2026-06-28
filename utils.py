@@ -30,6 +30,28 @@ PREALLOCATE = False       # aria2 file pre-allocation
 HASH_CHECK = False        # verify SHA-256 against a <url>.sha256 sidecar on finish
 SPEED_IN_BYTES = False    # speed readout units: False = bits (Kb/s), True = bytes (KB/s)
 
+# Per-host download rules (Settings -> Network). {host: {"segments": int,
+# "ytdlp": bool}} — override the segment count or force the yt-dlp engine for
+# specific hosts (some servers throttle or reject many parallel connections).
+HOST_RULES = {}
+
+
+def host_rule(url):
+    """The per-host rule for a URL's host (matches the exact host or a parent
+    domain, e.g. a rule for 'example.com' also covers 'cdn.example.com'); {} if
+    none."""
+    try:
+        host = urllib.parse.urlparse(url).netloc.split("@")[-1].split(":")[0].lower()
+    except Exception:
+        return {}
+    if not host:
+        return {}
+    for h, rule in (HOST_RULES or {}).items():
+        h = (h or "").lower().lstrip(".")
+        if h and (host == h or host.endswith("." + h)):
+            return rule or {}
+    return {}
+
 # Auto-capture allowlist (Settings -> Browser Integration). When the extension's
 # browser-download capture forwards an auto-captured file, the server only accepts
 # it if its extension is in this list. Empty list = capture everything. The

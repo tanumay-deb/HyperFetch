@@ -16,7 +16,8 @@ hidden = (
     # local modules reached via lazy `import` inside functions
     ['hls', 'downloader', 'queue_manager', 'api_server', 'task', 'utils',
      'crash_reporter', 'updater', 'torrent', 'yt_dl', 'doh', 'upnp', 'history',
-     'gui2.dialogs.history', 'gui2.dialogs.queues', 'gui2.dialogs.console']
+     'gui2.dialogs.history', 'gui2.dialogs.queues', 'gui2.dialogs.console',
+     'gui2.dialogs.host_rules']
     + crypto_hidden + ytdlp_hidden
     + collect_submodules('flask_cors')
 )

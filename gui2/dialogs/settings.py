@@ -297,8 +297,19 @@ class SettingsDialogV2(QDialog):
         self._row(g, "Proxy Settings", "Configure a proxy for downloads", self.proxy_btn)
         self.dns_https = self._toggle(ex.get("dns_https", False))
         self._row(g, "DNS over HTTPS", "Use secure DNS for resolving addresses", self.dns_https)
+        self._host_rules = dict(ex.get("host_rules", {}) or {})
+        n = len(self._host_rules)
+        self.hostrules_btn = QPushButton("Configure" if not n else f"Edit ({n})")
+        self.hostrules_btn.clicked.connect(self._open_host_rules)
+        self._row(g, "Per-host rules", "Override segments / force yt-dlp per host", self.hostrules_btn)
         v.addWidget(f); v.addStretch()
         return sa
+
+    def _open_host_rules(self):
+        from gui2.dialogs.host_rules import HostRulesDialog
+        HostRulesDialog(self, self._host_rules).exec()
+        n = len(self._host_rules)
+        self.hostrules_btn.setText("Configure" if not n else f"Edit ({n})")
 
     def _p_browser(self, ex):
         sa, v = self._page("Browser Integration", "Integrate with your web browser")
@@ -544,6 +555,7 @@ class SettingsDialogV2(QDialog):
             "listen_port": self.listen_port.value(),
             "upnp": self.upnp.isChecked(),
             "dns_https": self.dns_https.isChecked(),
+            "host_rules": self._host_rules,
             "preallocate": self.preallocate.isChecked(),
             "proxy": self._proxy_url,
             "font_size": self.font_size.currentText(),

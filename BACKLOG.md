@@ -3,6 +3,7 @@
 Simple running list. Newest first. Keep entries to one line.
 
 ## Done
+- _(uncommitted)_ — Per-host rules (Settings → Network → Per-host rules): per host, override the segment count and/or force the yt-dlp engine; matches exact host or any subdomain. `utils.host_rule()` consulted in `Downloader.__init__` (segments, capped by Max Connections) and the engine delegation (ytdlp). Editor dialog + unit tests.
 - _(uncommitted)_ — In-app Developer Console (Settings → Advanced → Open Console): live tail of `hyperfetch.log` (incremental by offset), Verbose-debug toggle, Auto-scroll, Copy / Clear / Open-Folder.
 - _(uncommitted)_ — Better logging: per-engine child loggers (`hyperfetch.downloader/.hls/.torrent/.ytdlp/.queue/.server`) so each line shows its source; `setup_logging` always captures warnings/errors to `hyperfetch.log` (created lazily) and adds DEBUG verbosity with the toggle; added structured logging to the byte downloader (start/retry/403/429/fail) + torrent/yt-dlp start·done·fail.
 - _(uncommitted)_ — Throttle schedule: Settings → Downloads "Scheduled speed limit" (window + limit); enforced each scheduler tick via `SystemMixin._apply_throttle` (overrides the global limit inside the window, reverts outside). Bugs section verified clean in v2.
@@ -41,7 +42,6 @@ Simple running list. Newest first. Keep entries to one line.
 
 ## Ideas
 - Light theme (the Settings theme selector is dark-only today — Light/System are no-ops in gui2; needs a light palette + qss() theming).
-- Per-host rules (cookies/segments per host).
 - DASH (`.mpd`) native support (or lean on yt-dlp).
 - Per-thread SOCKS5 proxies (beat per-IP CDN rate limits).
 - Inline-on-page quality picker in the extension (near the video, not the panel).
