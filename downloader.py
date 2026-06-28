@@ -494,26 +494,15 @@ class Downloader:
         all_done = all(s.complete for s in self.t.segments) if self.t.supports_range \
             else self.t.downloaded > 0
         if all_done:
-            # temp_path is in %TEMP%, often a DIFFERENT volume than the
-            # destination -> shutil.move is copy+delete and can fail (dest full,
-            # AV/permission lock). Move into a sibling temp in the DEST dir first,
-            # then atomically replace, so a failure never both deletes the old
-            # file AND loses the new one, and never marks COMPLETED on failure.
+            # cross-volume-safe atomic finalize (shared helper); on failure leave
+            # temp_path in %TEMP% for a retry and never mark COMPLETED.
             try:
                 self._check_disk_space(self.t.save_path, self.t.total_size)
-                staged = self.t.save_path + ".hfmove"
-                shutil.move(temp_path, staged)        # cross-volume copy lands here
-                os.replace(staged, self.t.save_path)  # atomic same-volume swap
+                utils.finalize_download(temp_path, self.t.save_path)
             except OSError as e:
                 self.t.status = T.ERROR
                 self.t.error = self._format_disk_error(e, self.t.save_path)
-                for leftover in (self.t.save_path + ".hfmove",):
-                    try:
-                        if os.path.exists(leftover):
-                            os.remove(leftover)
-                    except OSError:
-                        pass
-                return  # leave temp_path in %TEMP% for a retry
+                return
             if utils.HASH_CHECK and self._verify_hash() is False:
                 self.t.status = T.ERROR
                 self.t.error = "SHA-256 mismatch — the file may be corrupt"

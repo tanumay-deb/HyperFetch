@@ -17,6 +17,30 @@ def temp_download_path(task_id):
     convention; downloader + HLS both use it)."""
     return os.path.join(tempfile.gettempdir(), f"{task_id}.hfdownload")
 
+
+def finalize_download(temp_path, dest_path):
+    """Atomically move a finished temp file to its destination, cross-volume safe.
+
+    The temp lives in %TEMP% (often a different volume than the destination), so
+    we stage into a sibling ``.hfmove`` in the DEST dir first (a plain
+    ``shutil.move`` there is a same-dir rename) then ``os.replace`` it onto the
+    final path (atomic same-volume swap). On failure the staging file is cleaned
+    up and the OSError re-raised, so the caller can set the task error and leave
+    the temp in place for a retry. Shared by the byte downloader and the HLS
+    grabber."""
+    import shutil
+    staged = dest_path + ".hfmove"
+    try:
+        shutil.move(temp_path, staged)
+        os.replace(staged, dest_path)
+    except OSError:
+        try:
+            if os.path.exists(staged):
+                os.remove(staged)
+        except OSError:
+            pass
+        raise
+
 # Global TLS-verification flag. Default ON (secure). The GUI may flip it from
 # the saved setting; downloader/hls/probe read it for every request.
 VERIFY_TLS = True

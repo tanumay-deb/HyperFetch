@@ -9,7 +9,6 @@ does that: master->variant selection, AES-128 decryption, raw concat into one
 import os
 import re
 import time
-import shutil
 import logging
 import tempfile
 import struct
@@ -425,21 +424,13 @@ class HlsDownloader:
                 self.t.status = T.PAUSED
             return
 
-        # finalize — temp is in %TEMP% (possibly a different volume), so stage
-        # into the dest dir then atomically replace. On failure mark ERROR and
-        # keep the temp for retry instead of claiming COMPLETED with no file.
+        # cross-volume-safe atomic finalize (shared helper). On failure mark ERROR
+        # and keep the temp for retry instead of claiming COMPLETED with no file.
         try:
-            staged = self.t.save_path + ".hfmove"
-            shutil.move(temp_path, staged)
-            os.replace(staged, self.t.save_path)
+            utils.finalize_download(temp_path, self.t.save_path)
         except OSError as e:
             self.t.status = T.ERROR
             self.t.error = f"finalize failed (pick another folder, then Resume): {e}"
-            try:
-                if os.path.exists(self.t.save_path + ".hfmove"):
-                    os.remove(self.t.save_path + ".hfmove")
-            except OSError:
-                pass
             return
         self.t.total_size = downloaded
         self.t.downloaded = downloaded
