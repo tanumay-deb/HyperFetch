@@ -18,19 +18,23 @@ browser extension that sends your downloads straight to the app.
 
 ## Install
 
-One line (needs Python 3.10+):
+**Windows (most people — no Python needed):** download **`HyperFetch-Setup.exe`**
+from the [Releases](https://github.com/tanumay-deb/HyperFetch/releases) page and
+run it. The installer bundles its own Python runtime and `aria2c`, so it works on
+a clean machine. (Unsigned, so Windows SmartScreen shows *"Windows protected your
+PC"* on first run → **More info → Run anyway**.) Prefer no install? Grab the
+`-portable.zip`, extract it, and run `HyperFetch.exe` inside the folder.
+
+**Developers / other OS (needs Python 3.10+):**
 
 ```powershell
 pipx install git+https://github.com/tanumay-deb/HyperFetch.git
 hyperfetch
 ```
 
-No `pipx`? Use `pip install git+https://github.com/tanumay-deb/HyperFetch.git`
-(then run `hyperfetch`), or grab the Windows build from the
-[Releases](https://github.com/tanumay-deb/HyperFetch/releases) page.
+(No `pipx`? `pip install git+https://github.com/tanumay-deb/HyperFetch.git`, then run `hyperfetch`.)
 
 The window opens and a local server starts at `http://127.0.0.1:5000`.
-(Torrents/magnets need `aria2c` on your `PATH`; the packaged Windows build bundles it.)
 
 ### From source
 

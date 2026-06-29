@@ -15,7 +15,8 @@ param(
     [switch]$Installer,
     [switch]$Sign,
     [string]$CertPath,
-    [string]$CertPass
+    [string]$CertPass,
+    [string]$Version          # override the installer version (e.g. from a CI tag)
 )
 
 $ErrorActionPreference = "Stop"
@@ -85,7 +86,9 @@ if ($Installer) {
     $iscc = (Get-Command iscc.exe -ErrorAction SilentlyContinue).Source
     if (-not $iscc) { $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" }
     if (-not (Test-Path $iscc)) { throw "Inno Setup (iscc.exe) not found" }
-    & $iscc "installer.iss"
+    $isccArgs = @()
+    if ($Version) { $isccArgs += "/DAppVersion=$Version" }
+    & $iscc @isccArgs "installer.iss"
     if ($LASTEXITCODE -ne 0) { throw "installer build failed" }
     if ($Sign) {
         Write-Host "==> Signing the installer" -ForegroundColor Cyan

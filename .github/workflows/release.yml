@@ -1,0 +1,65 @@
+name: release
+
+# Builds the no-Python-needed Windows installer (and a portable zip) and attaches
+# them to the GitHub Release. Runs automatically on a version tag; can also be run
+# by hand against an existing tag (e.g. v2.0.0) via "Run workflow".
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing tag to build + attach (e.g. v2.0.0)'
+        required: true
+
+permissions:
+  contents: write          # upload assets to the release
+
+jobs:
+  windows-installer:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - name: Install build deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pyinstaller pillow
+
+      - name: Install Inno Setup
+        run: choco install innosetup -y --no-progress
+
+      - name: Resolve version from the tag
+        id: ver
+        shell: pwsh
+        run: |
+          $tag = "${{ github.event.inputs.tag }}"
+          if (-not $tag) { $tag = "${{ github.ref_name }}" }
+          $ver = $tag.TrimStart('v')
+          "tag=$tag"     | Out-File $env:GITHUB_OUTPUT -Append -Encoding utf8
+          "version=$ver" | Out-File $env:GITHUB_OUTPUT -Append -Encoding utf8
+
+      - name: Build app + installer
+        run: .\build.ps1 -Installer -Version ${{ steps.ver.outputs.version }}
+
+      - name: Smoke-test the frozen binary
+        run: dist\HyperFetch\HyperFetch.exe --selftest
+
+      - name: Package a portable zip
+        shell: pwsh
+        run: Compress-Archive -Path dist\HyperFetch\* -DestinationPath "dist\HyperFetch-${{ steps.ver.outputs.version }}-portable.zip"
+
+      - name: Attach to the GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.ver.outputs.tag }}
+          files: |
+            dist/installer/*.exe
+            dist/HyperFetch-*-portable.zip
