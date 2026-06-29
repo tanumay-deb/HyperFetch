@@ -1,0 +1,5 @@
+recursive-include assets/icons *.svg
+include assets/icon.png
+include assets/icon.ico
+include requirements.txt
+include LICENSE

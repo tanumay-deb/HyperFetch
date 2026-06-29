@@ -1,0 +1,43 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "hyperfetch"
+version = "2.0.0"
+description = "A multi-segment download accelerator with a desktop GUI and browser-extension integration."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "Tanumay Goswami" }]
+keywords = ["download-manager", "downloader", "hls", "torrent", "yt-dlp", "pyside6"]
+dependencies = [
+    "PySide6==6.11.0",
+    "requests==2.33.1",
+    "Flask==3.1.3",
+    "flask-cors==6.0.2",
+    "cryptography==49.0.0",
+    "yt-dlp==2026.6.9",
+]
+
+[project.urls]
+Homepage = "https://github.com/tanumay-deb/HyperFetch"
+Issues = "https://github.com/tanumay-deb/HyperFetch/issues"
+
+[project.scripts]
+hyperfetch = "main:main"
+
+# Flat layout: list the top-level modules and packages explicitly (auto-discovery
+# refuses a flat layout with this many top-level modules).
+[tool.setuptools]
+py-modules = [
+    "main", "api_server", "crash_reporter", "doh", "downloader", "history",
+    "hls", "queue_manager", "task", "torrent", "updater", "upnp", "utils", "yt_dl",
+]
+packages = ["gui", "gui2", "gui2.dialogs"]
+
+# Runtime assets (SVG icons + the app icon). Installed under
+# <prefix>/share/hyperfetch and found by gui.theme.resource_path at runtime.
+[tool.setuptools.data-files]
+"share/hyperfetch/assets" = ["assets/icon.png", "assets/icon.ico"]
+"share/hyperfetch/assets/icons" = ["assets/icons/*.svg"]

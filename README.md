@@ -16,19 +16,28 @@ browser extension that sends your downloads straight to the app.
 - **Track everything** — every completed download is logged with lifetime totals and stats.
 - **Privacy & control** — set speed limits and a global proxy, encrypt DNS lookups (DNS-over-HTTPS), enable UPnP, and optionally verify file integrity with SHA-256.
 
-## Install & run
+## Install
+
+One line (needs Python 3.10+):
+
+```powershell
+pipx install git+https://github.com/tanumay-deb/HyperFetch.git
+hyperfetch
+```
+
+No `pipx`? Use `pip install git+https://github.com/tanumay-deb/HyperFetch.git`
+(then run `hyperfetch`), or grab the Windows build from the
+[Releases](https://github.com/tanumay-deb/HyperFetch/releases) page.
+
+The window opens and a local server starts at `http://127.0.0.1:5000`.
+(Torrents/magnets need `aria2c` on your `PATH`; the packaged Windows build bundles it.)
+
+### From source
 
 ```powershell
 pip install -r requirements.txt
 python main.py          # or double-click HyperFetch.bat
-```
-
-The window opens and a local server starts at `http://127.0.0.1:5000`.
-
-Headless (queue downloads with no window):
-
-```powershell
-python api_server.py
+python api_server.py    # headless: queue downloads with no window
 ```
 
 ## Browser extension
