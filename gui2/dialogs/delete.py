@@ -117,7 +117,7 @@ class DeleteDialog(QDialog):
         layout.addWidget(warning)
 
         self.deleteDisk = QCheckBox("Also delete downloaded files")
-        self.deleteDisk.setChecked(True)
+        self.deleteDisk.setChecked(False)   # default: keep files on disk (remove from list only)
         layout.addWidget(self.deleteDisk)
 
         sub = QLabel("The downloaded files will be permanently removed.")
