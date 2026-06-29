@@ -9,7 +9,7 @@ from PySide6.QtCore import Qt
 from gui2.palette import COLORS, DIALOG_MARGIN
 from gui2.dialogs.common import DialogHeader
 
-_STORE_URL = "https://chromewebstore.google.com/search/HyperFetch"
+_STORE_URL = "https://chromewebstore.google.com/detail/hyperfetch/finojjembpabfbincabngboedegokdlm"
 _STEPS = [
     f"Install the <b>HyperFetch</b> extension from the "
     f"<a href='{_STORE_URL}' style='color:#8b5cf6;'>Chrome Web Store</a> "

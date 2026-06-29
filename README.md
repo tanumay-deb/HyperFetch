@@ -47,9 +47,8 @@ python api_server.py    # headless: queue downloads with no window
 ## Browser extension
 
 1. **Install it** from the
-   [Chrome Web Store](https://chromewebstore.google.com/search/HyperFetch)
+   [Chrome Web Store](https://chromewebstore.google.com/detail/hyperfetch/finojjembpabfbincabngboedegokdlm)
    (works in Chrome, Edge and Brave).
-   <!-- TODO: swap for the direct listing link, e.g. https://chromewebstore.google.com/detail/hyperfetch/<id> -->
 2. In the app, open **Settings → Browser Integration**, copy the pairing token, and paste it into the extension popup.
 3. Keep the app running. Right-click a link → **Download with HyperFetch**, or turn on capture to route browser downloads automatically (pick which file types in Settings).
 
