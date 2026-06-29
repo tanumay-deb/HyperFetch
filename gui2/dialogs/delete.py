@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
 )
 import sys
 from gui2.palette import COLORS
+from gui.theme import resource_path
 class DeleteDialog(QDialog):
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
@@ -146,6 +147,7 @@ class DeleteDialog(QDialog):
 
         layout.addLayout(buttons)
 
+        check_img = resource_path("assets", "icons", "check-white.svg").replace("\\", "/")
         self.setStyleSheet(f"""
 #container{{
     background:{COLORS['surface2']};
@@ -232,25 +234,30 @@ class DeleteDialog(QDialog):
         }}
 
         QCheckBox{{
-            color:white;
-            spacing:8px;
+            color:{COLORS['text']};
+            spacing:10px;
+            font-size:13px;
         }}
 
         QCheckBox::indicator{{
-            width:18px;
-            height:18px;
+            width:20px;
+            height:20px;
+            border-radius:6px;
         }}
 
         QCheckBox::indicator:unchecked{{
-            border:2px solid {COLORS['faint']};
-            border-radius:4px;
-            background:{COLORS['surface2']};
+            border:1px solid {COLORS['border']};
+            background:{COLORS['surface']};
+        }}
+
+        QCheckBox::indicator:unchecked:hover{{
+            border:1px solid {COLORS['accent']};
         }}
 
         QCheckBox::indicator:checked{{
-            border:2px solid {COLORS['error']};
-            background:{COLORS['error']};
-            border-radius:4px;
+            border:1px solid {COLORS['accent']};
+            background:{COLORS['accent']};
+            image:url({check_img});
         }}
         """)
 
