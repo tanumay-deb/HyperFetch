@@ -29,12 +29,26 @@ function refreshPairState() {
   });
 }
 
+// Auto-pair: fetch the token straight from the app (it only answers this
+// extension's id). Falls back silently to manual paste for unpacked/dev loads.
+function autoPair() {
+  fetch(`${APP}/pair`)
+    .then((r) => (r.ok ? r.json() : null))
+    .then((j) => {
+      if (j && j.token) chrome.storage.local.set({ token: j.token }, refreshPairState);
+    })
+    .catch(() => {});
+}
+
 fetch(`${APP}/ping`)
   .then((r) => r.json().then((j) => ({ ok: r.ok, j })))
   .then(({ ok, j }) => {
     setStatus(ok);
     needsToken = !!(j && j.needsToken);
     refreshPairState();
+    if (ok && needsToken) {
+      chrome.storage.local.get({ token: "" }, ({ token }) => { if (!token) autoPair(); });
+    }
   })
   .catch(() => { setStatus(false); refreshPairState(); });
 

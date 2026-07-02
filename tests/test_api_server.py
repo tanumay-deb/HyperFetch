@@ -131,3 +131,37 @@ def test_probe_rejects_bad_scheme(tmp_path):
 def test_probe_requires_token(tmp_path):
     c = create_app(_FakeQueue(), str(tmp_path), pending=None, token="SECRET").test_client()
     assert c.post("/probe", json={"url": "https://x/m.m3u8"}).status_code == 401
+
+
+# ---- auto-pair: /pair serves the token only to the trusted extension id ----
+import api_server
+
+_OFFICIAL = "chrome-extension://" + next(iter(api_server.TRUSTED_EXT_IDS))
+
+
+def test_pair_serves_token_to_official_extension(tmp_path):
+    c = create_app(_FakeQueue(), str(tmp_path), pending=None, token="SECRET").test_client()
+    r = c.get("/pair", headers={"Origin": _OFFICIAL})
+    assert r.status_code == 200
+    assert r.get_json()["token"] == "SECRET"
+    assert r.headers.get("Access-Control-Allow-Origin") == _OFFICIAL
+
+
+def test_pair_denies_other_extension(tmp_path):
+    c = create_app(_FakeQueue(), str(tmp_path), pending=None, token="SECRET").test_client()
+    r = c.get("/pair", headers={"Origin": "chrome-extension://someotherextensionidaaaaaaaaaaaa"})
+    assert r.status_code == 403
+    assert "SECRET" not in r.get_data(as_text=True)
+
+
+def test_pair_denies_website_and_missing_origin(tmp_path):
+    c = create_app(_FakeQueue(), str(tmp_path), pending=None, token="SECRET").test_client()
+    assert c.get("/pair", headers={"Origin": "https://evil.example"}).status_code == 403
+    assert c.get("/pair").status_code == 403
+
+
+def test_pair_preflight_ok_for_official(tmp_path):
+    c = create_app(_FakeQueue(), str(tmp_path), pending=None, token="SECRET").test_client()
+    r = c.open("/pair", method="OPTIONS", headers={"Origin": _OFFICIAL})
+    assert r.status_code == 200
+    assert r.headers.get("Access-Control-Allow-Origin") == _OFFICIAL

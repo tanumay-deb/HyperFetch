@@ -24,16 +24,52 @@ import utils
 PORT = 5000
 log = logging.getLogger("hyperfetch.server")
 
+# Extension ids trusted to auto-pair (read the token via /pair). Only the
+# published listings belong here — the Chrome Web Store id (and the Edge Add-ons
+# id once published). Unpacked/dev loads get a random id and fall back to the
+# manual copy-paste in the popup.
+TRUSTED_EXT_IDS = {"finojjembpabfbincabngboedegokdlm"}      # Chrome Web Store
+
 
 def create_app(queue, save_dir, pending=None, token=None):
     app = Flask(__name__)
     # Only browser-extension origins may call cross-origin. Websites use http(s)
-    # origins and are rejected at preflight.
-    CORS(app, origins=[r"chrome-extension://*", r"moz-extension://*"],
-         allow_headers=["Content-Type", "X-HyperFetch-Token"])
+    # origins and are rejected at preflight. /pair is deliberately NOT covered by
+    # this global rule — it sets its own Access-Control-Allow-Origin locked to the
+    # trusted extension id(s) so only the real extension can read the token.
+    _ext = [r"chrome-extension://*", r"moz-extension://*"]
+    _hdr = ["Content-Type", "X-HyperFetch-Token"]
+    CORS(app, resources={
+        r"/ping":     {"origins": _ext},
+        r"/probe":    {"origins": _ext, "allow_headers": _hdr},
+        r"/download": {"origins": _ext, "allow_headers": _hdr},
+    })
     logging.getLogger("werkzeug").setLevel(logging.ERROR)
 
     app.config["HYPERFETCH_TOKEN"] = token
+
+    @app.route("/pair", methods=["GET", "OPTIONS"])
+    def pair():
+        """Hand the pairing token to the official extension so it can auto-pair —
+        no copy-paste. CORS is locked to the trusted extension id(s): other
+        extensions get a different Origin (403 + no CORS header) and website JS is
+        blocked by the browser. A local process could read the token file anyway,
+        so serving it here to localhost adds no new exposure."""
+        origin = request.headers.get("Origin", "")
+        allowed = any(origin == scheme + eid
+                      for scheme in ("chrome-extension://", "moz-extension://")
+                      for eid in TRUSTED_EXT_IDS)
+        if not allowed:
+            return ("", 403)
+        if request.method == "OPTIONS":
+            resp = app.make_default_options_response()
+        else:
+            resp = jsonify({"token": app.config.get("HYPERFETCH_TOKEN") or ""})
+        resp.headers["Access-Control-Allow-Origin"] = origin
+        resp.headers["Vary"] = "Origin"
+        resp.headers["Access-Control-Allow-Methods"] = "GET, OPTIONS"
+        resp.headers["Access-Control-Allow-Headers"] = "Content-Type, X-HyperFetch-Token"
+        return resp
 
     def _authorized(data):
         expected = app.config.get("HYPERFETCH_TOKEN")

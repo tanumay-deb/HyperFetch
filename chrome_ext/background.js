@@ -3,8 +3,31 @@
 // downloads are NOT auto-intercepted.
 const APP = "http://127.0.0.1:5000/download";
 const PROBE = "http://127.0.0.1:5000/probe";
+const PAIR = "http://127.0.0.1:5000/pair";
 
 const ignoreErr = () => void chrome.runtime.lastError;
+
+// Auto-pairing: pull the token straight from the app instead of asking the user
+// to copy/paste it. The app only answers /pair for THIS extension's id (locked
+// via CORS there), so other extensions and websites can't read the token.
+function fetchPairToken() {
+  return fetch(PAIR)
+    .then((r) => (r.ok ? r.json() : null))
+    .then((j) => {
+      const t = (j && j.token) || "";
+      if (t) chrome.storage.local.set({ token: t });
+      return t;
+    })
+    .catch(() => "");
+}
+
+// The stored token, or a freshly auto-paired one if none is stored yet.
+function getToken() {
+  return new Promise((resolve) => {
+    chrome.storage.local.get({ token: "" }, ({ token }) =>
+      token ? resolve(token) : fetchPairToken().then(resolve));
+  });
+}
 
 // capture on/off toggle, cached for the high-frequency media sniffer. The
 // pairing token is NOT cached in a global: MV3 evicts the service worker after
@@ -24,22 +47,32 @@ chrome.storage.onChanged.addListener((ch) => {
 // woken service worker never sends an empty one) so only this paired extension
 // can queue.
 function sendToApp(url, filename, referrer, done, extra) {
-  chrome.storage.local.get({ token: "" }, ({ token }) => {
+  getToken().then((token) => {
     chrome.cookies.getAll({ url }, (cookies) => {
       ignoreErr();
       const cookieStr = (cookies || []).map((c) => `${c.name}=${c.value}`).join("; ");
-      fetch(APP, {
+      const post = (tok) => fetch(APP, {
         method: "POST",
-        headers: { "Content-Type": "application/json", "X-HyperFetch-Token": token },
+        headers: { "Content-Type": "application/json", "X-HyperFetch-Token": tok },
         body: JSON.stringify(Object.assign({
           url,
           filename: filename || "",
           cookies: cookieStr,
           referrer: referrer || "",
           userAgent: navigator.userAgent,
-          token
+          token: tok
         }, extra || {}))
-      })
+      });
+      post(token)
+        .then((r) => {
+          // stale token (e.g. the app was reinstalled -> new token): drop it,
+          // re-pair once, and retry so the user never has to re-pair by hand.
+          if (r.status === 401) {
+            chrome.storage.local.remove("token");
+            return fetchPairToken().then((t2) => (t2 ? post(t2) : r));
+          }
+          return r;
+        })
         .then((r) => r.json().then(
           (j) => done(r.ok, r.status, j),
           () => done(r.ok, r.status, {})))
@@ -80,7 +113,7 @@ chrome.contextMenus.onClicked.addListener((info, tab) => {
       // surface the result in the page (the menu has no UI of its own) so a
       // pairing/offline failure isn't silently swallowed.
       const text = ok ? "Sent to HyperFetch"
-        : status === 401 ? "Pair the extension first — paste the app token in its popup"
+        : status === 401 ? "HyperFetch couldn't pair — open the app and try again"
         : "HyperFetch app offline";
       if (tab && tab.id >= 0)
         chrome.tabs.sendMessage(tab.id, { type: "HYPERFETCH_TOAST", text }, ignoreErr);
@@ -194,6 +227,8 @@ function hlsDuration(text) {
 // null when the app is unreachable (-> caller falls back to the SW fetch).
 function probeViaApp(url, referer) {
   return new Promise((resolve) => {
+    // use the stored token only (no auto-pair fetch here) — the download path
+    // pairs first, and an unpaired probe just falls back to the SW fetch below.
     chrome.storage.local.get({ token: "" }, ({ token }) => {
       chrome.cookies.getAll({ url }, (cookies) => {
         ignoreErr();
