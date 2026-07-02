@@ -135,10 +135,12 @@ QWidget#root {{ background: {c['bg']}; }}
 /* ---------- sidebar ---------- */
 QFrame#sidebar {{ background: {c['surface']}; border: none; border-right: 1px solid {c['border']}; }}
 QWidget#mainPane {{ background: {c['bg']}; }}
-/* the download list is a QScrollArea; make its viewport + inner content show the
-   app background instead of the Qt default (which rendered light in dark mode) */
+/* Every QScrollArea's inner content is transparent so it shows the container's
+   themed background instead of the Qt palette default (which rendered as a light
+   panel in dark mode — the download list, settings pages, drawer tabs, etc.).
+   Cards/panels inside keep their own bg via #panel / #card selectors. */
 QWidget#listInner {{ background: transparent; }}
-QScrollArea#downloadList, QScrollArea#downloadList > QWidget > QWidget {{ background: transparent; }}
+QScrollArea > QWidget > QWidget {{ background: transparent; }}
 
 QLabel#brand {{ font-size: 18px; font-weight: 800; }}
 QLabel#sectionTitle {{ color: {c['muted']}; font-size: 11px; font-weight: 800; letter-spacing: 1px; }}
@@ -178,11 +180,11 @@ QPushButton#pill:hover {{ color: {c['text']}; border-color: {c['border2']}; }}
 QPushButton#pill:checked {{ background: {c['accent']}; border-color: {c['accent']}; color: white; }}
 
 /* ---------- inputs ---------- */
-QLineEdit, QComboBox, QSpinBox {{
+QLineEdit, QComboBox, QSpinBox, QTimeEdit, QDateTimeEdit {{
     background: {c['surface2']}; border: 1px solid {c['border']}; border-radius: 9px;
-    padding: 9px 12px; selection-background-color: {c['accent']};
+    padding: 9px 12px; selection-background-color: {c['accent']}; color: {c['text']};
 }}
-QLineEdit:focus, QComboBox:focus, QSpinBox:focus {{ border-color: {c['accent']}; }}
+QLineEdit:focus, QComboBox:focus, QSpinBox:focus, QTimeEdit:focus, QDateTimeEdit:focus {{ border-color: {c['accent']}; }}
 QComboBox::drop-down {{ border: none; width: 22px; }}
 QComboBox QAbstractItemView {{
     background: {c['surface2']}; border: 1px solid {c['border']};
