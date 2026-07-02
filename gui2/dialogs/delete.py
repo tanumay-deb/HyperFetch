@@ -36,6 +36,26 @@ class DeleteDialog(QDialog):
     def mouseReleaseEvent(self, event):
         self._drag_active = False
         super().mouseReleaseEvent(event)
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self._strip_system_border()
+
+    def _strip_system_border(self):
+        """Remove the Windows 11 DWM window border on this frameless dialog so the
+        only visible edge is our themed rounded border (the system border renders
+        as a light grey outline that clashes with the dark theme)."""
+        if sys.platform != "win32":
+            return
+        try:
+            import ctypes
+            DWMWA_BORDER_COLOR = 34
+            DWMWA_COLOR_NONE = 0xFFFFFFFE
+            val = ctypes.c_uint(DWMWA_COLOR_NONE)
+            ctypes.windll.dwmapi.DwmSetWindowAttribute(
+                int(self.winId()), DWMWA_BORDER_COLOR, ctypes.byref(val), ctypes.sizeof(val))
+        except Exception:
+            pass
     def __init__(self, finished=8, downloading=1, parent=None):
         super().__init__(parent)
 
