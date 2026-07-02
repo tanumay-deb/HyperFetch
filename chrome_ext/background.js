@@ -96,15 +96,39 @@ chrome.runtime.onInstalled.addListener(() => {
       title: "Download with HyperFetch",
       contexts: ["link", "image", "video", "audio"]
     }, ignoreErr);
+    // Media-page sites (YouTube etc.) play via blob:/MSE, so there is no
+    // capturable media URL — instead offer a PAGE-level item that sends the page
+    // URL to the app, whose yt-dlp engine resolves the actual video. Shown only
+    // on hosts the app routes through yt-dlp (list mirrors yt_dl._SITES).
+    chrome.contextMenus.create({
+      id: "hyperfetch-download-page",
+      title: "Download video on this page with HyperFetch",
+      contexts: ["page", "frame", "video"],
+      documentUrlPatterns: [
+        "*://*.youtube.com/*", "*://youtu.be/*", "*://*.vimeo.com/*",
+        "*://*.dailymotion.com/*", "*://*.twitch.tv/*", "*://*.tiktok.com/*",
+        "*://*.instagram.com/*", "*://*.facebook.com/*", "*://*.twitter.com/*",
+        "*://*.x.com/*", "*://*.soundcloud.com/*", "*://*.reddit.com/*",
+        "*://*.bilibili.com/*", "*://*.rumble.com/*", "*://*.ok.ru/*"
+      ]
+    }, ignoreErr);
   });
 });
 
 chrome.contextMenus.onClicked.addListener((info, tab) => {
-  if (info.menuItemId !== "hyperfetch-download") return;
-  const url = info.linkUrl || info.srcUrl;
+  if (info.menuItemId !== "hyperfetch-download" &&
+      info.menuItemId !== "hyperfetch-download-page") return;
+  let url, name;
+  if (info.menuItemId === "hyperfetch-download-page") {
+    // send the PAGE url — the app's yt-dlp engine resolves the real video
+    url = (tab && tab.url) || info.pageUrl;
+    name = "";                       // yt-dlp fills in the video title
+  } else {
+    url = info.linkUrl || info.srcUrl;
+    name = url ? url.split("?")[0].split(/[\\/]/).pop() || "" : "";
+  }
   if (!url || url.startsWith("blob:") || url.startsWith("data:")) return;
   const referrer = (tab && tab.url) || info.frameUrl || info.pageUrl || "";
-  const name = url.split("?")[0].split(/[\\/]/).pop() || "";
   // read the capture flag fresh — the cached global may be unhydrated on a
   // wake-triggered click.
   chrome.storage.local.get({ enabled: true }, ({ enabled }) => {
