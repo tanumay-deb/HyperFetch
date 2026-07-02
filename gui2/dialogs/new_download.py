@@ -30,12 +30,13 @@ _YT_QUALITY = [
 
 class NewDownloadDialog(QDialog):
     def __init__(self, parent, save_dir, queues, segments,
-                 url="", suggested="", headers=None):
+                 url="", suggested="", headers=None, categorize=True):
         super().__init__(parent)
         self.setWindowTitle("New Download")
         self.setMinimumWidth(560)
         self.setStyleSheet(parent.styleSheet() if parent else "")
         self._headers = dict(headers or {})
+        self._categorize = categorize
 
         lay = QVBoxLayout(self)
         lay.setContentsMargins(22, 20, 22, 18)
@@ -99,6 +100,17 @@ class NewDownloadDialog(QDialog):
         grid.addWidget(self.cat, 1, 0); grid.addWidget(self.q, 1, 1); grid.addWidget(self.prio, 1, 2)
         lay.addLayout(grid)
 
+        # live destination hint — shows the actual folder (incl. the auto category
+        # subfolder) so it's clear where the file lands before downloading
+        self.dest_hint = QLabel("")
+        self.dest_hint.setStyleSheet(f"color:{COLORS['muted']};background:transparent;font-size:11px;")
+        self.dest_hint.setWordWrap(True)
+        lay.addWidget(self.dest_hint)
+        for sig in (self.name_edit.textChanged, self.url_edit.textChanged,
+                    self.cat.currentTextChanged, self.dir_edit.textChanged):
+            sig.connect(self._update_dest_hint)
+        self._update_dest_hint()
+
         # ---- advanced (collapsible) ----
         self.adv_btn = QPushButton("  Advanced Options"); self.adv_btn.setObjectName("ghost")
         self.adv_btn.setIcon(themed_icon("chevron-right", "muted"))
@@ -154,6 +166,28 @@ class NewDownloadDialog(QDialog):
     # ---- helpers ----
     def _label(self, text):
         l = QLabel(text); l.setObjectName("fieldLabel"); return l
+
+    def _update_dest_hint(self):
+        """Show the real destination — including the auto category subfolder — so
+        it's clear the file lands in e.g. Downloads\\Video, not just Downloads."""
+        base = self.dir_edit.text().strip()
+        cat = self.cat.currentText()
+        name = self.name_edit.text().strip()
+        if not name:                                   # URL tab: derive the auto name
+            try:
+                name = utils.filename_from_url(self.url_edit.text().strip())
+            except Exception:
+                name = ""
+        sub = ""
+        if self.tabs.currentIndex() == 0:              # only the URL tab categorises
+            if cat == "Auto":
+                if self._categorize and name:
+                    c = utils.category_for(name)
+                    sub = "" if c == "Other" else c
+            else:
+                sub = cat                              # explicit pick (incl. "Other")
+        dest = os.path.join(base, sub) if sub else base
+        self.dest_hint.setText(f"Saved to:  {dest or '…'}")
 
     def _paste(self):
         self.url_edit.setText(QApplication.clipboard().text().strip())

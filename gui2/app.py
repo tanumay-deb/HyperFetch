@@ -529,7 +529,8 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, QW
     def _add_download(self, url, suggested, headers, flash=False):
         queues = list(self.queue.queues.keys()) or ["Main"]
         dlg = NewDownloadDialog(self, self.save_dir, queues, self.segments,
-                                url=url, suggested=suggested, headers=headers)
+                                url=url, suggested=suggested, headers=headers,
+                                categorize=self._extras.get("categorize", True))
         dq = self._extras.get("default_queue")          # Settings -> Downloads
         if dq and dq in queues:
             dlg.q.setCurrentText(dq)
