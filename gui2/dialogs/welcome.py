@@ -4,7 +4,7 @@ the browser extension (the one bit of setup that isn't obvious). Shown once.
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton, QFrame, QApplication
 )
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer
 
 from gui2.palette import COLORS, DIALOG_MARGIN
 from gui2.dialogs.common import DialogHeader
@@ -56,7 +56,18 @@ class WelcomeDialog(QDialog):
         v.addWidget(self._label("Pairing token"))
         trow = QHBoxLayout()
         self.tok = QLineEdit(token); self.tok.setReadOnly(True)
-        copy = QPushButton("Copy"); copy.clicked.connect(lambda: QApplication.clipboard().setText(token))
+        copy = QPushButton("Copy"); copy.setCursor(Qt.PointingHandCursor)
+        copy.setStyleSheet(
+            f"QPushButton {{ background: {COLORS['surface2']}; color: {COLORS['text']};"
+            f" border: 1px solid {COLORS['border']}; border-radius: 7px; padding: 6px 16px; font-weight: 600; }}"
+            f"QPushButton:hover {{ background: {COLORS['card_hover']}; }}"
+            f"QPushButton:pressed {{ background: {COLORS['accent']}; color: white; }}")
+
+        def _copy():
+            QApplication.clipboard().setText(token)
+            copy.setText("Copied ✓")
+            QTimer.singleShot(1400, lambda: copy.setText("Copy"))
+        copy.clicked.connect(_copy)
         trow.addWidget(self.tok, 1); trow.addWidget(copy)
         v.addLayout(trow)
 

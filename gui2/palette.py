@@ -21,13 +21,13 @@ ACCENTS = {
 # live dict everything reads — qss() and inline styles. Theme is applied at
 # startup before the UI is built, so every read picks up the right palette.
 DARK = {
-    "bg":        "#0a0e17",   # app background (deep navy)
-    "surface":   "#11151f",   # sidebar / panels
-    "surface2":  "#171c28",   # cards, inputs
-    "card":      "#12161f",   # download card
-    "card_hover":"#161b27",
-    "border":    "#232838",
-    "border2":   "#2c3344",
+    "bg":        "#12141c",   # app background (soft charcoal, not pure black)
+    "surface":   "#191c25",   # sidebar / panels
+    "surface2":  "#20242f",   # cards, inputs
+    "card":      "#191c25",   # download card
+    "card_hover":"#232733",
+    "border":    "#2a2f3b",
+    "border2":   "#353b48",
     "text":      "#f1f5f9",
     "muted":     "#8b97ad",
     "faint":     "#5b6678",
@@ -135,6 +135,10 @@ QWidget#root {{ background: {c['bg']}; }}
 /* ---------- sidebar ---------- */
 QFrame#sidebar {{ background: {c['surface']}; border: none; border-right: 1px solid {c['border']}; }}
 QWidget#mainPane {{ background: {c['bg']}; }}
+/* the download list is a QScrollArea; make its viewport + inner content show the
+   app background instead of the Qt default (which rendered light in dark mode) */
+QWidget#listInner {{ background: transparent; }}
+QScrollArea#downloadList, QScrollArea#downloadList > QWidget > QWidget {{ background: transparent; }}
 
 QLabel#brand {{ font-size: 18px; font-weight: 800; }}
 QLabel#sectionTitle {{ color: {c['muted']}; font-size: 11px; font-weight: 800; letter-spacing: 1px; }}

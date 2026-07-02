@@ -30,6 +30,7 @@ class DownloadList(QScrollArea):
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        self.setObjectName("downloadList")
         self.setWidgetResizable(True)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self._inner = QWidget(); self._inner.setObjectName("listInner")

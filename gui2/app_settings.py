@@ -8,6 +8,7 @@ import os
 import threading
 
 from PySide6.QtWidgets import QApplication
+from PySide6.QtCore import QTimer
 
 import utils
 from gui.theme import apply_theme
@@ -84,10 +85,11 @@ class SettingsMixin:
             downloader._GLOBAL_CONNS.set_limit(self.max_concurrent * self.segments)
         apply_theme(self.theme)
         # A light/dark switch can't be applied live (widgets bake colours at build
-        # time) — persist it and prompt a restart for a clean re-skin.
-        if theme_changed and hasattr(self, "_toasts"):
-            self._toasts.show("info", "Theme change",
-                              "Restart HyperFetch to apply the new theme.")
+        # time), so persist it (below) and auto-restart for a clean re-skin.
+        if theme_changed:
+            if hasattr(self, "_toasts"):
+                self._toasts.show("info", "Applying theme", "Restarting HyperFetch…")
+            QTimer.singleShot(700, self._restart_app)
         if palette.ACCENTS.get(v["accent"]) != palette.COLORS["accent"]:
             palette.set_accent(v["accent"])
             self.setStyleSheet(palette.qss())        # live accent re-skin (QSS widgets)

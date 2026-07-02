@@ -4,8 +4,9 @@
 that pauses or releases downloads at set times.
 """
 import datetime
+import os
 
-from PySide6.QtWidgets import QSystemTrayIcon
+from PySide6.QtWidgets import QSystemTrayIcon, QApplication
 
 import task as T
 import utils
@@ -71,6 +72,23 @@ class SystemMixin:
     def _real_quit(self):
         self._quit_requested = True
         self.close()
+
+    def _restart_app(self):
+        """Relaunch the app (used after a theme change — widgets bake colours at
+        construction, so a clean restart is the reliable re-skin). State is saved
+        first; any in-flight download restores as resumable-paused."""
+        import sys
+        from PySide6.QtCore import QProcess
+        self._quit_requested = True
+        try:
+            self._save_state(); self._save_settings()
+        except Exception:
+            pass
+        if getattr(sys, "frozen", False):
+            QProcess.startDetached(sys.executable, sys.argv[1:])
+        else:
+            QProcess.startDetached(sys.executable, [os.path.abspath(sys.argv[0])] + sys.argv[1:])
+        QApplication.quit()
 
     # ------------------------------------------------------------- scheduler
     def _check_scheduler(self):

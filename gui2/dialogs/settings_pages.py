@@ -10,11 +10,13 @@ from PySide6.QtWidgets import (
     QComboBox, QSlider, QSpinBox, QWidget, QFrame, QFileDialog, QTimeEdit,
     QScrollArea, QApplication, QSizePolicy
 )
-from PySide6.QtCore import Qt, QTime
+from PySide6.QtCore import Qt, QTime, QTimer
 
 import crash_reporter
 import utils
 from gui.theme import APP_VERSION
+
+STORE_URL = "https://chromewebstore.google.com/detail/hyperfetch/finojjembpabfbincabngboedegokdlm"
 try:
     from gui.dialogs import AnimatedToggle
 except Exception:                       # fallback if unavailable
@@ -62,6 +64,23 @@ class PageBuilderMixin:
         t = AnimatedToggle()
         t.setChecked(bool(on))
         return t
+
+    def _copy_button(self, get_text):
+        """A Copy button with a clear pressed state + a 'Copied ✓' confirmation
+        (the plain button gave no feedback that the click registered)."""
+        b = QPushButton("Copy"); b.setCursor(Qt.PointingHandCursor)
+        b.setStyleSheet(
+            f"QPushButton {{ background: {COLORS['surface2']}; color: {COLORS['text']};"
+            f" border: 1px solid {COLORS['border']}; border-radius: 7px; padding: 6px 16px; font-weight: 600; }}"
+            f"QPushButton:hover {{ background: {COLORS['card_hover']}; }}"
+            f"QPushButton:pressed {{ background: {COLORS['accent']}; color: white; }}")
+
+        def do_copy():
+            QApplication.clipboard().setText(get_text())
+            b.setText("Copied ✓")
+            QTimer.singleShot(1400, lambda: b.setText("Copy"))
+        b.clicked.connect(do_copy)
+        return b
 
     def _combo(self, items, current=None):
         c = QComboBox(); c.addItems(items)
@@ -168,11 +187,12 @@ class PageBuilderMixin:
         sa, v = self._page("Browser Integration", "Integrate with your web browser")
         f, g = self._card()
         get = QPushButton("  Get Extension"); get.setIcon(themed_icon("open", "text"))
-        self._row(g, "Browser Extension", "Install the HyperFetch extension to catch downloads", get)
+        get.clicked.connect(lambda: __import__("webbrowser").open(STORE_URL))
+        self._row(g, "Browser Extension", "Install the HyperFetch extension from the Chrome Web Store", get)
         v.addWidget(f)
         f2, g2 = self._card()
         self.browsers = {}
-        for b in ("Google Chrome", "Microsoft Edge", "Mozilla Firefox", "Brave", "Opera"):
+        for b in ("Google Chrome", "Microsoft Edge"):
             tog = self._toggle((ex.get("browsers") or {}).get(b, True))
             self.browsers[b] = tog
             self._row(g2, b, "Detected", tog)
@@ -180,7 +200,7 @@ class PageBuilderMixin:
         f3, g3 = self._card()
         trow = QHBoxLayout()
         tok = QLineEdit(self._token); tok.setReadOnly(True)
-        copy = QPushButton("Copy"); copy.clicked.connect(lambda: QApplication.clipboard().setText(self._token))
+        copy = self._copy_button(lambda: self._token)
         trow.addWidget(tok, 1); trow.addWidget(copy)
         lab = QLabel("Browser Pairing Token"); lab.setStyleSheet("font-weight:700;background:transparent;")
         g3.addWidget(lab); g3.addLayout(trow)
