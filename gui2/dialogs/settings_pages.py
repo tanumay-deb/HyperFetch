@@ -329,6 +329,11 @@ class PageBuilderMixin:
         g.addLayout(brow)
         self.upd_lbl = QLabel(""); self.upd_lbl.setStyleSheet(f"color:{COLORS['muted']};background:transparent;")
         g.addWidget(self.upd_lbl)
+        self._update_url = ""
+        self.upd_btn = QPushButton("Download update"); self.upd_btn.setObjectName("primary")
+        self.upd_btn.setVisible(False)
+        self.upd_btn.clicked.connect(lambda: self._update_url and __import__("webbrowser").open(self._update_url))
+        g.addWidget(self.upd_btn)
         links = QHBoxLayout()
         lic = QPushButton("License"); lic.setObjectName("ghost")
         cred = QPushButton("Credits"); cred.setObjectName("ghost")
@@ -372,14 +377,28 @@ class PageBuilderMixin:
             self.proxy_btn.setText("Edit" if self._proxy_url else "Configure")
 
     def _check_updates(self):
-        self.upd_lbl.setText("Checking…"); QApplication.processEvents()
+        self.upd_lbl.setText("Checking…"); self.upd_btn.setVisible(False); QApplication.processEvents()
         import urllib.request, json
         try:
-            req = urllib.request.Request("https://api.github.com/repos/tanumay-deb/HyperFetch/releases/latest")
-            with urllib.request.urlopen(req, timeout=5) as r:
-                latest = json.loads(r.read().decode()).get("tag_name", "")
-            self.upd_lbl.setText(f"Update available: {latest}" if latest.lstrip("v") != APP_VERSION
-                                 else "You are on the latest version.")
+            req = urllib.request.Request(
+                "https://api.github.com/repos/tanumay-deb/HyperFetch/releases/latest",
+                headers={"Accept": "application/vnd.github+json"})
+            with urllib.request.urlopen(req, timeout=6) as r:
+                data = json.loads(r.read().decode())
+            latest = data.get("tag_name", "")
+            if latest.lstrip("v") and latest.lstrip("v") != APP_VERSION:
+                # link straight to the Windows installer, else the release page
+                url = data.get("html_url", "")
+                for a in data.get("assets", []):
+                    if (a.get("name") or "").lower().endswith("setup.exe"):
+                        url = a.get("browser_download_url") or url
+                        break
+                self._update_url = url
+                self.upd_lbl.setText(f"Update available: {latest}")
+                self.upd_btn.setText(f"Download {latest}")
+                self.upd_btn.setVisible(True)
+            else:
+                self.upd_lbl.setText("You are on the latest version.")
         except Exception:
             self.upd_lbl.setText("Failed to check for updates.")
 
