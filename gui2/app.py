@@ -403,6 +403,37 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, QW
         if getattr(self, "tray", None):
             self.tray.setToolTip(title)
 
+    def _maybe_categorize(self, t):
+        """Move a completed file that landed in a base folder into its category
+        subfolder. Covers engines that only learn the real filename/extension
+        during the download (yt-dlp media pages, extensionless URLs) — add-time
+        categorisation can't classify those, so we fix it up on completion.
+        Torrents and already-categorised files are skipped."""
+        if not self._extras.get("categorize", True):
+            return
+        if _torrent.is_torrent_task(t.url, t.filename):
+            return
+        path = getattr(t, "save_path", "") or ""
+        if not os.path.isfile(path):
+            return
+        cat = utils.category_for(t.filename)
+        if cat == "Other":
+            return
+        cur_dir = os.path.dirname(path)
+        if os.path.basename(cur_dir).lower() == cat.lower():
+            return                                  # already inside its category folder
+        try:
+            import shutil
+            dest_dir = os.path.join(cur_dir, cat)
+            os.makedirs(dest_dir, exist_ok=True)
+            dest = utils.unique_path(dest_dir, os.path.basename(path))
+            shutil.move(path, dest)
+            t.save_path = dest
+            t.filename = os.path.basename(dest)
+            self._save_state()
+        except OSError:
+            pass
+
     def _counts(self):
         tasks = self.queue.tasks
         c = {"All": len(tasks)}
@@ -423,6 +454,7 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, QW
         wc = self._extras.get("when_complete", "Show notification")
         for t in self.queue.tasks:
             if t.status == T.COMPLETED and t.id not in self._completed_seen:
+                self._maybe_categorize(t)      # re-home late-resolved files (yt-dlp etc.)
                 try:
                     import history
                     history.record(t)
