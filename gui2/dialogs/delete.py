@@ -171,7 +171,7 @@ class DeleteDialog(QDialog):
         self.setStyleSheet(f"""
 #container{{
     background:{COLORS['surface2']};
-    border:1px solid {COLORS['border']};
+    border:none;
     border-radius:16px;
 }}
 
@@ -225,10 +225,12 @@ class DeleteDialog(QDialog):
 
         #cancel{{
             background:{COLORS['surface']};
+            color:{COLORS['text']};
+            border:1px solid {COLORS['border2']};
         }}
 
         #cancel:hover{{
-            background:{COLORS['border']};
+            background:{COLORS['card_hover']};
         }}
 
         #delete{{
