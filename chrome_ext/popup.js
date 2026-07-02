@@ -61,6 +61,10 @@ enabledEl.addEventListener("change", () => {
   chrome.storage.local.set({ enabled: enabledEl.checked });
 });
 
+// show the real extension version (read from the manifest, never hardcoded)
+const verEl = document.getElementById("ver");
+if (verEl) verEl.textContent = `bridge 127.0.0.1:5000 · v${chrome.runtime.getManifest().version}`;
+
 saveTokenBtn.addEventListener("click", () => {
   const tok = tokenEl.value.trim();
   if (!tok) { msgEl.textContent = "Paste the token from the app first"; return; }
