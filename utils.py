@@ -159,7 +159,7 @@ def safe_filename(name, max_len=200):
     headroom). The last line of defense before joining to a download directory."""
     name = os.path.basename(name or "")
     name = name.replace("\\", "_").replace("/", "_")
-    name = sanitize(name)
+    name = _safe_chars(name)         # keep '#' and the extension; do NOT URL-split
     if name in ("", ".", ".."):
         name = "download"
     # reserved device name (CON, NUL, COM1, …), with or without an extension
@@ -202,11 +202,21 @@ def default_download_dir():
     return d
 
 
+def _safe_chars(name):
+    """Replace characters illegal in a Windows filename with '_'. Keeps legal
+    ones like '#' — unlike sanitize(), which URL-splits on '?'/'#'."""
+    name = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", name or "")
+    return name.strip(". ")
+
+
 def sanitize(name):
+    # URL-oriented: decode %-escapes and drop any query/fragment, THEN make the
+    # remaining chars file-safe. Only for names derived from a URL — a real
+    # filename/title (e.g. a video title with '#') must use _safe_chars instead,
+    # or everything after the '#' (including the extension) would be lost.
     name = urllib.parse.unquote(name or "").strip()
     name = name.split("?")[0].split("#")[0]
-    name = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", name)
-    return name.strip(". ") or ""
+    return _safe_chars(name) or ""
 
 
 def filename_from_url(url, suggested=None):

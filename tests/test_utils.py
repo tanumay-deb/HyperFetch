@@ -44,6 +44,20 @@ def test_safe_filename_windows_reserved():
     assert utils.safe_filename("console.log") == "console.log"
 
 
+def test_safe_filename_keeps_hash_and_extension():
+    # a media title with '#' must NOT be truncated at the '#', and the extension
+    # must survive — yt-dlp titles reach here via the category move (regression)
+    out = utils.safe_filename("Crush GMAT | 3-hour NonStop #GMAT Crash-Course.mp4")
+    assert out.endswith(".mp4")
+    assert "#GMAT Crash-Course" in out
+    assert "|" not in out                # illegal char replaced, not split
+
+
+def test_safe_filename_question_mark_not_split():
+    out = utils.safe_filename("what is this? v2.mkv")
+    assert out.endswith(".mkv") and "?" not in out
+
+
 def test_safe_filename_length_capped():
     long = "a" * 400 + ".zip"
     out = utils.safe_filename(long)
