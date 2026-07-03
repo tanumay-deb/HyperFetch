@@ -54,6 +54,30 @@ if (Test-Path $ariaExe) {
     }
 }
 
+Write-Host "==> Ensuring ffmpeg (yt-dlp merge -> 1080p/4K + DASH-only videos)" -ForegroundColor Cyan
+$ffExe = "bin\ffmpeg.exe"
+if (Test-Path $ffExe) {
+    Write-Host "    already present: $ffExe" -ForegroundColor DarkGray
+} else {
+    try {
+        New-Item -ItemType Directory -Force bin | Out-Null
+        # BtbN static Windows build (essentials would also do; gpl is fine)
+        $ffUrl = "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip"
+        $zip = Join-Path $env:TEMP "ffmpeg-win64.zip"
+        Invoke-WebRequest -Uri $ffUrl -OutFile $zip -UseBasicParsing
+        $tmp = Join-Path $env:TEMP "ffmpeg-extract"
+        Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue
+        Expand-Archive -Path $zip -DestinationPath $tmp -Force
+        $found = Get-ChildItem -Path $tmp -Recurse -Filter ffmpeg.exe | Select-Object -First 1
+        if ($found) { Copy-Item $found.FullName $ffExe -Force; Write-Host "    ffmpeg.exe -> $ffExe" -ForegroundColor Green }
+        else { Write-Warning "ffmpeg.exe not found in the archive" }
+        Remove-Item $zip -Force -ErrorAction SilentlyContinue
+        Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue
+    } catch {
+        Write-Warning "ffmpeg fetch failed ($($_.Exception.Message)); build continues, yt-dlp limited to <=720p muxed."
+    }
+}
+
 Write-Host "==> Cleaning previous build" -ForegroundColor Cyan
 Remove-Item -Recurse -Force build, dist -ErrorAction SilentlyContinue
 

@@ -94,13 +94,38 @@ class YtDlpDownloader:
         }
         if http_headers:
             opts["http_headers"] = http_headers
-        # quality selector chosen in New Download (single-file formats so no
-        # ffmpeg merge is required); "" keeps yt-dlp's default best.
-        fmt = (getattr(self.t, "yt_format", "") or "").strip()
-        if fmt:
-            opts["format"] = fmt
+
+        import utils, shutil, re, sys
+        # Locate ffmpeg (bundled with the app, or on PATH). With ffmpeg we can
+        # merge separate video+audio streams -> real 1080p/4K, and videos that
+        # only offer DASH (no combined stream) become downloadable. Without it we
+        # are limited to single muxed streams (<=720p on YouTube).
+        ffdir = None
+        _base = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
+        _bundled = os.path.join(_base, "bin", "ffmpeg.exe")
+        if os.path.exists(_bundled):
+            ffdir = os.path.dirname(_bundled)
+        else:
+            _which = shutil.which("ffmpeg")
+            if _which:
+                ffdir = os.path.dirname(_which)
+        if ffdir:
+            opts["ffmpeg_location"] = ffdir
+
+        # Build a format string that never hard-fails with "requested format is
+        # not available": prefer a height-capped merge when ffmpeg is present,
+        # else a single muxed stream — always with a plain "b" fallback.
+        req = (getattr(self.t, "yt_format", "") or "").strip()
+        mh = re.search(r"height<=(\d+)", req)
+        h = mh.group(1) if mh else None
+        if req.startswith("ba"):                        # audio-only intent
+            opts["format"] = "ba[ext=m4a]/ba/b"
+        elif ffdir:
+            opts["format"] = (f"bv*[height<={h}]+ba/b[height<={h}]/b" if h else "bv*+ba/b")
+        else:
+            opts["format"] = (f"b[height<={h}]/b" if h else "b")
+
         # respect the global TLS + proxy settings
-        import utils
         if not utils.VERIFY_TLS:
             opts["nocheckcertificate"] = True
         if utils.PROXIES:
@@ -131,7 +156,16 @@ class YtDlpDownloader:
             self.t.status = T.CANCELLED if self.t.cancel_requested else T.PAUSED
         except Exception as e:
             self.t.status = T.ERROR
-            self.t.error = "yt-dlp: " + str(e)[:200]
+            import re as _re
+            msg = _re.sub(r"\x1b\[[0-9;]*m", "", str(e)).strip()    # strip ANSI colour codes
+            low = msg.lower()
+            if ("requested format is not available" in low or "ffmpeg" in low
+                    or "merging" in low):
+                self.t.error = ("This video has no combined audio+video stream — it needs "
+                                "ffmpeg to merge them (bundled in the app installer; on a "
+                                "source run, put ffmpeg on your PATH).")
+            else:
+                self.t.error = "yt-dlp: " + msg[:200]
             log.error("yt-dlp failed: %s — %s", self.t.url, str(e)[:200])
 
     @staticmethod

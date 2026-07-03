@@ -21,6 +21,8 @@ _PRIORITIES = [("High", -10), ("Normal", 0), ("Low", 10)]
 # no ffmpeg merge is needed; "Best (auto)" defers to yt-dlp's default.
 _YT_QUALITY = [
     ("Best (auto)", ""),
+    ("2160p (4K)", "b[height<=2160]"),
+    ("1440p", "b[height<=1440]"),
     ("1080p", "b[height<=1080]"),
     ("720p", "b[height<=720]"),
     ("480p", "b[height<=480]"),
@@ -135,7 +137,7 @@ class NewDownloadDialog(QDialog):
         self.quality = QComboBox(); self.quality.addItems([q[0] for q in _YT_QUALITY])
         self.quality.setToolTip(
             "Video/audio quality for media-page (yt-dlp) downloads.\n"
-            "Single-file formats — no ffmpeg needed.")
+            "Merged with the bundled ffmpeg (falls back to ≤720p if ffmpeg is missing).")
         self.quality.setEnabled(self.use_ytdlp.isChecked())
         self.use_ytdlp.toggled.connect(self.quality.setEnabled)
         av.addWidget(self.quality, 5, 1)

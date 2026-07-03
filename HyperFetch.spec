@@ -31,6 +31,9 @@ if os.path.isfile(os.path.join('bin', 'aria2c.exe')):
     extra_datas.append(('bin/aria2c.exe', 'bin'))
 elif os.path.isfile(os.path.join('bin', 'aria2c')):
     extra_datas.append(('bin/aria2c', 'bin'))
+# ffmpeg for yt-dlp merges (1080p/4K + DASH-only videos); optional
+if os.path.isfile(os.path.join('bin', 'ffmpeg.exe')):
+    extra_datas.append(('bin/ffmpeg.exe', 'bin'))
 
 a = Analysis(
     ['main.py'],
