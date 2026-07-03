@@ -182,13 +182,18 @@ def load_json(path, default):
 
 
 def save_json(path, data):
+    tmp = path + ".tmp"
     try:
-        tmp = path + ".tmp"
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2)
         os.replace(tmp, path)
-    except OSError:
-        pass
+    except (OSError, TypeError, ValueError):
+        # never crash a save (a TypeError from a non-serializable value would
+        # otherwise propagate mid-shutdown) and never leave the .tmp sidecar
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
 
 
 def default_download_dir():
