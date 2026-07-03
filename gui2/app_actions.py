@@ -148,7 +148,16 @@ class ActionsMixin:
         bar = getattr(self, "action_bar", None)
         if bar is not None:
             if ids:
+                ts = [x for x in (self.queue.get_task(i) for i in ids) if x]
+                st = {x.status for x in ts}
                 bar.set_count(len(ids))
+                bar.set_applicable(
+                    open_=(len(ts) == 1 and T.COMPLETED in st),
+                    pause=T.DOWNLOADING in st,
+                    resume=bool(st & {T.PAUSED, T.ERROR, T.QUEUED, T.SCHEDULED}),
+                    force=bool(st & {T.QUEUED, T.PAUSED, T.ERROR, T.SCHEDULED}),
+                    move=(len(self.queue.queues) > 1 and T.QUEUED in st),
+                )
                 self._position_action_bar()
                 bar.show(); bar.raise_()
             else:
@@ -163,6 +172,11 @@ class ActionsMixin:
         ts = [x for x in (self.queue.get_task(i) for i in self.list.selected_ids()) if x]
         if ts:
             self._bulk(ts, fn)
+
+    def _bar_open(self):
+        ts = [x for x in (self.queue.get_task(i) for i in self.list.selected_ids()) if x]
+        if len(ts) == 1 and ts[0].status == T.COMPLETED:
+            self._open_file(ts[0])
 
     def _bar_move_menu(self):
         ts = [x for x in (self.queue.get_task(i) for i in self.list.selected_ids()) if x]

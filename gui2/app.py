@@ -239,6 +239,7 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, QW
         from gui2.action_bar import ActionBar
         self.action_bar = ActionBar(self)
         self.action_bar.hide()
+        self.action_bar.openClicked.connect(self._bar_open)
         self.action_bar.pauseClicked.connect(lambda: self._bar_bulk(self.queue.pause_task))
         self.action_bar.resumeClicked.connect(lambda: self._bar_bulk(self.queue.resume_task))
         self.action_bar.forceClicked.connect(lambda: self._bar_bulk(self.queue.force_start))
