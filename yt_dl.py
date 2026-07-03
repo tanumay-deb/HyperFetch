@@ -82,10 +82,19 @@ class YtDlpDownloader:
         http_headers = {k: v for k, v in hdrs.items()
                         if k.lower() in ("user-agent", "referer", "cookie")}
 
+        # route yt-dlp's own messages (deprecation notices, ERROR echoes) into our
+        # debug log instead of stdout/stderr, so they don't spam the app console
+        class _YtLog:
+            def debug(self, m): pass
+            def info(self, m): pass
+            def warning(self, m): log.debug("yt-dlp: %s", m)
+            def error(self, m): log.debug("yt-dlp: %s", m)
+
         opts = {
             "outtmpl": os.path.join(out_dir, "%(title)s.%(ext)s"),
             "noplaylist": True,
             "progress_hooks": [hook],
+            "logger": _YtLog(),
             "quiet": True, "no_warnings": True, "noprogress": True,
             "concurrent_fragment_downloads": 4,
             "retries": 5, "fragment_retries": 5,

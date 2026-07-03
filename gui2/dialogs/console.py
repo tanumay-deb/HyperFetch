@@ -45,7 +45,7 @@ class ConsoleDialog(QDialog):
         self.view.setStyleSheet(
             f"QPlainTextEdit {{ background: {COLORS['bg']}; color: {COLORS['text']};"
             f" border: 1px solid {COLORS['border']}; border-radius: 8px;"
-            " font-family: Consolas, 'Cascadia Mono', monospace; font-size: 12px; padding: 8px; }}")
+            " font-family: Consolas, monospace; font-size: 12px; padding: 8px; }")
         v.addWidget(self.view, 1)
 
         foot = QHBoxLayout()
