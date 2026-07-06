@@ -242,6 +242,7 @@ class TorrentDownloader:
                         top = self._top_entry(s[5:], out_dir)
                         if top:
                             seen["top"] = top
+                            self.t.filename = top     # show the real torrent name (was the "torrent" placeholder)
                     continue
                 if s and not any(k in s for k in FOOTER):   # keep real errors only
                     tail.append(s)
@@ -319,6 +320,7 @@ class TorrentDownloader:
         qualifies — the dialogs then fall back to opening the folder."""
         if top and os.path.exists(os.path.join(out_dir, top)):
             self.t.save_path = os.path.join(out_dir, top)
+            self.t.filename = top
             return
         started = getattr(self, "_started", 0)
         newest = None
@@ -336,6 +338,8 @@ class TorrentDownloader:
             newest = None
         if newest:
             self.t.save_path = os.path.join(out_dir, newest[1])
+            # note: don't rename the task here — the newest-entry heuristic can pick
+            # an unrelated file; keep the reliable magnet dn / FILE-line name
 
     def _stop(self):
         p = self._proc

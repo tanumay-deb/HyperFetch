@@ -156,6 +156,26 @@ def create_app(queue, save_dir, pending=None, token=None):
         queue.add_task(task)
         return jsonify({"status": "queued", "id": task.id, "filename": filename})
 
+    @app.route("/open", methods=["POST"])
+    def open_target():
+        """Single-instance handoff: `main.py`, launched by Windows to open a
+        .torrent file or magnet: link, POSTs it here so the already-running app
+        adds it (instead of spawning a second window). Token-gated + localhost;
+        not in the CORS allow-list, so a browser can't reach it."""
+        data = request.get_json(silent=True) or {}
+        if not _authorized(data):
+            return jsonify({"status": "error", "message": "unauthorized"}), 401
+        target = (data.get("target") or "").strip()
+        if not (target.lower().startswith("magnet:") or target.lower().endswith(".torrent")):
+            return jsonify({"status": "error", "message": "not a torrent/magnet"}), 400
+        if pending is not None:
+            pending.append({"url": target, "filename": "", "headers": {}})
+            return jsonify({"status": "queued"})
+        fn = utils.filename_from_url(target) or "torrent"
+        task = T.DownloadTask(target, utils.unique_path(save_dir, fn), filename=fn)
+        queue.add_task(task)
+        return jsonify({"status": "queued", "id": task.id})
+
     return app
 
 

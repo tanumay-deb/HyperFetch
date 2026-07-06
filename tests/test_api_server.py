@@ -165,3 +165,27 @@ def test_pair_preflight_ok_for_official(tmp_path):
     r = c.open("/pair", method="OPTIONS", headers={"Origin": _OFFICIAL})
     assert r.status_code == 200
     assert r.headers.get("Access-Control-Allow-Origin") == _OFFICIAL
+
+
+# ---- /open: single-instance handoff for .torrent / magnet: ----
+def test_open_accepts_magnet_and_torrent(tmp_path):
+    pend = deque()
+    c = create_app(_FakeQueue(), str(tmp_path), pending=pend, token="S").test_client()
+    h = {"X-HyperFetch-Token": "S"}
+    assert c.post("/open", json={"target": "magnet:?xt=urn:btih:abc"}, headers=h).status_code == 200
+    assert c.post("/open", json={"target": "C:/x/file.torrent"}, headers=h).status_code == 200
+    assert len(pend) == 2
+
+
+def test_open_rejects_non_torrent_and_unauthorized(tmp_path):
+    c = create_app(_FakeQueue(), str(tmp_path), pending=deque(), token="S").test_client()
+    assert c.post("/open", json={"target": "https://x/y.zip"},
+                  headers={"X-HyperFetch-Token": "S"}).status_code == 400
+    assert c.post("/open", json={"target": "magnet:?x"}).status_code == 401
+
+
+def test_open_headless_queues(tmp_path):
+    q = _FakeQueue()
+    c = create_app(q, str(tmp_path), pending=None, token="S").test_client()
+    r = c.post("/open", json={"target": "magnet:?xt=urn:btih:z"}, headers={"X-HyperFetch-Token": "S"})
+    assert r.status_code == 200 and len(q.tasks) == 1

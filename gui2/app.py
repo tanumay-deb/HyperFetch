@@ -753,7 +753,7 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, QW
         super().closeEvent(e)
 
 
-def run_v2():
+def run_v2(open_target=None):
     import sys
     app = QApplication.instance() or QApplication(sys.argv)
     from PySide6.QtGui import QFont
@@ -761,12 +761,17 @@ def run_v2():
     win = DownloadAppV2()
     # launch behavior (Settings -> General -> On application launch)
     launch = win._extras.get("launch", "Show main window")
-    if launch == "Start in tray" and win.tray and win.tray.isVisible():
+    if open_target:
+        win.show(); win.raise_(); win.activateWindow()   # a file open always surfaces the window
+    elif launch == "Start in tray" and win.tray and win.tray.isVisible():
         pass                                   # stay hidden in the tray
     elif launch == "Start minimized":
         win.showMinimized()
     else:
         win.show()
+    # a .torrent / magnet: passed on the command line -> open the Add dialog for it
+    if open_target:
+        QTimer.singleShot(350, lambda: win._add_download(open_target, "", None, flash=True))
     return app.exec()
 
 
