@@ -4,14 +4,42 @@
 // auto-intercepted, so already-downloaded files never re-trigger a dialog.
 
 let captureEnabled = true;
-chrome.storage.local.get({ enabled: true }, (v) => { captureEnabled = v.enabled; });
+// media-sniffer panel globals (declared before the storage callbacks below,
+// which can run synchronously and call applyBadgeCorner)
+let panelRoot = null;
+let panelContainer = null;
+// which corner the floating download panel sits in — draggable (snaps to the
+// nearest corner on drop) and settable from the popup; both persist here
+let badgeCorner = "top-right";
+chrome.storage.local.get({ enabled: true, badgeCorner: "top-right" }, (v) => {
+  captureEnabled = v.enabled;
+  badgeCorner = v.badgeCorner || "top-right";
+  applyBadgeCorner();
+});
 chrome.storage.onChanged.addListener((ch) => {
   if (ch.enabled) {
     captureEnabled = ch.enabled.newValue;
     // reflect the toggle on the download badges right away
     if (typeof scheduleReposition === 'function') scheduleReposition();
   }
+  if (ch.badgeCorner) {
+    badgeCorner = ch.badgeCorner.newValue;
+    applyBadgeCorner();
+  }
 });
+
+// pin the panel wrapper to its corner (20px margins). Called on create, after a
+// drag-drop snap, and when the popup changes the setting.
+function applyBadgeCorner() {
+  if (!panelRoot) return;
+  const w = panelRoot.getElementById("wrapper");
+  if (!w) return;
+  const [v, h] = (badgeCorner || "top-right").split("-");   // e.g. "top-right"
+  w.style.top = v === "top" ? "20px" : "auto";
+  w.style.bottom = v === "bottom" ? "20px" : "auto";
+  w.style.left = h === "left" ? "20px" : "auto";
+  w.style.right = h === "right" ? "20px" : "auto";
+}
 
 function sendToApp(url, suggestedName = null) {
   const filename = suggestedName || url.split("/").pop().split("?")[0];
@@ -67,8 +95,6 @@ const sniffedMedia = new Map();
 // variant-playlist URLs that belong to a parsed master — suppressed as standalone
 // rows so a master isn't duplicated by the chunklists the player also requests.
 const hlsVariantUrls = new Set();
-let panelRoot = null;
-let panelContainer = null;
 
 chrome.runtime.onMessage.addListener((msg) => {
   if (msg.type === "SNIFFED_MEDIA") {
@@ -109,11 +135,13 @@ function updatePanel() {
       #toggle {
         background: linear-gradient(135deg, #6366f1, #8b5cf6);
         color: white; border: none; border-radius: 20px;
-        padding: 10px 16px; font-weight: bold; cursor: pointer;
+        padding: 10px 16px; font-weight: bold; cursor: grab;
         box-shadow: 0 4px 12px rgba(0,0,0,0.3);
         display: flex; align-items: center; gap: 8px;
         transition: transform 0.2s; font-size: 13px;
+        touch-action: none;
       }
+      #toggle:active { cursor: grabbing; }
       #toggle:hover { transform: scale(1.05); }
       #list-container {
         display: none; background: #111a2e;
@@ -177,14 +205,46 @@ function updatePanel() {
     
     const toggle = document.createElement("button");
     toggle.id = "toggle";
+    // click toggles the list; a DRAG (past a small threshold) moves the panel and
+    // snaps it to the nearest corner on release (persisted, shared across sites)
+    let dragged = false;
     toggle.onclick = () => {
+      if (dragged) { dragged = false; return; }    // suppress the click after a drag
       listContainer.style.display = listContainer.style.display === "flex" ? "none" : "flex";
     };
-    
+    toggle.addEventListener("pointerdown", (e) => {
+      if (e.button !== 0) return;
+      const startX = e.clientX, startY = e.clientY;
+      const rect = wrapper.getBoundingClientRect();
+      const offX = startX - rect.left, offY = startY - rect.top;
+      const move = (ev) => {
+        if (!dragged && Math.hypot(ev.clientX - startX, ev.clientY - startY) < 6) return;
+        dragged = true;
+        wrapper.style.top = (ev.clientY - offY) + "px";
+        wrapper.style.left = (ev.clientX - offX) + "px";
+        wrapper.style.right = "auto"; wrapper.style.bottom = "auto";
+      };
+      const up = (ev) => {
+        window.removeEventListener("pointermove", move, true);
+        window.removeEventListener("pointerup", up, true);
+        if (!dragged) return;
+        // snap to the nearest corner and persist it
+        const r = wrapper.getBoundingClientRect();
+        const cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+        badgeCorner = (cy < window.innerHeight / 2 ? "top" : "bottom") + "-" +
+                      (cx < window.innerWidth / 2 ? "left" : "right");
+        chrome.storage.local.set({ badgeCorner });
+        applyBadgeCorner();
+      };
+      window.addEventListener("pointermove", move, true);
+      window.addEventListener("pointerup", up, true);
+    });
+
     wrapper.appendChild(listContainer);
     wrapper.appendChild(toggle);
     panelRoot.appendChild(wrapper);
     document.body.appendChild(panelContainer);
+    applyBadgeCorner();                            // pin to the saved corner
   }
   
   const toggle = panelRoot.getElementById("toggle");

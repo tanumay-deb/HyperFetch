@@ -61,6 +61,14 @@ enabledEl.addEventListener("change", () => {
   chrome.storage.local.set({ enabled: enabledEl.checked });
 });
 
+// on-page download button corner — the content script repositions live; the
+// button can also be dragged on the page (it snaps + saves the same setting)
+const cornerEl = document.getElementById("badgeCorner");
+chrome.storage.local.get({ badgeCorner: "top-right" }, (v) => { cornerEl.value = v.badgeCorner; });
+cornerEl.addEventListener("change", () => {
+  chrome.storage.local.set({ badgeCorner: cornerEl.value });
+});
+
 // show the real extension version (read from the manifest, never hardcoded)
 const verEl = document.getElementById("ver");
 if (verEl) verEl.textContent = `bridge 127.0.0.1:5000 · v${chrome.runtime.getManifest().version}`;
