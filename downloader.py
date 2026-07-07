@@ -170,9 +170,18 @@ class Downloader:
             self._conn_cv.notify_all()
 
     def _throttle_conns(self):
-        """Server is rate limiting: halve allowed parallel connections."""
+        """Server is pushing back (429 or connection resets): halve allowed
+        parallel connections. _grow_conns() restores them on later successes."""
         with self._conn_cv:
             self._max_conns = max(1, self._max_conns // 2)
+
+    def _grow_conns(self):
+        """A stream connected successfully: allow one more parallel connection,
+        up to the segment count (TCP-slow-start-style ramp; see run())."""
+        with self._conn_cv:
+            if self._max_conns < getattr(self, "_conn_cap", self._max_conns):
+                self._max_conns += 1
+                self._conn_cv.notify_all()
 
     # ------------------------------------------------------------------ probe
     def _probe(self):
@@ -312,6 +321,7 @@ class Downloader:
                                   allow_redirects=True, timeout=CONNECT_TIMEOUT,
                                   verify=utils.VERIFY_TLS, proxies=utils.PROXIES) as r:
                     r.raise_for_status()
+                    self._grow_conns()          # stream accepted -> ramp up one more slot
                     with open(temp_path, mode) as f:
                         if mode == "r+b":
                             f.seek(seg.start + seg.downloaded)
@@ -360,6 +370,14 @@ class Downloader:
                     self._throttle_conns()
                     log.warning("429 rate-limited: %s — halved to %d connections",
                                 self.t.filename, self._max_conns)
+                elif code is None:
+                    # connection-level failure (reset/refused/timeout, no HTTP
+                    # code): the server or path is rejecting our concurrency —
+                    # back off the gate like a 429 so the surviving retries go
+                    # out at a rate the server tolerates.
+                    self._throttle_conns()
+                    log.debug("seg %d conn failure — gate now %d: %s",
+                              seg.index, self._max_conns, e)
                 else:
                     log.debug("seg %d retry %d/%d: %s — %s",
                               seg.index, attempts, MAX_RETRIES, self.t.filename, e)
@@ -461,10 +479,15 @@ class Downloader:
             self.t.error = str(e)
             return
 
-        # Set the connection cap from the ACTUAL segment count (covers fresh
-        # builds, Auto mode, and resume-from-disk where segments are restored
-        # and _build_segments is skipped). Must be > 0 or the gate deadlocks.
-        self._max_conns = max(1, len(self.t.segments))
+        # Connection ramp-up (TCP-style slow start): opening every segment
+        # socket at once trips per-IP burst protection on big CDNs (Google's
+        # gvt1 resets a 30-connection burst and the whole task dies with
+        # "Connection lost"). Start at 4; each stream that connects grows the
+        # gate by 1 (up to the real segment count), and 429s/resets halve it —
+        # the task self-tunes to what the server tolerates instead of failing.
+        n = max(1, len(self.t.segments))
+        self._conn_cap = n
+        self._max_conns = min(4, n)
 
         self.t.recompute_downloaded()
         log.info("HTTP %s: %d segment(s), %d bytes, range=%s",
