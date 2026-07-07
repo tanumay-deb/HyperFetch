@@ -86,7 +86,12 @@ function sendToApp(url, filename, referrer, done, extra) {
 // "Download with HyperFetch" menu item (below) and the in-page video badges
 // (content.js). Browser-initiated downloads are left entirely to the browser,
 // so re-requested or already-downloaded files never trigger a surprise dialog.
-chrome.runtime.onInstalled.addListener(() => {
+chrome.runtime.onInstalled.addListener((details) => {
+  // first install (not updates): open the bundled welcome/onboarding page —
+  // it live-checks for the desktop app and walks through the 3 steps
+  if (details && details.reason === "install" && chrome.tabs && chrome.tabs.create) {
+    chrome.tabs.create({ url: chrome.runtime.getURL("welcome.html") }, ignoreErr);
+  }
   // removeAll() first so an extension UPDATE doesn't hit "duplicate id" — the
   // prior registration persists across update and create() with the same id
   // surfaces an error to chrome://extensions otherwise.
@@ -114,6 +119,12 @@ chrome.runtime.onInstalled.addListener(() => {
     }, ignoreErr);
   });
 });
+
+// after removal, Chrome opens this hosted feedback page (bundled pages are gone
+// by then). Guarded: absent in the jsdom test harness.
+if (chrome.runtime.setUninstallURL) {
+  chrome.runtime.setUninstallURL("https://tanumay-deb.github.io/HyperFetch/uninstall.html", ignoreErr);
+}
 
 chrome.contextMenus.onClicked.addListener((info, tab) => {
   if (info.menuItemId !== "hyperfetch-download" &&

@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Welcome to HyperFetch</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center;
+    background: radial-gradient(900px 600px at 30% 20%, #1d1738 0%, #12141c 55%, #0e1016 100%);
+    color: #f1f5f9; font-family: 'Segoe UI', system-ui, sans-serif;
+  }
+  .card {
+    width: 620px; max-width: 92vw; background: #191c25; border: 1px solid #2a2f3b;
+    border-radius: 18px; padding: 36px 40px; box-shadow: 0 18px 60px rgba(0,0,0,.5);
+  }
+  .brand { display: flex; align-items: center; gap: 14px; margin-bottom: 6px; }
+  .bolt {
+    width: 46px; height: 46px; border-radius: 12px; display: flex; align-items: center;
+    justify-content: center; font-size: 24px; color: white;
+    background: linear-gradient(135deg, #6366f1, #8b5cf6);
+  }
+  h1 { font-size: 24px; margin: 0; }
+  .sub { color: #8b97ad; margin: 4px 0 22px; font-size: 14px; }
+  #status {
+    display: flex; align-items: center; gap: 10px; padding: 12px 16px; border-radius: 10px;
+    background: #20242f; border: 1px solid #2a2f3b; font-weight: 600; font-size: 14px; margin-bottom: 22px;
+  }
+  .dot { width: 10px; height: 10px; border-radius: 50%; background: #f59e0b; flex: none; }
+  #status.ok .dot { background: #22c55e; }
+  #status.down .dot { background: #ef4444; }
+  .step { display: flex; gap: 14px; margin: 16px 0; align-items: flex-start; }
+  .num {
+    width: 26px; height: 26px; border-radius: 50%; flex: none; display: flex; align-items: center;
+    justify-content: center; font-weight: 800; font-size: 13px; color: white;
+    background: linear-gradient(135deg, #6366f1, #8b5cf6);
+  }
+  .step b { display: block; font-size: 14px; margin-bottom: 2px; }
+  .step p { margin: 0; color: #8b97ad; font-size: 13px; line-height: 1.5; }
+  a { color: #9277ff; text-decoration: none; font-weight: 600; }
+  a:hover { text-decoration: underline; }
+  .cta {
+    display: inline-block; margin-top: 22px; padding: 11px 22px; border-radius: 10px;
+    background: linear-gradient(135deg, #6366f1, #8b5cf6); color: white !important;
+    font-weight: 700; font-size: 14px;
+  }
+  .cta:hover { filter: brightness(1.1); text-decoration: none; }
+  .hint { color: #5b6678; font-size: 12px; margin-top: 18px; }
+</style>
+</head>
+<body>
+  <div class="card">
+    <div class="brand"><div class="bolt">⚡</div><h1>Welcome to HyperFetch</h1></div>
+    <div class="sub">Multi-segment download accelerator — the extension sends downloads to the desktop app.</div>
+
+    <div id="status"><span class="dot"></span><span id="statusText">Checking for the desktop app…</span></div>
+
+    <div class="step"><div class="num">1</div><div>
+      <b>Install the desktop app</b>
+      <p>The extension needs the HyperFetch app running. No app yet?
+         <a href="https://github.com/tanumay-deb/HyperFetch/releases/latest" target="_blank">Download the installer</a> — no setup beyond Next‑Next‑Finish.</p>
+    </div></div>
+
+    <div class="step"><div class="num">2</div><div>
+      <b>Pairing is automatic</b>
+      <p>With the app running, the extension pairs itself — no tokens to copy. Click the ⚡ icon in your toolbar to check the connection.</p>
+    </div></div>
+
+    <div class="step"><div class="num">3</div><div>
+      <b>Download anything</b>
+      <p>Right‑click any link → <b>Download with HyperFetch</b>. On YouTube &amp; co., right‑click the page → <b>Download video on this page</b>. Streaming sites get a floating download button you can drag to any corner.</p>
+    </div></div>
+
+    <a id="cta" class="cta" href="https://github.com/tanumay-deb/HyperFetch/releases/latest" target="_blank">Get the desktop app</a>
+    <div class="hint">Already installed? Just launch HyperFetch — this page updates by itself.</div>
+  </div>
+  <script src="welcome.js"></script>
+</body>
+</html>
