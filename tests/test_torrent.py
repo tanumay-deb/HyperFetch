@@ -27,6 +27,13 @@ def test_magnet_name():
     assert torrent.magnet_name("") == ""
 
 
+def test_magnet_name_decodes_plus_as_space():
+    # dn= is a query value: '+' means space (was shown raw in the UI)
+    assert torrent.magnet_name(
+        "magnet:?xt=urn:btih:abc&dn=Killhouse+(2026)+%5B1080p%5D+%5BYTS.GG%5D"
+    ) == "Killhouse (2026) [1080p] [YTS.GG]"
+
+
 # ---- progress parsing ----
 @pytest.mark.parametrize("line,done,total", [
     ("[#7d6f3a 12MiB/100MiB(12%) CN:5 DL:2.0MiB ETA:44s]", 12 * 1024**2, 100 * 1024**2),
@@ -85,6 +92,29 @@ def test_run_completes_and_tracks_progress(tmp_path, monkeypatch):
     assert t.total_size == 100 * 1024**2
     assert t.downloaded == t.total_size
     assert t.filename == "Movie"           # taken from magnet dn=
+
+
+def test_run_skips_metadata_pseudo_entry_and_names_from_payload(tmp_path, monkeypatch):
+    """A magnet's first FILE: line is the [MEMORY][METADATA] pseudo-entry — it must
+    NOT become the display name; the real payload FILE: line that follows should
+    (and save_path must repoint at that on-disk entry, not fall back to guessing)."""
+    monkeypatch.setattr(torrent, "aria2c_path", lambda: "aria2c")
+    out = tmp_path / "out"
+    real = out / "Killhouse (2026) [1080p] [WEBRip] [YTS.GG]"
+    real.mkdir(parents=True)
+    (real / "movie.mkv").write_bytes(b"x")
+    lines = [
+        "FILE: [MEMORY][METADATA]Killhouse+(2026)+[1080p]+[YTS.GG]\n",
+        f"FILE: {real / 'movie.mkv'} (1 more)\n",
+        "[#a 100MiB/100MiB(100%) CN:5]\n",
+    ]
+    monkeypatch.setattr(torrent.subprocess, "Popen", lambda *a, **k: _FakeProc(lines, rc=0))
+    t = T.DownloadTask("magnet:?xt=urn:btih:abc&dn=Killhouse+(2026)", str(out / "x"))
+    torrent.TorrentDownloader(t).run()
+    assert t.status == T.COMPLETED
+    assert t.filename == "Killhouse (2026) [1080p] [WEBRip] [YTS.GG]"
+    assert "[METADATA]" not in t.filename and "+" not in t.filename
+    assert t.save_path == str(real)
 
 
 def test_run_reports_error_on_nonzero_exit(tmp_path, monkeypatch):

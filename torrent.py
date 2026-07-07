@@ -58,9 +58,10 @@ def is_torrent_task(url="", filename=""):
 
 
 def magnet_name(url):
-    """Display name from a magnet's dn= param, or '' if absent."""
+    """Display name from a magnet's dn= param, or '' if absent. dn= is a URL
+    query value, so '+' means space (unquote_plus, not plain unquote)."""
     m = re.search(r"[?&]dn=([^&]+)", url or "", re.I)
-    return urllib.parse.unquote(m.group(1)) if m else ""
+    return urllib.parse.unquote_plus(m.group(1)) if m else ""
 
 
 def aria2c_path():
@@ -237,12 +238,19 @@ class TorrentDownloader:
                 s = ln.strip()
                 if s.startswith("FILE:"):
                     # capture the torrent's real top-level entry so save_path can
-                    # be repointed at the actual download (not the placeholder)
+                    # be repointed at the actual download (not the placeholder).
+                    # A magnet's FIRST download is the metadata, whose FILE: line
+                    # is the "[MEMORY][METADATA]<name>" pseudo-entry — not a real
+                    # path. Skip it (without consuming seen["top"]) so the real
+                    # payload FILE: line that follows is the one captured.
+                    val = s[5:].strip()
+                    if "[METADATA]" in val.upper() or "[MEMORY]" in val.upper():
+                        continue
                     if not seen["top"]:
-                        top = self._top_entry(s[5:], out_dir)
+                        top = self._top_entry(val, out_dir)
                         if top:
                             seen["top"] = top
-                            self.t.filename = top     # show the real torrent name (was the "torrent" placeholder)
+                            self.t.filename = top     # real torrent name (matches the on-disk entry)
                     continue
                 if s and not any(k in s for k in FOOTER):   # keep real errors only
                     tail.append(s)
