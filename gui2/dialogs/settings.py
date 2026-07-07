@@ -200,6 +200,7 @@ class SettingsDialogV2(PageBuilderMixin, QDialog):
             "default_queue": self.def_queue.currentText(),
             "auto_start": self.auto_start.isChecked(),
             "categorize": self.categorize.isChecked(),
+            "badge_corner": self._badge_corner_map.get(self.badge_corner.currentText(), "top-right"),
             "speed_limit": self.speed_limit.currentText(),
             "throttle_enabled": self.throttle_en.isChecked(),
             "throttle_start": self.thr_start.time().toString("HH:mm"),

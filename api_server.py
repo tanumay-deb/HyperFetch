@@ -83,7 +83,12 @@ def create_app(queue, save_dir, pending=None, token=None):
     @app.route("/ping", methods=["GET"])
     def ping():
         # open (no token) so the popup can show connection status; reveals nothing
-        return jsonify({"status": "ok", "needsToken": bool(app.config.get("HYPERFETCH_TOKEN"))})
+        # badgeCorner: the extension mirrors this app setting into chrome.storage
+        # when its popup pings us (position of the on-page download button —
+        # harmless to expose on the open endpoint)
+        return jsonify({"status": "ok",
+                        "needsToken": bool(app.config.get("HYPERFETCH_TOKEN")),
+                        "badgeCorner": utils.BADGE_CORNER})
 
     @app.route("/probe", methods=["POST"])
     def probe():

@@ -196,6 +196,17 @@ class PageBuilderMixin:
             tog = self._toggle((ex.get("browsers") or {}).get(b, True))
             self.browsers[b] = tog
             self._row(g2, b, "Detected", tog)
+        # on-page download-button corner — served to the extension via /ping;
+        # the extension mirrors it into chrome.storage when its popup opens
+        _corners = {"Top right": "top-right", "Top left": "top-left",
+                    "Bottom right": "bottom-right", "Bottom left": "bottom-left"}
+        self._badge_corner_map = _corners
+        cur = next((k for k, val in _corners.items()
+                    if val == ex.get("badge_corner", "top-right")), "Top right")
+        self.badge_corner = self._combo(list(_corners), cur)
+        self._row(g2, "Download button position",
+                  "Corner of the on-page download button (you can also drag it on the page)",
+                  self.badge_corner)
         v.addWidget(f2)
         f3, g3 = self._card()
         trow = QHBoxLayout()
