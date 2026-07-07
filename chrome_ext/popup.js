@@ -49,6 +49,11 @@ fetch(`${APP}/ping`)
     if (ok && needsToken) {
       chrome.storage.local.get({ token: "" }, ({ token }) => { if (!token) autoPair(); });
     }
+    // mirror the app's "Download button position" setting (Settings → Browser
+    // Integration) into storage — the content script repositions live
+    if (ok && j && j.badgeCorner) {
+      chrome.storage.local.set({ badgeCorner: j.badgeCorner });
+    }
   })
   .catch(() => { setStatus(false); refreshPairState(); });
 
@@ -61,13 +66,6 @@ enabledEl.addEventListener("change", () => {
   chrome.storage.local.set({ enabled: enabledEl.checked });
 });
 
-// on-page download button corner — the content script repositions live; the
-// button can also be dragged on the page (it snaps + saves the same setting)
-const cornerEl = document.getElementById("badgeCorner");
-chrome.storage.local.get({ badgeCorner: "top-right" }, (v) => { cornerEl.value = v.badgeCorner; });
-cornerEl.addEventListener("change", () => {
-  chrome.storage.local.set({ badgeCorner: cornerEl.value });
-});
 
 // show the real extension version (read from the manifest, never hardcoded)
 const verEl = document.getElementById("ver");
