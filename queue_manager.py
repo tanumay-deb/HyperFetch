@@ -277,6 +277,23 @@ class QueueManager:
         except Exception:
             log.exception("task crashed: %s", task.filename)
         finally:
+            # Safety net: a task must NEVER linger in a running state. run() sets
+            # DOWNLOADING up front and only reaches a terminal status at the end,
+            # so if any engine crashed — or returned without setting one (e.g. an
+            # unexpected error between the last byte and finalize) — the task would
+            # otherwise sit in the Active group forever at 100% / 0 b/s with only a
+            # Pause button and no way out. Force a terminal status here so the card
+            # always leaves Active. Honor a pending pause/cancel; otherwise Error
+            # (resumable from the bytes already on disk).
+            if task.status in (T.DOWNLOADING, T.QUEUED, T.SCHEDULED):
+                if task.cancel_requested:
+                    task.status = T.CANCELLED
+                elif task.pause_requested:
+                    task.status = T.PAUSED
+                else:
+                    task.status = T.ERROR
+                    task.error = task.error or "Download ended unexpectedly — Resume to retry"
+                log.warning("forced terminal status for %s -> %s", task.filename, task.status)
             with self.cond:
                 q = self.queues.get(started_queue)
                 if q:

@@ -202,6 +202,73 @@ def test_move_running_task_does_not_corrupt_slot_accounting(fake_worker):
     q.shutdown()
 
 
+class CrashDownloader:
+    """run() sets DOWNLOADING then raises — mimics an unexpected error between
+    the last byte and finalize (e.g. a Windows AV/handle edge case on a .exe)."""
+    def __init__(self, task, segments=8):
+        self.t = task
+
+    def run(self):
+        self.t.status = T.DOWNLOADING
+        raise RuntimeError("boom during finalize")
+
+
+class LeaveRunningDownloader:
+    """run() returns WITHOUT ever setting a terminal status — the exact 'stuck in
+    Active at 100% / 0 b/s' shape the safety net must clean up."""
+    def __init__(self, task, segments=8):
+        self.t = task
+
+    def run(self):
+        self.t.status = T.DOWNLOADING
+        self.t.downloaded = self.t.total_size = 100     # shows 100%
+        return                                          # no COMPLETED/ERROR
+
+
+def test_crashed_task_forced_to_error(monkeypatch):
+    """A worker that raises must not leave the task wedged in DOWNLOADING — the
+    _execute safety net forces a resumable ERROR so the card leaves Active."""
+    monkeypatch.setattr(queue_manager, "Downloader", CrashDownloader)
+    q = QueueManager(queues=[{"name": "Main", "max_concurrent": 1}])
+    t = q.add_task(T.DownloadTask("u", "crash"))
+    assert _wait(lambda: t.status == T.ERROR), \
+        f"crashed task stuck at {t.status} (expected ERROR)"
+    assert t.error                                      # user gets a message
+    assert q.active == 0                                # slot still released
+    q.shutdown()
+
+
+def test_worker_returning_without_terminal_status_is_cleaned_up(monkeypatch):
+    """run() that returns still-DOWNLOADING (the reported 100%/0 b/s zombie) is
+    forced to a terminal status instead of lingering in the Active group."""
+    monkeypatch.setattr(queue_manager, "Downloader", LeaveRunningDownloader)
+    q = QueueManager(queues=[{"name": "Main", "max_concurrent": 1}])
+    t = q.add_task(T.DownloadTask("u", "zombie"))
+    assert _wait(lambda: t.status not in (T.DOWNLOADING, T.QUEUED, T.SCHEDULED)), \
+        f"task lingered in a running state ({t.status})"
+    assert t.status == T.ERROR
+    assert q.active == 0
+    q.shutdown()
+
+
+def test_crash_honors_pending_pause(monkeypatch):
+    """If the user paused right as the worker crashed, the net prefers PAUSED
+    over ERROR so their intent is respected (still resumable from disk)."""
+    class CrashAfterPause:
+        def __init__(self, task, segments=8):
+            self.t = task
+        def run(self):
+            self.t.status = T.DOWNLOADING
+            self.t.request_pause()          # user paused
+            raise RuntimeError("crash after pause")
+    monkeypatch.setattr(queue_manager, "Downloader", CrashAfterPause)
+    q = QueueManager(queues=[{"name": "Main", "max_concurrent": 1}])
+    t = q.add_task(T.DownloadTask("u", "p"))
+    assert _wait(lambda: t.status == T.PAUSED), \
+        f"expected PAUSED, got {t.status}"
+    q.shutdown()
+
+
 def test_concurrency_stress_no_deadlock_no_leak(fake_worker):
     """30 tasks across 3 queues drain fully with no deadlock, and every slot
     is released — global active and every per-queue active settle at 0."""
