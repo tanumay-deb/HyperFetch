@@ -485,6 +485,10 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, QW
     def _drain_pending(self):
         while self.pending:
             item = self.pending.popleft()
+            if item.get("focus"):
+                # a second app launch asked us to come forward (single-instance)
+                self._show_from_tray()
+                continue
             url = item.get("url", "")
             if not url:
                 continue
@@ -612,7 +616,11 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, QW
         right_inset = self.drawer.width() if (hasattr(self, "drawer") and self.drawer.isVisible()) else 0
         margin = 16
         avail = lw - right_inset - 2 * margin
-        bw = max(360, min(720, avail))
+        # never narrower than the bar's real content (sizeHint) — a hardcoded
+        # floor truncated button labels ("Resum…") when the sidebar + drawer
+        # squeezed the list. May overhang the drawer inset on tiny windows;
+        # readable beats clipped.
+        bw = min(max(bar.sizeHint().width(), min(720, avail)), lw - 2 * margin)
         x = tl.x() + margin + max(0, (avail - bw) // 2)
         y = tl.y() + lh - bh - margin
         bar.setGeometry(x, y, bw, bh)

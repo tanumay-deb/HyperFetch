@@ -189,3 +189,29 @@ def test_open_headless_queues(tmp_path):
     c = create_app(q, str(tmp_path), pending=None, token="S").test_client()
     r = c.post("/open", json={"target": "magnet:?xt=urn:btih:z"}, headers={"X-HyperFetch-Token": "S"})
     assert r.status_code == 200 and len(q.tasks) == 1
+
+
+# ---- /focus: single-instance handoff for plain (no-target) launches ----
+def test_focus_gui_mode_appends_focus_item(tmp_path):
+    pend = deque()
+    c = create_app(_FakeQueue(), str(tmp_path), pending=pend, token="S").test_client()
+    r = c.post("/focus", json={}, headers={"X-HyperFetch-Token": "S"})
+    assert r.status_code == 200
+    assert r.get_json()["status"] == "focused"
+    assert len(pend) == 1 and pend[0].get("focus") is True
+
+
+def test_focus_headless_says_no_gui(tmp_path):
+    """A headless server has no window to raise — the second launch must NOT
+    exit thinking it focused something."""
+    c = create_app(_FakeQueue(), str(tmp_path), pending=None, token="S").test_client()
+    r = c.post("/focus", json={}, headers={"X-HyperFetch-Token": "S"})
+    assert r.status_code == 200
+    assert r.get_json()["status"] == "no-gui"
+
+
+def test_focus_requires_token(tmp_path):
+    pend = deque()
+    c = create_app(_FakeQueue(), str(tmp_path), pending=pend, token="S").test_client()
+    assert c.post("/focus", json={}).status_code == 401
+    assert len(pend) == 0

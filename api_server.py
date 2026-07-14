@@ -161,6 +161,21 @@ def create_app(queue, save_dir, pending=None, token=None):
         queue.add_task(task)
         return jsonify({"status": "queued", "id": task.id, "filename": filename})
 
+    @app.route("/focus", methods=["POST"])
+    def focus():
+        """Single-instance handoff: a second `main.py` launch (no CLI target)
+        POSTs here so the already-running GUI pops up instead of a duplicate
+        window + tray icon. Token-gated + localhost; not in the CORS allow-list,
+        so a browser can't reach it. Headless mode answers "no-gui" — the new
+        launch then proceeds to open a real window."""
+        data = request.get_json(silent=True) or {}
+        if not _authorized(data):
+            return jsonify({"status": "error", "message": "unauthorized"}), 401
+        if pending is None:
+            return jsonify({"status": "no-gui"})
+        pending.append({"focus": True})
+        return jsonify({"status": "focused"})
+
     @app.route("/open", methods=["POST"])
     def open_target():
         """Single-instance handoff: `main.py`, launched by Windows to open a
