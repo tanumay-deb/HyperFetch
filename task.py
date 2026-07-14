@@ -86,8 +86,16 @@ class DownloadTask:
         self.downloaded = downloaded
         self.supports_range = supports_range
         self.segments: List[Segment] = segments or []
-        self.status = status
+        # status-transition timeline shown in the drawer's Logs tab:
+        # [[unix_ts, "Downloading"], ...] capped at EVENTS_MAX. The initial
+        # status is set directly (no event) — the timeline starts at the first
+        # real transition; "Added" is derived from `added` by the GUI.
+        self.events = []
+        self._status = status
         self.error = error
+        # computed SHA-256 of the finished file (set by hash verification /
+        # Force Recheck); "" until known
+        self.sha256 = ""
 
         # queue ordering: lower priority value runs first; seq breaks ties FIFO
         self.priority = priority
@@ -118,6 +126,46 @@ class DownloadTask:
         self._pause = threading.Event()
         self._cancel = threading.Event()
         self.lock = threading.Lock()
+
+    EVENTS_MAX = 50
+
+    # ---- status: plain attribute semantics + a transition timeline ----------
+    @property
+    def status(self):
+        return self._status
+
+    @status.setter
+    def status(self, value):
+        changed = self._status != value
+        self._status = value
+        if changed:
+            self.log_event(str(value))
+
+    def log_event(self, text):
+        """Append a timeline entry (worker threads call this; list.append is
+        GIL-atomic and the GUI only ever reads a snapshot)."""
+        self.events.append([time.time(), str(text)])
+        if len(self.events) > self.EVENTS_MAX:
+            del self.events[:-self.EVENTS_MAX]
+
+    def reset_progress(self):
+        """Wipe all download progress so the task restarts from byte 0
+        (Restart action). Only call on a non-running task."""
+        self._pause.clear()
+        self._cancel.clear()
+        self.segments = []
+        self.downloaded = 0
+        self.seg_total = self.seg_done = 0
+        self.error = ""
+        self.hash_status = ""
+        self.sha256 = ""
+        try:
+            tmp = utils.temp_download_path(self.id)
+            if os.path.exists(tmp):
+                os.remove(tmp)
+        except OSError:
+            pass
+        self.log_event("Restarted")
 
     # ---- priority queue ordering: lower priority value first, then FIFO ----
     def __lt__(self, other):
@@ -181,6 +229,8 @@ class DownloadTask:
             "seg_done": self.seg_done,
             "queue_name": self.queue_name,
             "yt_format": self.yt_format,
+            "events": self.events[-self.EVENTS_MAX:],
+            "sha256": self.sha256,
             "is_scheduled": getattr(self, "is_scheduled", False),
             # never write cookies/auth to disk; keep only safe headers (Referer/UA)
             "headers": utils.strip_sensitive(self.headers)
@@ -197,7 +247,8 @@ class DownloadTask:
         # back as Paused, otherwise it shows "Downloading" with nothing running
         # and resume_task() refuses to requeue it
         status = d.get("status", QUEUED)
-        if status in (DOWNLOADING, QUEUED):
+        forced_pause = status in (DOWNLOADING, QUEUED)
+        if forced_pause:
             status = PAUSED
         t = cls(
             url=d["url"], save_path=d["save_path"],
@@ -214,4 +265,8 @@ class DownloadTask:
             yt_format=d.get("yt_format", "")
         )
         t.is_scheduled = d.get("is_scheduled", False)
+        t.sha256 = d.get("sha256", "")
+        t.events = [e for e in (d.get("events") or []) if isinstance(e, list) and len(e) == 2]
+        if forced_pause:
+            t.log_event("Paused")     # in-flight at shutdown -> restored as paused
         return t

@@ -210,3 +210,50 @@ def test_finalize_failure_marks_error_not_completed(file_server, tmp_path, monke
     assert not os.path.exists(dst)                 # no half-written destination
     # the staged sibling must be cleaned up, not left behind
     assert not os.path.exists(dst + ".hfmove")
+
+
+# ---- _verify_hash: digest stored for the drawer's Integrity section ----
+def _mk_verify_task(tmp_path, data=b"hello world"):
+    import task as T
+    p = tmp_path / "f.bin"
+    p.write_bytes(data)
+    t = T.DownloadTask("https://x/f.bin", str(p), filename="f.bin",
+                       total_size=len(data))
+    return t
+
+
+def test_verify_hash_match_stores_digest(tmp_path, monkeypatch):
+    import hashlib
+    from downloader import Downloader
+    t = _mk_verify_task(tmp_path)
+    expected = hashlib.sha256(b"hello world").hexdigest()
+    dl = Downloader(t)
+    monkeypatch.setattr(dl, "_fetch_expected_hash", lambda: expected.upper())
+    assert dl._verify_hash() is True
+    assert t.hash_status == "ok"
+    assert t.sha256 == expected
+
+
+def test_verify_hash_mismatch(tmp_path, monkeypatch):
+    from downloader import Downloader
+    t = _mk_verify_task(tmp_path)
+    dl = Downloader(t)
+    monkeypatch.setattr(dl, "_fetch_expected_hash", lambda: "0" * 64)
+    assert dl._verify_hash() is False
+    assert t.hash_status == "fail"
+    assert len(t.sha256) == 64
+
+
+def test_verify_hash_no_sidecar_skips_unless_forced(tmp_path, monkeypatch):
+    import hashlib
+    from downloader import Downloader
+    t = _mk_verify_task(tmp_path)
+    dl = Downloader(t)
+    monkeypatch.setattr(dl, "_fetch_expected_hash", lambda: None)
+    # normal completion path: no sidecar -> no wasted hashing
+    assert dl._verify_hash() is None
+    assert t.hash_status == "nohash" and t.sha256 == ""
+    # Force Recheck: digest computed anyway
+    assert dl._verify_hash(always_digest=True) is None
+    assert t.hash_status == "nohash"
+    assert t.sha256 == hashlib.sha256(b"hello world").hexdigest()

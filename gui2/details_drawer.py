@@ -35,6 +35,8 @@ _STATE_COLOR = {
     T.SCHEDULED: COLORS["info"], T.COMPLETED: COLORS["success"],
     T.CANCELLED: COLORS["muted"],
 }
+# timeline events carry plain strings — str-keyed view of the same map
+_STATE_COLOR_S = {str(k): v for k, v in _STATE_COLOR.items()}
 
 
 class SpeedGraph(QWidget):
@@ -161,9 +163,16 @@ class DetailsDrawer(QFrame):
         self.h_icon.setPixmap(themed_icon("document", "text").pixmap(18, 18))
         self.h_name = QLabel(""); self.h_name.setStyleSheet("font-weight: 800; font-size: 14px; background: transparent;")
         self.h_name.setWordWrap(True)
+        self._pinned = False
+        self.pin_btn = QPushButton("📌"); self.pin_btn.setFixedSize(28, 28)
+        self.pin_btn.setCursor(Qt.PointingHandCursor)
+        self.pin_btn.setToolTip("Pin: keep this download in the panel while selecting others")
+        self.pin_btn.clicked.connect(self._toggle_pin)
+        self._style_pin()
         close = QPushButton(); close.setIcon(themed_icon("close", "muted")); close.setObjectName("iconbtn"); close.setFixedSize(28, 28)
         close.setCursor(Qt.PointingHandCursor); close.clicked.connect(self.close_drawer)
-        head.addWidget(self.h_icon); head.addWidget(self.h_name, 1); head.addWidget(close)
+        head.addWidget(self.h_icon); head.addWidget(self.h_name, 1)
+        head.addWidget(self.pin_btn); head.addWidget(close)
         lay.addLayout(head)
 
         self.tabs = QTabWidget()
@@ -296,7 +305,10 @@ class DetailsDrawer(QFrame):
         v.addWidget(net)
 
         integ = _Section("check", "Integrity")
-        self.ov_hash = integ.add_kv("SHA-256")
+        self.ov_hash = integ.add_kv("Status")
+        self.ov_digest = integ.add_kv("SHA-256")
+        self.ov_digest.setCursor(Qt.IBeamCursor)
+        self.ov_digest.setTextInteractionFlags(Qt.TextSelectableByMouse)
         v.addWidget(integ)
 
         v.addStretch()
@@ -351,6 +363,18 @@ class DetailsDrawer(QFrame):
     def _copy_path(self):
         if getattr(self, "_full_path", ""):
             QApplication.clipboard().setText(self._full_path)
+
+    def _style_pin(self):
+        on = self._pinned
+        self.pin_btn.setStyleSheet(
+            f"QPushButton {{ background: {COLORS['accent'] if on else 'transparent'};"
+            f" border: 1px solid {COLORS['accent'] if on else 'transparent'};"
+            f" border-radius: 8px; font-size: 13px; }}"
+            f"QPushButton:hover {{ background: {COLORS['accent'] if on else COLORS['surface2']}; }}")
+
+    def _toggle_pin(self):
+        self._pinned = not self._pinned
+        self._style_pin()
 
     def _style_bar(self, col):
         if col == self._bar_color:
@@ -424,8 +448,9 @@ class DetailsDrawer(QFrame):
             self.op_anim.start()
 
     def retarget(self, t):
-        """Swap to another task while already open — quick cross-fade, no slide."""
-        if not self.isVisible() or t.id == self._tid:
+        """Swap to another task while already open — quick cross-fade, no slide.
+        A pinned drawer stays on its task while the user selects others."""
+        if not self.isVisible() or t.id == self._tid or self._pinned:
             return
         self._load(t)
         self.raise_()
@@ -437,6 +462,9 @@ class DetailsDrawer(QFrame):
 
     def close_drawer(self):
         self._tid = None
+        if self._pinned:
+            self._pinned = False
+            self._style_pin()
         self.hide()
 
     def reposition(self):
@@ -503,14 +531,54 @@ class DetailsDrawer(QFrame):
                    empty=("document", "No extra headers",
                           "Browser-sent downloads carry Referer / User-Agent here."))
 
-        # Logs (we don't keep a per-task log yet — show the essentials)
-        logs = [(f"Added: {humanize_age(getattr(t,'added',0)) or '—'}", True),
-                (f"Status: {t.status}", True),
-                (f"URL: {t.url}", True)]
+        # Logs: rendered as an event timeline by _render_logs (update_live
+        # rebuilds it whenever the event count changes)
+        self._ev_count = -1
+
+    # ---- Logs timeline ----
+    def _render_logs(self, t):
+        """Rebuild the Logs tab as a status timeline (mockup): dot + event +
+        relative age, then the URL / error details below. Only called when the
+        event count changes, so no per-tick widget churn."""
+        lay = self._logs_lay
+        while lay.count():
+            it = lay.takeAt(0)
+            if it.widget():
+                it.widget().deleteLater()
+
+        rows = [(getattr(t, "added", 0), "Added")] + \
+               [(ts, txt) for ts, txt in getattr(t, "events", [])]
+        copy_lines = []
+        for ts, txt in rows:
+            age = humanize_age(ts) or ""
+            copy_lines.append(f"{txt}  ({age})" if age else txt)
+            r = QHBoxLayout(); r.setSpacing(10)
+            dot = QLabel("●")
+            col = _STATE_COLOR_S.get(txt, COLORS["accent"])
+            dot.setStyleSheet(f"color: {col}; font-size: 9px; background: transparent;")
+            lab = QLabel(txt)
+            lab.setStyleSheet(f"color: {COLORS['text']}; font-weight: 700; font-size: 12px; background: transparent;")
+            when = QLabel(age)
+            when.setStyleSheet(f"color: {COLORS['muted']}; font-size: 11px; background: transparent;")
+            r.addWidget(dot); r.addWidget(lab); r.addStretch(); r.addWidget(when)
+            w = QWidget(); w.setLayout(r); w.setStyleSheet("background: transparent;")
+            lay.addWidget(w)
+
+        # detail lines (selectable) under the timeline
+        details = [f"URL: {t.url}"]
         if t.error:
-            logs.append((f"Error: {t.error}", True))
-        self._log_lines = [text for text, _ in logs]
-        self._fill("logs", logs)
+            details.append(f"Error: {t.error}")
+        copy_lines += details
+        lay.addSpacing(10)
+        for text in details:
+            l = QLabel(text); l.setWordWrap(True)
+            l.setTextInteractionFlags(Qt.TextSelectableByMouse | Qt.TextSelectableByKeyboard)
+            l.setCursor(Qt.IBeamCursor)
+            l.setStyleSheet(f"color: {COLORS['muted']}; background: transparent;"
+                            " font-family: Consolas, monospace; font-size: 11px;")
+            lay.addWidget(l)
+        lay.addStretch()
+        self._log_lines = copy_lines
 
     def _integrity_text(self, t):
         st = getattr(t, "hash_status", "")
@@ -544,7 +612,20 @@ class DetailsDrawer(QFrame):
         eta = fmt_eta((t.total_size - t.downloaded) / bps) if bps > 0 and t.total_size else ""
         self.ov_eta.setText(eta or "—")
         self.ov_hash.setText(self._integrity_text(t))
+        digest = getattr(t, "sha256", "")
+        if digest:
+            self.ov_digest.setText(digest[:10] + "…" + digest[-10:])
+            self.ov_digest.setToolTip(digest)
+        else:
+            self.ov_digest.setText("—")
+            self.ov_digest.setToolTip("")
         self.graph.push(bps if t.status == T.DOWNLOADING else 0.0)
+
+        # Logs timeline: rebuild only when a new event landed
+        n = len(getattr(t, "events", []))
+        if n != getattr(self, "_ev_count", -1):
+            self._ev_count = n
+            self._render_logs(t)
 
         # Connections
         if is_tor:

@@ -560,12 +560,17 @@ class Downloader:
                 pass
         return None
 
-    def _verify_hash(self):
+    def _verify_hash(self, always_digest=False):
         """Verify the finished file's SHA-256 against the sidecar digest.
-        Returns True (match), False (mismatch), or None (no sidecar / unreadable)."""
+        Returns True (match), False (mismatch), or None (no sidecar / unreadable).
+        The computed digest is stored on the task for the drawer's Integrity
+        section. `always_digest=True` (Force Recheck) hashes the file even when
+        no sidecar exists, so the user still gets a digest to compare by hand;
+        the normal completion path skips that cost when there is nothing to
+        compare against."""
         import hashlib
         expected = self._fetch_expected_hash()
-        if not expected:
+        if not expected and not always_digest:
             self.t.hash_status = "nohash"
             return None
         h = hashlib.sha256()
@@ -578,6 +583,10 @@ class Downloader:
         except OSError:
             self.t.hash_status = "nohash"
             return None
-        ok = h.hexdigest().lower() == expected.lower()
+        self.t.sha256 = h.hexdigest().lower()
+        if not expected:
+            self.t.hash_status = "nohash"
+            return None
+        ok = self.t.sha256 == expected.lower()
         self.t.hash_status = "ok" if ok else "fail"
         return ok

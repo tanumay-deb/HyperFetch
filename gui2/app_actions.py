@@ -76,6 +76,60 @@ class ActionsMixin:
             self._save_state()
             self.refresh()
 
+    def _rename_task(self, t):
+        """Change the display name — and the file on disk when it's completed.
+        In-flight tasks only retarget save_path: bytes live in the id-keyed
+        .hfdownload temp, so finalize simply lands on the new name."""
+        import utils
+        new, ok = QInputDialog.getText(self, "Rename", "New file name:",
+                                       QLineEdit.Normal, t.filename)
+        new = utils.safe_filename((new or "").strip())
+        if not ok or not new or new == t.filename:
+            return
+        d = os.path.dirname(t.save_path) or "."
+        if t.status == T.COMPLETED and os.path.exists(t.save_path):
+            dest = utils.unique_path(d, new)
+            try:
+                os.rename(t.save_path, dest)
+            except OSError as e:
+                self._toasts.show("error", "Rename failed", str(e))
+                return
+            t.save_path = dest
+            t.filename = os.path.basename(dest)
+        else:
+            t.save_path = utils.unique_path(d, new)
+            t.filename = os.path.basename(t.save_path)
+        t.log_event("Renamed")
+        self._save_state()
+        self.refresh()
+
+    def _restart_task(self, t):
+        """Re-download from byte 0. Only offered on non-running tasks so we
+        never race a live worker over the temp file."""
+        if t.status in (T.DOWNLOADING, T.QUEUED):
+            return
+        t.reset_progress()
+        self.queue.add_task(t)
+        self._save_state()
+        self.refresh()
+
+    def _force_recheck(self, t):
+        """Re-run SHA-256 verification on a completed file in the background;
+        the drawer's Integrity section shows the result on the next tick."""
+        if t.status != T.COMPLETED or not os.path.isfile(t.save_path or ""):
+            return
+        t.hash_status = ""
+        t.sha256 = ""
+
+        def work():
+            from downloader import Downloader
+            try:
+                Downloader(t)._verify_hash(always_digest=True)
+            except Exception:
+                t.hash_status = "nohash"
+        import threading
+        threading.Thread(target=work, daemon=True).start()
+
     def _set_task_limit(self, t, bps):
         t.speed_limit = bps
         try:
@@ -144,6 +198,13 @@ class ActionsMixin:
                 if getattr(t, "queue_name", "Main") == q.name:
                     act.setEnabled(False)
                 act.triggered.connect(lambda _=False, n=q.name: self._move_task_to_queue(t, n))
+        m.addSeparator()
+        is_tor = _torrent.is_torrent_task(t.url, t.filename)
+        m.addAction(ico("document"), "Rename", lambda: self._rename_task(t))
+        if t.status in (T.PAUSED, T.ERROR, T.CANCELLED, T.COMPLETED) and not is_tor:
+            m.addAction(ico("history"), "Restart", lambda: self._restart_task(t))
+        if t.status == T.COMPLETED and not is_tor:
+            m.addAction(ico("check"), "Force Recheck", lambda: self._force_recheck(t))
         m.addSeparator()
         m.addAction(ico("info"), "Properties", lambda: (self.list.set_selection({t.id}), self.drawer.open_for(t)))
         m.addAction(ico("link"), "Copy URL", lambda: QApplication.clipboard().setText(t.url or ""))

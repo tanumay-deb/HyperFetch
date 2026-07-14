@@ -113,3 +113,70 @@ def test_speed_limit_setter():
     t.set_speed_limit(256 * 1024)
     assert t.speed_limit == 256 * 1024
     assert t._limiter.limit_bps == 256 * 1024
+
+
+# ---- event timeline (drawer Logs tab) ----
+def test_status_transitions_logged():
+    t = T.DownloadTask("u", "p")
+    assert t.events == []                     # initial status: no event
+    t.status = T.DOWNLOADING
+    t.status = T.DOWNLOADING                  # same value: no duplicate
+    t.status = T.PAUSED
+    assert [e[1] for e in t.events] == ["Downloading", "Paused"]
+    assert all(isinstance(e[0], float) for e in t.events)
+
+
+def test_events_capped():
+    t = T.DownloadTask("u", "p")
+    for i in range(80):
+        t.log_event(f"e{i}")
+    assert len(t.events) == T.DownloadTask.EVENTS_MAX
+    assert t.events[-1][1] == "e79"
+
+
+def test_events_and_sha256_roundtrip():
+    import json
+    t = T.DownloadTask("u", "p")
+    t.status = T.DOWNLOADING
+    t.status = T.COMPLETED
+    t.sha256 = "ab" * 32
+    r = T.DownloadTask.from_dict(json.loads(json.dumps(t.to_dict())))
+    assert [e[1] for e in r.events] == ["Downloading", "Completed"]
+    assert r.sha256 == "ab" * 32
+
+
+def test_inflight_restore_appends_paused_event():
+    d = T.DownloadTask("u", "p").to_dict()
+    d["status"] = T.DOWNLOADING
+    d["events"] = [[1.0, "Downloading"]]
+    r = T.DownloadTask.from_dict(d)
+    assert r.status == T.PAUSED
+    assert [e[1] for e in r.events] == ["Downloading", "Paused"]
+
+
+def test_events_missing_or_malformed_tolerated():
+    d = T.DownloadTask("u", "p").to_dict()
+    d["status"] = T.COMPLETED          # terminal: no forced-pause event on restore
+    d.pop("events", None)
+    assert T.DownloadTask.from_dict(d).events == []
+    d["events"] = ["junk", [1.0], [2.0, "Paused"]]
+    assert [e[1] for e in T.DownloadTask.from_dict(d).events] == ["Paused"]
+
+
+def test_reset_progress(tmp_path, monkeypatch):
+    import utils, os
+    t = T.DownloadTask("u", "p", total_size=100)
+    t.segments = [T.Segment(0, 0, 99)]
+    t.segments[0].downloaded = 50
+    t.downloaded = 50
+    t.error = "x"; t.hash_status = "fail"; t.sha256 = "d" * 64
+    t.request_pause(); t.request_cancel()
+    tmp = tmp_path / f"{t.id}.hfdownload"
+    tmp.write_bytes(b"x" * 10)
+    monkeypatch.setattr(utils, "temp_download_path", lambda tid: str(tmp))
+    t.reset_progress()
+    assert t.segments == [] and t.downloaded == 0
+    assert t.error == "" and t.hash_status == "" and t.sha256 == ""
+    assert not t.pause_requested and not t.cancel_requested
+    assert not tmp.exists()
+    assert t.events[-1][1] == "Restarted"
