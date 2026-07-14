@@ -288,13 +288,17 @@ class TorrentDownloader:
         complete = (self._proc.returncode == 0
                     or (self.t.total_size and self.t.downloaded >= self.t.total_size))
         if complete:
-            self.t.status = T.COMPLETED        # set first: stops a stray reader write
             if self.t.total_size:
                 self.t.downloaded = self.t.total_size
             # repoint save_path at the real on-disk entry aria2 created (a folder
             # for multi-file torrents, a file for single) so Properties and
             # "Open File" work — the placeholder download.bin never existed.
+            # Resolve BEFORE flipping to COMPLETED: the GUI's completion tick
+            # categorizes by save_path, and must never see COMPLETED with the
+            # placeholder path. (The reader is already fenced off by the _tor_gen
+            # bump above, so status order no longer guards against stray writes.)
             self._resolve_save_path(out_dir, seen["top"])
+            self.t.status = T.COMPLETED
             log.info("torrent done: %s", self.t.filename)
         else:
             self.t.status = T.ERROR

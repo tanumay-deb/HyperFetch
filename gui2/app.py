@@ -407,12 +407,12 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, QW
     def _maybe_categorize(self, t):
         """Move a completed file that landed in a base folder into its category
         subfolder. Covers engines that only learn the real filename/extension
-        during the download (yt-dlp media pages, extensionless URLs) — add-time
-        categorisation can't classify those, so we fix it up on completion.
-        Torrents and already-categorised files are skipped."""
+        during the download (yt-dlp media pages, extensionless URLs, single-file
+        torrents) — add-time categorisation can't classify those, so we fix it
+        up on completion. Multi-file torrents resolve save_path to a FOLDER,
+        which the isfile guard below leaves in place; already-categorised files
+        are skipped too."""
         if not self._extras.get("categorize", True):
-            return
-        if _torrent.is_torrent_task(t.url, t.filename):
             return
         path = getattr(t, "save_path", "") or ""
         if not os.path.isfile(path):

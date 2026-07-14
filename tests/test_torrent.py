@@ -117,6 +117,35 @@ def test_run_skips_metadata_pseudo_entry_and_names_from_payload(tmp_path, monkey
     assert t.save_path == str(real)
 
 
+def test_run_resolves_save_path_before_completed(tmp_path, monkeypatch):
+    """The GUI's completion tick categorizes by save_path the moment it sees
+    COMPLETED — the status flip must come AFTER _resolve_save_path, or a
+    single-file torrent gets categorized against the placeholder path."""
+    monkeypatch.setattr(torrent, "aria2c_path", lambda: "aria2c")
+    out = tmp_path / "out"
+    out.mkdir()
+    (out / "movie.mkv").write_bytes(b"x")
+    lines = [
+        f"FILE: {out / 'movie.mkv'}\n",
+        "[#a 100MiB/100MiB(100%) CN:5]\n",
+    ]
+    monkeypatch.setattr(torrent.subprocess, "Popen", lambda *a, **k: _FakeProc(lines, rc=0))
+    t = T.DownloadTask("magnet:?xt=urn:btih:abc&dn=Movie", str(out / "x"))
+
+    status_at_resolve = []
+    orig = torrent.TorrentDownloader._resolve_save_path
+
+    def spy(self, out_dir, top):
+        status_at_resolve.append(self.t.status)
+        return orig(self, out_dir, top)
+
+    monkeypatch.setattr(torrent.TorrentDownloader, "_resolve_save_path", spy)
+    torrent.TorrentDownloader(t).run()
+    assert t.status == T.COMPLETED
+    assert t.save_path == str(out / "movie.mkv")
+    assert status_at_resolve == [T.DOWNLOADING]   # resolved before the flip
+
+
 def test_run_reports_error_on_nonzero_exit(tmp_path, monkeypatch):
     monkeypatch.setattr(torrent, "aria2c_path", lambda: "aria2c")
     lines = ["errorCode=1 metadata fetch failed\n"]
