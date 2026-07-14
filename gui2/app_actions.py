@@ -44,6 +44,13 @@ class ActionsMixin:
             self.drawer.open_for(t)
             self._position_action_bar()      # re-dodge now that the drawer is visible
             return
+        elif action == "delete":
+            # drawer quick-action: same confirm dialog as the bulk bar
+            self.list.set_selection({t.id})
+            self._del_selected()
+            if not self.queue.get_task(t.id):        # actually removed
+                self.drawer.close_drawer()
+            return
         elif action == "more":
             self._card_menu(t)
             return
