@@ -92,6 +92,13 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, QW
         self._sched_timer.timeout.connect(self._check_scheduler)
         self._sched_timer.start(60000)
         QTimer.singleShot(1000, self._check_scheduler)
+
+        # autosave: periodic state flush while anything is active, so a crash /
+        # force-kill never loses more than ~30s of progress (segment counters
+        # drive resume; a stale save re-downloads the gap otherwise)
+        self._autosave = QTimer(self)
+        self._autosave.timeout.connect(self._autosave_tick)
+        self._autosave.start(30000)
         self.refresh()
 
         if not self._extras.get("welcomed"):     # first run -> pairing onboarding
@@ -123,8 +130,25 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, QW
                         pass
 
     def _save_state(self):
-        utils.save_json(self._state_path,
-                        [t.to_dict() for t in self.queue.tasks if t.status != T.CANCELLED])
+        # serialize per-task: one broken task must never freeze the whole state
+        # file (a silently-failing save resurrects days-old statuses on restart)
+        rows = []
+        for t in self.queue.tasks:
+            if t.status == T.CANCELLED:
+                continue
+            try:
+                rows.append(t.to_dict())
+            except Exception:
+                import logging
+                logging.getLogger("hyperfetch.gui").exception(
+                    "state save: skipping unserializable task %s", getattr(t, "id", "?"))
+        utils.save_json(self._state_path, rows)
+
+    def _autosave_tick(self):
+        # flush only while something is in flight — an idle list changes via
+        # user actions, and those already save
+        if any(t.status in (T.DOWNLOADING, T.QUEUED) for t in self.queue.tasks):
+            self._save_state()
 
     def _start_server(self):
         def serve():
@@ -480,6 +504,11 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, QW
                     if self.tray and self.tray.isVisible():
                         self.tray.showMessage("Download Failed", t.filename or "download",
                                               QSystemTrayIcon.Critical, 4000)
+        # Persist terminal transitions IMMEDIATELY. Saving only on user actions
+        # left a window where a finished download was still "Downloading" on
+        # disk — kill/crash the app there and it resurrected as Paused.
+        if done != self._completed_seen or errd != self._errored_seen:
+            self._save_state()
         self._completed_seen, self._errored_seen = done, errd
 
     def _drain_pending(self):

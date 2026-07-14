@@ -190,7 +190,10 @@ def save_json(path, data):
         os.replace(tmp, path)
     except (OSError, TypeError, ValueError):
         # never crash a save (a TypeError from a non-serializable value would
-        # otherwise propagate mid-shutdown) and never leave the .tmp sidecar
+        # otherwise propagate mid-shutdown) and never leave the .tmp sidecar —
+        # but never fail SILENTLY either: a quietly-frozen state file resurrects
+        # days-old task statuses on every restart.
+        logging.getLogger("hyperfetch.utils").exception("save_json failed: %s", path)
         try:
             os.remove(tmp)
         except OSError:
