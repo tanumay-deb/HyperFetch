@@ -28,7 +28,7 @@ from queue_manager import QueueManager
 from api_server import run_server, PORT
 
 
-APP_VERSION = "2.0.8"
+APP_VERSION = "2.1.0"
 
 
 def resource_path(*parts):

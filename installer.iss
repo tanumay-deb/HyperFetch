@@ -4,7 +4,7 @@
 #define AppName "HyperFetch"
 ; Overridable from the command line: iscc /DAppVersion=2.0.0 installer.iss
 #ifndef AppVersion
-  #define AppVersion "2.0.8"
+  #define AppVersion "2.1.0"
 #endif
 #define AppPublisher "HyperFetch"
 #define AppExe "HyperFetch.exe"
