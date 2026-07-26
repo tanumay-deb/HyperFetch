@@ -11,6 +11,10 @@ let panelContainer = null;
 // which corner the floating download panel sits in — draggable (snaps to the
 // nearest corner on drop) and settable from the popup; both persist here
 let badgeCorner = "top-right";
+// page-session dismissal: dragging the panel onto the drop zone hides it until
+// the next reload. Deliberately NOT persisted — a hidden gesture shouldn't make
+// a lasting change the user can't find their way back from; reload restores it.
+let badgeHidden = false;
 chrome.storage.local.get({ enabled: true, badgeCorner: "top-right" }, (v) => {
   captureEnabled = v.enabled;
   badgeCorner = v.badgeCorner || "top-right";
@@ -117,7 +121,8 @@ function formatSize(bytes) {
 
 function updatePanel() {
   if (sniffedMedia.size === 0) return;
-  
+  if (badgeHidden) return;             // dismissed for this page view
+
   if (!panelContainer) {
     panelContainer = document.createElement("div");
     panelContainer.id = "hyperfetch-media-sniffer-root";
@@ -182,6 +187,34 @@ function updatePanel() {
       ::-webkit-scrollbar { width: 8px; }
       ::-webkit-scrollbar-thumb { background: #243352; border-radius: 4px; }
       ::-webkit-scrollbar-thumb:hover { background: #6366f1; }
+      /* drag-to-dismiss target: only rendered while a drag is in progress, and
+         pointer-events:none so it never steals the drag's pointer capture —
+         the hit test is done in code against its rect */
+      #dropzone {
+        position: fixed; left: 50%; bottom: 26px;
+        transform: translateX(-50%) scale(0.92);
+        z-index: 2147483646; pointer-events: none;
+        display: none; flex-direction: column; align-items: center; gap: 7px;
+        padding: 13px 22px 11px; border-radius: 16px;
+        background: rgba(17,26,46,0.94); border: 1px solid #243352;
+        color: #8b97b8; font-family: 'Segoe UI', system-ui, sans-serif;
+        font-size: 12px; font-weight: 600; white-space: nowrap;
+        box-shadow: 0 8px 24px rgba(0,0,0,0.45);
+        opacity: 0; transition: opacity .14s ease, transform .14s ease;
+      }
+      #dropzone.show { display: flex; opacity: 1; transform: translateX(-50%) scale(1); }
+      #dropzone.armed {
+        border-color: #f87171; color: #fff;
+        background: rgba(248,113,113,0.20);
+        transform: translateX(-50%) scale(1.06);
+      }
+      #dz-x {
+        width: 34px; height: 34px; border-radius: 50%;
+        display: flex; align-items: center; justify-content: center;
+        background: #243352; color: #e5e9f5; font-size: 15px;
+        transition: background .14s ease;
+      }
+      #dropzone.armed #dz-x { background: #f87171; color: #fff; }
     `;
     panelRoot.appendChild(style);
     
@@ -212,22 +245,51 @@ function updatePanel() {
       if (dragged) { dragged = false; return; }    // suppress the click after a drag
       listContainer.style.display = listContainer.style.display === "flex" ? "none" : "flex";
     };
+    // drag-to-dismiss target, revealed at the bottom centre during a drag
+    const dropZone = document.createElement("div");
+    dropZone.id = "dropzone";
+    dropZone.innerHTML = `<div id="dz-x">&#10005;</div><span>Release to hide</span>`;
+
+    // is the pointer over the dismiss target? Rect + padding (not a radius) so
+    // the hit area matches what the user actually sees, plus a little slack.
+    const overDropZone = (x, y) => {
+      if (!dropZone.classList.contains("show")) return false;
+      const r = dropZone.getBoundingClientRect();
+      const pad = 20;
+      return x >= r.left - pad && x <= r.right + pad &&
+             y >= r.top - pad && y <= r.bottom + pad;
+    };
     toggle.addEventListener("pointerdown", (e) => {
       if (e.button !== 0) return;
       const startX = e.clientX, startY = e.clientY;
       const rect = wrapper.getBoundingClientRect();
       const offX = startX - rect.left, offY = startY - rect.top;
+      let armed = false;
       const move = (ev) => {
         if (!dragged && Math.hypot(ev.clientX - startX, ev.clientY - startY) < 6) return;
+        if (!dragged) dropZone.classList.add("show");   // reveal only once dragging starts
         dragged = true;
         wrapper.style.top = (ev.clientY - offY) + "px";
         wrapper.style.left = (ev.clientX - offX) + "px";
         wrapper.style.right = "auto"; wrapper.style.bottom = "auto";
+        armed = overDropZone(ev.clientX, ev.clientY);
+        dropZone.classList.toggle("armed", armed);
       };
       const up = (ev) => {
         window.removeEventListener("pointermove", move, true);
         window.removeEventListener("pointerup", up, true);
+        dropZone.classList.remove("show", "armed");
         if (!dragged) return;
+        if (armed) {
+          // dropped on the target: hide for this page view only. Corner is NOT
+          // re-persisted — otherwise dismissing would also move the panel to a
+          // bottom corner on the next page.
+          badgeHidden = true;
+          panelContainer.remove();
+          panelContainer = null; panelRoot = null;
+          showToast("Download button hidden — reload the page to bring it back");
+          return;
+        }
         // snap to the nearest corner and persist it
         const r = wrapper.getBoundingClientRect();
         const cx = r.left + r.width / 2, cy = r.top + r.height / 2;
@@ -243,6 +305,7 @@ function updatePanel() {
     wrapper.appendChild(listContainer);
     wrapper.appendChild(toggle);
     panelRoot.appendChild(wrapper);
+    panelRoot.appendChild(dropZone);
     document.body.appendChild(panelContainer);
     applyBadgeCorner();                            // pin to the saved corner
   }
