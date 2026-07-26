@@ -56,6 +56,44 @@ jobs:
         shell: pwsh
         run: Compress-Archive -Path dist\HyperFetch\* -DestinationPath "dist\HyperFetch-${{ steps.ver.outputs.version }}-portable.zip"
 
+      # Browser extension zips, straight from the tagged source. The Chrome one
+      # is what gets uploaded to the Web Store; the Edge one has no store listing
+      # at all, so this release asset is its only distribution channel. Only the
+      # runtime files are copied, so test/ (and its node_modules) never ships.
+      # Entries are written explicitly with '/' separators: Compress-Archive on
+      # Windows PowerShell emits '\', which can stop a browser resolving icons/.
+      - name: Package the browser extensions
+        shell: pwsh
+        run: |
+          Add-Type -AssemblyName System.IO.Compression
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $runtime = @("manifest.json","background.js","content.js",
+                       "popup.html","popup.js","welcome.html","welcome.js")
+          $bs = [char]92; $fwd = [char]47
+          New-Item -ItemType Directory -Force -Path "dist" | Out-Null
+          foreach ($browser in @("chrome","edge")) {
+            $src   = "${browser}_ext"
+            $stage = Join-Path "dist" "extstage/$browser"
+            New-Item -ItemType Directory -Force -Path $stage | Out-Null
+            foreach ($f in $runtime) { Copy-Item (Join-Path $src $f) $stage }
+            Copy-Item (Join-Path $src "icons") $stage -Recurse
+            $ver = (Get-Content (Join-Path $src "manifest.json") -Raw | ConvertFrom-Json).version
+            $zip = Join-Path "dist" "hyperfetch-$browser-$ver.zip"
+            if (Test-Path $zip) { Remove-Item -LiteralPath $zip -Force }
+            $fs = [System.IO.File]::Open((Join-Path $PWD $zip), [System.IO.FileMode]::CreateNew)
+            $ar = New-Object System.IO.Compression.ZipArchive($fs, [System.IO.Compression.ZipArchiveMode]::Create)
+            foreach ($file in (Get-ChildItem -LiteralPath $stage -Recurse -File)) {
+              $rel = $file.FullName.Substring((Get-Item $stage).FullName.Length + 1).Replace($bs, $fwd)
+              $entry = $ar.CreateEntry($rel, [System.IO.Compression.CompressionLevel]::Optimal)
+              $es = $entry.Open()
+              $bytes = [System.IO.File]::ReadAllBytes($file.FullName)
+              $es.Write($bytes, 0, $bytes.Length)
+              $es.Dispose()
+            }
+            $ar.Dispose(); $fs.Dispose()
+            Write-Host "packaged $browser extension v$ver -> $zip"
+          }
+
       - name: Attach to the GitHub Release
         uses: softprops/action-gh-release@v2
         with:
@@ -63,3 +101,5 @@ jobs:
           files: |
             dist/installer/*.exe
             dist/HyperFetch-*-portable.zip
+            dist/hyperfetch-chrome-*.zip
+            dist/hyperfetch-edge-*.zip
