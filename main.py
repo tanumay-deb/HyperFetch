@@ -45,6 +45,22 @@ def _handoff(target):
     return _post_running("/open", {"target": target}) is not None
 
 
+def _wait_for_exit(timeout=15.0):
+    """Block until the running instance's server stops answering (it is going
+    away), or `timeout` passes. Returns True if it went. Used by the restart
+    path so the replacement does not race its own predecessor."""
+    import time, urllib.request
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        try:
+            with urllib.request.urlopen("http://127.0.0.1:5000/ping", timeout=1):
+                pass
+        except Exception:
+            return True                      # nothing answering -> it is gone
+        time.sleep(0.25)
+    return False
+
+
 def _focus_running():
     """Single-instance guard: if a HyperFetch GUI is already running, ask it to
     come to the front and return True (this launch then exits instead of adding
@@ -71,14 +87,27 @@ def main():
     if target and _handoff(target):
         return 0
 
-    # Plain launch with an instance already running: pop its window instead of
-    # opening a duplicate (which would also lose the port-5000 server to the
-    # first instance and confuse the browser extension). Skipped for a restart
-    # (theme change): the outgoing instance is still shutting down and its
-    # server may still answer, which would make the replacement exit and leave
-    # the user with no app at all.
+    # A second instance must NEVER be created while one is already running: the
+    # two share downloads.json, so whichever saves last silently wipes the
+    # other's downloads, and only the first owns port 5000 (so the browser
+    # extension talks to a window the user may not even be looking at).
+    #
+    # This runs even when a target was given: the handoff above may have failed
+    # (busy instance, transient error), and falling through to a full second
+    # window was exactly how duplicates appeared — opening a .torrent by
+    # double-click is the common path.
     restarted = "--restarted" in sys.argv
-    if not target and not restarted and _focus_running():
+    if restarted:
+        # A theme-change restart legitimately expects the outgoing instance to
+        # disappear. Wait for it rather than skipping the check outright — if it
+        # never goes (a failed quit), focusing it beats duplicating it.
+        _wait_for_exit(timeout=15.0)
+    if _focus_running():
+        if target:
+            # the earlier handoff failed but the instance is demonstrably alive
+            # (it just answered /focus), so retry rather than silently dropping
+            # the file the user double-clicked
+            _handoff(target)
         return 0
 
     # install BEFORE the GUI so a Qt construction crash is captured too

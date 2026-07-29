@@ -257,3 +257,63 @@ def test_private_network_optin_does_not_widen_origins(tmp_path):
     # and /pair still refuses a non-official extension outright
     assert c.get("/pair", headers={"Origin": "chrome-extension://nottherealoneaaaaaaaaaaaaaaaaaa"}
                  ).status_code == 403
+
+
+# ---- single-instance guard (main.py): a duplicate window shares downloads.json
+# with the original, so whichever saves last wipes the other's list ----
+def test_guard_runs_even_when_a_target_was_given(monkeypatch):
+    """The hole that produced two live windows: opening a .torrent set `target`,
+    and a FAILED handoff then fell through to a full second instance because the
+    focus check was gated on `not target`."""
+    import main
+    calls = {"handoff": 0, "focus": 0}
+
+    def fake_post(path, payload):
+        if path == "/open":
+            calls["handoff"] += 1
+            return None                     # handoff fails
+        if path == "/focus":
+            calls["focus"] += 1
+            return {"status": "focused"}
+        return None
+
+    monkeypatch.setattr(main, "_post_running", fake_post)
+    monkeypatch.setattr(main.sys, "argv", ["main.py", "C:/x/a.torrent"])
+    monkeypatch.setattr(main.crash_reporter, "install", lambda *a, **k: None)
+    started = {"n": 0}
+    monkeypatch.setitem(__import__("sys").modules, "gui2.app",
+                        type("M", (), {"run_v2": lambda **k: started.__setitem__("n", 1)})())
+    assert main.main() == 0                 # exits instead of opening a window
+    assert calls["focus"] == 1
+    assert started["n"] == 0                # no second instance
+    assert calls["handoff"] == 2            # and the torrent was retried
+
+
+def test_guard_lets_the_first_instance_start(monkeypatch):
+    """With nothing running, the app must actually open."""
+    import main
+    monkeypatch.setattr(main, "_post_running", lambda *a, **k: None)
+    monkeypatch.setattr(main.sys, "argv", ["main.py"])
+    monkeypatch.setattr(main.crash_reporter, "install", lambda *a, **k: None)
+    started = {"n": 0}
+    monkeypatch.setitem(__import__("sys").modules, "gui2.app",
+                        type("M", (), {"run_v2": staticmethod(
+                            lambda **k: (started.__setitem__("n", 1), 0)[1])})())
+    assert main.main() == 0
+    assert started["n"] == 1
+
+
+def test_restart_waits_for_predecessor_then_focuses_if_it_lingers(monkeypatch):
+    """--restarted used to skip the guard entirely, so a restart whose old
+    instance failed to quit produced two windows."""
+    import main
+    monkeypatch.setattr(main, "_wait_for_exit", lambda timeout=15.0: False)
+    monkeypatch.setattr(main, "_post_running",
+                        lambda p, d: {"status": "focused"} if p == "/focus" else None)
+    monkeypatch.setattr(main.sys, "argv", ["main.py", "--restarted"])
+    monkeypatch.setattr(main.crash_reporter, "install", lambda *a, **k: None)
+    started = {"n": 0}
+    monkeypatch.setitem(__import__("sys").modules, "gui2.app",
+                        type("M", (), {"run_v2": lambda **k: started.__setitem__("n", 1)})())
+    assert main.main() == 0
+    assert started["n"] == 0                # focused the survivor, no duplicate
