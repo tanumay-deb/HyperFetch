@@ -76,6 +76,12 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, QW
         self._clip_last = ""
         self._quit_requested = False
 
+        # Font size must be applied BEFORE the UI is built: widgets bake their
+        # font size into inline styles at construction, exactly like theme
+        # colours. Applying it afterwards (as this used to) left every already
+        # constructed widget at the default size, which is why the setting
+        # appeared to do nothing.
+        palette.set_font_scale(self._extras.get("font_size", "Medium"))
         self._build_ui()
         self._setup_tray()
         self._setup_shortcuts()
@@ -496,7 +502,12 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, QW
                     import history
                     history.record(t)
                 except Exception:
-                    pass
+                    # never let a history failure break the completion flow —
+                    # but never hide it either: swallowing this silently meant a
+                    # download could finish with nothing recorded and no clue why
+                    import logging
+                    logging.getLogger("hyperfetch.gui").exception(
+                        "history.record failed for %s", getattr(t, "filename", "?"))
                 if wc != "Do nothing":
                     self._toasts.show("success", "Download Complete", t.filename or "download")
                     if self.tray and self.tray.isVisible():

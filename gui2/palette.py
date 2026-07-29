@@ -121,13 +121,36 @@ def _lighten(hex_color, amt):
         return hex_color
 
 
+# ---------------------------------------------------------------- font scale
+# Settings -> Appearance -> Font Size. Qt stylesheet font-size ALWAYS beats
+# QApplication.setFont(), and this UI pins a size on most widgets, so the
+# setting did nothing on its own. Every size is now routed through fpx(), which
+# multiplies by this scale. Set it BEFORE any widget is constructed — inline
+# styles bake their size in at construction, exactly like the theme colours do.
+FONT_SCALE = 1.0
+FONT_SIZES = {"Small": 0.85, "Medium": 1.0, "Large": 1.2}
+
+
+def set_font_scale(name):
+    """Apply a Font Size setting name ('Small'/'Medium'/'Large')."""
+    global FONT_SCALE
+    FONT_SCALE = FONT_SIZES.get(name, 1.0)
+    return FONT_SCALE
+
+
+def fpx(px):
+    """A scaled 'Npx' font-size string. Never drops below 8px — below that the
+    UI stops being readable rather than merely small."""
+    return f"{max(8, round(px * FONT_SCALE))}px"
+
+
 def qss():
     """The application stylesheet, built from the active palette."""
     c = COLORS
     return f"""
 * {{
     font-family: 'Segoe UI Variable Display', 'Segoe UI', 'Inter';
-    font-size: 13px;
+    font-size: {fpx(13)};
     color: {c['text']};
 }}
 QWidget#root {{ background: {c['bg']}; }}
@@ -142,8 +165,8 @@ QWidget#mainPane {{ background: {c['bg']}; }}
 QWidget#listInner {{ background: transparent; }}
 QScrollArea > QWidget > QWidget {{ background: transparent; }}
 
-QLabel#brand {{ font-size: 18px; font-weight: 800; }}
-QLabel#sectionTitle {{ color: {c['muted']}; font-size: 11px; font-weight: 800; letter-spacing: 1px; }}
+QLabel#brand {{ font-size: {fpx(18)}; font-weight: 800; }}
+QLabel#sectionTitle {{ color: {c['muted']}; font-size: {fpx(11)}; font-weight: 800; letter-spacing: 1px; }}
 
 /* nav buttons (one real button per row — no paint delegate) */
 QPushButton#navItem {{
@@ -163,7 +186,7 @@ QPushButton:disabled {{ color: {c['faint']}; background: {c['surface']}; }}
 
 QPushButton#primary {{
     background: qlineargradient(x1:0,y1:0,x2:1,y2:1, stop:0 {c['accent']}, stop:1 {c['accent2']});
-    border: none; color: white; padding: 11px 18px; font-weight: 700; font-size: 14px;
+    border: none; color: white; padding: 11px 18px; font-weight: 700; font-size: {fpx(14)};
 }}
 QPushButton#primary:hover {{ background: {c['accent2']}; }}
 QPushButton#ghost {{ background: transparent; border: none; color: {c['muted']}; padding: 8px 10px; }}
@@ -194,8 +217,8 @@ QSpinBox::up-button, QSpinBox::down-button {{ width: 18px; background: {c['surfa
 
 /* ---------- dialogs ---------- */
 QDialog {{ background: {c['bg']}; }}
-QLabel#dlgTitle {{ font-size: 17px; font-weight: 800; }}
-QLabel#fieldLabel {{ color: {c['muted']}; font-weight: 700; font-size: 12px; background: transparent; }}
+QLabel#dlgTitle {{ font-size: {fpx(17)}; font-weight: 800; }}
+QLabel#fieldLabel {{ color: {c['muted']}; font-weight: 700; font-size: {fpx(12)}; background: transparent; }}
 
 /* ---------- tabs ---------- */
 QTabWidget::pane {{ border: none; top: -1px; }}

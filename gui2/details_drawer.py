@@ -24,7 +24,7 @@ import utils
 import torrent as _torrent
 from gui.theme import human_size, human_speed, fmt_eta, humanize_age
 from gui.icons import themed_icon
-from gui2.palette import COLORS
+from gui2.palette import COLORS, fpx
 
 WIDTH = 440
 
@@ -114,7 +114,7 @@ class _Section(QFrame):
         ic = QLabel(); ic.setPixmap(themed_icon(icon, "muted").pixmap(15, 15))
         ic.setStyleSheet("background: transparent;")
         tl = QLabel(title)
-        tl.setStyleSheet(f"color: {COLORS['text']}; font-weight: 800; font-size: 12px; background: transparent;")
+        tl.setStyleSheet(f"color: {COLORS['text']}; font-weight: 800; font-size: {fpx(12)}; background: transparent;")
         self._chev = QLabel(); self._chev.setStyleSheet("background: transparent;")
         h.addWidget(ic); h.addWidget(tl); h.addStretch(); h.addWidget(self._chev)
         v.addWidget(self._head)
@@ -161,7 +161,7 @@ class DetailsDrawer(QFrame):
         head = QHBoxLayout()
         self.h_icon = QLabel(); self.h_icon.setStyleSheet("background: transparent;")
         self.h_icon.setPixmap(themed_icon("document", "text").pixmap(18, 18))
-        self.h_name = QLabel(""); self.h_name.setStyleSheet("font-weight: 800; font-size: 14px; background: transparent;")
+        self.h_name = QLabel(""); self.h_name.setStyleSheet(f"font-weight: 800; font-size: {fpx(14)}; background: transparent;")
         self.h_name.setWordWrap(True)
         self._pinned = False
         self.pin_btn = QPushButton("📌"); self.pin_btn.setFixedSize(28, 28)
@@ -214,10 +214,10 @@ class DetailsDrawer(QFrame):
     def _stat_col(self, label):
         col = QVBoxLayout(); col.setSpacing(1)
         val = QLabel("—")
-        val.setStyleSheet(f"color: {COLORS['text']}; font-weight: 800; font-size: 13px; background: transparent;")
+        val.setStyleSheet(f"color: {COLORS['text']}; font-weight: 800; font-size: {fpx(13)}; background: transparent;")
         val.setAlignment(Qt.AlignHCenter)
         lab = QLabel(label)
-        lab.setStyleSheet(f"color: {COLORS['muted']}; font-size: 10px; background: transparent;")
+        lab.setStyleSheet(f"color: {COLORS['muted']}; font-size: {fpx(10)}; background: transparent;")
         lab.setAlignment(Qt.AlignHCenter)
         col.addWidget(val); col.addWidget(lab)
         return col, val
@@ -232,7 +232,7 @@ class DetailsDrawer(QFrame):
         b.setStyleSheet(
             f"QToolButton {{ background: {COLORS['surface2']}; border: 1px solid {COLORS['border']};"
             f" border-radius: 10px; padding: 8px 4px 6px; color: {COLORS['text']};"
-            f" font-weight: 600; font-size: 11px; }}"
+            f" font-weight: 600; font-size: {fpx(11)}; }}"
             f"QToolButton:hover {{ background: {COLORS['card_hover']}; }}")
         b.clicked.connect(cb)
         return b
@@ -254,7 +254,7 @@ class DetailsDrawer(QFrame):
         # ---- stat row: big % + Speed / ETA / Downloaded columns ----
         stats = QHBoxLayout(); stats.setSpacing(10)
         self.ov_pct = QLabel("0%")
-        self.ov_pct.setStyleSheet(f"color: {COLORS['text']}; font-weight: 800; font-size: 34px; background: transparent;")
+        self.ov_pct.setStyleSheet(f"color: {COLORS['text']}; font-weight: 800; font-size: {fpx(34)}; background: transparent;")
         stats.addWidget(self.ov_pct)
         stats.addStretch()
         c1, self.ov_speed = self._stat_col("Speed");      stats.addLayout(c1)
@@ -271,7 +271,7 @@ class DetailsDrawer(QFrame):
         self._style_bar(COLORS["accent"])
         v.addWidget(self.bar)
         self.ov_status = QLabel("")
-        self.ov_status.setStyleSheet(f"color: {COLORS['muted']}; font-weight: 700; font-size: 12px; background: transparent;")
+        self.ov_status.setStyleSheet(f"color: {COLORS['muted']}; font-weight: 700; font-size: {fpx(12)}; background: transparent;")
         v.addWidget(self.ov_status)
 
         self.graph = SpeedGraph(); v.addWidget(self.graph)
@@ -369,7 +369,7 @@ class DetailsDrawer(QFrame):
         self.pin_btn.setStyleSheet(
             f"QPushButton {{ background: {COLORS['accent'] if on else 'transparent'};"
             f" border: 1px solid {COLORS['accent'] if on else 'transparent'};"
-            f" border-radius: 8px; font-size: 13px; }}"
+            f" border-radius: 8px; font-size: {fpx(13)}; }}"
             f"QPushButton:hover {{ background: {COLORS['accent'] if on else COLORS['surface2']}; }}")
 
     def _toggle_pin(self):
@@ -401,9 +401,9 @@ class DetailsDrawer(QFrame):
             ic.setPixmap(themed_icon(icon, COLORS['muted']).pixmap(34, 34))
             ic.setStyleSheet("background: transparent;")
             tl = QLabel(title); tl.setAlignment(Qt.AlignCenter)
-            tl.setStyleSheet(f"color: {COLORS['text']}; font-weight: 800; font-size: 13px; background: transparent;")
+            tl.setStyleSheet(f"color: {COLORS['text']}; font-weight: 800; font-size: {fpx(13)}; background: transparent;")
             sb = QLabel(sub); sb.setAlignment(Qt.AlignCenter); sb.setWordWrap(True)
-            sb.setStyleSheet(f"color: {COLORS['muted']}; font-size: 12px; background: transparent;")
+            sb.setStyleSheet(f"color: {COLORS['muted']}; font-size: {fpx(12)}; background: transparent;")
             lay.addWidget(ic)
             lay.addSpacing(6)
             lay.addWidget(tl)
@@ -417,7 +417,7 @@ class DetailsDrawer(QFrame):
             l.setCursor(Qt.IBeamCursor)
             style = f"color: {COLORS['text']}; background: transparent;"
             if mono:
-                style += " font-family: Consolas, monospace; font-size: 11px;"
+                style += f" font-family: Consolas, monospace; font-size: {fpx(11)};"
             l.setStyleSheet(style)
             lay.addWidget(l)
         if not lines:
@@ -575,11 +575,11 @@ class DetailsDrawer(QFrame):
             r = QHBoxLayout(); r.setSpacing(10)
             dot = QLabel("●")
             col = _STATE_COLOR_S.get(txt, COLORS["accent"])
-            dot.setStyleSheet(f"color: {col}; font-size: 9px; background: transparent;")
+            dot.setStyleSheet(f"color: {col}; font-size: {fpx(9)}; background: transparent;")
             lab = QLabel(txt)
-            lab.setStyleSheet(f"color: {COLORS['text']}; font-weight: 700; font-size: 12px; background: transparent;")
+            lab.setStyleSheet(f"color: {COLORS['text']}; font-weight: 700; font-size: {fpx(12)}; background: transparent;")
             when = QLabel(age)
-            when.setStyleSheet(f"color: {COLORS['muted']}; font-size: 11px; background: transparent;")
+            when.setStyleSheet(f"color: {COLORS['muted']}; font-size: {fpx(11)}; background: transparent;")
             r.addWidget(dot); r.addWidget(lab); r.addStretch(); r.addWidget(when)
             w = QWidget(); w.setLayout(r); w.setStyleSheet("background: transparent;")
             lay.addWidget(w)
@@ -595,7 +595,7 @@ class DetailsDrawer(QFrame):
             l.setTextInteractionFlags(Qt.TextSelectableByMouse | Qt.TextSelectableByKeyboard)
             l.setCursor(Qt.IBeamCursor)
             l.setStyleSheet(f"color: {COLORS['muted']}; background: transparent;"
-                            " font-family: Consolas, monospace; font-size: 11px;")
+                            f" font-family: Consolas, monospace; font-size: {fpx(11)};")
             lay.addWidget(l)
         lay.addStretch()
         self._log_lines = copy_lines
@@ -624,7 +624,7 @@ class DetailsDrawer(QFrame):
         col = _STATE_COLOR.get(t.status, COLORS["accent"])
         self._style_bar(col)
         self.ov_status.setText(str(t.status))
-        self.ov_status.setStyleSheet(f"color: {col}; font-weight: 700; font-size: 12px; background: transparent;")
+        self.ov_status.setStyleSheet(f"color: {col}; font-weight: 700; font-size: {fpx(12)}; background: transparent;")
         self.ov_speed.setText(human_speed(bps) or "0 b/s")
         done = human_size(t.downloaded) if t.downloaded > 0 else "0 B"
         self.ov_done.setText(f"{done} / {human_size(t.total_size)}" if t.total_size else done)

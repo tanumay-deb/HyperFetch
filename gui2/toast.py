@@ -7,7 +7,7 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Qt, QTimer, QPropertyAnimation, QEasingCurve, QPoint
 
-from gui2.palette import COLORS
+from gui2.palette import COLORS, fpx
 from gui.icons import themed_icon
 
 _KIND = {
@@ -34,7 +34,7 @@ class Toast(QFrame):
         col = QVBoxLayout(); col.setSpacing(1)
         t = QLabel(title); t.setStyleSheet("font-weight:700;background:transparent;")
         m = QLabel(msg); m.setWordWrap(True)
-        m.setStyleSheet(f"color:{COLORS['muted']};font-size:11px;background:transparent;")
+        m.setStyleSheet(f"color:{COLORS['muted']};font-size: {fpx(11)};background:transparent;")
         col.addWidget(t); col.addWidget(m)
         x = QPushButton(); x.setIcon(themed_icon("close", "muted")); x.setObjectName("iconbtn"); x.setFixedSize(22, 22)
         x.setCursor(Qt.PointingHandCursor); x.clicked.connect(on_close)

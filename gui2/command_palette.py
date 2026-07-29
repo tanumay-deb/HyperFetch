@@ -10,7 +10,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt
 
 from gui.icons import themed_icon
-from gui2.palette import COLORS
+from gui2.palette import COLORS, fpx
 
 
 class CommandPalette(QDialog):
@@ -25,7 +25,7 @@ class CommandPalette(QDialog):
             f"#palette {{ background: {COLORS['surface']}; border: 1px solid {COLORS['border']};"
             f" border-radius: 12px; }}"
             f"QLineEdit {{ background: {COLORS['surface2']}; color: {COLORS['text']};"
-            f" border: 1px solid {COLORS['border']}; border-radius: 8px; padding: 10px 12px; font-size: 15px; }}"
+            f" border: 1px solid {COLORS['border']}; border-radius: 8px; padding: 10px 12px; font-size: {fpx(15)}; }}"
             f"QListWidget {{ background: transparent; border: none; color: {COLORS['text']}; outline: 0; }}"
             f"QListWidget::item {{ padding: 8px 10px; border-radius: 7px; }}"
             f"QListWidget::item:selected {{ background: {COLORS['accent']}; color: white; }}")

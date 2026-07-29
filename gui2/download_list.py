@@ -11,7 +11,7 @@ from PySide6.QtCore import Qt, Signal
 
 import task as T
 from gui2.download_card import DownloadCardWidget
-from gui2.palette import COLORS
+from gui2.palette import COLORS, fpx
 from gui.icons import themed_icon
 
 _GROUPS = [
@@ -71,9 +71,9 @@ class DownloadList(QScrollArea):
         v.addSpacing(6)
 
         title = QLabel("No downloads yet"); title.setAlignment(Qt.AlignCenter)
-        title.setStyleSheet(f"font-size:19px;font-weight:800;color:{COLORS['text']};background:transparent;")
+        title.setStyleSheet(f"font-size: {fpx(19)};font-weight:800;color:{COLORS['text']};background:transparent;")
         sub = QLabel("Paste a link, drop a file, or start one below."); sub.setAlignment(Qt.AlignCenter)
-        sub.setStyleSheet(f"font-size:13px;color:{COLORS['muted']};background:transparent;")
+        sub.setStyleSheet(f"font-size: {fpx(13)};color:{COLORS['muted']};background:transparent;")
         v.addWidget(title); v.addWidget(sub)
         v.addSpacing(14)
 
@@ -95,13 +95,13 @@ class DownloadList(QScrollArea):
         v.addLayout(rh)
 
         hint = QLabel("or drag files & links anywhere in the window"); hint.setAlignment(Qt.AlignCenter)
-        hint.setStyleSheet(f"font-size:11px;color:{COLORS['faint']};background:transparent;")
+        hint.setStyleSheet(f"font-size: {fpx(11)};color:{COLORS['faint']};background:transparent;")
         v.addSpacing(10); v.addWidget(hint)
         return w
 
     def _header(self, title, count):
         h = QLabel(f"{title.upper()}   {count}")
-        h.setStyleSheet(f"color:{COLORS['muted']};font-size:11px;font-weight:800;letter-spacing:1px;background:transparent;padding:6px 2px 0;")
+        h.setStyleSheet(f"color:{COLORS['muted']};font-size: {fpx(11)};font-weight:800;letter-spacing:1px;background:transparent;padding:6px 2px 0;")
         return h
 
     # ---- selection ----

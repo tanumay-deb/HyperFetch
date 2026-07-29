@@ -15,7 +15,7 @@ from PySide6.QtCore import Qt
 
 import history
 from gui2 import search as _search
-from gui2.palette import COLORS
+from gui2.palette import COLORS, fpx
 from gui2.dialogs.common import DialogHeader
 from gui.icons import themed_icon
 from gui.theme import human_size, humanize_age
@@ -65,7 +65,7 @@ class HistoryDialog(QDialog):
                                "category:video · ext:zip · size:>100mb · date:7d")
         self.search.textChanged.connect(self._apply_filter)
         self.count = QLabel("")
-        self.count.setStyleSheet(f"color:{COLORS['muted']};font-size:12px;background:transparent;")
+        self.count.setStyleSheet(f"color:{COLORS['muted']};font-size: {fpx(12)};background:transparent;")
         row.addWidget(self.search, 1); row.addWidget(self.count)
         v.addLayout(row)
 
@@ -89,7 +89,7 @@ class HistoryDialog(QDialog):
         self.empty = QLabel()
         self.empty.setAlignment(Qt.AlignCenter)
         self.empty.setWordWrap(True)
-        self.empty.setStyleSheet(f"color:{COLORS['muted']};font-size:13px;background:transparent;")
+        self.empty.setStyleSheet(f"color:{COLORS['muted']};font-size: {fpx(13)};background:transparent;")
 
         self.stack = QStackedWidget()
         self.stack.addWidget(self.table)
@@ -182,8 +182,8 @@ class HistoryDialog(QDialog):
     def _stat_card(self, label, value):
         f = QFrame(); f.setObjectName("panel")
         g = QVBoxLayout(f); g.setContentsMargins(16, 12, 16, 12); g.setSpacing(2)
-        val = QLabel(value); val.setStyleSheet("font-size:22px;font-weight:800;background:transparent;")
-        cap = QLabel(label); cap.setStyleSheet(f"color:{COLORS['muted']};font-size:11px;background:transparent;")
+        val = QLabel(value); val.setStyleSheet(f"font-size:{fpx(22)};font-weight:800;background:transparent;")
+        cap = QLabel(label); cap.setStyleSheet(f"color:{COLORS['muted']};font-size: {fpx(11)};background:transparent;")
         g.addWidget(val); g.addWidget(cap)
         return f
 

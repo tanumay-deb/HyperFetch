@@ -105,11 +105,24 @@ class SettingsMixin:
         self.refresh()
 
     def _apply_appearance(self):
-        """Apply the Appearance font-size setting to the whole app."""
-        pt = {"Small": 9, "Medium": 10, "Large": 12}.get(self._extras.get("font_size", "Medium"), 10)
+        """Apply the Appearance font-size setting.
+
+        Two halves: QApplication.setFont covers widgets with no explicit size,
+        and palette.set_font_scale drives every size the stylesheet declares
+        (a stylesheet font-size always beats the application font, so setting
+        the app font alone had almost no visible effect). Inline widget styles
+        read the scale when they are constructed, so a change applies fully
+        after the restart the settings dialog offers.
+        """
+        from gui2 import palette
+        name = self._extras.get("font_size", "Medium")
+        palette.set_font_scale(name)
+        pt = {"Small": 9, "Medium": 10, "Large": 12}.get(name, 10)
         app = QApplication.instance()
         if app:
             f = app.font(); f.setPointSize(pt); app.setFont(f)
+        # re-generate the stylesheet so the app chrome resizes immediately
+        self.setStyleSheet(palette.qss())
 
     def _apply_network_settings(self):
         """Push persisted Network/Advanced prefs into the backend globals the

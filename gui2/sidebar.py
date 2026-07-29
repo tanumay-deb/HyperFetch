@@ -6,7 +6,7 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Qt, Signal
 
-from gui2.palette import COLORS
+from gui2.palette import COLORS, fpx
 from gui2.speed_gauge import SpeedGraph
 from gui.theme import human_speed
 from gui.icons import themed_icon
@@ -53,7 +53,7 @@ class NavRow(QFrame):
         self.lbl = QLabel(label)
         self.lbl.setStyleSheet(f"background: transparent; font-weight: 600; color: {COLORS['muted']};")
         self.cnt = QLabel("")
-        self.cnt.setStyleSheet(f"background: transparent; color: {COLORS['faint']}; font-size: 12px;")
+        self.cnt.setStyleSheet(f"background: transparent; color: {COLORS['faint']}; font-size: {fpx(12)};")
         self._h.addWidget(self.ic)
         self._h.addWidget(self.lbl)
         self._h.addStretch()
@@ -131,7 +131,7 @@ class Sidebar(QFrame):
         self.brand_icon = BrandLogo(26)
         self.brand = QLabel("HyperFetch")
         self.brand.setObjectName("brand")
-        self.brand.setStyleSheet("background: transparent; font-size: 18px; font-weight: 800;")
+        self.brand.setStyleSheet(f"background: transparent; font-size: {fpx(18)}; font-weight: 800;")
         self.btn_collapse = QPushButton()
         self.btn_collapse.setIcon(themed_icon("menu", "text"))
         self.btn_collapse.setObjectName("iconbtn")
@@ -196,17 +196,17 @@ class Sidebar(QFrame):
         gt.setContentsMargins(0, 0, 0, 0)
         scol = QVBoxLayout(); scol.setSpacing(0)
         self.lbl_speed = QLabel("0 B/s")
-        self.lbl_speed.setStyleSheet(f"font-size: 16px; font-weight: 800; background: transparent; color: {COLORS['text']};")
+        self.lbl_speed.setStyleSheet(f"font-size: {fpx(16)}; font-weight: 800; background: transparent; color: {COLORS['text']};")
         cap1 = QLabel("Current Speed")
-        cap1.setStyleSheet(f"font-size: 11px; color: {COLORS['muted']}; background: transparent;")
+        cap1.setStyleSheet(f"font-size: {fpx(11)}; color: {COLORS['muted']}; background: transparent;")
         scol.addWidget(self.lbl_speed); scol.addWidget(cap1)
         ccol = QVBoxLayout(); ccol.setSpacing(0)
         self.lbl_conns = QLabel("0")
         self.lbl_conns.setAlignment(Qt.AlignRight)
-        self.lbl_conns.setStyleSheet(f"font-size: 16px; font-weight: 800; background: transparent; color: {COLORS['text']};")
+        self.lbl_conns.setStyleSheet(f"font-size: {fpx(16)}; font-weight: 800; background: transparent; color: {COLORS['text']};")
         cap2 = QLabel("Connections")
         cap2.setAlignment(Qt.AlignRight)
-        cap2.setStyleSheet(f"font-size: 11px; color: {COLORS['muted']}; background: transparent;")
+        cap2.setStyleSheet(f"font-size: {fpx(11)}; color: {COLORS['muted']}; background: transparent;")
         ccol.addWidget(self.lbl_conns); ccol.addWidget(cap2)
         gt.addLayout(scol); gt.addStretch(); gt.addLayout(ccol)
         sv.addWidget(self.g_text)

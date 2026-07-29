@@ -20,7 +20,7 @@ import utils
 import torrent as _torrent
 from gui.theme import human_size, human_speed, fmt_eta, humanize_age
 from gui.icons import themed_icon
-from gui2.palette import COLORS
+from gui2.palette import COLORS, fpx
 from gui2.graphing import moving_avg, smooth_path
 
 _CAT_ICON = {
@@ -137,7 +137,7 @@ class DownloadCardWidget(QFrame):
         # serial number
         self.sl_lbl = QLabel(f"#{sl_no}")
         self.sl_lbl.setFixedWidth(30)
-        self.sl_lbl.setStyleSheet(f"color: {COLORS['muted']}; font-size: 11px; font-weight: 700; background: transparent;")
+        self.sl_lbl.setStyleSheet(f"color: {COLORS['muted']}; font-size: {fpx(11)}; font-weight: 700; background: transparent;")
         root.addWidget(self.sl_lbl, 0, Qt.AlignVCenter)
 
         ic_name, ic_color = _icon_for(task)
@@ -151,14 +151,14 @@ class DownloadCardWidget(QFrame):
         mid = QVBoxLayout(); mid.setSpacing(4)
         namerow = QHBoxLayout(); namerow.setSpacing(8)
         self.name = ElideLabel(task.filename or "download")
-        self.name.setStyleSheet(f"font-size: 14px; font-weight: 700; color: {COLORS['text']}; background: transparent;")
+        self.name.setStyleSheet(f"font-size: {fpx(14)}; font-weight: 700; color: {COLORS['text']}; background: transparent;")
         self.pct = QLabel("")
-        self.pct.setStyleSheet(f"font-size: 13px; font-weight: 700; color: {COLORS['muted']}; background: transparent;")
+        self.pct.setStyleSheet(f"font-size: {fpx(13)}; font-weight: 700; color: {COLORS['muted']}; background: transparent;")
         # queue badge — only shown when the task isn't in the default "Main" queue,
         # so multi-queue membership is visible at a glance
         self.qbadge = QLabel("")
         self.qbadge.setStyleSheet(
-            f"font-size: 10px; font-weight: 700; color: {COLORS['accent2']}; "
+            f"font-size: {fpx(10)}; font-weight: 700; color: {COLORS['accent2']}; "
             f"background: {COLORS['surface2']}; border-radius: 6px; padding: 1px 7px;")
         self.qbadge.setVisible(False)
         self.spark = Sparkline()
@@ -173,7 +173,7 @@ class DownloadCardWidget(QFrame):
         mid.addWidget(self.bar)
 
         self.sub = ElideLabel("")
-        self.sub.setStyleSheet(f"font-size: 11px; color: {COLORS['muted']}; background: transparent;")
+        self.sub.setStyleSheet(f"font-size: {fpx(11)}; color: {COLORS['muted']}; background: transparent;")
         mid.addWidget(self.sub)
         root.addLayout(mid, 1)
 
