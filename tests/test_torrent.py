@@ -147,14 +147,19 @@ def test_run_resolves_save_path_before_completed(tmp_path, monkeypatch):
     assert status_at_resolve == [T.DOWNLOADING]   # resolved before the flip
 
 
-def test_run_reports_error_on_nonzero_exit(tmp_path, monkeypatch):
+def test_run_metadata_phase_failure_stays_resumable(tmp_path, monkeypatch):
+    """A non-zero exit BEFORE any payload is known means the swarm was cold, not
+    that the torrent is broken — it must stay resumable rather than go red.
+    (A non-zero exit after the payload is known is still an error: see
+    test_real_failure_still_errors.)"""
     monkeypatch.setattr(torrent, "aria2c_path", lambda: "aria2c")
+    monkeypatch.setattr(torrent.utils, "app_data_dir", lambda: str(tmp_path / "app"))
     lines = ["errorCode=1 metadata fetch failed\n"]
     monkeypatch.setattr(torrent.subprocess, "Popen", lambda *a, **k: _FakeProc(lines, rc=1))
     t = T.DownloadTask("magnet:?xt=urn:btih:abc", str(tmp_path / "out"))
     torrent.TorrentDownloader(t).run()
-    assert t.status == T.ERROR
-    assert "torrent failed" in t.error
+    assert t.status == T.PAUSED
+    assert "No peers found yet" in t.error
 
 
 def test_run_cancel_terminates(tmp_path, monkeypatch):
@@ -326,3 +331,76 @@ def test_cancelled_run_cleans_up(tmp_path, monkeypatch):
     torrent.TorrentDownloader(t).run()
     assert t.status == T.CANCELLED
     assert not ctl.exists()
+
+
+# ---- engine configuration: peer discovery ----
+def _cmd(tmp_path, monkeypatch, url="magnet:?xt=urn:btih:abc"):
+    monkeypatch.setattr(torrent.utils, "app_data_dir", lambda: str(tmp_path))
+    t = T.DownloadTask(url, str(tmp_path / "out.bin"))
+    return torrent.TorrentDownloader(t)._build_cmd("aria2c", str(tmp_path))
+
+
+def test_dht_bootstrap_nodes_passed(tmp_path, monkeypatch):
+    """aria2 ships no built-in entry point: without these a cold routing table
+    can never join the DHT, so magnets sit at CN:0 forever."""
+    cmd = _cmd(tmp_path, monkeypatch)
+    eps = [a for a in cmd if a.startswith("--dht-entry-point=")]
+    assert len(eps) == len(torrent.DHT_ENTRY_POINTS) >= 2
+    assert any("router.bittorrent.com:6881" in a for a in eps)
+    assert any(a.startswith("--dht-entry-point6=") for a in cmd)
+
+
+def test_dht_table_persisted_in_app_data(tmp_path, monkeypatch):
+    """aria2's default dht.dat dir does not exist, so it failed to save every
+    run and re-bootstrapped from scratch each time."""
+    cmd = _cmd(tmp_path, monkeypatch)
+    paths = [a for a in cmd if a.startswith("--dht-file-path")]
+    assert len(paths) == 2
+    assert all(str(tmp_path) in a for a in paths)
+    assert os.path.isdir(torrent.dht_dir())        # created up front
+
+
+def test_listen_port_always_bound(tmp_path, monkeypatch):
+    """The port must always be explicit so it matches what UPnP forwards."""
+    monkeypatch.setattr(torrent.utils, "LISTEN_PORT", 0)
+    cmd = _cmd(tmp_path, monkeypatch)
+    assert f"--listen-port={torrent.DEFAULT_LISTEN_PORT}" in cmd
+    assert f"--dht-listen-port={torrent.DEFAULT_LISTEN_PORT}" in cmd
+    # an explicit user setting still wins
+    monkeypatch.setattr(torrent.utils, "LISTEN_PORT", 6899)
+    assert "--listen-port=6899" in _cmd(tmp_path, monkeypatch)
+
+
+def test_saved_metadata_reused_and_stall_timeout_generous(tmp_path, monkeypatch):
+    cmd = _cmd(tmp_path, monkeypatch)
+    assert "--bt-load-saved-metadata=true" in cmd
+    assert "--enable-dht6=true" in cmd
+    stall = next(a for a in cmd if a.startswith("--bt-stop-timeout="))
+    assert int(stall.split("=")[1]) >= 900        # metadata phase shares this timer
+
+
+def test_no_peers_ends_paused_not_error(tmp_path, monkeypatch):
+    """A cold swarm is not a failure: it is the case that starts working later,
+    so it must stay resumable instead of going red."""
+    monkeypatch.setattr(torrent, "aria2c_path", lambda: "aria2c")
+    monkeypatch.setattr(torrent.utils, "app_data_dir", lambda: str(tmp_path / "app"))
+    lines = ["[#a 0B/0B CN:0 SD:0 DL:0B]\n"]
+    monkeypatch.setattr(torrent.subprocess, "Popen", lambda *a, **k: _FakeProc(lines, rc=1))
+    t = T.DownloadTask("magnet:?xt=urn:btih:abc&dn=Cold", str(tmp_path / "out" / "x"))
+    torrent.TorrentDownloader(t).run()
+    assert t.status == T.PAUSED
+    assert "No peers found yet" in t.error
+
+
+def test_real_failure_still_errors(tmp_path, monkeypatch):
+    """Once the payload is known, a non-zero exit is a genuine failure."""
+    monkeypatch.setattr(torrent, "aria2c_path", lambda: "aria2c")
+    monkeypatch.setattr(torrent.utils, "app_data_dir", lambda: str(tmp_path / "app"))
+    out = tmp_path / "out"; out.mkdir()
+    lines = [f"FILE: {out / 'movie.mkv'}\n", "[#a 5MiB/100MiB(5%) CN:3 SD:1]\n",
+             "errorCode=2 something broke\n"]
+    monkeypatch.setattr(torrent.subprocess, "Popen", lambda *a, **k: _FakeProc(lines, rc=1))
+    t = T.DownloadTask("magnet:?xt=urn:btih:abc", str(out / "x"))
+    torrent.TorrentDownloader(t).run()
+    assert t.status == T.ERROR
+    assert "torrent failed" in t.error

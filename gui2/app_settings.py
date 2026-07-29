@@ -133,10 +133,13 @@ class SettingsMixin:
         # DNS-over-HTTPS: override the resolver for all in-process HTTP downloads
         import doh
         doh.enable(bool(ex.get("dns_https", False)))
-        # UPnP: open the torrent listen port on the router (best-effort, threaded)
-        if bool(ex.get("upnp", True)) and utils.LISTEN_PORT:
-            import upnp
-            threading.Thread(target=upnp.map_port, args=(utils.LISTEN_PORT,),
+        # UPnP: open the torrent listen port on the router (best-effort, threaded).
+        # Uses the effective port — the user's setting OR the engine default —
+        # because gating on a non-zero LISTEN_PORT meant the mapping never ran
+        # for anyone who had not manually picked a port, so no inbound peers.
+        if bool(ex.get("upnp", True)):
+            import upnp, torrent as _tor
+            threading.Thread(target=upnp.map_port, args=(_tor.listen_port(),),
                              daemon=True).start()
         ctype = ex.get("connection_type", "Default (Auto)")
         purl = (ex.get("proxy") or "").strip()

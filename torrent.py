@@ -30,6 +30,15 @@ log = logging.getLogger("hyperfetch.torrent")
 
 POLL = 0.3            # seconds between pause/cancel checks
 STOP_GRACE = 5        # seconds to wait after terminate before kill
+# How long aria2 may sit at zero speed before giving up. Generous because the
+# same timer covers the magnet metadata phase, where minutes of silence is
+# normal on a sparsely-seeded torrent.
+STALL_TIMEOUT = 1800  # 30 min
+# Default BitTorrent listen port when the user has not chosen one. It used to be
+# left unset, which meant aria2 picked from its own range and UPnP had no single
+# port to forward — so we only ever made OUTBOUND connections and never accepted
+# peers. A fixed default gives UPnP something concrete to map.
+DEFAULT_LISTEN_PORT = 51413
 
 # well-known public trackers appended to every magnet so peers are found via
 # trackers + DHT + PEX + LPD (a hash-only magnet otherwise leans on DHT alone)
@@ -40,6 +49,20 @@ PUBLIC_TRACKERS = [
     "udp://exodus.desync.com:6969/announce",
     "udp://tracker.torrent.eu.org:451/announce",
     "udp://open.stealth.si:80/announce",
+]
+
+# DHT bootstrap nodes. aria2 ships NO built-in entry point: with a cold routing
+# table and no --dht-entry-point, DHT never bootstraps at all, so a magnet can
+# only find peers through the trackers above — which is how a torrent ends up
+# sitting at "CN:0 SD:0" forever while it downloads fine in other clients.
+DHT_ENTRY_POINTS = [
+    ("router.bittorrent.com", 6881),
+    ("dht.transmissionbt.com", 6881),
+    ("router.utorrent.com", 6881),
+]
+DHT_ENTRY_POINTS6 = [
+    ("router.bittorrent.com", 6881),
+    ("dht.transmissionbt.com", 6881),
 ]
 
 
@@ -121,6 +144,24 @@ def parse_torrent_files(path):
         return [(dec(info[b"name"]), int(info.get(b"length", 0)))]   # single file
     except (KeyError, TypeError, ValueError):
         return []
+
+
+def listen_port():
+    """The BitTorrent listen port actually in use: the user's setting, else the
+    default. UPnP maps this, and aria2 binds it."""
+    return int(getattr(utils, "LISTEN_PORT", 0) or DEFAULT_LISTEN_PORT)
+
+
+def dht_dir():
+    """Directory for aria2's DHT routing tables. aria2 defaults to
+    ~/.cache/aria2 but does NOT create it, so it failed to save the table on
+    every run and each start re-bootstrapped the DHT from scratch."""
+    d = os.path.join(utils.app_data_dir(), "dht")
+    try:
+        os.makedirs(d, exist_ok=True)
+    except OSError:
+        pass
+    return d
 
 
 def metadata_dir():
@@ -287,24 +328,46 @@ class TorrentDownloader:
             exe,
             "--dir", out_dir,
             "--seed-time=0",              # don't seed after completing
-            "--bt-stop-timeout=300",     # give up if a swarm stalls for 5 min
+            # Stall timeout. Only meaningful once the payload is transferring:
+            # during the metadata phase a magnet legitimately sits at 0 B/s for
+            # minutes while DHT is queried, and a short timeout there is what
+            # turned slow-but-fine magnets into "failed".
+            f"--bt-stop-timeout={STALL_TIMEOUT}",
             "--summary-interval=1",      # emit a progress readout each second
             "--console-log-level=warn",
             "--bt-save-metadata=true",
+            # reuse metadata we already saved: a re-added or resumed magnet then
+            # skips the metadata fetch entirely instead of re-querying the swarm
+            "--bt-load-saved-metadata=true",
             "--continue=true",           # resume from .aria2 control file
             # peer discovery — match what desktop torrent clients do so a bare
             # magnet finds peers via more than DHT alone (the usual reason a
             # magnet "works in qBittorrent but stalls here").
             "--enable-dht=true",
+            "--enable-dht6=true",
             "--enable-peer-exchange=true",
             "--bt-enable-lpd=true",       # local peer discovery
             "--bt-max-peers=0",           # unlimited peers
             "--bt-tracker=" + ",".join(PUBLIC_TRACKERS),
+            # Persist the DHT routing table so the next run starts with a warm
+            # table instead of bootstrapping from nothing. aria2's default path
+            # is ~/.cache/aria2/dht.dat, whose directory it does NOT create —
+            # it threw "Failed to save DHT routing table" on every run.
+            f"--dht-file-path={os.path.join(dht_dir(), 'dht.dat')}",
+            f"--dht-file-path6={os.path.join(dht_dir(), 'dht6.dat')}",
         ]
+        # Bootstrap nodes — without these a cold routing table can never join
+        # the DHT, leaving magnets entirely dependent on the trackers above.
+        for host, port in DHT_ENTRY_POINTS:
+            cmd.append(f"--dht-entry-point={host}:{port}")
+        for host, port in DHT_ENTRY_POINTS6:
+            cmd.append(f"--dht-entry-point6={host}:{port}")
         # --- settings wired from the GUI (Settings -> Network / Advanced) ---
-        if utils.LISTEN_PORT:
-            cmd += [f"--listen-port={utils.LISTEN_PORT}",
-                    f"--dht-listen-port={utils.LISTEN_PORT}"]
+        # Always bind an explicit port (user's or the default) so it matches the
+        # one UPnP forwards; leaving it unset meant inbound peers had nowhere to
+        # land.
+        port = listen_port()
+        cmd += [f"--listen-port={port}", f"--dht-listen-port={port}"]
         if not utils.DISK_CACHE:
             cmd.append("--disk-cache=0")
         cmd.append("--file-allocation=" + ("prealloc" if utils.PREALLOCATE else "none"))
@@ -470,6 +533,17 @@ class TorrentDownloader:
             self._resolve_save_path(out_dir, seen["top"])
             self.t.status = T.COMPLETED
             log.info("torrent done: %s", self.t.filename)
+        elif not seen["top"] and self.t.downloaded == 0:
+            # Never got past the metadata phase and never saw a peer: the swarm
+            # is cold right now, not broken. Calling that a red "failed" was
+            # wrong — it is exactly the case that starts working later, so end
+            # PAUSED and resumable instead. (Resume re-launches aria2, which now
+            # reuses the saved metadata and the warm DHT table.)
+            self.t.status = T.PAUSED
+            self.t.error = ("No peers found yet — the swarm may be offline or "
+                            "still waking up. Resume to try again.")
+            log.info("torrent found no peers: %s (peers=%d seeds=%d)",
+                     self.t.filename, self.t.tor_conns, self.t.tor_seeds)
         else:
             self.t.status = T.ERROR
             msg = " | ".join(tail[-3:])
