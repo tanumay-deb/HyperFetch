@@ -52,9 +52,25 @@ class ShortcutsMixin:
             delete_disk = dlg.deleteDisk.isChecked()
             for t in ts:
                 self.queue.remove_task(t)
-                if delete_disk and getattr(t, "save_path", None) and os.path.exists(t.save_path):
+                # always clear the engine's leftovers (aria2 .aria2 control file
+                # + our saved metadata) — they are useless once the task is gone
+                try:
+                    import torrent as _tor
+                    if _tor.is_torrent_task(t.url, t.filename):
+                        _tor.cleanup_artifacts(t)
+                except Exception:
+                    pass
+                path = getattr(t, "save_path", None)
+                if delete_disk and path and os.path.exists(path):
                     try:
-                        os.remove(t.save_path)
+                        # a torrent's payload is a DIRECTORY; os.remove only
+                        # handles files, so multi-file torrents used to survive
+                        # "also delete from disk" untouched
+                        if os.path.isdir(path):
+                            import shutil
+                            shutil.rmtree(path, ignore_errors=True)
+                        else:
+                            os.remove(path)
                     except OSError:
                         pass
             self._save_state()

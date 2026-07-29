@@ -123,6 +123,69 @@ def parse_torrent_files(path):
         return []
 
 
+def metadata_dir():
+    """Where saved torrent metadata is kept, out of the user's download folder.
+    aria2 can only write it into --dir (there is no separate metadata path
+    option), so it is moved here once a run ends."""
+    d = os.path.join(utils.app_data_dir(), "torrents")
+    try:
+        os.makedirs(d, exist_ok=True)
+    except OSError:
+        pass
+    return d
+
+
+def archive_metadata(task, out_dir):
+    """Move aria2's <infohash>.torrent out of the download folder into app data.
+    Keeps the Files tab working while leaving no junk next to the payload.
+    Best-effort: failures are ignored, the file simply stays put."""
+    ih = magnet_infohash(task.url or "")
+    if not ih:
+        return ""
+    src = os.path.join(out_dir, ih + ".torrent")
+    if not os.path.isfile(src):
+        return ""
+    dest = os.path.join(metadata_dir(), ih + ".torrent")
+    try:
+        os.replace(src, dest)          # same volume in practice (%APPDATA%)
+        return dest
+    except OSError:
+        try:
+            shutil.copy2(src, dest)    # cross-volume fallback
+            os.remove(src)
+            return dest
+        except OSError:
+            return ""
+
+
+def cleanup_artifacts(task):
+    """Remove the aria2 leftovers for a task the user cancelled or deleted: the
+    <name>.aria2 control file and our saved metadata copy. Only ever touches
+    files belonging to THIS task — a blind sweep could delete the control file
+    of a torrent another client (or another of our tasks) is still resuming."""
+    save = getattr(task, "save_path", "") or ""
+    removed = []
+    if save:
+        ctl = save + ".aria2"
+        if os.path.isfile(ctl):
+            try:
+                os.remove(ctl)
+                removed.append(ctl)
+            except OSError:
+                pass
+    ih = magnet_infohash(task.url or "")
+    if ih:
+        for d in (metadata_dir(), os.path.dirname(save) or "."):
+            p = os.path.join(d, ih + ".torrent")
+            if os.path.isfile(p):
+                try:
+                    os.remove(p)
+                    removed.append(p)
+                except OSError:
+                    pass
+    return removed
+
+
 def metadata_torrent_path(task, *dirs):
     """Locate the .torrent describing this task: a local .torrent input as-is,
     else the copy aria2 saves as <infohash>.torrent (--bt-save-metadata) once a
@@ -133,7 +196,9 @@ def metadata_torrent_path(task, *dirs):
     ih = magnet_infohash(url)
     if not ih:
         return ""
-    for d in dirs:
+    # the archived copy first: that is where metadata lives once a run has
+    # ended; `dirs` covers a download still in flight (aria2 writes into --dir)
+    for d in (metadata_dir(),) + tuple(dirs):
         if not d:
             continue
         cand = os.path.join(d, ih + ".torrent")
@@ -371,9 +436,15 @@ class TorrentDownloader:
         rt.join(timeout=2)
 
         if self.t.cancel_requested:
+            # cancelled for good: take the control file and metadata with it
+            # instead of leaving them next to the half-downloaded payload
+            cleanup_artifacts(self.t)
             self.t.status = T.CANCELLED
             return
         if self.t.pause_requested:
+            # a pause KEEPS the .aria2 control file — it is what lets aria2
+            # resume from the partial data — but the metadata can still move
+            archive_metadata(self.t, out_dir)
             self.t.status = T.PAUSED
             return
 
@@ -382,6 +453,10 @@ class TorrentDownloader:
         # there, it's complete.
         complete = (self._proc.returncode == 0
                     or (self.t.total_size and self.t.downloaded >= self.t.total_size))
+        # aria2 removes its own .aria2 control file on success; the saved
+        # metadata is ours, so move it out of the user's download folder on
+        # every terminal outcome (the Files tab reads it from there).
+        archive_metadata(self.t, out_dir)
         if complete:
             if self.t.total_size:
                 self.t.downloaded = self.t.total_size

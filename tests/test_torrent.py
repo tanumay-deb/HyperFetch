@@ -1,5 +1,6 @@
 """BitTorrent/magnet engine (aria2c sidecar). Detection + progress parsing are
 pure; run() is driven against a fake aria2c subprocess (no real swarm/network)."""
+import os
 import subprocess
 
 import pytest
@@ -252,3 +253,76 @@ def test_list_files_empty_for_non_torrent_and_missing_metadata(tmp_path):
     # magnet whose metadata has not arrived yet
     t = T.DownloadTask("magnet:?xt=urn:btih:" + "c" * 40, str(tmp_path / "d.bin"))
     assert torrent.list_files(t) == []
+
+
+# ---- aria2 leftovers: keep the user's download folder clean ----
+def test_archive_metadata_moves_out_of_download_folder(tmp_path, monkeypatch):
+    ih = "d" * 40
+    dl = tmp_path / "Downloads"; dl.mkdir()
+    app = tmp_path / "meta_store"; app.mkdir()
+    monkeypatch.setattr(torrent.utils, "app_data_dir", lambda: str(app))
+    _write_multi(dl / f"{ih}.torrent")
+    t = T.DownloadTask(f"magnet:?xt=urn:btih:{ih}", str(dl / "download.bin"))
+
+    dest = torrent.archive_metadata(t, str(dl))
+    assert dest and os.path.isfile(dest)
+    assert not (dl / f"{ih}.torrent").exists()        # gone from Downloads
+    # and the Files tab still resolves it from the archive
+    assert len(torrent.list_files(t)) == 2
+
+
+def test_archive_metadata_noop_without_metadata(tmp_path, monkeypatch):
+    monkeypatch.setattr(torrent.utils, "app_data_dir", lambda: str(tmp_path))
+    t = T.DownloadTask("magnet:?xt=urn:btih:" + "e" * 40, str(tmp_path / "x.bin"))
+    assert torrent.archive_metadata(t, str(tmp_path)) == ""
+    # a non-magnet has no infohash to look for
+    assert torrent.archive_metadata(T.DownloadTask("https://x/a.zip", "a.zip"), str(tmp_path)) == ""
+
+
+def test_cleanup_artifacts_removes_control_file_and_metadata(tmp_path, monkeypatch):
+    ih = "f" * 40
+    app = tmp_path / "meta_store"; app.mkdir()
+    monkeypatch.setattr(torrent.utils, "app_data_dir", lambda: str(app))
+    payload = tmp_path / "Show.S01"
+    payload.mkdir()
+    ctl = tmp_path / "Show.S01.aria2"
+    ctl.write_bytes(b"control")
+    _write_multi(tmp_path / f"{ih}.torrent")
+    t = T.DownloadTask(f"magnet:?xt=urn:btih:{ih}", str(payload))
+    torrent.archive_metadata(t, str(tmp_path))
+
+    torrent.cleanup_artifacts(t)
+    assert not ctl.exists()                                   # control file gone
+    assert not (tmp_path / f"{ih}.torrent").exists()
+    assert not (app / "torrents" / f"{ih}.torrent").exists()  # archive gone too
+    assert payload.exists()          # payload itself is NOT touched here
+
+
+def test_cleanup_artifacts_leaves_other_tasks_alone(tmp_path, monkeypatch):
+    """Only this task's leftovers may be removed — a blind sweep would break
+    another torrent that is still resuming from its control file."""
+    monkeypatch.setattr(torrent.utils, "app_data_dir", lambda: str(tmp_path / "app"))
+    mine = tmp_path / "Mine"; mine.mkdir()
+    (tmp_path / "Mine.aria2").write_bytes(b"x")
+    other = tmp_path / "Other.aria2"
+    other.write_bytes(b"keep me")
+    torrent.cleanup_artifacts(T.DownloadTask("magnet:?xt=urn:btih:" + "a" * 40, str(mine)))
+    assert other.exists()
+
+
+def test_cancelled_run_cleans_up(tmp_path, monkeypatch):
+    """A cancelled torrent must not leave its control file behind."""
+    monkeypatch.setattr(torrent, "aria2c_path", lambda: "aria2c")
+    monkeypatch.setattr(torrent.utils, "app_data_dir", lambda: str(tmp_path / "app"))
+    out = tmp_path / "out"; out.mkdir()
+    payload = out / "x"
+    ctl = out / "x.aria2"
+    ctl.write_bytes(b"control")
+    proc = _FakeProc(["[#a 10MiB/100MiB(10%)]\n"], rc=0)
+    proc._rc = None
+    monkeypatch.setattr(torrent.subprocess, "Popen", lambda *a, **k: proc)
+    t = T.DownloadTask("magnet:?xt=urn:btih:" + "b" * 40, str(payload))
+    t.request_cancel()
+    torrent.TorrentDownloader(t).run()
+    assert t.status == T.CANCELLED
+    assert not ctl.exists()
