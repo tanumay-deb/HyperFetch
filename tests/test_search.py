@@ -86,3 +86,48 @@ def test_combined_advanced():
     import time
     t = _mk("clip.mkv", 2_000_000_000, T.DOWNLOADING); t.added = time.time() - 1800
     assert names(search.filter_tasks([t], "status:downloading ext:mkv date:today size:>1gb")) == ["clip.mkv"]
+
+
+# ---- history records (dicts) share the task query syntax ----
+def _rec(name, size=1000, cat="Video", url="https://x/f", when=0.0):
+    return {"filename": name, "size": size, "category": cat, "url": url,
+            "completed_at": when, "path": "C:/d/" + name}
+
+
+def test_filter_records_plain_word():
+    recs = [_rec("Interstellar.mkv"), _rec("report.pdf", cat="Documents")]
+    assert [r["filename"] for r in search.filter_records(recs, "inter")] == ["Interstellar.mkv"]
+    assert len(search.filter_records(recs, "")) == 2
+
+
+def test_filter_records_tokens():
+    recs = [_rec("a.mkv", size=5_000_000_000, cat="Video"),
+            _rec("b.zip", size=1000, cat="Compressed")]
+    assert [r["filename"] for r in search.filter_records(recs, "category:compressed")] == ["b.zip"]
+    assert [r["filename"] for r in search.filter_records(recs, "ext:mkv")] == ["a.mkv"]
+    assert [r["filename"] for r in search.filter_records(recs, "size:>1gb")] == ["a.mkv"]
+
+
+def test_filter_records_date_uses_completed_at():
+    import time
+    now = time.time()
+    recs = [_rec("new.mkv", when=now), _rec("old.mkv", when=now - 40 * 86400)]
+    assert [r["filename"] for r in search.filter_records(recs, "date:7d")] == ["new.mkv"]
+
+
+def test_filter_records_url_is_searchable():
+    recs = [_rec("a.mkv", url="https://cdn.example.com/movie"), _rec("b.mkv", url="https://other/x")]
+    assert [r["filename"] for r in search.filter_records(recs, "example.com")] == ["a.mkv"]
+
+
+def test_filter_records_status_token_is_completed_only():
+    """History holds only completed downloads, so status:completed matches all
+    and any other status matches nothing (rather than silently ignoring it)."""
+    recs = [_rec("a.mkv"), _rec("b.mkv")]
+    assert len(search.filter_records(recs, "status:completed")) == 2
+    assert search.filter_records(recs, "status:failed") == []
+
+
+def test_filter_records_missing_fields_dont_crash():
+    assert search.filter_records([{}], "anything") == []
+    assert len(search.filter_records([{}], "")) == 1

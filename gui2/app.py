@@ -308,6 +308,18 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, QW
         self._search = text.strip().lower()
         self.refresh()
 
+    def _sl_map(self):
+        """{task id: serial number} ranked by when each download was ADDED.
+
+        Numbering is deliberately computed over every task, not just the visible
+        ones, and independently of the sort — a card's "#3" identifies it, so it
+        must not change when the user re-sorts or filters the list. `added` is
+        persisted, so the numbers survive a restart too; `seq` breaks ties for
+        tasks stamped in the same instant."""
+        ordered = sorted(self.queue.tasks,
+                         key=lambda t: (getattr(t, "added", 0) or 0, getattr(t, "seq", 0)))
+        return {t.id: i for i, t in enumerate(ordered, 1)}
+
     def _visible_tasks(self):
         tasks = [t for t in self.queue.tasks if getattr(self, "_filter", "All") == "All" or 
                  (self._filter == "Active" and t.status in (T.DOWNLOADING, T.QUEUED, T.SCHEDULED)) or
@@ -359,7 +371,7 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, QW
 
         speeds = {tid: v[2] for tid, v in self._speed.items()}
         histories = {tid: list(dq) for tid, dq in self._spark.items()}
-        self.list.set_tasks(self._visible_tasks(), speeds, histories)
+        self.list.set_tasks(self._visible_tasks(), speeds, histories, self._sl_map())
         self.sidebar.set_counts(self._counts())
         self.sidebar.set_stats(total_bps, conns)
         self._update_live_title(total_bps)

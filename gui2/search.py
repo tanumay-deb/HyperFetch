@@ -144,3 +144,37 @@ def filter_tasks(tasks, query):
         return list(tasks)
     words, filters = parse(query)
     return [t for t in tasks if _matches(t, words, filters)]
+
+
+def _record_matches(r, words, filters):
+    """Same query semantics as _matches, against a history.json record (a dict).
+    History is completed-only, so status: does not apply; date: is judged on
+    completed_at rather than when the download was added."""
+    hay = f"{r.get('filename', '')}\n{r.get('url', '')}".lower()
+    if any(w not in hay for w in words):
+        return False
+    if "status" in filters and filters["status"] not in ("completed", "complete", "done"):
+        return False
+    cat = filters.get("category")
+    if cat is not None and (r.get("category") or "Other").lower() != cat:
+        return False
+    size = filters.get("size")
+    if size is not None:
+        op, thresh = size
+        if not _OPS[op](float(r.get("size") or 0), thresh):
+            return False
+    ext = filters.get("ext")
+    if ext and not (r.get("filename") or "").lower().endswith("." + ext):
+        return False
+    date_pred = filters.get("date")
+    if date_pred is not None and not date_pred(float(r.get("completed_at") or 0)):
+        return False
+    return True
+
+
+def filter_records(records, query):
+    """History records matching the query (empty query -> unchanged)."""
+    if not (query or "").strip():
+        return list(records)
+    words, filters = parse(query)
+    return [r for r in records if _record_matches(r, words, filters)]

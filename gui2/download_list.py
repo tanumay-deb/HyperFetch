@@ -153,8 +153,11 @@ class DownloadList(QScrollArea):
                 card.chk.blockSignals(False)
 
     # ---- data ----
-    def set_tasks(self, tasks, speeds, histories=None):
+    def set_tasks(self, tasks, speeds, histories=None, sl_map=None):
         histories = histories or {}
+        # serial numbers come from the caller's stable added-order ranking, so a
+        # card keeps its number when the list is re-sorted or filtered
+        self._sl_map = sl_map or {}
         buckets = []
         for title, statuses in _GROUPS:
             members = [t for t in tasks if t.status in statuses]
@@ -197,11 +200,15 @@ class DownloadList(QScrollArea):
                 self._cards.pop(cid).deleteLater()
 
         self._lay.addWidget(self._empty)
-        sl_counter = 0
+        sl_map = getattr(self, "_sl_map", {}) or {}
+        fallback = 0
         for title, members in buckets:
             self._lay.addWidget(self._header(title, len(members)))
             for t in members:
-                sl_counter += 1
+                fallback += 1
+                # added-order number (stable across sorting/filtering); the
+                # running counter is only a fallback if no map was supplied
+                sl_counter = sl_map.get(t.id, fallback)
                 card = self._cards.get(t.id)
                 if card is None:
                     card = DownloadCardWidget(t, sl_no=sl_counter)
