@@ -166,3 +166,89 @@ def test_run_cancel_terminates(tmp_path, monkeypatch):
     torrent.TorrentDownloader(t).run()
     assert t.status == T.CANCELLED
     assert proc.terminated
+
+
+# ---- torrent file listing (drawer Files tab) ----
+def _bencode(obj):
+    if isinstance(obj, int):
+        return b"i" + str(obj).encode() + b"e"
+    if isinstance(obj, bytes):
+        return str(len(obj)).encode() + b":" + obj
+    if isinstance(obj, list):
+        return b"l" + b"".join(_bencode(x) for x in obj) + b"e"
+    if isinstance(obj, dict):
+        out = b"d"
+        for k in sorted(obj):
+            out += _bencode(k) + _bencode(obj[k])
+        return out + b"e"
+    raise TypeError(type(obj))
+
+
+def _write_multi(path, name=b"Show.S01", files=(("a.mkv", 900), ("subs/a.srt", 40))):
+    entries = [{b"path": [p.encode() for p in rel.split("/")], b"length": ln}
+               for rel, ln in files]
+    path.write_bytes(_bencode({b"info": {b"name": name, b"files": entries}}))
+
+
+def test_parse_torrent_files_multi(tmp_path):
+    p = tmp_path / "m.torrent"
+    _write_multi(p)
+    assert torrent.parse_torrent_files(str(p)) == [("a.mkv", 900), ("subs/a.srt", 40)]
+
+
+def test_parse_torrent_files_single(tmp_path):
+    p = tmp_path / "s.torrent"
+    p.write_bytes(_bencode({b"info": {b"name": b"movie.mkv", b"length": 1234}}))
+    assert torrent.parse_torrent_files(str(p)) == [("movie.mkv", 1234)]
+
+
+def test_parse_torrent_files_tolerates_junk(tmp_path):
+    """A bad/absent metadata file must degrade to an empty list, never raise —
+    the file list is a display nicety and can't be allowed to break a task."""
+    bad = tmp_path / "bad.torrent"
+    bad.write_bytes(b"not bencode at all")
+    assert torrent.parse_torrent_files(str(bad)) == []
+    assert torrent.parse_torrent_files(str(tmp_path / "missing.torrent")) == []
+    trunc = tmp_path / "t.torrent"
+    trunc.write_bytes(_bencode({b"info": {b"name": b"x", b"length": 5}})[:-3])
+    assert torrent.parse_torrent_files(str(trunc)) == []
+
+
+def test_magnet_infohash():
+    assert torrent.magnet_infohash("magnet:?xt=urn:btih:ABCdef123&dn=x") == "abcdef123"
+    assert torrent.magnet_infohash("magnet:?dn=noHash") == ""
+    assert torrent.magnet_infohash("https://x/y.zip") == ""
+
+
+def test_list_files_while_downloading(tmp_path):
+    """Mid-download save_path is a placeholder inside aria2's --dir, where the
+    <infohash>.torrent metadata lives."""
+    ih = "a" * 40
+    _write_multi(tmp_path / f"{ih}.torrent")
+    t = T.DownloadTask(f"magnet:?xt=urn:btih:{ih}", str(tmp_path / "download.bin"))
+    assert torrent.list_files(t) == [("a.mkv", 900), ("subs/a.srt", 40)]
+
+
+def test_list_files_when_completed(tmp_path):
+    """Once finished, save_path is the payload FOLDER — the metadata sits in its
+    parent, so resolution has to look one level up."""
+    ih = "b" * 40
+    _write_multi(tmp_path / f"{ih}.torrent")
+    payload = tmp_path / "Show.S01"
+    payload.mkdir()
+    t = T.DownloadTask(f"magnet:?xt=urn:btih:{ih}", str(payload))
+    assert len(torrent.list_files(t)) == 2
+
+
+def test_list_files_local_torrent_file(tmp_path):
+    p = tmp_path / "local.torrent"
+    _write_multi(p)
+    t = T.DownloadTask(str(p), str(tmp_path / "out.bin"), filename="local.torrent")
+    assert len(torrent.list_files(t)) == 2
+
+
+def test_list_files_empty_for_non_torrent_and_missing_metadata(tmp_path):
+    assert torrent.list_files(T.DownloadTask("https://x/a.zip", str(tmp_path / "a.zip"))) == []
+    # magnet whose metadata has not arrived yet
+    t = T.DownloadTask("magnet:?xt=urn:btih:" + "c" * 40, str(tmp_path / "d.bin"))
+    assert torrent.list_files(t) == []

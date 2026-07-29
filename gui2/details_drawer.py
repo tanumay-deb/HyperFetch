@@ -510,10 +510,30 @@ class DetailsDrawer(QFrame):
             self.ov_proto.setText(scheme or "—")
             self.ov_range.setText("Yes" if t.supports_range else "No")
 
-        # Files
+        # Files. For torrents the list comes from the saved metadata, so all of
+        # the payload's files show up while it is still downloading (and after a
+        # restart) instead of only whatever happens to exist on disk so far.
         files = []
         sp = t.save_path
-        if sp and os.path.isdir(sp):
+        empty = None
+        if is_tor:
+            entries = _torrent.list_files(t)
+            for rel, size in entries:
+                on_disk = ""
+                if sp:
+                    base = sp if os.path.isdir(sp) else os.path.dirname(sp) or "."
+                    fp = os.path.join(base, *rel.split("/"))
+                    if os.path.isfile(fp):
+                        got = os.path.getsize(fp)
+                        if size and got < size:
+                            on_disk = f"   · {int(got * 100 / size)}% on disk"
+                        elif size:
+                            on_disk = "   · complete"
+                files.append((f"{rel}   ({human_size(size)}){on_disk}", False))
+            if not entries:
+                empty = ("magnet", "Waiting for torrent metadata",
+                         "The file list appears once peers send the torrent's metadata.")
+        elif sp and os.path.isdir(sp):
             try:
                 for name in sorted(os.listdir(sp)):
                     fp = os.path.join(sp, name)
@@ -523,7 +543,7 @@ class DetailsDrawer(QFrame):
                 pass
         else:
             files.append((f"{t.filename}   ({human_size(t.total_size)})", False))
-        self._fill("files", files)
+        self._fill("files", files, empty=empty)
 
         # Headers (cookies/auth stripped)
         hdr = utils.strip_sensitive(getattr(t, "headers", {}) or {})

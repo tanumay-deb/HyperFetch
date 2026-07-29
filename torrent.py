@@ -64,6 +64,101 @@ def magnet_name(url):
     return urllib.parse.unquote_plus(m.group(1)) if m else ""
 
 
+def magnet_infohash(url):
+    """The 40-hex btih from a magnet, lowercased; '' if absent."""
+    m = re.search(r"xt=urn:btih:([A-Za-z0-9]+)", url or "", re.I)
+    return m.group(1).lower() if m else ""
+
+
+def _bdecode(data):
+    """Minimal bencode decoder — enough to read a .torrent's info dict.
+    Returns the decoded object; raises ValueError on malformed input (callers
+    treat that as 'no file list available' rather than an error)."""
+    def parse(i):
+        c = data[i:i + 1]
+        if c == b"i":                                    # i<int>e
+            j = data.index(b"e", i)
+            return int(data[i + 1:j]), j + 1
+        if c == b"l":                                    # l<items>e
+            out, i = [], i + 1
+            while data[i:i + 1] != b"e":
+                v, i = parse(i)
+                out.append(v)
+            return out, i + 1
+        if c == b"d":                                    # d<key><val>...e
+            out, i = {}, i + 1
+            while data[i:i + 1] != b"e":
+                k, i = parse(i)
+                v, i = parse(i)
+                out[k] = v
+            return out, i + 1
+        j = data.index(b":", i)                          # <len>:<bytes>
+        n = int(data[i:j])
+        return data[j + 1:j + 1 + n], j + 1 + n
+    try:
+        return parse(0)[0]
+    except (ValueError, IndexError, TypeError) as e:
+        raise ValueError("malformed bencode") from e
+
+
+def parse_torrent_files(path):
+    """[(relative path, size_bytes)] described by a .torrent file.
+    Returns [] if the file is missing or unreadable — the file list is a
+    display nicety and must never break a download."""
+    try:
+        with open(path, "rb") as f:
+            info = _bdecode(f.read())[b"info"]
+    except (OSError, ValueError, KeyError, TypeError):
+        return []
+    dec = lambda b: b.decode("utf-8", "replace")
+    try:
+        if b"files" in info:                             # multi-file torrent
+            out = []
+            for f in info[b"files"]:
+                parts = [dec(p) for p in f[b"path"]]
+                out.append(("/".join(parts), int(f[b"length"])))
+            return out
+        return [(dec(info[b"name"]), int(info.get(b"length", 0)))]   # single file
+    except (KeyError, TypeError, ValueError):
+        return []
+
+
+def metadata_torrent_path(task, *dirs):
+    """Locate the .torrent describing this task: a local .torrent input as-is,
+    else the copy aria2 saves as <infohash>.torrent (--bt-save-metadata) once a
+    magnet's metadata arrives. '' when nothing is on disk yet."""
+    url = task.url or ""
+    if is_torrent(url) and os.path.isfile(url):
+        return url
+    ih = magnet_infohash(url)
+    if not ih:
+        return ""
+    for d in dirs:
+        if not d:
+            continue
+        cand = os.path.join(d, ih + ".torrent")
+        if os.path.isfile(cand):
+            return cand
+    return ""
+
+
+def list_files(task):
+    """Files inside a torrent task, as [(relative path, size)]. Reads the saved
+    metadata so the list is available while downloading and after a restart —
+    not just once the payload exists on disk. [] for non-torrents or before a
+    magnet's metadata has been fetched."""
+    if not is_torrent_task(task.url, task.filename):
+        return []
+    save = getattr(task, "save_path", "") or ""
+    # aria2 saves the metadata in its --dir, which is the PARENT of the payload
+    # folder. save_path is that folder once the download finishes and the
+    # placeholder file's directory before then, so try both.
+    parent = os.path.dirname(save) or "."
+    dirs = [parent, os.path.dirname(parent)] if os.path.isdir(save) else [parent]
+    path = metadata_torrent_path(task, *dirs)
+    return parse_torrent_files(path) if path else []
+
+
 def aria2c_path():
     """Locate aria2c: bundled bin/ (frozen build) first, then PATH. None if absent."""
     base = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
