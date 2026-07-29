@@ -216,6 +216,7 @@ class SettingsDialogV2(PageBuilderMixin, QDialog):
             "dns_https": self.dns_https.isChecked(),
             "host_rules": self._host_rules,
             "preallocate": self.preallocate.isChecked(),
+            "torrent_rpc": self.torrent_rpc.isChecked(),
             "proxy": self._proxy_url,
             "font_size": self.font_size.currentText(),
             "speed_units": "bytes" if self.speed_units.currentText().startswith("Bytes") else "bits",

@@ -807,6 +807,14 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, QW
             if t.status in (T.DOWNLOADING, T.QUEUED):
                 t.request_pause()
         self.queue.shutdown()
+        # stop the shared aria2 daemon we own. It outlives its parent if left
+        # alone (it survives a killed parent), so an explicit shutdown is what
+        # keeps it from holding the BitTorrent port after the app is gone.
+        try:
+            import aria2d
+            aria2d.DAEMON.shutdown()
+        except Exception:
+            pass
         self.queue.wait_active(2.0)
         if self.tray:
             self.tray.hide()

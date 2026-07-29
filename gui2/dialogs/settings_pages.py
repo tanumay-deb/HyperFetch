@@ -312,6 +312,11 @@ class PageBuilderMixin:
         self._row(g, "Disk cache", "Improve disk writing performance", self.disk_cache)
         self.preallocate = self._toggle(ex.get("preallocate", False))
         self._row(g, "Pre-allocate disk space", "Reserve the full file size before downloading", self.preallocate)
+        self.torrent_rpc = self._toggle(ex.get("torrent_rpc", False))
+        self._row(g, "Shared torrent engine (beta)",
+                  "One aria2 daemon for all torrents: shared peer table and a single "
+                  "forwardable port, instead of one process per torrent. Falls back "
+                  "automatically if the engine can't start.", self.torrent_rpc)
         self.hash_check = self._toggle(ex.get("hash_check", False))
         self._row(g, "Enable hash verification", "Verify file integrity after download", self.hash_check)
         self.debug_log = self._toggle(ex.get("debug_log", False))

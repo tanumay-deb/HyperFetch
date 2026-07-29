@@ -1,0 +1,264 @@
+"""Shared aria2 daemon + JSON-RPC client (Phase 1 of the RPC migration).
+
+Why a daemon at all: the legacy engine spawns one aria2c process PER torrent.
+Each gets its own cold DHT routing table, and they all try to bind the same
+BitTorrent listen port — measured: three concurrent torrents, only two
+listeners, so the third ran outbound-only with a starved peer set. One daemon
+means one warm DHT table, one listen port that UPnP can actually forward, and
+status by JSON instead of regex-parsing stdout.
+
+Lifecycle rules, each learned from the Phase 0 spike:
+
+* **Attach before spawning.** A daemon from a previous run may still be alive;
+  a second process can talk to it fine (verified), so we reuse it rather than
+  starting a rival that would fight for the same ports.
+* **Orphans are real.** aria2 survives its parent being killed (verified), so
+  the pid/port/secret are written to disk and a stale-but-alive daemon that no
+  longer answers RPC is killed rather than left running forever.
+* **Loopback + secret only.** ``--rpc-listen-all=false`` binds 127.0.0.1, and a
+  per-run random ``--rpc-secret`` is required on every call (a wrong token is
+  refused — verified). Same posture as the app's own Flask server.
+"""
+import json
+import os
+import secrets
+import socket
+import subprocess
+import threading
+import time
+import urllib.request
+
+import utils
+
+log = utils.get_logger("aria2d")
+
+RPC_HOST = "127.0.0.1"
+START_TIMEOUT = 20.0        # seconds to wait for a fresh daemon to answer
+CALL_TIMEOUT = 15.0
+
+
+class Aria2Error(RuntimeError):
+    """An RPC call returned an error, or the daemon is unreachable."""
+
+
+def _state_path():
+    return os.path.join(utils.app_data_dir(), "aria2d.json")
+
+
+def _free_port():
+    s = socket.socket()
+    try:
+        s.bind((RPC_HOST, 0))
+        return s.getsockname()[1]
+    finally:
+        s.close()
+
+
+def _pid_alive(pid):
+    if not pid:
+        return False
+    try:
+        out = subprocess.run(
+            ["tasklist", "/FI", f"PID eq {int(pid)}", "/NH"],
+            capture_output=True, text=True,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)).stdout
+        return str(pid) in out
+    except Exception:
+        return False
+
+
+def _kill(pid):
+    try:
+        subprocess.run(["taskkill", "/F", "/PID", str(int(pid))],
+                       capture_output=True,
+                       creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    except Exception:
+        pass
+
+
+class Aria2Daemon:
+    """One aria2 process shared by every torrent task."""
+
+    def __init__(self):
+        self._lock = threading.RLock()
+        self.port = 0
+        self.secret = ""
+        self.pid = 0
+        self._proc = None
+
+    # ------------------------------------------------------------- transport
+    def _post(self, port, secret, method, params, timeout=CALL_TIMEOUT):
+        body = json.dumps({"jsonrpc": "2.0", "id": "hf", "method": method,
+                           "params": [f"token:{secret}"] + list(params or [])}).encode()
+        req = urllib.request.Request(f"http://{RPC_HOST}:{port}/jsonrpc", data=body,
+                                     headers={"Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            payload = json.loads(r.read().decode() or "{}")
+        if "error" in payload:
+            raise Aria2Error(payload["error"])
+        return payload.get("result")
+
+    def call(self, method, *params, timeout=CALL_TIMEOUT):
+        """One RPC call against the running daemon (starting it if needed)."""
+        self.ensure()
+        return self._post(self.port, self.secret, method, params, timeout)
+
+    def alive(self):
+        if not (self.port and self.secret):
+            return False
+        try:
+            self._post(self.port, self.secret, "aria2.getGlobalStat", [], timeout=3)
+            return True
+        except Exception:
+            return False
+
+    # ------------------------------------------------------------- lifecycle
+    def _load_state(self):
+        try:
+            with open(_state_path(), encoding="utf-8") as f:
+                d = json.load(f)
+            return int(d.get("pid", 0)), int(d.get("port", 0)), str(d.get("secret", ""))
+        except Exception:
+            return 0, 0, ""
+
+    def _save_state(self):
+        try:
+            with open(_state_path(), "w", encoding="utf-8") as f:
+                json.dump({"pid": self.pid, "port": self.port,
+                           "secret": self.secret}, f)
+        except OSError:
+            pass
+
+    def _attach(self):
+        """Reuse a daemon left by an earlier run. Returns True on success; kills
+        a recorded process that is alive but no longer answering, so it cannot
+        sit there holding the BitTorrent port."""
+        pid, port, secret = self._load_state()
+        if not (port and secret):
+            return False
+        try:
+            self._post(port, secret, "aria2.getGlobalStat", [], timeout=3)
+        except Exception:
+            if _pid_alive(pid):
+                log.warning("aria2 daemon pid %s is alive but not answering RPC — killing it", pid)
+                _kill(pid)
+            return False
+        self.pid, self.port, self.secret = pid, port, secret
+        log.info("attached to existing aria2 daemon pid=%s port=%s", pid, port)
+        return True
+
+    def _spawn(self):
+        exe = _aria2c_path()
+        if not exe:
+            raise Aria2Error("aria2c not found")
+        self.port = _free_port()
+        self.secret = secrets.token_urlsafe(24)
+        cmd = [exe] + self._options()
+        self._proc = subprocess.Popen(
+            cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        self.pid = self._proc.pid
+        deadline = time.time() + START_TIMEOUT
+        while time.time() < deadline:
+            if self.alive():
+                self._save_state()
+                log.info("started aria2 daemon pid=%s port=%s", self.pid, self.port)
+                return True
+            if self._proc.poll() is not None:
+                raise Aria2Error(f"aria2 daemon exited immediately (code {self._proc.returncode})")
+            time.sleep(0.2)
+        _kill(self.pid)
+        raise Aria2Error("aria2 daemon did not answer RPC in time")
+
+    def _options(self):
+        """Daemon-wide options. The per-download ones (dir, pause) are passed
+        with each add call instead."""
+        import torrent
+        sess = os.path.join(utils.app_data_dir(), "aria2.session")
+        opts = [
+            "--enable-rpc",
+            f"--rpc-listen-port={self.port}",
+            f"--rpc-secret={self.secret}",
+            "--rpc-listen-all=false",          # loopback only
+            "--console-log-level=error",
+            f"--save-session={sess}",
+            "--save-session-interval=30",
+            "--auto-save-interval=30",
+            "--seed-time=0",
+            f"--bt-stop-timeout={torrent.STALL_TIMEOUT}",
+            "--bt-save-metadata=true",
+            "--bt-load-saved-metadata=true",
+            "--continue=true",
+            # peer discovery — one daemon means ONE warm routing table and ONE
+            # listen port, instead of a cold table per torrent all fighting for
+            # the same port (the legacy engine's core weakness)
+            "--enable-dht=true",
+            "--enable-dht6=true",
+            "--enable-peer-exchange=true",
+            "--bt-enable-lpd=true",
+            "--bt-max-peers=0",
+            "--bt-tracker=" + ",".join(torrent.PUBLIC_TRACKERS),
+            f"--dht-file-path={os.path.join(torrent.dht_dir(), 'dht.dat')}",
+            f"--dht-file-path6={os.path.join(torrent.dht_dir(), 'dht6.dat')}",
+            f"--listen-port={torrent.listen_port()}",
+            f"--dht-listen-port={torrent.listen_port()}",
+        ]
+        for host, port in torrent.DHT_ENTRY_POINTS:
+            opts.append(f"--dht-entry-point={host}:{port}")
+        for host, port in torrent.DHT_ENTRY_POINTS6:
+            opts.append(f"--dht-entry-point6={host}:{port}")
+        if os.path.isfile(sess):
+            opts.append(f"--input-file={sess}")
+        if not utils.DISK_CACHE:
+            opts.append("--disk-cache=0")
+        opts.append("--file-allocation=" + ("prealloc" if utils.PREALLOCATE else "none"))
+        if utils.PROXIES:
+            purl = utils.PROXIES.get("https") or utils.PROXIES.get("http")
+            if purl:
+                opts.append(f"--all-proxy={purl}")
+        return opts
+
+    def ensure(self):
+        """Guarantee a reachable daemon. Cheap when one is already running."""
+        with self._lock:
+            if self.alive():
+                return True
+            if self._attach():
+                return True
+            return self._spawn()
+
+    def shutdown(self):
+        """Stop the daemon we own (called on app exit). Saves the session first
+        so in-flight downloads resume next launch."""
+        with self._lock:
+            if not self.alive():
+                return
+            try:
+                self._post(self.port, self.secret, "aria2.saveSession", [], timeout=5)
+            except Exception:
+                pass
+            try:
+                self._post(self.port, self.secret, "aria2.shutdown", [], timeout=5)
+            except Exception:
+                _kill(self.pid)
+            for _ in range(20):
+                if not _pid_alive(self.pid):
+                    break
+                time.sleep(0.25)
+            else:
+                _kill(self.pid)
+            try:
+                os.remove(_state_path())
+            except OSError:
+                pass
+            self.pid = self.port = 0
+            self.secret = ""
+
+
+def _aria2c_path():
+    import torrent
+    return torrent.aria2c_path()
+
+
+# process-wide singleton — every torrent task shares this one daemon
+DAEMON = Aria2Daemon()

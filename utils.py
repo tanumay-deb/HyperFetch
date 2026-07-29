@@ -53,6 +53,12 @@ DISK_CACHE = True         # aria2 --disk-cache on/off
 PREALLOCATE = False       # aria2 file pre-allocation
 HASH_CHECK = False        # verify SHA-256 against a <url>.sha256 sidecar on finish
 SPEED_IN_BYTES = False    # speed readout units: False = bits (Kb/s), True = bytes (KB/s)
+# Torrent engine: False = one aria2c subprocess per task (legacy, stable),
+# True = one shared aria2 daemon driven over JSON-RPC. The daemon gives every
+# torrent one warm DHT table and one forwardable listen port; the legacy engine
+# gives each its own cold table and they collide on the port. Default off until
+# the RPC path has proven itself on real downloads.
+TORRENT_RPC = False
 BADGE_CORNER = "top-right"  # extension's on-page download-button corner (served via /ping)
 
 # Per-host download rules (Settings -> Network). {host: {"segments": int,

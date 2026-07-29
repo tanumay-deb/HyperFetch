@@ -321,6 +321,7 @@ class TorrentDownloader:
     def __init__(self, dtask: "T.DownloadTask"):
         self.t = dtask
         self._proc = None
+        self._gid = None          # aria2 download id, when driven over RPC
 
     def _build_cmd(self, exe, out_dir):
         src = self.t.url
@@ -390,6 +391,18 @@ class TorrentDownloader:
             self.t.error = ("aria2c not found — bundle bin/aria2c.exe or install "
                             "aria2 to download torrents/magnets.")
             return
+
+        # Shared-daemon engine, when enabled. Falls back to the per-task
+        # subprocess below if the daemon cannot be reached, so a broken daemon
+        # degrades to the old behaviour instead of failing the download.
+        if getattr(utils, "TORRENT_RPC", False):
+            try:
+                return self._run_rpc()
+            except Exception as e:
+                log.warning("RPC engine unavailable (%s) — falling back to the "
+                            "per-task subprocess engine", e)
+                if self.t.cancel_requested or self.t.pause_requested:
+                    return
 
         out_dir = os.path.dirname(self.t.save_path) or "."
         try:
@@ -550,6 +563,135 @@ class TorrentDownloader:
             self.t.error = "torrent failed" + (f": {msg}" if msg
                                                else f" (aria2 exit {self._proc.returncode})")
             log.warning("torrent failed: %s — %s", self.t.filename, self.t.error)
+
+    # ------------------------------------------------------------- RPC engine
+    def _run_rpc(self):
+        """Drive the download through the shared aria2 daemon.
+
+        Behaviour is deliberately identical to the subprocess engine — same
+        status transitions, same name/save_path resolution, same artifact
+        cleanup — so the two are interchangeable while the RPC path proves
+        itself. What differs is invisible to the task: one warm DHT table and
+        one forwardable listen port shared by every torrent, and status read as
+        JSON instead of scraped from stdout.
+        """
+        import base64
+        import aria2d
+
+        out_dir = os.path.dirname(self.t.save_path) or "."
+        os.makedirs(out_dir, exist_ok=True)
+        self._started = time.time()
+
+        # display name, same rules as the subprocess path
+        if is_magnet(self.t.url):
+            self.t.filename = magnet_name(self.t.url) or "torrent"
+        elif (not self.t.filename or is_magnet(self.t.filename)
+              or self.t.filename.endswith((".torrent", ".bin"))):
+            self.t.filename = "torrent"
+
+        d = aria2d.DAEMON
+        d.ensure()                                   # raises -> caller falls back
+        opts = {"dir": out_dir}
+        if is_torrent(self.t.url) and os.path.isfile(self.t.url):
+            with open(self.t.url, "rb") as f:
+                gid = d.call("aria2.addTorrent",
+                             base64.b64encode(f.read()).decode(), [], opts)
+        else:
+            gid = d.call("aria2.addUri", [self.t.url], opts)
+        self._gid = gid
+
+        top = ""
+        try:
+            top = self._poll_rpc(d, gid, out_dir)
+        finally:
+            self._gid = None
+        return top
+
+    def _poll_rpc(self, d, gid, out_dir):
+        """Mirror aria2's state onto the task until it reaches a terminal one."""
+        cur = gid
+        top = ""
+        while True:
+            if self.t.cancel_requested:
+                self._rpc_remove(d, cur, force=True)
+                cleanup_artifacts(self.t)
+                self.t.status = T.CANCELLED
+                return top
+            if self.t.pause_requested:
+                try:
+                    d.call("aria2.pause", cur)
+                except Exception:
+                    pass
+                archive_metadata(self.t, out_dir)
+                self.t.status = T.PAUSED
+                return top
+
+            try:
+                st = d.call("aria2.tellStatus", cur)
+            except Exception as e:
+                # daemon vanished mid-download: leave the task resumable rather
+                # than failing it — the bytes and control file are still on disk
+                self.t.status = T.PAUSED
+                self.t.error = "Torrent engine stopped — Resume to continue"
+                log.warning("tellStatus failed for %s: %s", self.t.filename, e)
+                return top
+
+            # a magnet's metadata download spawns the real payload as followedBy
+            follow = st.get("followedBy") or []
+            if follow:
+                cur = follow[0]
+                continue
+
+            self.t.downloaded = int(st.get("completedLength") or 0)
+            total = int(st.get("totalLength") or 0)
+            if total:
+                self.t.total_size = total
+            self.t.tor_conns = int(st.get("connections") or 0)
+            self.t.tor_seeds = int(st.get("numSeeders") or 0)
+
+            files = st.get("files") or []
+            if not top and files:
+                p = files[0].get("path") or ""
+                if "[METADATA]" not in p.upper() and "[MEMORY]" not in p.upper():
+                    entry = self._top_entry(p, out_dir)
+                    if entry:
+                        top = entry
+                        self.t.filename = entry
+
+            status = st.get("status")
+            if status == "complete":
+                if self.t.total_size:
+                    self.t.downloaded = self.t.total_size
+                archive_metadata(self.t, out_dir)
+                self._resolve_save_path(out_dir, top)     # before COMPLETED
+                self.t.status = T.COMPLETED
+                log.info("torrent done: %s", self.t.filename)
+                return top
+            if status in ("error", "removed"):
+                archive_metadata(self.t, out_dir)
+                msg = st.get("errorMessage") or ""
+                if not top and self.t.downloaded == 0:
+                    # never reached the payload and never saw a peer: a cold
+                    # swarm, not a broken torrent — stay resumable
+                    self.t.status = T.PAUSED
+                    self.t.error = ("No peers found yet — the swarm may be offline "
+                                    "or still waking up. Resume to try again.")
+                else:
+                    self.t.status = T.ERROR
+                    self.t.error = "torrent failed" + (f": {msg}" if msg else "")
+                log.info("torrent ended (%s): %s", status, self.t.filename)
+                return top
+
+            time.sleep(POLL)
+
+    @staticmethod
+    def _rpc_remove(d, gid, force=False):
+        for method in (("aria2.forceRemove" if force else "aria2.remove"),
+                       "aria2.removeDownloadResult"):
+            try:
+                d.call(method, gid)
+            except Exception:
+                pass
 
     @staticmethod
     def _top_entry(path, out_dir):

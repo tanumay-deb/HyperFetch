@@ -133,6 +133,7 @@ class SettingsMixin:
         utils.LISTEN_PORT = int(ex.get("listen_port", 0) or 0)
         utils.DISK_CACHE = bool(ex.get("disk_cache", True))
         utils.PREALLOCATE = bool(ex.get("preallocate", False))
+        utils.TORRENT_RPC = bool(ex.get("torrent_rpc", False))
         utils.HASH_CHECK = bool(ex.get("hash_check", False))
         # Auto-capture allowlist (Settings -> Browser). The Flask /download endpoint
         # reads utils.CAPTURE_EXTS to filter the extension's auto-captures.
