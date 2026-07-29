@@ -73,15 +73,19 @@ def main():
 
     # Plain launch with an instance already running: pop its window instead of
     # opening a duplicate (which would also lose the port-5000 server to the
-    # first instance and confuse the browser extension).
-    if not target and _focus_running():
+    # first instance and confuse the browser extension). Skipped for a restart
+    # (theme change): the outgoing instance is still shutting down and its
+    # server may still answer, which would make the replacement exit and leave
+    # the user with no app at all.
+    restarted = "--restarted" in sys.argv
+    if not target and not restarted and _focus_running():
         return 0
 
     # install BEFORE the GUI so a Qt construction crash is captured too
     crash_reporter.install(APP_VERSION)
 
     from gui2.app import run_v2
-    return run_v2(open_target=target)
+    return run_v2(open_target=target, restarted=restarted)
 
 
 if __name__ == "__main__":

@@ -215,3 +215,45 @@ def test_focus_requires_token(tmp_path):
     c = create_app(_FakeQueue(), str(tmp_path), pending=pend, token="S").test_client()
     assert c.post("/focus", json={}).status_code == 401
     assert len(pend) == 0
+
+
+# ---- Private Network Access: Chrome preflights every extension -> 127.0.0.1
+# request and blocks the call unless the reply opts in. flask-cors >= 5 defaults
+# this OFF, which silently broke the whole browser bridge.
+_PNA_REQ = {"Origin": _OFFICIAL,
+            "Access-Control-Request-Method": "GET",
+            "Access-Control-Request-Private-Network": "true"}
+
+
+def test_ping_preflight_allows_private_network(tmp_path):
+    c = create_app(_FakeQueue(), str(tmp_path), pending=deque()).test_client()
+    r = c.open("/ping", method="OPTIONS", headers=_PNA_REQ)
+    assert r.status_code in (200, 204)
+    assert r.headers.get("Access-Control-Allow-Private-Network") == "true"
+
+
+def test_download_preflight_allows_private_network(tmp_path):
+    c = create_app(_FakeQueue(), str(tmp_path), pending=deque(), token="S").test_client()
+    r = c.open("/download", method="OPTIONS",
+               headers={**_PNA_REQ, "Access-Control-Request-Method": "POST"})
+    assert r.headers.get("Access-Control-Allow-Private-Network") == "true"
+
+
+def test_pair_preflight_allows_private_network(tmp_path):
+    """/pair sets its own CORS headers (outside the global rule), so it needs
+    the opt-in too — without it auto-pairing can never fetch a token."""
+    c = create_app(_FakeQueue(), str(tmp_path), pending=None, token="SECRET").test_client()
+    r = c.open("/pair", method="OPTIONS", headers=_PNA_REQ)
+    assert r.status_code == 200
+    assert r.headers.get("Access-Control-Allow-Private-Network") == "true"
+
+
+def test_private_network_optin_does_not_widen_origins(tmp_path):
+    """The PNA opt-in must not let a website through: origin rules still rule."""
+    c = create_app(_FakeQueue(), str(tmp_path), pending=deque(), token="S").test_client()
+    r = c.open("/ping", method="OPTIONS",
+               headers={**_PNA_REQ, "Origin": "https://evil.example"})
+    assert r.headers.get("Access-Control-Allow-Origin") != "https://evil.example"
+    # and /pair still refuses a non-official extension outright
+    assert c.get("/pair", headers={"Origin": "chrome-extension://nottherealoneaaaaaaaaaaaaaaaaaa"}
+                 ).status_code == 403

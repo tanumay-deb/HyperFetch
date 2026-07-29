@@ -39,10 +39,20 @@ def create_app(queue, save_dir, pending=None, token=None):
     # trusted extension id(s) so only the real extension can read the token.
     _ext = [r"chrome-extension://*", r"moz-extension://*"]
     _hdr = ["Content-Type", "X-HyperFetch-Token"]
+    # allow_private_network: Chrome sends a Private Network Access preflight for
+    # every extension -> 127.0.0.1 request and BLOCKS the call unless the reply
+    # carries `Access-Control-Allow-Private-Network: true`. flask-cors >= 5
+    # defaults this to False (it answered an explicit "false"), which silently
+    # broke the whole browser bridge: the popup hung on "checking…" and
+    # auto-pairing could never fetch a token. This does not widen who may call
+    # us — the origin allow-list above still rejects websites, and the token
+    # gate is untouched; it only lets the already-allowed extension origins
+    # complete their preflight.
+    _pna = {"allow_private_network": True}
     CORS(app, resources={
-        r"/ping":     {"origins": _ext},
-        r"/probe":    {"origins": _ext, "allow_headers": _hdr},
-        r"/download": {"origins": _ext, "allow_headers": _hdr},
+        r"/ping":     {"origins": _ext, **_pna},
+        r"/probe":    {"origins": _ext, "allow_headers": _hdr, **_pna},
+        r"/download": {"origins": _ext, "allow_headers": _hdr, **_pna},
     })
     logging.getLogger("werkzeug").setLevel(logging.ERROR)
 
@@ -69,6 +79,10 @@ def create_app(queue, save_dir, pending=None, token=None):
         resp.headers["Vary"] = "Origin"
         resp.headers["Access-Control-Allow-Methods"] = "GET, OPTIONS"
         resp.headers["Access-Control-Allow-Headers"] = "Content-Type, X-HyperFetch-Token"
+        # /pair sets its own CORS headers (it is deliberately outside the global
+        # rule above), so it needs the Private Network Access opt-in too —
+        # without it Chrome blocks the preflight and auto-pairing never runs.
+        resp.headers["Access-Control-Allow-Private-Network"] = "true"
         return resp
 
     def _authorized(data):

@@ -84,10 +84,16 @@ class SystemMixin:
             self._save_state(); self._save_settings()
         except Exception:
             pass
+        # --restarted marks the replacement as a continuation of THIS session, not
+        # a fresh launch. Without it the new process (a) obeys the "Launch: Start
+        # in tray / minimized" preference and vanishes into the tray even though
+        # the user was looking at the window, and (b) can hit the single-instance
+        # guard against this still-dying instance's server and exit immediately.
+        args = [a for a in sys.argv[1:] if a != "--restarted"] + ["--restarted"]
         if getattr(sys, "frozen", False):
-            QProcess.startDetached(sys.executable, sys.argv[1:])
+            QProcess.startDetached(sys.executable, args)
         else:
-            QProcess.startDetached(sys.executable, [os.path.abspath(sys.argv[0])] + sys.argv[1:])
+            QProcess.startDetached(sys.executable, [os.path.abspath(sys.argv[0])] + args)
         QApplication.quit()
 
     # ------------------------------------------------------------- scheduler

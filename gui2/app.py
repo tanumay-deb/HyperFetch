@@ -790,7 +790,7 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, QW
         super().closeEvent(e)
 
 
-def run_v2(open_target=None):
+def run_v2(open_target=None, restarted=False):
     import sys
     app = QApplication.instance() or QApplication(sys.argv)
     from PySide6.QtGui import QFont
@@ -798,8 +798,11 @@ def run_v2(open_target=None):
     win = DownloadAppV2()
     # launch behavior (Settings -> General -> On application launch)
     launch = win._extras.get("launch", "Show main window")
-    if open_target:
-        win.show(); win.raise_(); win.activateWindow()   # a file open always surfaces the window
+    if open_target or restarted:
+        # a file open, or a theme-change restart, always surfaces the window:
+        # the user was looking at it, so honouring "Start in tray" here would
+        # make the app appear to vanish
+        win.show(); win.raise_(); win.activateWindow()
     elif launch == "Start in tray" and win.tray and win.tray.isVisible():
         pass                                   # stay hidden in the tray
     elif launch == "Start minimized":
