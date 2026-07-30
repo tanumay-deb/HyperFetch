@@ -230,7 +230,29 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, QW
                 import logging
                 logging.getLogger("hyperfetch.gui").exception(
                     "state save: skipping unserializable task %s", getattr(t, "id", "?"))
+        # THE rule that breaks the empty-list loop, whatever caused it.
+        #
+        # Once downloads.json became "[]", every later launch read an empty list
+        # and wrote "[]" straight back — and because the backup is rotated from
+        # the CURRENT file, that empty list poisoned the .bak too, destroying the
+        # only recovery copy. So: an empty list may never replace a non-empty
+        # one on disk. Clearing the list is always the result of a user action
+        # (Remove / Clear), and those set _allow_empty_save explicitly.
+        if not rows and not getattr(self, "_allow_empty_save", False):
+            try:
+                with open(self._state_path, "r", encoding="utf-8") as f:
+                    on_disk = json.loads(f.read() or "[]")
+            except Exception:
+                on_disk = []
+            if on_disk:
+                import logging
+                logging.getLogger("hyperfetch.gui").error(
+                    "refusing to save an empty download list over %d on disk — "
+                    "this session restored nothing, which is a load failure, not "
+                    "an empty queue", len(on_disk))
+                return
         utils.save_json(self._state_path, rows, keep_backup=True)
+        self._allow_empty_save = False      # one-shot permission
 
     def _autosave_tick(self):
         # flush only while something is in flight — an idle list changes via

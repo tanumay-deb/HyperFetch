@@ -58,9 +58,12 @@ class ActionsMixin:
         self.refresh()
 
     def _do(self, fn, t):
+        # a user action may legitimately leave the list empty
+        self._allow_empty_save = True
         fn(t); self._save_state(); self.refresh()
 
     def _bulk(self, ts, fn):
+        self._allow_empty_save = True
         for x in ts:
             fn(x)
         self._save_state(); self.refresh()

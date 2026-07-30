@@ -73,6 +73,8 @@ class ShortcutsMixin:
                             os.remove(path)
                     except OSError:
                         pass
+            # the user asked for this, so an empty result is legitimate
+            self._allow_empty_save = True
             self._save_state()
             self.refresh()
 
