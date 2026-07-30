@@ -45,6 +45,46 @@ def _handoff(target):
     return _post_running("/open", {"target": target}) is not None
 
 
+_MUTEX_NAME = "Local\\HyperFetch.SingleInstance"
+_mutex_handle = None
+
+
+def _claim_single_instance(name=None):
+    """Take a process-wide lock, or report that another instance holds it.
+
+    A Windows named mutex, deliberately NOT an HTTP check. The previous guard
+    asked the running instance over its localhost server — but that server is
+    exactly what fails when the port is already taken, and the app swallowed
+    that failure. A crippled instance therefore looked like "nothing running",
+    so a second window opened, and the two then fought over downloads.json.
+
+    The kernel releases a mutex automatically when the owning process dies, so
+    unlike a lock file this cannot go stale after a crash.
+
+    Returns True if we own the app (caller proceeds), False if another live
+    instance already does.
+    """
+    global _mutex_handle
+    try:
+        import ctypes
+        from ctypes import wintypes
+        k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        k32.CreateMutexW.argtypes = [wintypes.LPVOID, wintypes.BOOL, wintypes.LPCWSTR]
+        k32.CreateMutexW.restype = wintypes.HANDLE
+        handle = k32.CreateMutexW(None, True, name or _MUTEX_NAME)
+        err = ctypes.get_last_error()
+        ERROR_ALREADY_EXISTS = 183
+        if not handle:
+            return True                     # cannot lock -> fail open, never block startup
+        if err == ERROR_ALREADY_EXISTS:
+            k32.CloseHandle(handle)
+            return False
+        _mutex_handle = handle              # held for the life of the process
+        return True
+    except Exception:
+        return True                         # non-Windows / unavailable -> fail open
+
+
 def _wait_for_exit(timeout=15.0):
     """Block until the running instance's server stops answering (it is going
     away), or `timeout` passes. Returns True if it went. Used by the restart
@@ -97,11 +137,25 @@ def main():
     # window was exactly how duplicates appeared — opening a .torrent by
     # double-click is the common path.
     restarted = "--restarted" in sys.argv
+    # The authoritative check: a kernel mutex, which is true even when the
+    # running instance's localhost server never came up. Ask it to surface (and
+    # to take the file we were opened with) on a best-effort basis, but exit
+    # either way — a duplicate window is what corrupts the shared state.
+    if not restarted and not _claim_single_instance():
+        _focus_running()
+        if target:
+            _handoff(target)
+        return 0
     if restarted:
         # A theme-change restart legitimately expects the outgoing instance to
         # disappear. Wait for it rather than skipping the check outright — if it
-        # never goes (a failed quit), focusing it beats duplicating it.
+        # never goes (a failed quit), focusing it beats duplicating it. The
+        # mutex is not consulted here: the predecessor still holds it while it
+        # shuts down, and this launch is its intended replacement.
         _wait_for_exit(timeout=15.0)
+    # Whatever the launch reason, an instance that is still answering wins: a
+    # duplicate window is worse than a restart that did not take effect, because
+    # the two overwrite each other's downloads.json.
     if _focus_running():
         if target:
             # the earlier handoff failed but the instance is demonstrably alive
@@ -109,6 +163,8 @@ def main():
             # the file the user double-clicked
             _handoff(target)
         return 0
+    if restarted:
+        _claim_single_instance()          # predecessor has gone; take ownership
 
     # install BEFORE the GUI so a Qt construction crash is captured too
     crash_reporter.install(APP_VERSION)

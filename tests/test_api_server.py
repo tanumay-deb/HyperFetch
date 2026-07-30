@@ -282,7 +282,7 @@ def test_guard_runs_even_when_a_target_was_given(monkeypatch):
     monkeypatch.setattr(main.crash_reporter, "install", lambda *a, **k: None)
     started = {"n": 0}
     monkeypatch.setitem(__import__("sys").modules, "gui2.app",
-                        type("M", (), {"run_v2": lambda **k: started.__setitem__("n", 1)})())
+                        type("M", (), {"run_v2": staticmethod(lambda **k: started.__setitem__("n", 1))})())
     assert main.main() == 0                 # exits instead of opening a window
     assert calls["focus"] == 1
     assert started["n"] == 0                # no second instance
@@ -292,6 +292,7 @@ def test_guard_runs_even_when_a_target_was_given(monkeypatch):
 def test_guard_lets_the_first_instance_start(monkeypatch):
     """With nothing running, the app must actually open."""
     import main
+    monkeypatch.setattr(main, "_claim_single_instance", lambda *a, **k: True)
     monkeypatch.setattr(main, "_post_running", lambda *a, **k: None)
     monkeypatch.setattr(main.sys, "argv", ["main.py"])
     monkeypatch.setattr(main.crash_reporter, "install", lambda *a, **k: None)
@@ -308,12 +309,81 @@ def test_restart_waits_for_predecessor_then_focuses_if_it_lingers(monkeypatch):
     instance failed to quit produced two windows."""
     import main
     monkeypatch.setattr(main, "_wait_for_exit", lambda timeout=15.0: False)
+    monkeypatch.setattr(main, "_claim_single_instance", lambda *a, **k: True)
     monkeypatch.setattr(main, "_post_running",
                         lambda p, d: {"status": "focused"} if p == "/focus" else None)
     monkeypatch.setattr(main.sys, "argv", ["main.py", "--restarted"])
     monkeypatch.setattr(main.crash_reporter, "install", lambda *a, **k: None)
     started = {"n": 0}
     monkeypatch.setitem(__import__("sys").modules, "gui2.app",
-                        type("M", (), {"run_v2": lambda **k: started.__setitem__("n", 1)})())
+                        type("M", (), {"run_v2": staticmethod(lambda **k: started.__setitem__("n", 1))})())
     assert main.main() == 0
     assert started["n"] == 0                # focused the survivor, no duplicate
+
+
+# ---- single-instance mutex: the guard must not depend on the HTTP server ----
+def test_mutex_blocks_a_second_claim_and_releases_on_death():
+    """A kernel mutex, not an HTTP round-trip: the old guard asked the running
+    instance over its localhost server, but that server is exactly what fails
+    when the port is taken — so a crippled instance looked like 'nothing
+    running' and a duplicate window opened."""
+    import subprocess
+    import sys
+    import textwrap
+    import time
+
+    hold = textwrap.dedent("""
+        import sys, time; sys.path.insert(0, %r)
+        import main
+        print(main._claim_single_instance("Local\HyperFetchTest.Mutex"), flush=True)
+        time.sleep(10)
+    """) % str(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    probe = textwrap.dedent("""
+        import sys; sys.path.insert(0, %r)
+        import main
+        print(main._claim_single_instance("Local\HyperFetchTest.Mutex"))
+    """) % str(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+    a = subprocess.Popen([sys.executable, "-c", hold], stdout=subprocess.PIPE, text=True)
+    try:
+        assert a.stdout.readline().strip() == "True"        # owner takes it
+        time.sleep(0.3)
+        b = subprocess.run([sys.executable, "-c", probe], capture_output=True, text=True)
+        assert b.stdout.strip() == "False"                  # duplicate refused
+    finally:
+        a.kill(); a.wait()
+    time.sleep(1)
+    c = subprocess.run([sys.executable, "-c", probe], capture_output=True, text=True)
+    assert c.stdout.strip() == "True"                       # no stale lock
+
+
+def test_second_launch_exits_without_opening_a_window(monkeypatch):
+    """Even if /focus cannot be reached (crippled instance), the launch must
+    still exit rather than open a rival window."""
+    import main
+    monkeypatch.setattr(main, "_claim_single_instance", lambda: False)
+    monkeypatch.setattr(main, "_post_running", lambda *a, **k: None)   # server down
+    monkeypatch.setattr(main.sys, "argv", ["main.py"])
+    monkeypatch.setattr(main.crash_reporter, "install", lambda *a, **k: None)
+    started = {"n": 0}
+    monkeypatch.setitem(__import__("sys").modules, "gui2.app",
+                        type("M", (), {"run_v2": staticmethod(lambda **k: started.__setitem__("n", 1))})())
+    assert main.main() == 0
+    assert started["n"] == 0
+
+
+def test_restart_is_not_blocked_by_its_predecessors_mutex(monkeypatch):
+    """--restarted is the predecessor's intended replacement; it must not be
+    refused by the lock the outgoing instance still holds."""
+    import main
+    monkeypatch.setattr(main, "_claim_single_instance", lambda: False)
+    monkeypatch.setattr(main, "_wait_for_exit", lambda timeout=15.0: True)
+    monkeypatch.setattr(main, "_post_running", lambda *a, **k: None)
+    monkeypatch.setattr(main.sys, "argv", ["main.py", "--restarted"])
+    monkeypatch.setattr(main.crash_reporter, "install", lambda *a, **k: None)
+    started = {"n": 0}
+    monkeypatch.setitem(__import__("sys").modules, "gui2.app",
+                        type("M", (), {"run_v2": staticmethod(
+                            lambda **k: (started.__setitem__("n", 1), 0)[1])})())
+    assert main.main() == 0
+    assert started["n"] == 1                                # replacement DID start

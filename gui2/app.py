@@ -118,11 +118,25 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, QW
 
     # ------------------------------------------------------------- settings/state
     def _load_state(self):
-        for d in utils.load_json(self._state_path, []):
+        import logging
+        _log = logging.getLogger("hyperfetch.gui")
+        rows = utils.load_json(self._state_path, [])
+        skipped = 0
+        for d in rows:
             try:
                 self.queue.add_task(T.DownloadTask.from_dict(d), start=False)
             except (KeyError, TypeError, ValueError):
+                skipped += 1
                 continue
+        # One line that says where the list came from and how much of it
+        # survived. Without it, "the app opened with an empty list" and "the
+        # user has no downloads" look identical — which is exactly what made a
+        # failed restore impossible to tell apart from a fresh install.
+        _log.info("restored %d/%d download(s) from %s",
+                  len(rows) - skipped, len(rows), self._state_path)
+        if skipped:
+            _log.warning("%d download(s) in %s could not be restored",
+                         skipped, self._state_path)
         # Orphan .hfdownload sweep — clean up temp files from crashed sessions
         import glob, tempfile
         known_ids = {t.id for t in self.queue.tasks}
@@ -160,8 +174,15 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, QW
         def serve():
             try:
                 run_server(self.queue, self.save_dir, PORT, pending=self.pending, token=self.pair_token)
-            except OSError:
-                pass
+            except OSError as e:
+                # Swallowing this silently left the app running with no server:
+                # the browser extension could not reach it, and the old
+                # single-instance guard (which asked over HTTP) could not see it
+                # either — so another launch opened a duplicate window.
+                import logging
+                logging.getLogger("hyperfetch.gui").error(
+                    "local server could not start on port %s (%s) — the browser "
+                    "extension will not be able to reach this window", PORT, e)
         threading.Thread(target=serve, daemon=True).start()
 
     # ------------------------------------------------------------- UI
