@@ -188,9 +188,19 @@ def load_json(path, default):
         return default
 
 
-def save_json(path, data):
+def save_json(path, data, keep_backup=False):
+    """Atomically write JSON. ``keep_backup`` rotates the previous contents to
+    ``<path>.bak`` first — cheap insurance for files that are the only copy of
+    something the user cares about (the download list), so a bad write or a
+    wrongly-empty save is always recoverable."""
     tmp = path + ".tmp"
     try:
+        if keep_backup and os.path.isfile(path) and os.path.getsize(path) > 2:
+            try:
+                import shutil
+                shutil.copy2(path, path + ".bak")
+            except OSError:
+                pass                      # never let backup failure block a save
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2)
         os.replace(tmp, path)

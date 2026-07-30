@@ -119,8 +119,42 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, QW
     # ------------------------------------------------------------- settings/state
     def _load_state(self):
         import logging
+        import time as _time
         _log = logging.getLogger("hyperfetch.gui")
-        rows = utils.load_json(self._state_path, [])
+        self._state_load_failed = False
+
+        # A file that EXISTS but reads as empty is a failure, not an empty list.
+        # utils.load_json returns its default on any OSError, and on Windows a
+        # read can be briefly denied while another process swaps the file via
+        # os.replace — so a transient lock looked exactly like "no downloads",
+        # and the next save then wrote [] over the real data. Retry before
+        # believing it.
+        path = self._state_path
+        existed = os.path.isfile(path) and os.path.getsize(path) > 2
+        rows = utils.load_json(path, [])
+        if existed and not rows:
+            for _ in range(5):
+                _time.sleep(0.2)
+                rows = utils.load_json(path, [])
+                if rows:
+                    _log.warning("download list read succeeded on retry — the "
+                                 "first attempt was blocked (concurrent save?)")
+                    break
+            else:
+                # Last resort: the rotated copy from the previous save. Better
+                # to restore a slightly stale list than to show the user nothing.
+                rows = utils.load_json(path + ".bak", [])
+                if rows:
+                    _log.warning("recovered %d download(s) from %s.bak after the "
+                                 "main list could not be read", len(rows), path)
+                else:
+                    # Never overwrite what we could not read. Without this guard
+                    # a single failed read becomes permanent data loss the moment
+                    # anything triggers a save.
+                    self._state_load_failed = True
+                    _log.error("could not read the download list at %s (%d bytes "
+                               "on disk) — saving is disabled this session so the "
+                               "file is not overwritten", path, os.path.getsize(path))
         skipped = 0
         for d in rows:
             try:
@@ -150,6 +184,16 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, QW
                         pass
 
     def _save_state(self):
+        # Refuse to write when the list could not be READ this session: the
+        # in-memory list is empty only because the load failed, and saving it
+        # would destroy the real file. This is the difference between a display
+        # glitch and permanent data loss.
+        if getattr(self, "_state_load_failed", False):
+            import logging
+            logging.getLogger("hyperfetch.gui").warning(
+                "skipping state save — the download list failed to load, so the "
+                "file on disk is the only good copy")
+            return
         # serialize per-task: one broken task must never freeze the whole state
         # file (a silently-failing save resurrects days-old statuses on restart)
         rows = []
@@ -162,7 +206,7 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, QW
                 import logging
                 logging.getLogger("hyperfetch.gui").exception(
                     "state save: skipping unserializable task %s", getattr(t, "id", "?"))
-        utils.save_json(self._state_path, rows)
+        utils.save_json(self._state_path, rows, keep_backup=True)
 
     def _autosave_tick(self):
         # flush only while something is in flight — an idle list changes via

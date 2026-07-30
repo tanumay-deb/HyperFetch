@@ -4,6 +4,7 @@ A card's number identifies it, so it is ranked by when the download was ADDED
 and must not shift when the list is re-sorted or filtered. `_sl_map` only reads
 `self.queue.tasks`, so it can be exercised without constructing the window.
 """
+import json
 import types
 
 import task as T
@@ -65,3 +66,111 @@ def test_missing_added_stamp_does_not_crash():
     fresh = _mk("new", 500)
     sl = _win([fresh, legacy])
     assert sl[legacy.id] == 1 and sl[fresh.id] == 2
+
+
+# ---- state load/save safety: a failed READ must never become data loss ----
+def _app(tmp_path, monkeypatch):
+    """A DownloadAppV2 stub with just the state plumbing under test."""
+    import os
+    import utils
+    from gui2.app import DownloadAppV2
+    stub = types.SimpleNamespace(
+        _state_path=str(tmp_path / "downloads.json"),
+        queue=types.SimpleNamespace(tasks=[], add_task=lambda t, start=True: None),
+    )
+    stub.queue.add_task = lambda t, start=True: stub.queue.tasks.append(t)
+    return stub, DownloadAppV2
+
+
+def test_transient_read_failure_does_not_wipe_the_list(tmp_path, monkeypatch):
+    """The real bug: utils.load_json returns its default on ANY OSError, so a
+    file briefly locked by a concurrent save read as 'no downloads' — and the
+    next save wrote [] over it."""
+    import utils
+    from gui2.app import DownloadAppV2
+    p = tmp_path / "downloads.json"
+    good = [T.DownloadTask("https://x/a.zip", str(tmp_path / "a.zip"),
+                           filename="a.zip").to_dict()]
+    utils.save_json(str(p), good)
+
+    stub, cls = _app(tmp_path, monkeypatch)
+    calls = {"n": 0}
+    real = utils.load_json
+
+    def flaky(path, default, *a, **k):
+        # deny every read of the state file, as a lock would
+        if path == str(p):
+            calls["n"] += 1
+            return default
+        return real(path, default, *a, **k)
+
+    monkeypatch.setattr(utils, "load_json", flaky)
+    monkeypatch.setattr("time.sleep", lambda *_: None)
+    cls._load_state(stub)
+    assert stub._state_load_failed is True
+    assert calls["n"] > 1                      # it retried before giving up
+
+    # and the guard must block the save that would have destroyed the file
+    stub.refresh = lambda: None
+    cls._save_state(stub)
+    assert json.loads(p.read_text(encoding="utf-8")) == good     # untouched
+
+
+def test_read_succeeding_on_retry_is_used(tmp_path, monkeypatch):
+    import utils
+    from gui2.app import DownloadAppV2
+    p = tmp_path / "downloads.json"
+    good = [T.DownloadTask("https://x/a.zip", str(tmp_path / "a.zip"),
+                           filename="a.zip").to_dict()]
+    utils.save_json(str(p), good)
+    stub, cls = _app(tmp_path, monkeypatch)
+
+    state = {"n": 0}
+    real = utils.load_json
+
+    def flaky(path, default, *a, **k):
+        if path == str(p):
+            state["n"] += 1
+            if state["n"] == 1:
+                return default            # first read blocked
+        return real(path, default, *a, **k)
+
+    monkeypatch.setattr(utils, "load_json", flaky)
+    monkeypatch.setattr("time.sleep", lambda *_: None)
+    cls._load_state(stub)
+    assert stub._state_load_failed is False
+    assert len(stub.queue.tasks) == 1
+
+
+def test_backup_is_rotated_and_used_for_recovery(tmp_path, monkeypatch):
+    import utils
+    from gui2.app import DownloadAppV2
+    p = tmp_path / "downloads.json"
+    good = [T.DownloadTask("https://x/a.zip", str(tmp_path / "a.zip"),
+                           filename="a.zip").to_dict()]
+    utils.save_json(str(p), good)
+    utils.save_json(str(p), good, keep_backup=True)      # rotates the .bak
+    assert (tmp_path / "downloads.json.bak").is_file()
+
+    stub, cls = _app(tmp_path, monkeypatch)
+    real = utils.load_json
+
+    def only_main_fails(path, default, *a, **k):
+        if path == str(p):
+            return default                                # main copy unreadable
+        return real(path, default, *a, **k)
+
+    monkeypatch.setattr(utils, "load_json", only_main_fails)
+    monkeypatch.setattr("time.sleep", lambda *_: None)
+    cls._load_state(stub)
+    assert len(stub.queue.tasks) == 1                    # recovered from .bak
+    assert stub._state_load_failed is False              # saving stays enabled
+
+
+def test_genuinely_absent_file_is_not_a_failure(tmp_path, monkeypatch):
+    """A first run has no file at all — that must stay a normal empty list."""
+    from gui2.app import DownloadAppV2
+    stub, cls = _app(tmp_path, monkeypatch)
+    cls._load_state(stub)
+    assert stub._state_load_failed is False
+    assert stub.queue.tasks == []
