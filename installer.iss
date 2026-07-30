@@ -26,6 +26,15 @@ WizardStyle=modern
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 ChangesAssociations=yes
+; Installing over a RUNNING HyperFetch silently did nothing: Windows locks
+; HyperFetch.exe, Inno skipped the locked file but still wrote the uninstall
+; entry — so Programs and Features reported the new version while the old
+; binary kept running, and shipped fixes never reached the user.
+; AppMutex makes Setup detect the running app and ask to close it first;
+; CloseApplications lets the Restart Manager do that automatically.
+AppMutex=Global\HyperFetch.Running
+CloseApplications=yes
+RestartApplications=no
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"

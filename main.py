@@ -80,9 +80,37 @@ def _claim_single_instance(name=None):
             k32.CloseHandle(handle)
             return False
         _mutex_handle = handle              # held for the life of the process
+        _claim_installer_mutex(k32)
         return True
     except Exception:
         return True                         # non-Windows / unavailable -> fail open
+
+
+_installer_mutex = None
+
+
+def _claim_installer_mutex(k32):
+    """Hold Global\\HyperFetch.Running purely so the INSTALLER can see us.
+
+    Installing over a running app silently did nothing: Windows locks
+    HyperFetch.exe, so Setup skipped it but still wrote the uninstall entry —
+    the app reported the new version while the old binary kept running, and
+    shipped fixes never arrived. installer.iss names this mutex in AppMutex, so
+    Setup now detects the running app and closes it first.
+
+    Global (not Local) because Setup runs elevated, potentially in another
+    session. This is separate from the single-instance lock, which stays Local
+    so instances are counted per user.
+    """
+    global _installer_mutex
+    if _installer_mutex is not None:
+        return
+    try:
+        h = k32.CreateMutexW(None, False, "Global\\HyperFetch.Running")
+        if h:
+            _installer_mutex = h
+    except Exception:
+        pass                                # never let this block startup
 
 
 def _wait_for_exit(timeout=15.0):
