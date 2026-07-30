@@ -95,16 +95,16 @@ def test_transient_read_failure_does_not_wipe_the_list(tmp_path, monkeypatch):
 
     stub, cls = _app(tmp_path, monkeypatch)
     calls = {"n": 0}
-    real = utils.load_json
+    real_open = open
 
-    def flaky(path, default, *a, **k):
-        # deny every read of the state file, as a lock would
-        if path == str(p):
+    def locked(path, *a, **k):
+        # deny every read of the state file, as a concurrent save would
+        if str(path) == str(p):
             calls["n"] += 1
-            return default
-        return real(path, default, *a, **k)
+            raise PermissionError("locked")
+        return real_open(path, *a, **k)
 
-    monkeypatch.setattr(utils, "load_json", flaky)
+    monkeypatch.setattr("builtins.open", locked)
     monkeypatch.setattr("time.sleep", lambda *_: None)
     cls._load_state(stub)
     assert stub._state_load_failed is True
@@ -126,16 +126,16 @@ def test_read_succeeding_on_retry_is_used(tmp_path, monkeypatch):
     stub, cls = _app(tmp_path, monkeypatch)
 
     state = {"n": 0}
-    real = utils.load_json
+    real_open = open
 
-    def flaky(path, default, *a, **k):
-        if path == str(p):
+    def flaky(path, *a, **k):
+        if str(path) == str(p):
             state["n"] += 1
             if state["n"] == 1:
-                return default            # first read blocked
-        return real(path, default, *a, **k)
+                raise PermissionError("locked")   # first read blocked
+        return real_open(path, *a, **k)
 
-    monkeypatch.setattr(utils, "load_json", flaky)
+    monkeypatch.setattr("builtins.open", flaky)
     monkeypatch.setattr("time.sleep", lambda *_: None)
     cls._load_state(stub)
     assert stub._state_load_failed is False
@@ -153,14 +153,14 @@ def test_backup_is_rotated_and_used_for_recovery(tmp_path, monkeypatch):
     assert (tmp_path / "downloads.json.bak").is_file()
 
     stub, cls = _app(tmp_path, monkeypatch)
-    real = utils.load_json
+    real_open = open
 
-    def only_main_fails(path, default, *a, **k):
-        if path == str(p):
-            return default                                # main copy unreadable
-        return real(path, default, *a, **k)
+    def only_main_fails(path, *a, **k):
+        if str(path) == str(p):
+            raise PermissionError("locked")              # main copy unreadable
+        return real_open(path, *a, **k)
 
-    monkeypatch.setattr(utils, "load_json", only_main_fails)
+    monkeypatch.setattr("builtins.open", only_main_fails)
     monkeypatch.setattr("time.sleep", lambda *_: None)
     cls._load_state(stub)
     assert len(stub.queue.tasks) == 1                    # recovered from .bak

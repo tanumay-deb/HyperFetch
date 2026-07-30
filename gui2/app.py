@@ -8,6 +8,7 @@ app_shortcuts.py, app_system.py) to keep this file focused on the view.
 
 Run with:  python main.py
 """
+import json
 import os
 import time
 import threading
@@ -130,12 +131,34 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, QW
         # and the next save then wrote [] over the real data. Retry before
         # believing it.
         path = self._state_path
-        existed = os.path.isfile(path) and os.path.getsize(path) > 2
-        rows = utils.load_json(path, [])
-        if existed and not rows:
+
+        def _read(p):
+            """(rows, had_bytes). Reads the raw text itself rather than asking
+            whether the file 'exists' first: os.path.isfile/getsize are a
+            snapshot, and the file is swapped by os.replace on every save, so a
+            launch that races a save could see it vanish between the two calls
+            (getsize would even raise). had_bytes tells a genuinely empty list
+            apart from a read that failed."""
+            try:
+                with open(p, "r", encoding="utf-8") as f:
+                    raw = f.read()
+            except FileNotFoundError:
+                return [], False         # first run: genuinely no list yet
+            except OSError:
+                return [], True          # exists but unreadable -> stay safe
+            if not raw.strip():
+                return [], False         # truly empty file
+            try:
+                data = json.loads(raw)
+            except ValueError:
+                return [], True          # present but unparsable -> a failure
+            return (data if isinstance(data, list) else []), True
+
+        rows, had_bytes = _read(path)
+        if had_bytes and not rows:
             for _ in range(5):
                 _time.sleep(0.2)
-                rows = utils.load_json(path, [])
+                rows, _ = _read(path)
                 if rows:
                     _log.warning("download list read succeeded on retry — the "
                                  "first attempt was blocked (concurrent save?)")
@@ -154,7 +177,8 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, QW
                     self._state_load_failed = True
                     _log.error("could not read the download list at %s (%d bytes "
                                "on disk) — saving is disabled this session so the "
-                               "file is not overwritten", path, os.path.getsize(path))
+                               "file is not overwritten", path,
+                               (os.path.getsize(path) if os.path.exists(path) else -1))
         skipped = 0
         for d in rows:
             try:
