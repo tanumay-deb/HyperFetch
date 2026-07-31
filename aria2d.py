@@ -35,6 +35,10 @@ log = utils.get_logger("aria2d")
 RPC_HOST = "127.0.0.1"
 START_TIMEOUT = 20.0        # seconds to wait for a fresh daemon to answer
 CALL_TIMEOUT = 15.0
+# Concurrency inside the daemon. Comfortably above the app's own torrent gate
+# (queue_manager.MAX_ACTIVE_TORRENTS) so aria2 never becomes the bottleneck —
+# the app decides what runs, not aria2's queue.
+MAX_CONCURRENT = 12
 
 
 class Aria2Error(RuntimeError):
@@ -174,16 +178,21 @@ class Aria2Daemon:
         """Daemon-wide options. The per-download ones (dir, pause) are passed
         with each add call instead."""
         import torrent
-        sess = os.path.join(utils.app_data_dir(), "aria2.session")
         opts = [
             "--enable-rpc",
             f"--rpc-listen-port={self.port}",
             f"--rpc-secret={self.secret}",
             "--rpc-listen-all=false",          # loopback only
             "--console-log-level=error",
-            f"--save-session={sess}",
-            "--save-session-interval=30",
             "--auto-save-interval=30",
+            # The APP owns the task list: every torrent is (re-)added through
+            # addUri when its task runs, and --continue picks up from the
+            # .aria2 control file. Reloading a session on top of that both
+            # duplicated those downloads and, far worse, filled every
+            # concurrency slot with dead entries from previous runs — measured
+            # 5 active / 22 waiting / 75 stopped, so nothing new ever started
+            # and magnets sat in "waiting" forever.
+            f"--max-concurrent-downloads={MAX_CONCURRENT}",
             "--seed-time=0",
             f"--bt-stop-timeout={torrent.STALL_TIMEOUT}",
             "--bt-save-metadata=true",
@@ -207,8 +216,6 @@ class Aria2Daemon:
             opts.append(f"--dht-entry-point={host}:{port}")
         for host, port in torrent.DHT_ENTRY_POINTS6:
             opts.append(f"--dht-entry-point6={host}:{port}")
-        if os.path.isfile(sess):
-            opts.append(f"--input-file={sess}")
         if not utils.DISK_CACHE:
             opts.append("--disk-cache=0")
         opts.append("--file-allocation=" + ("prealloc" if utils.PREALLOCATE else "none"))
@@ -224,8 +231,34 @@ class Aria2Daemon:
             if self.alive():
                 return True
             if self._attach():
+                self._purge()
                 return True
-            return self._spawn()
+            ok = self._spawn()
+            self._purge()
+            return ok
+
+    def _purge(self):
+        """Drop finished/errored results. They are only history to aria2, but
+        they accumulate across runs and make tellStatus noisy."""
+        try:
+            self._post(self.port, self.secret, "aria2.purgeDownloadResult", [], timeout=5)
+        except Exception:
+            pass
+
+    def stop_recorded(self):
+        """Stop whatever daemon aria2d.json points at, even from a fresh object.
+
+        shutdown() only worked if THIS instance was already connected, so a new
+        process (or a new app run) could not stop the daemon a previous run had
+        left behind — it would just attach to it, inheriting its old options.
+        """
+        with self._lock:
+            if not self.alive():
+                pid, port, secret = self._load_state()
+                if not (port and secret):
+                    return
+                self.pid, self.port, self.secret = pid, port, secret
+            self.shutdown()
 
     def shutdown(self):
         """Stop the daemon we own (called on app exit). Saves the session first
