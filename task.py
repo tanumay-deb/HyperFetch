@@ -113,6 +113,11 @@ class DownloadTask:
         # computed SHA-256 of the finished file (set by hash verification /
         # Force Recheck); "" until known
         self.sha256 = ""
+        # what the server answered (drawer Headers tab). Transient diagnostics,
+        # not persisted: they describe one connection, not the download.
+        self.response_headers = {}
+        self.response_status = 0
+        self.remote_address = ""
 
         # queue ordering: lower priority value runs first; seq breaks ties FIFO
         self.priority = priority

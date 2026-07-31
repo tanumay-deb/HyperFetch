@@ -184,6 +184,30 @@ class Downloader:
                 self._conn_cv.notify_all()
 
     # ------------------------------------------------------------------ probe
+    def _capture_response(self, r):
+        """Record what the server actually answered, for the Headers tab.
+
+        Only the first segment's response is kept — they are all the same
+        request bar the Range header, so storing one per segment would just be
+        noise. Set-Cookie is dropped: it is a credential, it is the one response
+        header worth leaking, and this ends up on disk with the task.
+        """
+        if getattr(self.t, "response_headers", None):
+            return
+        try:
+            hdrs = {k: v for k, v in r.headers.items()
+                    if k.lower() not in ("set-cookie", "set-cookie2")}
+            self.t.response_headers = hdrs
+            self.t.response_status = r.status_code
+            self.t.remote_address = ""
+            raw = getattr(r, "raw", None)
+            sock = getattr(getattr(raw, "_connection", None), "sock", None)
+            if sock is not None:
+                peer = sock.getpeername()
+                self.t.remote_address = f"{peer[0]}:{peer[1]}"
+        except Exception:
+            pass                        # diagnostics must never break a download
+
     def _probe(self):
         """One request to learn total size + range support, following redirects."""
         try:
@@ -322,6 +346,7 @@ class Downloader:
                                   verify=utils.VERIFY_TLS, proxies=utils.PROXIES) as r:
                     r.raise_for_status()
                     self._grow_conns()          # stream accepted -> ramp up one more slot
+                    self._capture_response(r)   # for the drawer's Headers tab
                     with open(temp_path, mode) as f:
                         if mode == "r+b":
                             f.seek(seg.start + seg.downloaded)

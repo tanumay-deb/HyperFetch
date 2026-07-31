@@ -112,6 +112,49 @@ class ActionsMixin:
         self._save_state()
         self.refresh()
 
+    def _move_task_files(self, t):
+        """Move a download to another folder.
+
+        Completed or partially-downloaded files are moved on disk. An in-flight
+        HTTP download only needs its destination retargeted: the bytes live in
+        an id-keyed .hfdownload temp until finalize, so nothing has to move. A
+        running torrent is the exception — aria2 owns its --dir and cannot be
+        repointed mid-download — so that one asks for a pause first.
+        """
+        import shutil
+        import utils
+        from PySide6.QtWidgets import QFileDialog
+
+        is_tor = _torrent.is_torrent_task(t.url, t.filename)
+        if is_tor and t.status in (T.DOWNLOADING, T.QUEUED):
+            self._toasts.show("info", "Pause first",
+                              "Pause this torrent before moving it — the engine "
+                              "cannot change folder while it is running.")
+            return
+
+        cur = t.save_path or ""
+        start_dir = os.path.dirname(cur) if cur else self.save_dir
+        dest_dir = QFileDialog.getExistingDirectory(self, "Move download to…", start_dir)
+        if not dest_dir or os.path.normpath(dest_dir) == os.path.normpath(start_dir):
+            return
+
+        name = os.path.basename(cur) or t.filename
+        target = utils.unique_path(dest_dir, name)
+
+        if cur and os.path.exists(cur):
+            try:
+                shutil.move(cur, target)         # handles files and folders
+            except OSError as e:
+                self._toasts.show("error", "Move failed", str(e))
+                return
+        # nothing on disk yet (queued/paused HTTP): just retarget the destination
+        t.save_path = target
+        t.filename = os.path.basename(target)
+        t.log_event(f"Moved to {dest_dir}")
+        self._save_state()
+        self.refresh()
+        self._toasts.show("success", "Moved", t.filename)
+
     def _restart_task(self, t):
         """Re-download from byte 0. Only offered on non-running tasks so we
         never race a live worker over the temp file."""
@@ -210,6 +253,7 @@ class ActionsMixin:
         m.addSeparator()
         is_tor = _torrent.is_torrent_task(t.url, t.filename)
         m.addAction(ico("document"), "Rename", lambda: self._rename_task(t))
+        m.addAction(ico("folder"), "Move to…", lambda: self._move_task_files(t))
         if t.status in (T.PAUSED, T.ERROR, T.CANCELLED, T.COMPLETED) and not is_tor:
             m.addAction(ico("history"), "Restart", lambda: self._restart_task(t))
         if t.status == T.COMPLETED and not is_tor:

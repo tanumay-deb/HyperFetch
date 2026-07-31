@@ -640,12 +640,37 @@ class DetailsDrawer(QFrame):
         return self.h_table
 
     def _fill_headers(self, t):
-        """Populate the header table. Cookies/auth are stripped first — this
-        panel is the one place a screenshot could leak a session."""
-        hdr = utils.strip_sensitive(getattr(t, "headers", {}) or {})
-        self.h_table.setRowCount(len(hdr))
-        for i, (k, v) in enumerate(sorted(hdr.items())):
+        """Request headers we sent, then what the server answered.
+
+        Cookies/auth are stripped from the request side and Set-Cookie never
+        reaches the response side — this panel is the one place a screenshot
+        could leak a session.
+        """
+        req = utils.strip_sensitive(getattr(t, "headers", {}) or {})
+        resp = getattr(t, "response_headers", {}) or {}
+        status = getattr(t, "response_status", 0)
+        remote = getattr(t, "remote_address", "")
+
+        rows = []
+        rows.append(("— Request —", ""))
+        rows += sorted(req.items()) or [("(none sent)", "")]
+        rows.append(("", ""))
+        if resp:
+            label = f"— Response —   HTTP {status}" if status else "— Response —"
+            if remote:
+                label += f"   ·   {remote}"
+            rows.append((label, ""))
+            rows += sorted(resp.items())
+        else:
+            rows.append(("— Response —", ""))
+            rows.append(("(captured once the download connects)", ""))
+
+        self.h_table.setRowCount(len(rows))
+        for i, (k, v) in enumerate(rows):
             name = QTableWidgetItem(str(k))
+            if str(k).startswith("—"):          # section marker, not a header
+                f = name.font(); f.setBold(True); name.setFont(f)
+                name.setForeground(QColor(COLORS["accent"]))
             val = QTableWidgetItem(str(v))
             val.setToolTip(str(v))
             self.h_table.setItem(i, 0, name)
