@@ -26,6 +26,7 @@ import socket
 import subprocess
 import threading
 import time
+import urllib.error
 import urllib.request
 
 import utils
@@ -35,6 +36,12 @@ log = utils.get_logger("aria2d")
 RPC_HOST = "127.0.0.1"
 START_TIMEOUT = 20.0        # seconds to wait for a fresh daemon to answer
 CALL_TIMEOUT = 15.0
+# aria2 serves RPC from the same thread that allocates files and hash-checks, so
+# a big torrent can stall it for seconds. A short probe reads a BUSY daemon as a
+# dead one, and killing it mid-download is destructive (see _attach).
+PROBE_TIMEOUT = 10.0
+LIVENESS_TTL = 2.0          # how long one successful probe is trusted for
+DEAD_STRIKES = 3            # consecutive missed probes before declaring death
 # Concurrency inside the daemon. Comfortably above the app's own torrent gate
 # (queue_manager.MAX_ACTIVE_TORRENTS) so aria2 never becomes the bottleneck —
 # the app decides what runs, not aria2's queue.
@@ -89,6 +96,8 @@ class Aria2Daemon:
         self.secret = ""
         self.pid = 0
         self._proc = None
+        self._last_ok = 0.0     # monotonic stamp of the last successful probe
+        self._strikes = 0       # consecutive missed probes
 
     # ------------------------------------------------------------- transport
     def _post(self, port, secret, method, params, timeout=CALL_TIMEOUT):
@@ -96,8 +105,21 @@ class Aria2Daemon:
                            "params": [f"token:{secret}"] + list(params or [])}).encode()
         req = urllib.request.Request(f"http://{RPC_HOST}:{port}/jsonrpc", data=body,
                                      headers={"Content-Type": "application/json"})
-        with urllib.request.urlopen(req, timeout=timeout) as r:
-            payload = json.loads(r.read().decode() or "{}")
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as r:
+                payload = json.loads(r.read().decode() or "{}")
+        except urllib.error.HTTPError as e:
+            # aria2 answers 4xx with the real JSON-RPC error in the BODY, but
+            # urllib raises before anyone reads it — so "GID x is not found" and
+            # "Unauthorized" both reached the log as the useless "HTTP Error
+            # 400: Bad Request", which reads like a transport fault rather than
+            # the state problem it actually is.
+            try:
+                detail = (json.loads(e.read().decode() or "{}")
+                          .get("error", {}).get("message"))
+            except Exception:
+                detail = None
+            raise Aria2Error(detail or f"HTTP {e.code}") from None
         if "error" in payload:
             raise Aria2Error(payload["error"])
         return payload.get("result")
@@ -110,11 +132,19 @@ class Aria2Daemon:
     def alive(self):
         if not (self.port and self.secret):
             return False
-        try:
-            self._post(self.port, self.secret, "aria2.getGlobalStat", [], timeout=3)
+        # Every torrent thread calls ensure() on every RPC. Probing the daemon
+        # each time is pure load amplification on the very thing we are asking
+        # "are you overloaded?", so a fresh success is trusted briefly.
+        if time.monotonic() - self._last_ok < LIVENESS_TTL:
             return True
+        try:
+            self._post(self.port, self.secret, "aria2.getGlobalStat", [],
+                       timeout=PROBE_TIMEOUT)
         except Exception:
             return False
+        self._last_ok = time.monotonic()
+        self._strikes = 0
+        return True
 
     # ------------------------------------------------------------- lifecycle
     def _load_state(self):
@@ -134,20 +164,42 @@ class Aria2Daemon:
             pass
 
     def _attach(self):
-        """Reuse a daemon left by an earlier run. Returns True on success; kills
-        a recorded process that is alive but no longer answering, so it cannot
-        sit there holding the BitTorrent port."""
+        """Reuse a daemon left by an earlier run. Returns True on success.
+
+        A recorded process that is alive but silent is only replaced after
+        DEAD_STRIKES consecutive misses. Replacing it on the FIRST miss was
+        actively destructive: a daemon busy allocating or hash-checking a large
+        torrent stops answering for seconds, so healthy engines were killed
+        mid-download. Worse, _kill is a hard kill — aria2 never flushed its
+        .aria2 control files, so the payloads it left behind could not be
+        resumed at all ("exists, but a control file(*.aria2) does not exist"),
+        and every running task died with "Torrent engine stopped".
+        """
         pid, port, secret = self._load_state()
         if not (port and secret):
             return False
         try:
-            self._post(port, secret, "aria2.getGlobalStat", [], timeout=3)
-        except Exception:
-            if _pid_alive(pid):
-                log.warning("aria2 daemon pid %s is alive but not answering RPC — killing it", pid)
-                _kill(pid)
+            self._post(port, secret, "aria2.getGlobalStat", [],
+                       timeout=PROBE_TIMEOUT)
+        except Exception as e:
+            if not _pid_alive(pid):
+                self._strikes = 0
+                return False
+            self._strikes += 1
+            if self._strikes < DEAD_STRIKES:
+                log.warning("aria2 daemon pid %s did not answer (%s) — strike %d/%d",
+                            pid, e, self._strikes, DEAD_STRIKES)
+                # Busy, not dead. Tell the caller to retry rather than letting
+                # it spawn a rival daemon that would fight for the same ports.
+                raise Aria2Error(f"aria2 daemon busy: {e}")
+            log.warning("aria2 daemon pid %s missed %d probes — replacing it",
+                        pid, self._strikes)
+            self._strikes = 0
+            _kill(pid)
             return False
         self.pid, self.port, self.secret = pid, port, secret
+        self._last_ok = time.monotonic()
+        self._strikes = 0
         log.info("attached to existing aria2 daemon pid=%s port=%s", pid, port)
         return True
 

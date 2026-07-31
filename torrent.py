@@ -34,6 +34,13 @@ STOP_GRACE = 5        # seconds to wait after terminate before kill
 # same timer covers the magnet metadata phase, where minutes of silence is
 # normal on a sparsely-seeded torrent.
 STALL_TIMEOUT = 1800  # 30 min
+# Consecutive failed status polls before an RPC download gives up. A daemon that
+# is merely busy (allocating a file, hash-checking) blocks RPC for seconds; the
+# first miss used to pause the download outright.
+RPC_RETRIES = 10
+# aria2 refuses to touch an existing payload that has no .aria2 control file: it
+# cannot tell finished bytes from garbage, so it stops rather than truncate.
+_CTL_MISSING = re.compile(r"control file.*does not exist", re.I)
 # Default BitTorrent listen port when the user has not chosen one. It used to be
 # left unset, which meant aria2 picked from its own range and UPnP had no single
 # port to forward — so we only ever made OUTBOUND connections and never accepted
@@ -645,7 +652,6 @@ class TorrentDownloader:
         one forwardable listen port shared by every torrent, and status read as
         JSON instead of scraped from stdout.
         """
-        import base64
         import aria2d
 
         out_dir = os.path.dirname(self.t.save_path) or "."
@@ -662,27 +668,52 @@ class TorrentDownloader:
         d = aria2d.DAEMON
         d.ensure()                                   # raises -> caller falls back
         opts = {"dir": out_dir}
-        if is_torrent(self.t.url) and os.path.isfile(self.t.url):
-            with open(self.t.url, "rb") as f:
-                gid = d.call("aria2.addTorrent",
-                             base64.b64encode(f.read()).decode(), [], opts)
-        else:
-            gid = d.call("aria2.addUri", [self.t.url], opts)
+        gid = self._rpc_add(d, opts)
         self._gid = gid
         self.t.gid = gid
 
         top = ""
         try:
             top = self._poll_rpc(d, gid, out_dir)
+            if (self.t.status == T.ERROR
+                    and _CTL_MISSING.search(self.t.error or "")
+                    and not (self.t.cancel_requested or self.t.pause_requested)):
+                # The payload is on disk but its .aria2 control file is gone —
+                # typically because aria2 was hard-killed before it could flush
+                # one. aria2 then refuses the torrent outright and the download
+                # is dead for good. check-integrity re-hashes what is already
+                # there and rebuilds the control file, so it resumes from the
+                # verified bytes. Confirmed offline on a real multi-file
+                # torrent: the plain add fails with exactly this message, while
+                # the same add with check-integrity is accepted and counts the
+                # intact pieces, leaving the files untruncated.
+                log.info("control file missing for %s — retrying with an "
+                         "integrity check", self.t.filename)
+                self.t.error = ""
+                self.t.status = T.DOWNLOADING
+                gid = self._rpc_add(d, dict(opts, **{"check-integrity": "true"}))
+                self._gid = gid
+                self.t.gid = gid
+                top = self._poll_rpc(d, gid, out_dir)
         finally:
             self._gid = None
             self.t.gid = None
         return top
 
+    def _rpc_add(self, d, opts):
+        """Hand the torrent/magnet to the daemon and return its gid."""
+        import base64
+        if is_torrent(self.t.url) and os.path.isfile(self.t.url):
+            with open(self.t.url, "rb") as f:
+                return d.call("aria2.addTorrent",
+                              base64.b64encode(f.read()).decode(), [], opts)
+        return d.call("aria2.addUri", [self.t.url], opts)
+
     def _poll_rpc(self, d, gid, out_dir):
         """Mirror aria2's state onto the task until it reaches a terminal one."""
         cur = gid
         top = ""
+        fails = 0
         while True:
             if self.t.cancel_requested:
                 self._rpc_remove(d, cur, force=True)
@@ -700,7 +731,25 @@ class TorrentDownloader:
 
             try:
                 st = d.call("aria2.tellStatus", cur)
+                fails = 0
             except Exception as e:
+                if "is not found" in str(e):
+                    # The daemon was replaced under us, so our gid died with it.
+                    # Nothing is wrong with the download itself — the bytes and
+                    # control file are on disk — so stay resumable and say so
+                    # accurately instead of blaming the engine for stopping.
+                    self.t.status = T.PAUSED
+                    self.t.error = "Torrent engine restarted — Resume to continue"
+                    log.warning("gid %s lost for %s (daemon replaced)",
+                                cur, self.t.filename)
+                    return top
+                fails += 1
+                if fails < RPC_RETRIES:
+                    # busy daemon, not a dead one: keep polling
+                    log.debug("tellStatus retry %d/%d for %s: %s",
+                              fails, RPC_RETRIES, self.t.filename, e)
+                    time.sleep(POLL)
+                    continue
                 # daemon vanished mid-download: leave the task resumable rather
                 # than failing it — the bytes and control file are still on disk
                 self.t.status = T.PAUSED

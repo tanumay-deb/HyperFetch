@@ -3,6 +3,7 @@
 No real aria2 process and no network: the daemon's RPC transport is stubbed so
 the lifecycle rules and the status mapping can be asserted directly.
 """
+import io
 import json
 import os
 
@@ -32,23 +33,74 @@ def test_attach_reuses_a_reachable_daemon(tmp_path, monkeypatch):
     assert spawned["n"] == 0                       # nothing new started
 
 
-def test_unreachable_but_live_daemon_is_killed(tmp_path, monkeypatch):
-    """The orphan case proven in the spike: aria2 outlives its parent. One that
-    is alive but no longer answering must be killed, not left holding ports."""
+def _silent_daemon(tmp_path, monkeypatch, pid=9999):
+    """A recorded daemon whose process is alive but never answers RPC."""
     monkeypatch.setattr(utils, "app_data_dir", lambda: str(tmp_path))
     (tmp_path / "aria2d.json").write_text(json.dumps(
-        {"pid": 9999, "port": 6800, "secret": "s"}), encoding="utf-8")
-
+        {"pid": pid, "port": 6800, "secret": "s"}), encoding="utf-8")
     d = aria2d.Aria2Daemon()
+
     def dead(*a, **k):
         raise OSError("connection refused")
+
     monkeypatch.setattr(d, "_post", dead)
-    monkeypatch.setattr(aria2d, "_pid_alive", lambda pid: pid == 9999)
+    monkeypatch.setattr(aria2d, "_pid_alive", lambda p: p == pid)
     killed = []
     monkeypatch.setattr(aria2d, "_kill", killed.append)
+    return d, killed
 
+
+def test_unreachable_but_live_daemon_is_killed(tmp_path, monkeypatch):
+    """The orphan case proven in the spike: aria2 outlives its parent. One that
+    is alive but no longer answering must eventually be killed, not left
+    holding ports — but only after it has really stopped answering."""
+    d, killed = _silent_daemon(tmp_path, monkeypatch)
+    for _ in range(aria2d.DEAD_STRIKES - 1):
+        with pytest.raises(aria2d.Aria2Error):
+            d._attach()
     assert d._attach() is False
     assert killed == [9999]
+
+
+def test_a_busy_daemon_survives_a_single_missed_probe(tmp_path, monkeypatch):
+    """The regression that cost real downloads: aria2 blocks its RPC thread
+    while allocating or hash-checking, so one missed probe means BUSY. Killing
+    on the first miss took out healthy engines mid-download — and being a hard
+    kill, it left payloads with no .aria2 control file, which aria2 then refuses
+    to resume at all."""
+    d, killed = _silent_daemon(tmp_path, monkeypatch)
+    with pytest.raises(aria2d.Aria2Error):
+        d._attach()
+    assert killed == []                    # still running, still downloading
+
+
+def test_one_good_probe_clears_accumulated_strikes(tmp_path, monkeypatch):
+    """Strikes must be consecutive, or a daemon that stutters once an hour is
+    eventually executed for it."""
+    d, killed = _silent_daemon(tmp_path, monkeypatch)
+    with pytest.raises(aria2d.Aria2Error):
+        d._attach()
+    monkeypatch.setattr(d, "_post", lambda *a, **k: {"ok": 1})   # answers again
+    assert d._attach() is True
+    assert d._strikes == 0 and killed == []
+
+
+def test_http_error_body_carries_the_real_aria2_message(tmp_path, monkeypatch):
+    """aria2 puts the useful error in the BODY of a 4xx. urllib raises before
+    anyone reads it, so "GID x is not found" used to reach the log as the
+    meaningless "HTTP Error 400: Bad Request"."""
+    d = aria2d.Aria2Daemon()
+
+    def boom(*a, **k):
+        raise aria2d.urllib.error.HTTPError(
+            "u", 400, "Bad Request", {},
+            io.BytesIO(json.dumps(
+                {"error": {"message": "GID abc is not found"}}).encode()))
+
+    monkeypatch.setattr(aria2d.urllib.request, "urlopen", boom)
+    with pytest.raises(aria2d.Aria2Error) as e:
+        d._post(1, "s", "aria2.tellStatus", ["abc"])
+    assert "GID abc is not found" in str(e.value)
 
 
 def test_dead_pid_is_not_killed(tmp_path, monkeypatch):
@@ -243,3 +295,99 @@ def test_engine_falls_back_when_daemon_unavailable(tmp_path, monkeypatch):
 def test_rpc_disabled_by_default():
     """The daemon engine ships off until it has proven itself on real work."""
     assert utils.TORRENT_RPC is False
+
+
+# ------------------------------------------------- resilience of the RPC poll
+class _FlakyDaemon(_FakeDaemon):
+    """Fails the first `misses` tellStatus calls, then behaves normally."""
+
+    def __init__(self, states, misses, error="timed out"):
+        super().__init__(states)
+        self.misses = misses
+        self.error = error
+
+    def call(self, method, *params, **kw):
+        if method == "aria2.tellStatus" and self.misses > 0:
+            self.misses -= 1
+            raise aria2d.Aria2Error(self.error)
+        return super().call(method, *params, **kw)
+
+
+def _drive_with(tmp_path, monkeypatch, daemon, task=None):
+    monkeypatch.setattr(utils, "app_data_dir", lambda: str(tmp_path))
+    monkeypatch.setattr(torrent, "POLL", 0)
+    monkeypatch.setattr(aria2d, "DAEMON", daemon)
+    t = task or _task(tmp_path)
+    torrent.TorrentDownloader(t)._run_rpc()
+    return t
+
+
+def test_a_busy_daemon_does_not_pause_a_healthy_download(tmp_path, monkeypatch):
+    """A few missed polls mean the daemon is busy, not gone. Giving up on the
+    first one paused downloads that were fine."""
+    payload = str(tmp_path / "Movie.mkv")
+    open(payload, "w").close()
+    daemon = _FlakyDaemon(
+        [{"status": "complete", "completedLength": "1000", "totalLength": "1000",
+          "files": [{"path": payload}]}],
+        misses=torrent.RPC_RETRIES - 1)
+    t = _drive_with(tmp_path, monkeypatch, daemon)
+    assert t.status == T.COMPLETED
+
+
+def test_a_daemon_that_stays_silent_still_pauses_the_task(tmp_path, monkeypatch):
+    """Retrying must not become retrying forever — a genuinely dead engine has
+    to surface, and resumably."""
+    daemon = _FlakyDaemon([], misses=torrent.RPC_RETRIES + 5)
+    t = _drive_with(tmp_path, monkeypatch, daemon)
+    assert t.status == T.PAUSED
+    assert "stopped" in t.error
+
+
+def test_a_lost_gid_reports_a_restart_not_a_failure(tmp_path, monkeypatch):
+    """When the daemon is replaced, the old gid dies with it. The download
+    itself is intact, so say the engine restarted rather than blaming it for
+    stopping — and never fail the task, whose bytes are still on disk."""
+    daemon = _FlakyDaemon([], misses=1, error="GID abc is not found")
+    t = _drive_with(tmp_path, monkeypatch, daemon)
+    assert t.status == T.PAUSED
+    assert "restarted" in t.error
+
+
+def test_a_missing_control_file_is_repaired_with_an_integrity_check(tmp_path, monkeypatch):
+    """A hard-killed aria2 leaves payloads with no .aria2 control file, which
+    aria2 then refuses outright — the download was dead for good. Re-adding it
+    with check-integrity rebuilds the control file from the bytes on disk."""
+    payload = str(tmp_path / "Movie.mkv")
+    open(payload, "w").close()
+    ctl_err = ("File /d/Movie exists, but a control file(*.aria2) does not "
+               "exist. Download was canceled in order to prevent your file "
+               "from being truncated to 0.")
+    daemon = _FakeDaemon([
+        {"status": "error", "errorMessage": ctl_err, "completedLength": "500",
+         "totalLength": "1000", "files": [{"path": payload}]},
+        {"status": "complete", "completedLength": "1000", "totalLength": "1000",
+         "files": [{"path": payload}]},
+    ])
+    t = _drive_with(tmp_path, monkeypatch, daemon)
+    adds = [p for m, p in daemon.calls if m in ("aria2.addUri", "aria2.addTorrent")]
+    assert len(adds) == 2                                   # it retried
+    assert adds[1][-1].get("check-integrity") == "true"     # ...with a recheck
+    assert t.status == T.COMPLETED
+    assert t.error == ""
+
+
+def test_an_ordinary_torrent_error_is_not_retried(tmp_path, monkeypatch):
+    """Only the control-file case is recoverable; everything else must still
+    fail, or a broken torrent loops forever."""
+    payload = str(tmp_path / "Movie.mkv")
+    open(payload, "w").close()
+    daemon = _FakeDaemon([
+        {"status": "error", "errorMessage": "tracker returned 410 Gone",
+         "completedLength": "500", "totalLength": "1000",
+         "files": [{"path": payload}]},
+    ])
+    t = _drive_with(tmp_path, monkeypatch, daemon)
+    adds = [p for m, p in daemon.calls if m in ("aria2.addUri", "aria2.addTorrent")]
+    assert len(adds) == 1
+    assert t.status == T.ERROR
