@@ -16,7 +16,7 @@ try:
     from gui.dialogs import AnimatedToggle
 except Exception:                       # fallback if unavailable
     from PySide6.QtWidgets import QCheckBox as AnimatedToggle
-from gui2.palette import COLORS, ACCENTS, set_accent
+from gui2.palette import COLORS, fpx, ACCENTS, set_accent
 from gui.icons import themed_icon
 from gui2.brand import BrandLogo
 from gui2.dialogs.settings_pages import PageBuilderMixin
@@ -39,16 +39,16 @@ class SettingsDialogV2(PageBuilderMixin, QDialog):
         body = QHBoxLayout(); body.setContentsMargins(0, 0, 0, 0); body.setSpacing(0)
 
         # left nav container
-        nav_container = QWidget(); nav_container.setFixedWidth(220)
+        nav_container = QWidget(); nav_container.setFixedWidth(176)
         nav_container.setStyleSheet(f"background:{COLORS['surface']};border-right:1px solid {COLORS['border']};")
-        nv_lay = QVBoxLayout(nav_container); nv_lay.setContentsMargins(12, 14, 12, 12); nv_lay.setSpacing(8)
+        nv_lay = QVBoxLayout(nav_container); nv_lay.setContentsMargins(8, 10, 8, 10); nv_lay.setSpacing(6)
         
         self.nav = QListWidget()
         self.nav.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.nav.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.nav.setStyleSheet(
             f"QListWidget{{background:transparent;border:none;outline:none;}}"
-            f"QListWidget::item{{padding:7px 12px;border-radius:8px;color:{COLORS['muted']};font-weight:700;margin-bottom:2px;}}"
+            f"QListWidget::item{{padding:6px 10px;border-radius:7px;color:{COLORS['muted']};font-weight:700;margin-bottom:1px;}}"
             f"QListWidget::item:selected{{background:{COLORS['accent']};color:white;}}")
             
         icons = ["settings", "download", "link", "open", "program", "menu", "info"]
@@ -62,23 +62,23 @@ class SettingsDialogV2(PageBuilderMixin, QDialog):
         self.stats = QFrame()
         self.stats.setObjectName("statsCard")
         sv = QVBoxLayout(self.stats)
-        sv.setContentsMargins(12, 10, 12, 10)
+        sv.setContentsMargins(10, 8, 10, 8)
         sv.setSpacing(8)
         self.graph = SpeedGraph()
-        self.graph.setFixedHeight(54)
+        self.graph.setFixedHeight(40)
         sv.addWidget(self.graph)
         gtext = QWidget(); gtext.setStyleSheet("background: transparent;")
         gt = QHBoxLayout(gtext); gt.setContentsMargins(0, 0, 0, 0)
         scol = QVBoxLayout(); scol.setSpacing(0)
         self.lbl_speed = QLabel("0 B/s")
-        self.lbl_speed.setStyleSheet(f"font-size: 16px; font-weight: 800; background: transparent; color: {COLORS['text']};")
-        cap1 = QLabel("Current Speed"); cap1.setStyleSheet(f"font-size: 11px; color: {COLORS['muted']}; background: transparent;")
+        self.lbl_speed.setStyleSheet(f"font-size: {fpx(14)}; font-weight: 800; background: transparent; color: {COLORS['text']};")
+        cap1 = QLabel("Current Speed"); cap1.setStyleSheet(f"font-size: {fpx(10)}; color: {COLORS['muted']}; background: transparent;")
         scol.addWidget(self.lbl_speed); scol.addWidget(cap1)
         ccol = QVBoxLayout(); ccol.setSpacing(0)
         self.lbl_conns = QLabel("0"); self.lbl_conns.setAlignment(Qt.AlignRight)
-        self.lbl_conns.setStyleSheet(f"font-size: 16px; font-weight: 800; background: transparent; color: {COLORS['text']};")
+        self.lbl_conns.setStyleSheet(f"font-size: {fpx(14)}; font-weight: 800; background: transparent; color: {COLORS['text']};")
         cap2 = QLabel("Connections"); cap2.setAlignment(Qt.AlignRight)
-        cap2.setStyleSheet(f"font-size: 11px; color: {COLORS['muted']}; background: transparent;")
+        cap2.setStyleSheet(f"font-size: {fpx(10)}; color: {COLORS['muted']}; background: transparent;")
         ccol.addWidget(self.lbl_conns); ccol.addWidget(cap2)
         gt.addLayout(scol); gt.addStretch(); gt.addLayout(ccol)
         sv.addWidget(gtext)
@@ -91,17 +91,17 @@ class SettingsDialogV2(PageBuilderMixin, QDialog):
         right_lay = QVBoxLayout(right_container); right_lay.setContentsMargins(0, 0, 0, 0); right_lay.setSpacing(0)
         
         # Header Search
-        head = QFrame(); head.setFixedHeight(72)
+        head = QFrame(); head.setFixedHeight(52)
         head.setStyleSheet(f"background: {COLORS['bg']}; border-bottom: 1px solid {COLORS['border']};")
-        hl = QHBoxLayout(head); hl.setContentsMargins(20, 0, 20, 0); hl.setSpacing(10)
-        hl.addWidget(BrandLogo(26))
+        hl = QHBoxLayout(head); hl.setContentsMargins(16, 0, 16, 0); hl.setSpacing(9)
+        hl.addWidget(BrandLogo(20))
         brand = QLabel("HyperFetch")
-        brand.setStyleSheet(f"font-size: 18px; font-weight: 800; color: {COLORS['text']}; background: transparent; border: none;")
+        brand.setStyleSheet(f"font-size: {fpx(15)}; font-weight: 800; color: {COLORS['text']}; background: transparent; border: none;")
         hl.addWidget(brand)
         hl.addStretch()
         self.search = QLineEdit(); self.search.setPlaceholderText("Search settings…")
         self.search.setClearButtonEnabled(True)
-        self.search.setFixedWidth(280)        # flat style from the global QSS — same as the main search
+        self.search.setFixedWidth(220)        # flat style from the global QSS — same as the main search
         self.search.textChanged.connect(self._do_search)
         hl.addWidget(self.search)
         right_lay.addWidget(head)

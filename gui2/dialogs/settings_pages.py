@@ -21,7 +21,7 @@ try:
     from gui.dialogs import AnimatedToggle
 except Exception:                       # fallback if unavailable
     from PySide6.QtWidgets import QCheckBox as AnimatedToggle
-from gui2.palette import COLORS, ACCENTS, set_accent
+from gui2.palette import COLORS, fpx, ACCENTS, set_accent
 from gui.icons import themed_icon
 
 _SLIDER_QSS = (
@@ -37,13 +37,13 @@ class PageBuilderMixin:
         # in the sidebar, so the page goes straight to its cards.
         sa = QScrollArea(); sa.setWidgetResizable(True)
         sa.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        w = QWidget(); v = QVBoxLayout(w); v.setContentsMargins(28, 22, 32, 22); v.setSpacing(10)
+        w = QWidget(); v = QVBoxLayout(w); v.setContentsMargins(22, 18, 24, 18); v.setSpacing(9)
         sa.setWidget(w); sa._v = v
         return sa, v
 
     def _card(self):
         f = QFrame(); f.setObjectName("panel")
-        g = QVBoxLayout(f); g.setContentsMargins(16, 12, 16, 12); g.setSpacing(14)
+        g = QVBoxLayout(f); g.setContentsMargins(14, 11, 14, 11); g.setSpacing(11)
         return f, g
 
     def _row(self, layout, label, desc, widget):
@@ -56,7 +56,7 @@ class PageBuilderMixin:
         l = QLabel(label); l.setStyleSheet(f"font-weight:700;background:transparent;color:{COLORS['text']};")
         col.addWidget(l)
         if desc:
-            d = QLabel(desc); d.setStyleSheet(f"color:{COLORS['muted']};font-size:11px;background:transparent;")
+            d = QLabel(desc); d.setStyleSheet(f"color:{COLORS['muted']};font-size:{fpx(11)};background:transparent;")
             col.addWidget(d)
         r.addLayout(col); r.addStretch(); r.addWidget(widget)
         layout.addWidget(rw)
@@ -262,7 +262,7 @@ class PageBuilderMixin:
             btn.setCursor(Qt.PointingHandCursor)
             bg = COLORS['surface2'] if name == "Dark" else ("#f8fafc" if name == "Light" else COLORS['surface'])
             fg = "white" if name == "Dark" else ("black" if name == "Light" else COLORS['text'])
-            btn.setStyleSheet(f"QPushButton {{ background: {bg}; color: {fg}; border: 2px solid transparent; border-radius: 8px; font-weight: 700; font-size: 14px; }}"
+            btn.setStyleSheet(f"QPushButton {{ background: {bg}; color: {fg}; border: 2px solid transparent; border-radius: 8px; font-weight: 700; font-size: {fpx(14)}; }}"
                               f"QPushButton:hover {{ border: 2px solid {COLORS['accent2']}; }}")
             btn.clicked.connect(lambda _, n=name: self._set_theme(n))
             return btn
@@ -336,7 +336,7 @@ class PageBuilderMixin:
     def _p_about(self):
         sa, v = self._page("About", "")
         f, g = self._card()
-        title = QLabel(f"HyperFetch v{APP_VERSION}"); title.setStyleSheet("font-weight:800;font-size:15px;background:transparent;")
+        title = QLabel(f"HyperFetch v{APP_VERSION}"); title.setStyleSheet(f"font-weight:800;font-size:{fpx(15)};background:transparent;")
         desc = QLabel("A modern, fast and reliable download manager."); desc.setStyleSheet(f"color:{COLORS['muted']};background:transparent;")
         g.addWidget(title); g.addWidget(desc)
         brow = QHBoxLayout()
@@ -375,7 +375,7 @@ class PageBuilderMixin:
             bg = COLORS['surface2'] if k == "Dark" else ("#f8fafc" if k == "Light" else COLORS['surface'])
             fg = "white" if k == "Dark" else ("black" if k == "Light" else COLORS['text'])
             border = COLORS['accent'] if k == name else COLORS['border']
-            b.setStyleSheet(f"QPushButton {{ background: {bg}; color: {fg}; border: 2px solid {border}; border-radius: 8px; font-weight: 700; font-size: 14px; }}"
+            b.setStyleSheet(f"QPushButton {{ background: {bg}; color: {fg}; border: 2px solid {border}; border-radius: 8px; font-weight: 700; font-size: {fpx(14)}; }}"
                             f"QPushButton:hover {{ border: 2px solid {COLORS['accent2']}; }}")
 
 
