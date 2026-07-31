@@ -264,18 +264,35 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, QW
             self._save_state()
 
     def _start_server(self):
+        """Bring up the localhost server the extension talks to.
+
+        Retries the bind rather than giving up on the first failure. Relaunching
+        shortly after a close leaves port 5000 held for a few seconds by the
+        outgoing process's sockets, and a single attempt would lose the race —
+        the app then ran with no server at all, so /pair was unreachable and
+        auto-pairing silently never happened. That is the "sometimes the
+        extension doesn't pair when I start from a terminal" symptom.
+        """
+        import logging
+        _log = logging.getLogger("hyperfetch.gui")
+
         def serve():
-            try:
-                run_server(self.queue, self.save_dir, PORT, pending=self.pending, token=self.pair_token)
-            except OSError as e:
-                # Swallowing this silently left the app running with no server:
-                # the browser extension could not reach it, and the old
-                # single-instance guard (which asked over HTTP) could not see it
-                # either — so another launch opened a duplicate window.
-                import logging
-                logging.getLogger("hyperfetch.gui").error(
-                    "local server could not start on port %s (%s) — the browser "
-                    "extension will not be able to reach this window", PORT, e)
+            deadline = time.time() + 20
+            attempt = 0
+            while time.time() < deadline:
+                attempt += 1
+                try:
+                    run_server(self.queue, self.save_dir, PORT,
+                               pending=self.pending, token=self.pair_token)
+                    return                      # only returns if it stops serving
+                except OSError as e:
+                    if attempt == 1:
+                        _log.warning("port %s busy (%s) — retrying while the "
+                                     "previous instance releases it", PORT, e)
+                    time.sleep(1.0)
+            _log.error("local server could not start on port %s — the browser "
+                       "extension will not be able to reach this window, so "
+                       "auto-pairing will not work", PORT)
         threading.Thread(target=serve, daemon=True).start()
 
     # ------------------------------------------------------------- UI

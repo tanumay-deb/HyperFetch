@@ -33,6 +33,7 @@ class DownloadList(QScrollArea):
         self.setObjectName("downloadList")
         self.setWidgetResizable(True)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.setFocusPolicy(Qt.StrongFocus)   # needed for arrow-key selection
         self._inner = QWidget(); self._inner.setObjectName("listInner")
         self._lay = QVBoxLayout(self._inner)
         self._lay.setContentsMargins(2, 2, 8, 80); self._lay.setSpacing(10)
@@ -47,6 +48,50 @@ class DownloadList(QScrollArea):
 
         self._empty = self._make_empty()
         self._lay.insertWidget(0, self._empty)
+
+    def keyPressEvent(self, e):
+        """Arrow keys move the selection; Shift+arrow extends it.
+
+        The list is a column of card widgets rather than a QListView, so none
+        of this comes for free — without it Shift+Up/Down did nothing and range
+        selection was mouse-only.
+        """
+        key = e.key()
+        if key not in (Qt.Key_Up, Qt.Key_Down) or not self._order:
+            super().keyPressEvent(e)
+            return
+
+        step = -1 if key == Qt.Key_Up else 1
+        # move from the edge of the current selection, so repeated presses walk
+        current = self._anchor if self._anchor in self._order else None
+        if self._selected:
+            picked = [i for i, tid in enumerate(self._order) if tid in self._selected]
+            cur_i = picked[0] if step < 0 else picked[-1]
+        elif current is not None:
+            cur_i = self._order.index(current)
+        else:
+            cur_i = 0 if step > 0 else len(self._order) - 1
+            step = 0                            # first press just picks an end
+
+        new_i = max(0, min(len(self._order) - 1, cur_i + step))
+        target = self._order[new_i]
+
+        if e.modifiers() & Qt.ShiftModifier:
+            if self._anchor not in self._order:
+                self._anchor = self._order[cur_i]
+            a, b = self._order.index(self._anchor), new_i
+            lo, hi = sorted((a, b))
+            self._selected = set(self._order[lo:hi + 1])
+        else:
+            self._selected = {target}
+            self._anchor = target
+
+        self._apply_selection()
+        self.selectionChanged.emit(set(self._selected))
+        card = self._cards.get(target)
+        if card:
+            self.ensureWidgetVisible(card, 0, 40)     # keep it on screen
+        e.accept()
 
     def mousePressEvent(self, e):
         # cards accept their own clicks, so anything reaching here is empty space
