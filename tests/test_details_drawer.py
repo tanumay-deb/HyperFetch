@@ -36,7 +36,10 @@ def test_opening_drawer_populates_structured_headers_without_crashing():
 
 def test_response_headers_are_shown_once_captured():
     app = QApplication.instance() or QApplication([])
-    drawer = DetailsDrawer(QWidget())
+    # keep a Python reference to the host: passing QWidget() inline lets it be
+    # collected, and the drawer's parent then raises "C++ object already deleted"
+    host = QWidget()
+    drawer = DetailsDrawer(host)
     task = T.DownloadTask("https://example.test/f.zip", "C:/Downloads/f.zip",
                           headers={"Referer": "https://example.test/"})
     task.response_headers = {"Content-Type": "application/zip",
