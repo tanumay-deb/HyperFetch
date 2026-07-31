@@ -44,10 +44,17 @@ def test_to_from_dict_roundtrip():
 
 
 def test_inflight_restores_as_paused():
-    for live in (T.DOWNLOADING, T.QUEUED):
-        d = T.DownloadTask("u", "p").to_dict()
-        d["status"] = live
-        assert T.DownloadTask.from_dict(d).status == T.PAUSED
+    """A DOWNLOADING task comes back PAUSED and flagged for auto-resume. QUEUED
+    is left alone — it was never mid-transfer, so the scheduler can pick it up."""
+    d = T.DownloadTask("u", "p").to_dict()
+    d["status"] = T.DOWNLOADING
+    r = T.DownloadTask.from_dict(d)
+    assert r.status == T.PAUSED
+    assert getattr(r, "_auto_resume", False) is True
+
+    d2 = T.DownloadTask("u", "p").to_dict()
+    d2["status"] = T.QUEUED
+    assert T.DownloadTask.from_dict(d2).status == T.QUEUED
 
 
 def test_terminal_status_unchanged_on_restore():
@@ -122,8 +129,8 @@ def test_status_transitions_logged():
     t.status = T.DOWNLOADING
     t.status = T.DOWNLOADING                  # same value: no duplicate
     t.status = T.PAUSED
-    assert [e[1] for e in t.events] == ["Downloading", "Paused"]
-    assert all(isinstance(e[0], float) for e in t.events)
+    assert [e["message"] for e in t.events] == ["Downloading", "Paused"]
+    assert all(isinstance(e["time"], float) for e in t.events)
 
 
 def test_events_capped():
@@ -131,7 +138,7 @@ def test_events_capped():
     for i in range(80):
         t.log_event(f"e{i}")
     assert len(t.events) == T.DownloadTask.EVENTS_MAX
-    assert t.events[-1][1] == "e79"
+    assert t.events[-1]["message"] == "e79"
 
 
 def test_events_and_sha256_roundtrip():
@@ -141,17 +148,21 @@ def test_events_and_sha256_roundtrip():
     t.status = T.COMPLETED
     t.sha256 = "ab" * 32
     r = T.DownloadTask.from_dict(json.loads(json.dumps(t.to_dict())))
-    assert [e[1] for e in r.events] == ["Downloading", "Completed"]
+    assert [e["message"] for e in r.events] == ["Downloading", "Completed"]
     assert r.sha256 == "ab" * 32
 
 
-def test_inflight_restore_appends_paused_event():
+def test_inflight_restore_migrates_legacy_events_and_notes_the_resume():
+    """Legacy [ts, message] entries must survive as dicts, or every reader that
+    does ev["message"] would raise on a task saved before the format changed."""
     d = T.DownloadTask("u", "p").to_dict()
     d["status"] = T.DOWNLOADING
     d["events"] = [[1.0, "Downloading"]]
     r = T.DownloadTask.from_dict(d)
     assert r.status == T.PAUSED
-    assert [e[1] for e in r.events] == ["Downloading", "Paused"]
+    assert [e["message"] for e in r.events] == ["Downloading", "Restored for auto-resume"]
+    assert all(isinstance(e, dict) for e in r.events)
+    assert r.events[0]["time"] == 1.0 and r.events[0]["level"] == "INFO"
 
 
 def test_events_missing_or_malformed_tolerated():
@@ -160,7 +171,7 @@ def test_events_missing_or_malformed_tolerated():
     d.pop("events", None)
     assert T.DownloadTask.from_dict(d).events == []
     d["events"] = ["junk", [1.0], [2.0, "Paused"]]
-    assert [e[1] for e in T.DownloadTask.from_dict(d).events] == ["Paused"]
+    assert [e["message"] for e in T.DownloadTask.from_dict(d).events] == ["Paused"]
 
 
 def test_reset_progress(tmp_path, monkeypatch):
@@ -179,4 +190,4 @@ def test_reset_progress(tmp_path, monkeypatch):
     assert t.error == "" and t.hash_status == "" and t.sha256 == ""
     assert not t.pause_requested and not t.cancel_requested
     assert not tmp.exists()
-    assert t.events[-1][1] == "Restarted"
+    assert t.events[-1]["message"] == "Restarted"
