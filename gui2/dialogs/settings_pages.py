@@ -51,14 +51,22 @@ class PageBuilderMixin:
         # tag it with its searchable text (label + description).
         rw = QWidget(); rw.setObjectName("settingRow")
         rw.setProperty("searchText", f"{label} {desc or ''}".lower())
-        r = QHBoxLayout(rw); r.setContentsMargins(0, 0, 0, 0)
+        r = QHBoxLayout(rw); r.setContentsMargins(0, 0, 0, 0); r.setSpacing(12)
         col = QVBoxLayout(); col.setSpacing(1)
-        l = QLabel(label); l.setStyleSheet(f"font-weight:700;background:transparent;color:{COLORS['text']};")
+        l = QLabel(label); l.setWordWrap(True)
+        l.setStyleSheet(f"font-weight:700;background:transparent;color:{COLORS['text']};")
         col.addWidget(l)
         if desc:
-            d = QLabel(desc); d.setStyleSheet(f"color:{COLORS['muted']};font-size:{fpx(11)};background:transparent;")
+            d = QLabel(desc); d.setWordWrap(True)
+            d.setStyleSheet(f"color:{COLORS['muted']};font-size:{fpx(11)};background:transparent;")
             col.addWidget(d)
-        r.addLayout(col); r.addStretch(); r.addWidget(widget)
+        # The text column takes the slack and WRAPS. Without word wrap a long
+        # description made the row wider than the page, shoving its control off
+        # the right edge — with no horizontal scrollbar, the toggle simply
+        # vanished. The control keeps its natural size and stays put.
+        r.addLayout(col, 1)
+        widget.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Preferred)
+        r.addWidget(widget, 0, Qt.AlignRight | Qt.AlignVCenter)
         layout.addWidget(rw)
 
     def _toggle(self, on):
@@ -315,9 +323,8 @@ class PageBuilderMixin:
         self._row(g, "Pre-allocate disk space", "Reserve the full file size before downloading", self.preallocate)
         self.torrent_rpc = self._toggle(ex.get("torrent_rpc", False))
         self._row(g, "Shared torrent engine (beta)",
-                  "One aria2 daemon for all torrents: shared peer table and a single "
-                  "forwardable port, instead of one process per torrent. Falls back "
-                  "automatically if the engine can't start.", self.torrent_rpc)
+                  "One aria2 daemon for all torrents — better peer discovery. "
+                  "Falls back automatically if it can't start.", self.torrent_rpc)
         self.hash_check = self._toggle(ex.get("hash_check", False))
         self._row(g, "Enable hash verification", "Verify file integrity after download", self.hash_check)
         self.debug_log = self._toggle(ex.get("debug_log", False))
