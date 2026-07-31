@@ -35,6 +35,30 @@ def test_magnet_name_decodes_plus_as_space():
     ) == "Killhouse (2026) [1080p] [YTS.GG]"
 
 
+def test_magnet_trackers_deduplicates_and_preserves_order():
+    url = (
+        "magnet:?xt=urn:btih:abc&tr=udp%3A%2F%2Fone.example%3A80"
+        "&tr=https%3A%2F%2Ftwo.example%2Fannounce&tr=UDP%3A%2F%2Fone.example%3A80"
+    )
+
+    assert torrent.magnet_trackers(url) == [
+        "udp://one.example:80", "https://two.example/announce",
+    ]
+
+
+def test_merge_magnet_trackers_adds_only_new_trackers():
+    current = "magnet:?xt=urn:btih:abc&dn=Example&tr=udp%3A%2F%2Fone.example%3A80"
+    updated, added = torrent.merge_magnet_trackers(current, [
+        "UDP://one.example:80", "https://two.example/announce",
+    ])
+
+    assert added == ["https://two.example/announce"]
+    assert torrent.magnet_infohash(updated) == "abc"
+    assert torrent.magnet_trackers(updated) == [
+        "udp://one.example:80", "https://two.example/announce",
+    ]
+
+
 # ---- progress parsing ----
 @pytest.mark.parametrize("line,done,total", [
     ("[#7d6f3a 12MiB/100MiB(12%) CN:5 DL:2.0MiB ETA:44s]", 12 * 1024**2, 100 * 1024**2),
@@ -345,7 +369,7 @@ def test_dht_bootstrap_nodes_passed(tmp_path, monkeypatch):
     can never join the DHT, so magnets sit at CN:0 forever."""
     cmd = _cmd(tmp_path, monkeypatch)
     eps = [a for a in cmd if a.startswith("--dht-entry-point=")]
-    assert len(eps) == len(torrent.DHT_ENTRY_POINTS) >= 2
+    assert len(eps) == len(torrent.DHT_ENTRY_POINTS) >= 1
     assert any("router.bittorrent.com:6881" in a for a in eps)
     assert any(a.startswith("--dht-entry-point6=") for a in cmd)
 

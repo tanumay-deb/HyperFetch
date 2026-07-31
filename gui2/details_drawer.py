@@ -14,7 +14,9 @@ from collections import deque
 
 from PySide6.QtWidgets import (
     QFrame, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QProgressBar,
-    QTabWidget, QWidget, QScrollArea, QToolButton, QSizePolicy, QApplication
+    QTabWidget, QWidget, QScrollArea, QToolButton, QSizePolicy, QApplication,
+    QTableWidget, QTableWidgetItem, QHeaderView, QAbstractItemView, QComboBox, QLineEdit, QFileDialog,
+    QCheckBox
 )
 from PySide6.QtCore import Qt, Signal, QPropertyAnimation, QEasingCurve, QPoint, QSize, QTimer
 from PySide6.QtGui import QPainter, QPen, QColor, QPainterPath
@@ -143,7 +145,75 @@ class _Section(QFrame):
         return val
 
 
+
+class _FileRow(QWidget):
+    def __init__(self, name, size, priority="Normal", is_folder=False, indent=0, parent=None):
+        super().__init__(parent)
+        self.setFixedHeight(36)
+        self.setStyleSheet(f"QWidget {{ border-bottom: 1px solid {COLORS['border']}; background: transparent; }} QWidget:hover {{ background: {COLORS['surface2']}; }}")
+        h = QHBoxLayout(self); h.setContentsMargins(8 + indent*16, 2, 8, 2); h.setSpacing(12)
+        
+        from PySide6.QtWidgets import QCheckBox, QProgressBar, QMenu
+        self.cb = QCheckBox(); self.cb.setChecked(True)
+        h.addWidget(self.cb)
+        
+        ic_name = "folder" if is_folder else "document"
+        ic_color = "warning" if is_folder else "muted"
+        self.icon = QLabel(); self.icon.setPixmap(themed_icon(ic_name, ic_color).pixmap(16, 16))
+        self.icon.setStyleSheet("background: transparent; border: none;")
+        h.addWidget(self.icon)
+        
+        self.lbl_name = QLabel(name); self.lbl_name.setStyleSheet(f"color: {COLORS['text']}; font-weight: 600; font-size: {fpx(12)}; background: transparent; border: none;")
+        self.lbl_name.setMinimumWidth(150); self.lbl_name.setWordWrap(False)
+        from PySide6.QtGui import QFontMetrics
+        fm = QFontMetrics(self.lbl_name.font())
+        elided = fm.elidedText(name, Qt.ElideMiddle, 300)
+        self.lbl_name.setText(elided)
+        self.lbl_name.setToolTip(name)
+        h.addWidget(self.lbl_name, 1)
+        
+        self.lbl_size = QLabel(size); self.lbl_size.setFixedWidth(60)
+        self.lbl_size.setStyleSheet(f"color: {COLORS['muted']}; font-size: {fpx(11)}; background: transparent; border: none;")
+        h.addWidget(self.lbl_size)
+        
+        self.lbl_status = QLabel("Idle"); self.lbl_status.setFixedWidth(60)
+        self.lbl_status.setStyleSheet(f"color: {COLORS['accent']}; font-size: {fpx(11)}; background: transparent; border: none;")
+        h.addWidget(self.lbl_status)
+        
+        pc = QHBoxLayout(); pc.setSpacing(6)
+        self.lbl_pct = QLabel("0%"); self.lbl_pct.setStyleSheet(f"color: {COLORS['success']}; font-weight: 700; font-size: {fpx(11)}; background: transparent; border: none;")
+        self.lbl_pct.setFixedWidth(35)
+        self.bar = QProgressBar(); self.bar.setTextVisible(False); self.bar.setRange(0, 100); self.bar.setFixedHeight(4); self.bar.setFixedWidth(60)
+        self.bar.setStyleSheet(f"QProgressBar{{background:{COLORS['surface']};border:none;border-radius:2px;}} QProgressBar::chunk{{background:{COLORS['accent']};border-radius:2px;}}")
+        pc.addWidget(self.lbl_pct); pc.addWidget(self.bar)
+        w_pc = QWidget(); w_pc.setLayout(pc); w_pc.setFixedWidth(100); w_pc.setStyleSheet("background: transparent; border: none;")
+        h.addWidget(w_pc)
+        
+        self.lbl_added = QLabel("Today"); self.lbl_added.setFixedWidth(70)
+        self.lbl_added.setStyleSheet(f"color: {COLORS['muted']}; font-size: {fpx(11)}; background: transparent; border: none;")
+        h.addWidget(self.lbl_added)
+        
+
+
+    def set_progress(self, pct, status="Idle"):
+        self.bar.setValue(pct)
+        self.lbl_pct.setText(f"{pct}%")
+        if pct == 100:
+            self.lbl_pct.setStyleSheet(f"color: {COLORS['success']}; font-weight: 700; font-size: {fpx(11)}; background: transparent; border: none;")
+            status = "Completed"
+        
+        self.lbl_status.setText(status)
+        if status == "Completed":
+            self.lbl_status.setStyleSheet(f"color: {COLORS['success']}; font-size: {fpx(11)}; background: transparent; border: none;")
+        elif status == "Downloading":
+            self.lbl_status.setStyleSheet(f"color: {COLORS['accent']}; font-size: {fpx(11)}; background: transparent; border: none;")
+        elif status == "Waiting":
+            self.lbl_status.setStyleSheet(f"color: {COLORS['warning']}; font-size: {fpx(11)}; background: transparent; border: none;")
+        else:
+            self.lbl_status.setStyleSheet(f"color: {COLORS['accent']}; font-size: {fpx(11)}; background: transparent; border: none;")
+
 class DetailsDrawer(QFrame):
+
     action = Signal(str, str)        # (action, task_id)
 
     def __init__(self, parent):
@@ -163,6 +233,7 @@ class DetailsDrawer(QFrame):
         self.h_icon.setPixmap(themed_icon("document", "text").pixmap(18, 18))
         self.h_name = QLabel(""); self.h_name.setStyleSheet(f"font-weight: 800; font-size: {fpx(14)}; background: transparent;")
         self.h_name.setWordWrap(True)
+        self.h_name.setTextInteractionFlags(Qt.TextSelectableByMouse)
         self._pinned = False
         self.pin_btn = QPushButton("📌"); self.pin_btn.setFixedSize(28, 28)
         self.pin_btn.setCursor(Qt.PointingHandCursor)
@@ -190,9 +261,15 @@ class DetailsDrawer(QFrame):
             }}
         """)
         self.tabs.addTab(self._overview_tab(), "Overview")
-        self.tabs.addTab(self._scroll_tab("files"), "Files")
-        self.tabs.addTab(self._scroll_tab("conns"), "Connections")
-        self.tabs.addTab(self._scroll_tab("headers"), "Headers")
+        self.tabs.addTab(self._files_tab(), "Files")
+        self.tabs.addTab(self._conns_tab(), "Connections")
+        
+        from PySide6.QtWidgets import QStackedWidget
+        self.headers_stack = QStackedWidget()
+        self.headers_stack.addWidget(self._headers_tab())
+        self.headers_stack.addWidget(self._scroll_tab("trackers"))
+        self.tabs.addTab(self.headers_stack, "Headers")
+        
         self.tabs.addTab(self._logs_tab(), "Logs")
         lay.addWidget(self.tabs, 1)
 
@@ -315,6 +392,154 @@ class DetailsDrawer(QFrame):
         outer.setWidget(w)
         return outer
 
+    def _conns_tab(self):
+        """Live connections. For torrents these are swarm peers (aria2.getPeers);
+        for an HTTP download they are the byte-range segments.
+
+        Only columns aria2 actually reports are shown. Per-peer cumulative bytes
+        and the uTP/TCP transport are deliberately absent — aria2 does not
+        expose either, and inventing them on the screen people open to diagnose
+        a slow download would be worse than leaving them out.
+        """
+        w = QWidget(); v = QVBoxLayout(w)
+        v.setContentsMargins(14, 14, 14, 14); v.setSpacing(10)
+
+        row = QHBoxLayout(); row.setSpacing(10)
+        self.conn_summary = QLabel("—")
+        self.conn_summary.setStyleSheet(
+            f"color:{COLORS['muted']}; font-size:{fpx(12)}; background:transparent;")
+        row.addWidget(self.conn_summary); row.addStretch()
+        v.addLayout(row)
+
+        self.conns_table = QTableWidget(0, 4)
+        self.conns_table.setHorizontalHeaderLabels(["Peer", "Progress", "Down", "Up"])
+        self.conns_table.verticalHeader().setVisible(False)
+        self.conns_table.setShowGrid(False)
+        self.conns_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.conns_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.conns_table.setStyleSheet(
+            f"QTableWidget {{ background: {COLORS['surface']}; border: 1px solid {COLORS['border']}; border-radius: 6px; }}"
+            f"QTableWidget::item {{ border-bottom: 1px solid {COLORS['border']}; padding: 4px; }}"
+            f"QHeaderView::section {{ background: {COLORS['surface2']}; color: {COLORS['muted']};"
+            f" border: none; padding: 6px; font-weight: bold;"
+            f" border-bottom: 1px solid {COLORS['border']}; }}")
+        hh = self.conns_table.horizontalHeader()
+        hh.setSectionResizeMode(0, QHeaderView.Stretch)
+        for c in (1, 2, 3):
+            hh.setSectionResizeMode(c, QHeaderView.ResizeToContents)
+        v.addWidget(self.conns_table, 1)
+
+        self.conn_empty = QLabel()
+        self.conn_empty.setAlignment(Qt.AlignCenter); self.conn_empty.setWordWrap(True)
+        self.conn_empty.setStyleSheet(
+            f"color:{COLORS['muted']}; font-size:{fpx(13)}; background:transparent;")
+        self.conn_empty.hide()
+        v.addWidget(self.conn_empty)
+        return w
+
+    @staticmethod
+    def _bitfield_pct(bits):
+        """Percentage of pieces a peer holds, from aria2's hex bitfield."""
+        if not bits:
+            return 0
+        try:
+            n = int(bits, 16)
+        except (TypeError, ValueError):
+            return 0
+        total = len(bits) * 4                      # 4 bits per hex char
+        return min(100, int(bin(n).count("1") * 100 / total)) if total else 0
+
+    def _peer_rows(self, t):
+        """[(label, pct, down_bps, up_bps)] from the daemon, or [] if the RPC
+        engine is not driving this task."""
+        gid = getattr(t, "gid", None)
+        if not gid:
+            return []
+        try:
+            import aria2d
+            peers = aria2d.DAEMON.call("aria2.getPeers", gid) or []
+        except Exception:
+            return []
+        out = []
+        for p in peers:
+            ip = str(p.get("ip", "?"))
+            port = p.get("port")
+            label = f"{ip}:{port}" if port else ip
+            if str(p.get("seeder", "")).lower() == "true":
+                label += "  · seed"
+            out.append((label,
+                        self._bitfield_pct(p.get("bitfield")),
+                        int(p.get("downloadSpeed") or 0),
+                        int(p.get("uploadSpeed") or 0)))
+        out.sort(key=lambda r: r[2], reverse=True)        # fastest first
+        return out
+
+    def _fill_conns(self, t, is_tor):
+        rows = self._peer_rows(t) if is_tor else []
+        if not is_tor:
+            # HTTP: the "connections" are this download's byte-range segments
+            for s in t.segments:
+                total = (s.end - s.start + 1) if s.end >= s.start else 0
+                pct = int(s.downloaded * 100 / total) if total else (100 if s.complete else 0)
+                rows.append((f"Segment {s.index + 1}", pct, 0, 0))
+
+        self.conns_table.setRowCount(len(rows))
+        for i, (label, pct, down, up) in enumerate(rows):
+            self.conns_table.setItem(i, 0, QTableWidgetItem(label))
+            self.conns_table.setItem(i, 1, QTableWidgetItem(f"{pct}%"))
+            self.conns_table.setItem(i, 2, QTableWidgetItem(human_speed(down) if down else "—"))
+            self.conns_table.setItem(i, 3, QTableWidgetItem(human_speed(up) if up else "—"))
+
+        if rows:
+            self.conns_table.show(); self.conn_empty.hide()
+            if is_tor:
+                seeds = getattr(t, "tor_seeds", 0)
+                self.conn_summary.setText(f"{len(rows)} peer(s) · {seeds} seed(s)")
+            else:
+                live = sum(1 for s in t.segments if not s.complete)
+                self.conn_summary.setText(f"{len(rows)} segment(s) · {live} active")
+        else:
+            self.conns_table.hide(); self.conn_empty.show()
+            if is_tor and t.status == T.DOWNLOADING and not getattr(t, "gid", None):
+                # honest about WHY it is empty rather than implying no peers
+                self.conn_summary.setText("")
+                self.conn_empty.setText(
+                    "Per-peer details need the shared torrent engine.\n"
+                    "Enable it in Settings → Advanced.")
+            elif t.status == T.DOWNLOADING:
+                self.conn_summary.setText("")
+                self.conn_empty.setText("Connecting…")
+            else:
+                self.conn_summary.setText("")
+                self.conn_empty.setText("Resume the download to see connections.")
+
+    def _headers_tab(self):
+        """Request headers as a real Name/Value table rather than 'k: v' text —
+        values (cookies stripped, long UA strings) are selectable per cell and
+        the name column stays readable when a value is huge."""
+        self.h_table = QTableWidget(0, 2)
+        self.h_table.setHorizontalHeaderLabels(["Header", "Value"])
+        self.h_table.verticalHeader().setVisible(False)
+        self.h_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.h_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.h_table.setAlternatingRowColors(True)
+        hh = self.h_table.horizontalHeader()
+        hh.setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        hh.setSectionResizeMode(1, QHeaderView.Stretch)
+        return self.h_table
+
+    def _fill_headers(self, t):
+        """Populate the header table. Cookies/auth are stripped first — this
+        panel is the one place a screenshot could leak a session."""
+        hdr = utils.strip_sensitive(getattr(t, "headers", {}) or {})
+        self.h_table.setRowCount(len(hdr))
+        for i, (k, v) in enumerate(sorted(hdr.items())):
+            name = QTableWidgetItem(str(k))
+            val = QTableWidgetItem(str(v))
+            val.setToolTip(str(v))
+            self.h_table.setItem(i, 0, name)
+            self.h_table.setItem(i, 1, val)
+
     def _scroll_tab(self, key):
         sa = QScrollArea(); sa.setWidgetResizable(True)
         inner = QWidget(); lay = QVBoxLayout(inner); lay.setContentsMargins(2, 12, 2, 2); lay.setSpacing(6)
@@ -323,32 +548,200 @@ class DetailsDrawer(QFrame):
         setattr(self, f"_{key}_lay", lay)
         return sa
 
-    def _logs_tab(self):
-        """Logs with a Copy button — text is selectable, and Copy grabs the whole
-        log (status / URL / error) in one click for pasting into a bug report."""
-        self._log_lines = []
-        w = QWidget(); v = QVBoxLayout(w); v.setContentsMargins(0, 8, 0, 0); v.setSpacing(6)
-        bar = QHBoxLayout(); bar.addStretch()
-        copy = QPushButton("  Copy"); copy.setIcon(themed_icon("clipboard", "text"))
-        copy.setCursor(Qt.PointingHandCursor)
-        copy.setStyleSheet(
-            f"QPushButton {{ padding: 4px 12px; font-weight: 600; background: {COLORS['surface2']};"
-            f" border: 1px solid {COLORS['border']}; border-radius: 7px; }}"
-            f"QPushButton:hover {{ background: {COLORS['card_hover']}; }}")
-        copy.clicked.connect(self._copy_logs)
-        bar.addWidget(copy)
-        v.addLayout(bar)
-        sa = self._scroll_tab("logs")
-        v.addWidget(sa, 1)
+    def _files_tab(self):
+        w = QWidget(); v = QVBoxLayout(w); v.setContentsMargins(14, 14, 14, 14); v.setSpacing(12)
+        
+        # Top toolbar
+        top_bar = QHBoxLayout()
+        
+        self.file_search = QLineEdit()
+        self.file_search.setPlaceholderText("Search files...")
+        self.file_search.textChanged.connect(self._filter_files)
+        self.file_search.addAction(themed_icon("search", "muted"), QLineEdit.LeadingPosition)
+        self.file_search.setStyleSheet(f"QLineEdit {{ background: {COLORS['surface2']}; color: {COLORS['text']}; border: 1px solid {COLORS['border']}; border-radius: 6px; padding: 4px; }}")
+        
+        self.btn_select_all = QPushButton(" Select All")
+        self.btn_select_all.setIcon(themed_icon("check-square", "text"))
+        self.btn_select_all.setStyleSheet(f"QPushButton {{ padding: 4px 12px; font-weight: 600; background: {COLORS['surface2']}; border: 1px solid {COLORS['border']}; border-radius: 7px; }} QPushButton:hover {{ background: {COLORS['card_hover']}; }}")
+        self.btn_select_all.clicked.connect(lambda: self._set_all_files(True))
+        
+        self.btn_select_none = QPushButton(" Select None")
+        self.btn_select_none.setIcon(themed_icon("square", "text"))
+        self.btn_select_none.setStyleSheet(f"QPushButton {{ padding: 4px 12px; font-weight: 600; background: {COLORS['surface2']}; border: 1px solid {COLORS['border']}; border-radius: 7px; }} QPushButton:hover {{ background: {COLORS['card_hover']}; }}")
+        self.btn_select_none.clicked.connect(lambda: self._set_all_files(False))
+        
+        top_bar.addWidget(self.file_search, 1)
+        top_bar.addWidget(self.btn_select_all)
+        top_bar.addWidget(self.btn_select_none)
+        v.addLayout(top_bar)
+        
+        # Table
+        self.files_table = QTableWidget()
+        self.files_table.setColumnCount(3)
+        self.files_table.setHorizontalHeaderLabels(["Name", "Size", "Status"])
+        self.files_table.verticalHeader().setVisible(False)
+        self.files_table.setShowGrid(False)
+        self.files_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.files_table.setSelectionMode(QAbstractItemView.NoSelection)
+        self.files_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.files_table.setStyleSheet(
+            f"QTableWidget {{ background: {COLORS['surface']}; border: 1px solid {COLORS['border']}; border-radius: 6px; }}"
+            f"QTableWidget::item {{ border-bottom: 1px solid {COLORS['border']}; padding: 4px; }}"
+            f"QHeaderView::section {{ background: {COLORS['surface2']}; color: {COLORS['muted']}; border: none; padding: 6px; font-weight: bold; border-bottom: 1px solid {COLORS['border']}; }}"
+        )
+        
+        header = self.files_table.horizontalHeader()
+        header.setSectionResizeMode(0, QHeaderView.Stretch)
+        header.setSectionResizeMode(1, QHeaderView.Fixed)
+        self.files_table.setColumnWidth(1, 80)
+        header.setSectionResizeMode(2, QHeaderView.Fixed)
+        self.files_table.setColumnWidth(2, 90)
+        
+        v.addWidget(self.files_table, 1)
         return w
+
+    def _filter_files(self):
+        query = self.file_search.text().lower()
+        for row in range(self.files_table.rowCount()):
+            item = self.files_table.item(row, 0)
+            if item:
+                self.files_table.setRowHidden(row, query not in item.data(Qt.UserRole).lower())
+
+    def _set_all_files(self, state):
+        if not hasattr(self, '_file_row_widgets') or not self._file_row_widgets: return
+        for idx, cb, sz in self._file_row_widgets:
+            cb.setChecked(state)
+
+    def _logs_tab(self):
+        w = QWidget(); v = QVBoxLayout(w); v.setContentsMargins(14, 14, 14, 14); v.setSpacing(12)
+        
+        # Top toolbar
+        top_bar = QHBoxLayout()
+        
+        self.log_filter_combo = QComboBox()
+        self.log_filter_combo.addItems(["All Logs", "INFO", "SUCCESS", "ERROR", "WARNING"])
+        self.log_filter_combo.currentTextChanged.connect(self._filter_logs)
+        self.log_filter_combo.setFixedWidth(120)
+        self.log_filter_combo.setStyleSheet(f"QComboBox {{ background: {COLORS['surface2']}; color: {COLORS['text']}; border: 1px solid {COLORS['border']}; border-radius: 6px; padding: 4px; }}")
+        
+        self.log_search = QLineEdit()
+        self.log_search.setPlaceholderText("Search logs...")
+        self.log_search.textChanged.connect(self._filter_logs)
+        self.log_search.addAction(themed_icon("search", "muted"), QLineEdit.LeadingPosition)
+        self.log_search.setStyleSheet(f"QLineEdit {{ background: {COLORS['surface2']}; color: {COLORS['text']}; border: 1px solid {COLORS['border']}; border-radius: 6px; padding: 4px; }}")
+        
+        self.clear_logs_btn = QPushButton(" Clear Logs")
+        self.clear_logs_btn.setIcon(themed_icon("trash", "text"))
+        self.clear_logs_btn.setObjectName("ghost")
+        self.clear_logs_btn.setStyleSheet(f"QPushButton {{ padding: 4px 12px; font-weight: 600; background: {COLORS['surface2']}; border: 1px solid {COLORS['border']}; border-radius: 7px; }} QPushButton:hover {{ background: {COLORS['card_hover']}; }}")
+        self.clear_logs_btn.clicked.connect(self._clear_logs)
+        
+        top_bar.addWidget(self.log_filter_combo)
+        top_bar.addWidget(self.log_search, 1)
+        top_bar.addWidget(self.clear_logs_btn)
+        v.addLayout(top_bar)
+        
+        # Table
+        self.logs_table = QTableWidget()
+        self.logs_table.setColumnCount(4)
+        self.logs_table.setHorizontalHeaderLabels(["Time", "Level", "Source", "Message"])
+        self.logs_table.verticalHeader().setVisible(False)
+        self.logs_table.setShowGrid(False)
+        self.logs_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.logs_table.setSelectionMode(QAbstractItemView.SingleSelection)
+        self.logs_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.logs_table.setStyleSheet(
+            f"QTableWidget {{ background: {COLORS['surface']}; border: 1px solid {COLORS['border']}; border-radius: 6px; }}"
+            f"QTableWidget::item {{ border-bottom: 1px solid {COLORS['border']}; padding: 4px; }}"
+            f"QHeaderView::section {{ background: {COLORS['surface2']}; color: {COLORS['muted']}; border: none; padding: 6px; font-weight: bold; border-bottom: 1px solid {COLORS['border']}; }}"
+        )
+        
+        header = self.logs_table.horizontalHeader()
+        header.setSectionResizeMode(0, QHeaderView.Fixed)
+        self.logs_table.setColumnWidth(0, 80)
+        header.setSectionResizeMode(1, QHeaderView.Fixed)
+        self.logs_table.setColumnWidth(1, 90)
+        header.setSectionResizeMode(2, QHeaderView.Fixed)
+        self.logs_table.setColumnWidth(2, 110)
+        header.setSectionResizeMode(3, QHeaderView.Stretch)
+        
+        v.addWidget(self.logs_table, 1)
+        
+        # Bottom toolbar
+        bot_bar = QHBoxLayout()
+        self.logs_count_lbl = QLabel("Showing 0 of 0 logs")
+        self.logs_count_lbl.setStyleSheet(f"color: {COLORS['muted']}; font-size: {fpx(12)};")
+        
+        self.export_logs_btn = QPushButton(" Export Logs")
+        self.export_logs_btn.setIcon(themed_icon("download", "white"))
+        self.export_logs_btn.setStyleSheet(f"background: {COLORS['accent']}; color: white; border-radius: 4px; padding: 6px 12px; font-weight: bold;")
+        self.export_logs_btn.clicked.connect(self._export_logs)
+        
+        bot_bar.addWidget(self.logs_count_lbl)
+        bot_bar.addStretch()
+        bot_bar.addWidget(self.export_logs_btn)
+        v.addLayout(bot_bar)
+        
+        return w
+
+    def _filter_logs(self):
+        query = self.log_search.text().lower()
+        level_filter = self.log_filter_combo.currentText()
+        visible_count = 0
+        total_count = self.logs_table.rowCount()
+        
+        for row in range(total_count):
+            level_item = self.logs_table.item(row, 1)
+            msg_item = self.logs_table.item(row, 3)
+            src_item = self.logs_table.item(row, 2)
+            if not level_item or not msg_item: continue
+            
+            lvl = level_item.data(Qt.UserRole)
+            txt = msg_item.text().lower() + (src_item.text().lower() if src_item else "")
+            
+            show = True
+            if level_filter != "All Logs" and lvl != level_filter:
+                show = False
+            if query and query not in txt:
+                show = False
+                
+            self.logs_table.setRowHidden(row, not show)
+            if show:
+                visible_count += 1
+                
+        self.logs_count_lbl.setText(f"Showing {visible_count:,} of {total_count:,} logs")
+
+    def _clear_logs(self):
+        if not self._tid: return
+        t = self.parent().queue.get_task(self._tid)
+        if t and hasattr(t, "events"):
+            t.events.clear()
+            self._ev_count = -1
+            self.update_live(t, 0.0)
+            
+    def _export_logs(self):
+        if not self._tid: return
+        t = self.parent().queue.get_task(self._tid)
+        if not t: return
+        path, _ = QFileDialog.getSaveFileName(self, "Export Logs", f"{t.filename}.log", "Log Files (*.log *.txt)")
+        if not path: return
+        try:
+            with open(path, 'w', encoding='utf-8') as f:
+                for ev in getattr(t, "events", []):
+                    ts = ev.get("time", 0) if isinstance(ev, dict) else ev[0]
+                    msg = ev.get("message", "") if isinstance(ev, dict) else ev[1]
+                    lvl = ev.get("level", "INFO") if isinstance(ev, dict) else "INFO"
+                    src = ev.get("source", "System") if isinstance(ev, dict) else "System"
+                    from datetime import datetime
+                    time_str = datetime.fromtimestamp(ts).strftime("%H:%M:%S") if ts else ""
+                    f.write(f"[{time_str}] [{lvl}] [{src}] {msg}\n")
+        except Exception as e:
+            print(f"Failed to export logs: {e}")
 
     # ---- small actions ----
     def _emit(self, action):
         if self._tid:
             self.action.emit(action, self._tid)
-
-    def _copy_logs(self):
-        QApplication.clipboard().setText("\n".join(self._log_lines))
 
     def _flash(self, btn, text="Copied ✓"):
         old = btn.text()
@@ -426,6 +819,23 @@ class DetailsDrawer(QFrame):
         lay.addStretch()
 
     # ---- open / close ----
+    def _apply_file_selection(self):
+        if not hasattr(self, '_file_row_widgets') or not self._file_row_widgets: return
+        selected = []
+        for idx, cb, _ in self._file_row_widgets:
+            if cb.isChecked():
+                selected.append(str(idx + 1))
+        
+        # update aria2 if this is a torrent
+        from PySide6.QtWidgets import QApplication
+        app = QApplication.instance()
+        if not hasattr(app, 'queue'): return
+        
+        t = next((task for task in app.queue.tasks if task.id == self._tid), None)
+        if t and getattr(t, 'is_torrent', False):
+            # In IDMClone, change_torrent_files handles this
+            app.queue.change_torrent_files(self._tid, ','.join(selected))
+
     def _load(self, t):
         """Point the drawer at a task and refresh its content (no slide)."""
         self._tid = t.id
@@ -509,47 +919,135 @@ class DetailsDrawer(QFrame):
             scheme = (t.url or "").split(":", 1)[0].upper()
             self.ov_proto.setText(scheme or "—")
             self.ov_range.setText("Yes" if t.supports_range else "No")
+            
+        # Extract trackers statically once
+        self._static_trackers = []
+        if is_tor:
+            import torrent
+            if t.url and t.url.startswith("magnet:"):
+                extracted = torrent.magnet_trackers(t.url)
+                self._static_trackers.extend(extracted)
+                for pt in torrent.PUBLIC_TRACKERS:
+                    if pt not in self._static_trackers:
+                        self._static_trackers.append(pt + " (Public)")
+            elif t.url and os.path.isfile(t.url):
+                try:
+                    with open(t.url, "rb") as f:
+                        data = torrent._bdecode(f.read())
+                        if b"announce-list" in data:
+                            for tier in data[b"announce-list"]:
+                                for tr_b in tier:
+                                    self._static_trackers.append(tr_b.decode("utf-8", "ignore"))
+                        elif b"announce" in data:
+                            self._static_trackers.append(data[b"announce"].decode("utf-8", "ignore"))
+                except Exception:
+                    pass
 
-        # Files. For torrents the list comes from the saved metadata, so all of
-        # the payload's files show up while it is still downloading (and after a
-        # restart) instead of only whatever happens to exist on disk so far.
-        files = []
+        self._file_row_widgets = []
+        self.files_table.setRowCount(0)
+        
         sp = t.save_path
-        empty = None
+        total_sz = 0
+        total_files = 0
+        
+        def add_file_row(idx, name, size, is_folder, pct, status_str, indent=0):
+            r = self.files_table.rowCount()
+            self.files_table.insertRow(r)
+            
+            # Col 0: Name (Checkbox + Icon + Label)
+            w = QWidget()
+            h = QHBoxLayout(w); h.setContentsMargins(4 + indent*16, 2, 4, 2); h.setSpacing(8)
+            cb = QCheckBox(); cb.setChecked(True)
+            cb.stateChanged.connect(self._apply_file_selection)
+            ic_name = "folder" if is_folder else "document"
+            ic_color = "warning" if is_folder else "muted"
+            icon = QLabel(); icon.setPixmap(themed_icon(ic_name, ic_color).pixmap(16, 16))
+            lbl = QLabel(name); lbl.setStyleSheet("background: transparent;")
+            lbl.setToolTip(name)
+            h.addWidget(cb)
+            h.addWidget(icon)
+            h.addWidget(lbl, 1)
+            
+            name_item = QTableWidgetItem()
+            name_item.setData(Qt.UserRole, name)
+            self.files_table.setItem(r, 0, name_item)
+            self.files_table.setCellWidget(r, 0, w)
+            
+            # Col 1: Size
+            sz_item = QTableWidgetItem(human_size(size))
+            sz_item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            sz_item.setForeground(QColor(COLORS['muted']))
+            self.files_table.setItem(r, 1, sz_item)
+            
+            # Col 2: Status
+            status_item = QTableWidgetItem(f"{pct}%" if pct < 100 else status_str)
+            status_item.setTextAlignment(Qt.AlignCenter)
+            status_item.setForeground(QColor(COLORS['accent'] if pct < 100 else COLORS['muted']))
+            self.files_table.setItem(r, 2, status_item)
+            
+            self._file_row_widgets.append((idx, cb, size))
+            
         if is_tor:
             entries = _torrent.list_files(t)
-            for rel, size in entries:
-                on_disk = ""
-                if sp:
-                    base = sp if os.path.isdir(sp) else os.path.dirname(sp) or "."
-                    fp = os.path.join(base, *rel.split("/"))
-                    if os.path.isfile(fp):
-                        got = os.path.getsize(fp)
-                        if size and got < size:
-                            on_disk = f"   · {int(got * 100 / size)}% on disk"
-                        elif size:
-                            on_disk = "   · complete"
-                files.append((f"{rel}   ({human_size(size)}){on_disk}", False))
             if not entries:
-                empty = ("magnet", "Waiting for torrent metadata",
-                         "The file list appears once peers send the torrent's metadata.")
-        elif sp and os.path.isdir(sp):
-            try:
-                for name in sorted(os.listdir(sp)):
-                    fp = os.path.join(sp, name)
-                    sz = os.path.getsize(fp) if os.path.isfile(fp) else 0
-                    files.append((f"{name}   ({human_size(sz)})", False))
-            except OSError:
-                pass
+                self.files_table.setRowCount(1)
+                self.files_table.setSpan(0, 0, 1, 3)
+                wait_item = QTableWidgetItem("Waiting for torrent metadata...")
+                wait_item.setTextAlignment(Qt.AlignCenter)
+                wait_item.setForeground(QColor(COLORS['muted']))
+                self.files_table.setItem(0, 0, wait_item)
+            else:
+                for i, (rel, size) in enumerate(entries):
+                    total_sz += size
+                    total_files += 1
+                    parts = rel.split("/")
+                    indent = len(parts) - 1
+                    name = parts[-1]
+                    pct = 0
+                    if sp:
+                        base = sp if os.path.isdir(sp) else os.path.dirname(sp) or "."
+                        fp = os.path.join(base, *parts)
+                        if os.path.isfile(fp):
+                            got = os.path.getsize(fp)
+                            if size: pct = int(got * 100 / size)
+                            elif size == 0: pct = 100
+                    status_str = "Completed" if pct >= 100 else ("Downloading" if t.status == T.DOWNLOADING else "Idle")
+                    add_file_row(i, name, size, False, pct, status_str, indent)
         else:
-            files.append((f"{t.filename}   ({human_size(t.total_size)})", False))
-        self._fill("files", files, empty=empty)
+            if sp and os.path.isdir(sp):
+                try:
+                    for i, name in enumerate(sorted(os.listdir(sp))):
+                        fp = os.path.join(sp, name)
+                        sz = os.path.getsize(fp) if os.path.isfile(fp) else 0
+                        total_sz += sz
+                        total_files += 1
+                        add_file_row(i, name, sz, os.path.isdir(fp), 100, "Completed")
+                except OSError: pass
+            else:
+                sz = t.total_size or 0
+                total_sz += sz
+                total_files += 1
+                pct = 100 if t.status == T.COMPLETED else t.percent
+                status_str = "Completed" if t.status == T.COMPLETED else ("Downloading" if t.status == T.DOWNLOADING else "Idle")
+                add_file_row(0, t.filename or "file", sz, False, pct, status_str)
+        
+
 
         # Headers (cookies/auth stripped)
-        hdr = utils.strip_sensitive(getattr(t, "headers", {}) or {})
-        self._fill("headers", [(f"{k}: {v}", True) for k, v in hdr.items()],
-                   empty=("document", "No extra headers",
-                          "Browser-sent downloads carry Referer / User-Agent here."))
+        is_tor = _torrent.is_torrent_task(t.url, t.filename)
+        self.headers_stack.setCurrentIndex(1 if is_tor else 0)
+        tab_index = self.tabs.indexOf(self.headers_stack)
+        self.tabs.setTabText(tab_index, "Trackers" if is_tor else "Headers")
+        
+        if is_tor:
+            trk = getattr(t, "trackers", [])
+            lines = []
+            for tr in trk:
+                st = tr.get("status", "Unknown")
+                lines.append((f"{tr.get('url', '')} - {st}", False))
+            self._fill("trackers", lines, empty=("magnet", "No Trackers", "This torrent has no trackers."))
+        else:
+            self._fill_headers(t)
 
         # Logs: rendered as an event timeline by _render_logs (update_live
         # rebuilds it whenever the event count changes)
@@ -557,48 +1055,80 @@ class DetailsDrawer(QFrame):
 
     # ---- Logs timeline ----
     def _render_logs(self, t):
-        """Rebuild the Logs tab as a status timeline (mockup): dot + event +
-        relative age, then the URL / error details below. Only called when the
-        event count changes, so no per-tick widget churn."""
-        lay = self._logs_lay
-        while lay.count():
-            it = lay.takeAt(0)
-            if it.widget():
-                it.widget().deleteLater()
+        self.logs_table.setRowCount(0)
+        events = getattr(t, "events", [])
+        
+        self.logs_table.setRowCount(len(events) + 1)
+        
+        def make_badge(level):
+            l = QLabel(level)
+            l.setAlignment(Qt.AlignCenter)
+            bg, text_col = COLORS["info"], "white"
+            if level == "SUCCESS": bg = COLORS["success"]
+            elif level == "ERROR": bg = COLORS["error"]
+            elif level == "WARNING": bg = COLORS["warning"]
+            l.setStyleSheet(f"background: {bg}; color: {text_col}; border-radius: 4px; font-size: {fpx(10)}; font-weight: bold; padding: 2px 6px;")
+            w = QWidget(); lay = QHBoxLayout(w); lay.setContentsMargins(4, 2, 4, 2); lay.addWidget(l)
+            return w, level
+            
+        def make_item(text, color):
+            item = QTableWidgetItem(text)
+            item.setForeground(QColor(color))
+            return item
+            
+        from datetime import datetime
+        row_idx = 0
+        
+        # Added event
+        added_ts = getattr(t, "added", 0)
+        time_str = datetime.fromtimestamp(added_ts).strftime("%H:%M:%S") if added_ts else ""
+        self.logs_table.setItem(row_idx, 0, make_item(time_str, COLORS["muted"]))
+        
+        badge_w, lvl = make_badge("SUCCESS")
+        self.logs_table.setCellWidget(row_idx, 1, badge_w)
+        lvl_item = QTableWidgetItem()
+        lvl_item.setData(Qt.UserRole, lvl)
+        self.logs_table.setItem(row_idx, 1, lvl_item)
+        
+        self.logs_table.setItem(row_idx, 2, make_item("System", COLORS["muted"]))
+        self.logs_table.setItem(row_idx, 3, make_item("Added to queue", COLORS["text"]))
+        row_idx += 1
+        
+        for ev in events:
+            ts = ev.get("time", 0) if isinstance(ev, dict) else ev[0]
+            msg = ev.get("message", "") if isinstance(ev, dict) else ev[1]
+            lvl = ev.get("level", "INFO") if isinstance(ev, dict) else "INFO"
+            src = ev.get("source", "System") if isinstance(ev, dict) else "System"
+            
+            time_str = datetime.fromtimestamp(ts).strftime("%H:%M:%S") if ts else ""
+            self.logs_table.setItem(row_idx, 0, make_item(time_str, COLORS["muted"]))
+            
+            badge_w, b_lvl = make_badge(lvl)
+            self.logs_table.setCellWidget(row_idx, 1, badge_w)
+            lvl_item = QTableWidgetItem()
+            lvl_item.setData(Qt.UserRole, b_lvl)
+            self.logs_table.setItem(row_idx, 1, lvl_item)
+            
+            self.logs_table.setItem(row_idx, 2, make_item(src, COLORS["muted"]))
+            self.logs_table.setItem(row_idx, 3, make_item(msg, COLORS["text"]))
+            row_idx += 1
 
-        rows = [(getattr(t, "added", 0), "Added")] + \
-               [(ts, txt) for ts, txt in getattr(t, "events", [])]
-        copy_lines = []
-        for ts, txt in rows:
-            age = humanize_age(ts) or ""
-            copy_lines.append(f"{txt}  ({age})" if age else txt)
-            r = QHBoxLayout(); r.setSpacing(10)
-            dot = QLabel("●")
-            col = _STATE_COLOR_S.get(txt, COLORS["accent"])
-            dot.setStyleSheet(f"color: {col}; font-size: {fpx(9)}; background: transparent;")
-            lab = QLabel(txt)
-            lab.setStyleSheet(f"color: {COLORS['text']}; font-weight: 700; font-size: {fpx(12)}; background: transparent;")
-            when = QLabel(age)
-            when.setStyleSheet(f"color: {COLORS['muted']}; font-size: {fpx(11)}; background: transparent;")
-            r.addWidget(dot); r.addWidget(lab); r.addStretch(); r.addWidget(when)
-            w = QWidget(); w.setLayout(r); w.setStyleSheet("background: transparent;")
-            lay.addWidget(w)
+        # Plain-text mirror of the table for copy-to-clipboard. A QTableWidget
+        # cannot be pasted into a bug report, and this is the whole point of the
+        # Logs tab, so keep the flat form alongside the rendered one.
+        lines = [f"Added: {getattr(t, 'added', 0)}  [SUCCESS] System — Added to queue"]
+        for ev in events:
+            if isinstance(ev, dict):
+                lines.append(f"{ev.get('time', 0)}  [{ev.get('level', 'INFO')}] "
+                             f"{ev.get('source', 'System')} — {ev.get('message', '')}")
+            elif isinstance(ev, (list, tuple)) and len(ev) == 2:
+                lines.append(f"{ev[0]}  [INFO] System — {ev[1]}")
+        lines.append(f"URL: {getattr(t, 'url', '')}")
+        if getattr(t, "error", ""):
+            lines.append(f"Error: {t.error}")
+        self._log_lines = lines
 
-        # detail lines (selectable) under the timeline
-        details = [f"URL: {t.url}"]
-        if t.error:
-            details.append(f"Error: {t.error}")
-        copy_lines += details
-        lay.addSpacing(10)
-        for text in details:
-            l = QLabel(text); l.setWordWrap(True)
-            l.setTextInteractionFlags(Qt.TextSelectableByMouse | Qt.TextSelectableByKeyboard)
-            l.setCursor(Qt.IBeamCursor)
-            l.setStyleSheet(f"color: {COLORS['muted']}; background: transparent;"
-                            f" font-family: Consolas, monospace; font-size: {fpx(11)};")
-            lay.addWidget(l)
-        lay.addStretch()
-        self._log_lines = copy_lines
+        self._filter_logs()
 
     def _integrity_text(self, t):
         st = getattr(t, "hash_status", "")
@@ -641,6 +1171,49 @@ class DetailsDrawer(QFrame):
             self.ov_digest.setToolTip("")
         self.graph.push(bps if t.status == T.DOWNLOADING else 0.0)
 
+        # Update files progress if applicable
+        if hasattr(self, '_file_row_widgets') and self._file_row_widgets and t.status == T.DOWNLOADING:
+            sp = t.save_path
+            if _torrent.is_torrent_task(t.url, t.filename) and sp:
+                entries = _torrent.list_files(t)
+                for i, cb, size in self._file_row_widgets[:150]:
+                    if i < len(entries):
+                        rel, _ = entries[i]
+                        parts = rel.split("/")
+                        base = sp if os.path.isdir(sp) else os.path.dirname(sp) or "."
+                        fp = os.path.join(base, *parts)
+                        if os.path.isfile(fp):
+                            got = os.path.getsize(fp)
+                            pct = int(got * 100 / size) if size else 100
+                            pct = min(100, pct)
+                            status_str = "Completed" if pct >= 100 else "Downloading"
+                            item = self.files_table.item(i, 2)
+                            if item:
+                                item.setText(f"{pct}%" if pct < 100 else status_str)
+                                item.setForeground(QColor(COLORS['accent'] if pct < 100 else COLORS['muted']))
+            elif not _torrent.is_torrent_task(t.url, t.filename) and len(self._file_row_widgets) == 1:
+                pct = t.percent
+                status_str = "Completed" if pct >= 100 else "Downloading"
+                item = self.files_table.item(0, 2)
+                if item:
+                    item.setText(f"{pct}%" if pct < 100 else status_str)
+                    item.setForeground(QColor(COLORS['accent'] if pct < 100 else COLORS['muted']))
+
+        if _torrent.is_torrent_task(t.url, t.filename):
+            # aria2 exposes no per-tracker stats and no reannounce, so this is
+            # the announce LIST, not a status table. Showing "Active"/peer
+            # counts here would be invented — the tab says what we know: which
+            # trackers this torrent will announce to.
+            trk = getattr(t, "trackers", [])
+            lines = []
+            if trk:
+                lines = [(str(tr.get("url", "")), False) for tr in trk if tr.get("url")]
+            elif getattr(self, "_static_trackers", None):
+                lines = [(str(tr), False) for tr in self._static_trackers]
+            self._fill("trackers", lines,
+                       empty=("magnet", "No trackers",
+                              "This magnet carries no tracker list — it relies on DHT."))
+
         # Logs timeline: rebuild only when a new event landed
         n = len(getattr(t, "events", []))
         if n != getattr(self, "_ev_count", -1):
@@ -650,29 +1223,13 @@ class DetailsDrawer(QFrame):
         # Connections
         if is_tor:
             self.ov_conns.setText(str(getattr(t, "tor_conns", 0)))
-            if t.status == T.DOWNLOADING:
-                self._fill("conns", [
-                    (f"Peers connected: {getattr(t,'tor_conns',0)}", False),
-                    (f"Seeders: {getattr(t,'tor_seeds',0)}", False),
-                ])
-            else:
-                self._fill("conns", [], empty=(
-                    "magnet", "No active peers",
-                    "Resume the download to see swarm details."))
         else:
             live = [s for s in t.segments if not s.complete]
             self.ov_conns.setText(str(len(live)) if t.status == T.DOWNLOADING else "0")
-            if t.status == T.DOWNLOADING and t.segments:
-                lines = []
-                for s in t.segments:
-                    total = (s.end - s.start + 1) if s.end >= s.start else 0
-                    pc = int(s.downloaded * 100 / total) if total else (100 if s.complete else 0)
-                    lines.append((f"Segment {s.index + 1}: {pc}%   ({human_size(s.downloaded)})", False))
-                self._fill("conns", lines)
-            else:
-                self._fill("conns", [], empty=(
-                    "link", "No active connections",
-                    "Resume the download to see connection details."))
+        # peers/segments only matter while the Connections tab is on screen —
+        # getPeers is an RPC round trip and this runs on the 500ms tick
+        if self.tabs.currentIndex() == self.tabs.indexOf(self.conns_table.parent()):
+            self._fill_conns(t, is_tor)
 
         # primary button
         if t.status == T.DOWNLOADING:

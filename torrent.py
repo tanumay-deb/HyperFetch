@@ -55,6 +55,9 @@ PUBLIC_TRACKERS = [
 # table and no --dht-entry-point, DHT never bootstraps at all, so a magnet can
 # only find peers through the trackers above — which is how a torrent ends up
 # sitting at "CN:0 SD:0" forever while it downloads fine in other clients.
+# More than one on purpose: a single bootstrap node is a single point of
+# failure, and if it is unreachable DHT never joins at all — which is exactly
+# the "CN:0 SD:0 forever" symptom these were added to fix.
 DHT_ENTRY_POINTS = [
     ("router.bittorrent.com", 6881),
     ("dht.transmissionbt.com", 6881),
@@ -89,8 +92,71 @@ def magnet_name(url):
 
 def magnet_infohash(url):
     """The 40-hex btih from a magnet, lowercased; '' if absent."""
+    try:
+        pairs = urllib.parse.parse_qsl(urllib.parse.urlsplit(url or "").query,
+                                       keep_blank_values=True)
+    except ValueError:
+        pairs = []
+    for key, value in pairs:
+        if key.lower() != "xt":
+            continue
+        m = re.fullmatch(r"urn:btih:([A-Za-z0-9]+)", value, re.I)
+        if m:
+            return m.group(1).lower()
     m = re.search(r"xt=urn:btih:([A-Za-z0-9]+)", url or "", re.I)
     return m.group(1).lower() if m else ""
+
+
+def magnet_trackers(url):
+    """Return unique tracker URLs from a magnet URI, preserving their order."""
+    if not is_magnet(url):
+        return []
+    try:
+        query = urllib.parse.urlsplit(url).query
+        values = urllib.parse.parse_qsl(query, keep_blank_values=True)
+    except ValueError:
+        return []
+    out = []
+    seen = set()
+    for key, value in values:
+        if key.lower() != "tr":
+            continue
+        for part in value.split(","):
+            tracker = part.strip()
+            marker = tracker.lower()
+            if tracker and marker not in seen:
+                seen.add(marker)
+                out.append(tracker)
+    return out
+
+
+def merge_magnet_trackers(url, trackers):
+    """Add new tracker URLs to a magnet URI without changing its identity.
+
+    Returns ``(updated_url, added_trackers)``. Tracker URLs are treated as
+    case-insensitive for de-duplication, matching URI scheme/host behaviour.
+    """
+    if not is_magnet(url):
+        return url, []
+    try:
+        parts = urllib.parse.urlsplit(url)
+        pairs = urllib.parse.parse_qsl(parts.query, keep_blank_values=True)
+    except ValueError:
+        return url, []
+
+    known = {tracker.lower() for tracker in magnet_trackers(url)}
+    added = []
+    for value in trackers:
+        tracker = str(value or "").strip()
+        marker = tracker.lower()
+        if tracker and marker not in known:
+            known.add(marker)
+            added.append(tracker)
+            pairs.append(("tr", tracker))
+    if not added:
+        return url, []
+    return urllib.parse.urlunsplit((parts.scheme, parts.netloc, parts.path,
+                                    urllib.parse.urlencode(pairs), parts.fragment)), added
 
 
 def _bdecode(data):
@@ -325,6 +391,10 @@ class TorrentDownloader:
 
     def _build_cmd(self, exe, out_dir):
         src = self.t.url
+        all_trackers = list(PUBLIC_TRACKERS)
+        if is_magnet(src):
+            all_trackers.extend([t for t in magnet_trackers(src) if t not in all_trackers])
+        
         cmd = [
             exe,
             "--dir", out_dir,
@@ -349,7 +419,7 @@ class TorrentDownloader:
             "--enable-peer-exchange=true",
             "--bt-enable-lpd=true",       # local peer discovery
             "--bt-max-peers=0",           # unlimited peers
-            "--bt-tracker=" + ",".join(PUBLIC_TRACKERS),
+            "--bt-tracker=" + ",".join(all_trackers),
             # Persist the DHT routing table so the next run starts with a warm
             # table instead of bootstrapping from nothing. aria2's default path
             # is ~/.cache/aria2/dht.dat, whose directory it does NOT create —
@@ -599,12 +669,14 @@ class TorrentDownloader:
         else:
             gid = d.call("aria2.addUri", [self.t.url], opts)
         self._gid = gid
+        self.t.gid = gid
 
         top = ""
         try:
             top = self._poll_rpc(d, gid, out_dir)
         finally:
             self._gid = None
+            self.t.gid = None
         return top
 
     def _poll_rpc(self, d, gid, out_dir):

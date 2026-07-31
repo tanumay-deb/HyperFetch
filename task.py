@@ -31,6 +31,23 @@ COMPLETED = Status.COMPLETED
 ERROR = Status.ERROR
 CANCELLED = Status.CANCELLED
 
+def _migrate_event(e):
+    """Normalise one persisted timeline entry to the current dict shape.
+
+    Events used to be stored as ``[timestamp, message]``. Any task saved before
+    the level/source fields were added still holds those lists, so a restored
+    task would otherwise mix lists and dicts and every ``ev["message"]`` reader
+    would raise. Returns None for anything unrecognisable, so junk is dropped
+    rather than crashing the restore.
+    """
+    if isinstance(e, dict):
+        return e if "message" in e else None
+    if isinstance(e, (list, tuple)) and len(e) == 2:
+        return {"time": e[0], "level": "INFO", "source": "System",
+                "message": str(e[1])}
+    return None
+
+
 _id_counter = itertools.count(1)
 _seq_counter = itertools.count(1)   # monotonic insertion order for FIFO tie-breaks
 
@@ -141,10 +158,10 @@ class DownloadTask:
         if changed:
             self.log_event(str(value))
 
-    def log_event(self, text):
+    def log_event(self, text, level="INFO", source="System"):
         """Append a timeline entry (worker threads call this; list.append is
         GIL-atomic and the GUI only ever reads a snapshot)."""
-        self.events.append([time.time(), str(text)])
+        self.events.append({"time": time.time(), "level": level, "source": source, "message": str(text)})
         if len(self.events) > self.EVENTS_MAX:
             del self.events[:-self.EVENTS_MAX]
 
@@ -244,11 +261,10 @@ class DownloadTask:
             seg.downloaded = sd.get("downloaded", 0)
             segs.append(seg)
         # anything that was in flight when the app closed/crashed must come
-        # back as Paused, otherwise it shows "Downloading" with nothing running
-        # and resume_task() refuses to requeue it
+        # back as Paused, but flagged so the app automatically resumes it.
         status = d.get("status", QUEUED)
-        forced_pause = status in (DOWNLOADING, QUEUED)
-        if forced_pause:
+        forced_requeue = status == DOWNLOADING
+        if forced_requeue:
             status = PAUSED
         t = cls(
             url=d["url"], save_path=d["save_path"],
@@ -266,7 +282,8 @@ class DownloadTask:
         )
         t.is_scheduled = d.get("is_scheduled", False)
         t.sha256 = d.get("sha256", "")
-        t.events = [e for e in (d.get("events") or []) if isinstance(e, list) and len(e) == 2]
-        if forced_pause:
-            t.log_event("Paused")     # in-flight at shutdown -> restored as paused
+        t.events = [e for e in map(_migrate_event, d.get("events") or []) if e]
+        if forced_requeue:
+            t._auto_resume = True
+            t.log_event("Restored for auto-resume", level="INFO")
         return t

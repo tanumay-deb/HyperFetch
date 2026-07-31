@@ -182,7 +182,10 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, QW
         skipped = 0
         for d in rows:
             try:
-                self.queue.add_task(T.DownloadTask.from_dict(d), start=False)
+                task = T.DownloadTask.from_dict(d)
+                self.queue.add_task(task, start=False)
+                if getattr(task, '_auto_resume', False):
+                    self.queue.force_start(task)
             except (KeyError, TypeError, ValueError):
                 skipped += 1
                 continue
@@ -337,14 +340,13 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, QW
             b.clicked.connect(lambda _=False, k=label: self._set_filter(k))
             top.addWidget(b)
 
-        self.sort = QPushButton("Sort: Added (↓)")
+        self.sort = QPushButton("Sort: Added (▼)")
         self.sort.setObjectName("pill")
         self.sort.setCursor(Qt.PointingHandCursor)
         from PySide6.QtWidgets import QMenu
         menu = QMenu(self.sort)
         menu.setStyleSheet(f"QMenu {{ background: {palette.COLORS['surface']}; color: {palette.COLORS['text']}; border: 1px solid {palette.COLORS['border']}; }} QMenu::item:selected {{ background: {palette.COLORS['surface2']}; }}")
-        for label in ["Added", "Name", "Size", "Progress"]:
-            # Need to capture the loop variable properly
+        for label in ["Added", "Name", "Size", "Progress", "Speed"]:
             action = menu.addAction(label)
             action.triggered.connect(lambda checked=False, k=label: self._on_sort_changed(k))
         self.sort.setMenu(menu)
@@ -399,7 +401,7 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, QW
 
     def _on_sort_changed(self, key):
         """Toggle ascending/descending when the same sort is clicked again."""
-        keys = ["Added", "Name", "Size", "Progress"]
+        keys = ["Added", "Name", "Size", "Progress", "Speed"]
         idx = keys.index(key)
         
         if not hasattr(self, "_sort_asc"):
@@ -411,7 +413,7 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, QW
             self._sort_asc = False
             self._last_sort_idx = idx
             
-        arrow = "↑" if self._sort_asc else "↓"
+        arrow = "▲" if self._sort_asc else "▼"
         self.sort.setText(f"Sort: {key} ({arrow})")
         self.refresh()
 
@@ -458,6 +460,8 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, QW
             tasks.sort(key=lambda t: t.total_size, reverse=not asc)
         elif idx == 3: # Progress
             tasks.sort(key=lambda t: t.percent, reverse=not asc)
+        elif idx == 4: # Speed
+            tasks.sort(key=lambda t: self._speed.get(t.id, (0,0,0.0))[2], reverse=not asc)
         else:          # Added (default)
             tasks.sort(key=lambda t: getattr(t, "added", 0), reverse=not asc)
         return tasks
@@ -711,6 +715,63 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, QW
         v = dlg.values()
         if not v["url"]:
             return
+        # Magnets with the same infohash are the same torrent even when their
+        # display name or tracker list differs. Import fresh trackers instead
+        # of creating a second downloader against the same payload.
+        incoming_hash = _torrent.magnet_infohash(v["url"])
+        if incoming_hash:
+            existing_torrent = next(
+                (x for x in self.queue.tasks
+                 if _torrent.magnet_infohash(x.url) == incoming_hash), None)
+            if existing_torrent:
+                updated_url, added = _torrent.merge_magnet_trackers(
+                    existing_torrent.url, _torrent.magnet_trackers(v["url"]))
+                if not added:
+                    QMessageBox.information(
+                        self, "Torrent already added",
+                        f"This torrent is already in the list as '{existing_torrent.filename}'.\n"
+                        "Its tracker list is already up to date.")
+                    return
+
+                box = QMessageBox(self)
+                box.setIcon(QMessageBox.Question)
+                box.setWindowTitle("Torrent already added")
+                box.setText(f"This torrent is already in the list as '{existing_torrent.filename}'.")
+                box.setInformativeText(
+                    f"The new magnet contains {len(added)} tracker"
+                    f"{'s' if len(added) != 1 else ''} not saved on the existing task.")
+                load_btn = box.addButton("Load Trackers", QMessageBox.AcceptRole)
+                box.addButton("Keep Existing", QMessageBox.RejectRole)
+                box.setDefaultButton(load_btn)
+                box.exec()
+                if box.clickedButton() is not load_btn:
+                    return
+
+                existing_torrent.url = updated_url
+                existing_torrent.log_event(f"Imported {len(added)} tracker(s)")
+                if getattr(existing_torrent, "gid", None):
+                    try:
+                        import aria2d
+                        opts = aria2d.DAEMON.call("aria2.getOption", existing_torrent.gid)
+                        running = [item.strip() for item in opts.get("bt-tracker", "").split(",")
+                                   if item.strip()]
+                        seen = {item.lower() for item in running}
+                        fresh = []
+                        for item in added:
+                            if item.lower() not in seen:
+                                seen.add(item.lower())
+                                fresh.append(item)
+                        if fresh:
+                            aria2d.DAEMON.call(
+                                "aria2.changeOption", existing_torrent.gid,
+                                {"bt-tracker": ",".join(running + fresh)})
+                    except Exception:
+                        pass
+                self._save_state()
+                self.refresh()
+                self._toasts.show("success", "Trackers imported",
+                                  f"Added {len(added)} tracker(s) to {existing_torrent.filename}.")
+                return
         # duplicate detection — same URL already in the list
         existing = next((x for x in self.queue.tasks if x.url == v["url"]), None)
         if existing:

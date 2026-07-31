@@ -67,6 +67,29 @@ def test_concurrency_cap(fake_worker):
     assert peak[0] <= 2
 
 
+def test_torrent_cap_does_not_throttle_normal_downloads(fake_worker):
+    q = QueueManager(queues=[{"name": "Main", "max_concurrent": 8}])
+    torrents = [q.add_task(T.DownloadTask(
+        f"magnet:?xt=urn:btih:{i:040x}", f"torrent-{i}")) for i in range(5)]
+    direct = q.add_task(T.DownloadTask("https://example.test/file.zip", "file.zip"))
+    peak = [0]
+    stop = threading.Event()
+
+    def sampler():
+        while not stop.is_set():
+            peak[0] = max(peak[0], sum(t.status == T.DOWNLOADING for t in torrents))
+            time.sleep(0.01)
+
+    monitor = threading.Thread(target=sampler, daemon=True)
+    monitor.start()
+    assert _wait(lambda: direct.status == T.COMPLETED), "direct download was blocked by torrent cap"
+    assert _wait(lambda: all(t.status == T.COMPLETED for t in torrents))
+    stop.set()
+    monitor.join(timeout=1)
+    q.shutdown()
+    assert peak[0] <= queue_manager.MAX_ACTIVE_TORRENTS
+
+
 def test_pause_queued_never_runs(fake_worker):
     q = QueueManager(queues=[{"name": "Main", "max_concurrent": 1}])
     block = q.add_task(T.DownloadTask("u", "block"))

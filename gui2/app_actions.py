@@ -39,6 +39,12 @@ class ActionsMixin:
             self._open_file(t)
         elif action == "folder":
             self._open_folder(t)
+        elif action.startswith("select_files:"):
+            indices = action.split(":", 1)[1]
+            self.queue.change_torrent_files(task_id, indices)
+        elif action == "trackers_changed":
+            # The drawer already updated the magnet URI; persist it below.
+            pass
         elif action == "details":
             self.list.set_selection({t.id})
             self.drawer.open_for(t)

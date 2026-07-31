@@ -36,6 +36,7 @@ class PageBuilderMixin:
         # title/subtitle intentionally omitted — the section name already shows
         # in the sidebar, so the page goes straight to its cards.
         sa = QScrollArea(); sa.setWidgetResizable(True)
+        sa.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         w = QWidget(); v = QVBoxLayout(w); v.setContentsMargins(28, 22, 32, 22); v.setSpacing(10)
         sa.setWidget(w); sa._v = v
         return sa, v

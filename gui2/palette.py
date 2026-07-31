@@ -155,6 +155,31 @@ def qss():
 }}
 QWidget#root {{ background: {c['bg']}; }}
 
+/* ---------- dense desktop console ---------- */
+QFrame#consoleHeader {{
+    background: {c['surface']}; border: 1px solid {c['border']};
+    border-top: none; border-radius: 0 0 10px 10px;
+}}
+QLabel#consoleBrand {{ font-size: {fpx(16)}; font-weight: 800; color: {c['text']}; background: transparent; }}
+QLabel#activityTitle {{ font-size: {fpx(12)}; color: {c['text']}; background: transparent; }}
+QPushButton#consoleIcon {{ background: transparent; border: none; border-radius: 6px; padding: 4px; }}
+QPushButton#consoleIcon:hover {{ background: {c['surface2']}; }}
+QFrame#consoleNavFrame {{ background: {c['surface']}; border: 1px solid {c['border']}; border-radius: 8px; }}
+QPushButton#consoleNav {{
+    background: transparent; border: none; border-right: 1px solid {c['border']}; border-radius: 5px;
+    min-height: 28px; padding: 5px 14px; color: {c['muted']}; font-size: {fpx(11)}; font-weight: 650;
+}}
+QPushButton#consoleNav:hover {{ background: {c['surface2']}; color: {c['text']}; }}
+QPushButton#consoleNav:checked {{ background: {c['accent']}; color: white; }}
+QFrame#metricCard {{ background: {c['surface']}; border: 1px solid {c['border']}; border-radius: 8px; min-height: 50px; }}
+QLabel#metricCaption {{ color: {c['muted']}; font-size: {fpx(10)}; background: transparent; }}
+QLabel#metricValue {{ color: {c['text']}; font-size: {fpx(14)}; font-weight: 750; background: transparent; }}
+QLabel#consolePageTitle {{ color: {c['text']}; font-size: {fpx(14)}; font-weight: 750; background: transparent; }}
+QLabel#consoleSummary {{ color: {c['muted']}; font-size: {fpx(11)}; background: transparent; }}
+QWidget#activityGraph {{ background: {c['surface']}; border: 1px solid {c['border']}; border-radius: 8px; }}
+QTableWidget#consoleTable {{ background: {c['surface']}; border: 1px solid {c['border']}; border-radius: 8px; }}
+QTableWidget#consoleTable::item {{ padding: 5px 9px; }}
+
 /* ---------- sidebar ---------- */
 QFrame#sidebar {{ background: {c['surface']}; border: none; border-right: 1px solid {c['border']}; }}
 QWidget#mainPane {{ background: {c['bg']}; }}

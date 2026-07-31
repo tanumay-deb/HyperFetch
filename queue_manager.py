@@ -11,8 +11,14 @@ import threading
 
 import task as T
 from downloader import Downloader
+import torrent as _torrent
 
 log = logging.getLogger("hyperfetch.queue")
+
+# Independent torrents contend for tracker/DHT sockets and, in the legacy
+# engine, the same BitTorrent listen port. Keep this lower than the general
+# download limit so a large HTTP queue cannot starve peer discovery.
+MAX_ACTIVE_TORRENTS = 3
 
 
 class Queue:
@@ -143,10 +149,24 @@ class QueueManager:
                 self.queues[task.queue_name] = q
             q.active += 1
             self.active += 1
+            if self._is_torrent(task):
+                task._torrent_slot_reserved = True
 
             threading.Thread(target=self._execute, args=(task, q.name),
                              daemon=True).start()
             self.cond.notify_all()
+
+    def change_torrent_files(self, task_id, indices_str):
+        """Change the selected files of a running torrent via aria2 RPC."""
+        with self.cond:
+            task = self.get_task(task_id)
+            if not task or not getattr(task, "gid", None):
+                return
+        try:
+            import aria2d
+            aria2d.DAEMON.call("aria2.changeOption", task.gid, {"select-file": indices_str})
+        except Exception as e:
+            log.warning("failed to change select-file for %s: %s", task_id, e)
 
     def move_to_queue(self, task, qname):
         """Re-assign a task to a different queue and wake the scheduler.
@@ -219,6 +239,14 @@ class QueueManager:
                 heapq.heapify(self._heap)
             self.cond.notify()
 
+    @staticmethod
+    def _is_torrent(task):
+        return _torrent.is_torrent_task(task.url, task.filename)
+
+    def _active_torrent_count(self):
+        return sum(bool(getattr(task, "_torrent_slot_reserved", False))
+                   for task in self.tasks)
+
     def _next_ready(self):
         """Return a runnable task or None."""
         if not self._heap:
@@ -226,13 +254,15 @@ class QueueManager:
             
         passed_over = []
         ready_task = None
+        active_torrents = self._active_torrent_count()
         while self._heap:
             task = heapq.heappop(self._heap)
             q = self.queues.get(task.queue_name)
             if not q:
                 q = Queue(task.queue_name, 3)
                 self.queues[task.queue_name] = q
-            if q.active < q.max_concurrent:
+            torrent_full = self._is_torrent(task) and active_torrents >= MAX_ACTIVE_TORRENTS
+            if q.active < q.max_concurrent and not torrent_full:
                 ready_task = task
                 break
             else:
@@ -259,6 +289,8 @@ class QueueManager:
                     self.queues[task.queue_name] = q
                 q.active += 1
                 self.active += 1
+                if self._is_torrent(task):
+                    task._torrent_slot_reserved = True
             # Bind the slot to the queue we charged it against (q.name), passed
             # explicitly — reading task.queue_name again in _execute would let a
             # mid-download "Move to Queue" decrement a DIFFERENT queue than the
@@ -295,6 +327,7 @@ class QueueManager:
                     task.error = task.error or "Download ended unexpectedly — Resume to retry"
                 log.warning("forced terminal status for %s -> %s", task.filename, task.status)
             with self.cond:
+                task._torrent_slot_reserved = False
                 q = self.queues.get(started_queue)
                 if q:
                     q.active -= 1

@@ -256,8 +256,9 @@ class Sidebar(QFrame):
         self._collapsed = on
         self.brand.setVisible(not on)
         self.brand_icon.setVisible(not on)
-        # keep the speed graph visible when collapsed (text hidden)
-        self.stats.setVisible(True)
+        # The graph card has an inner minimum width. Keeping it in the 72px
+        # rail makes the layout fight the width animation and misaligns nav rows.
+        self.stats.setVisible(not on)
         self.g_text.setVisible(not on)
         for row in self._rows.values():
             row.set_collapsed(on)

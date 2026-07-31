@@ -35,7 +35,7 @@ class DownloadList(QScrollArea):
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self._inner = QWidget(); self._inner.setObjectName("listInner")
         self._lay = QVBoxLayout(self._inner)
-        self._lay.setContentsMargins(2, 2, 8, 8); self._lay.setSpacing(10)
+        self._lay.setContentsMargins(2, 2, 8, 80); self._lay.setSpacing(10)
         self._lay.addStretch()
         self.setWidget(self._inner)
 
