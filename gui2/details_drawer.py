@@ -267,8 +267,10 @@ class DetailsDrawer(QFrame):
         from PySide6.QtWidgets import QStackedWidget
         self.headers_stack = QStackedWidget()
         self.headers_stack.addWidget(self._headers_tab())
-        self.headers_stack.addWidget(self._scroll_tab("trackers"))
-        self.tabs.addTab(self.headers_stack, "Headers")
+        self.headers_stack.addWidget(self._trackers_tab())
+        # label is swapped per task type in _populate_static — the same slot
+        # shows request headers for an HTTP download and trackers for a torrent
+        self._hdr_tab_index = self.tabs.addTab(self.headers_stack, "Headers")
         
         self.tabs.addTab(self._logs_tab(), "Logs")
         lay.addWidget(self.tabs, 1)
@@ -391,6 +393,115 @@ class DetailsDrawer(QFrame):
         v.addStretch()
         outer.setWidget(w)
         return outer
+
+    def _trackers_tab(self):
+        """Announce list + a way to add more.
+
+        Presented as a list, not a status table: aria2 exposes no per-tracker
+        statistics and no reannounce, so peers/seeds/last-update columns would
+        be invented.
+        """
+        w = QWidget(); v = QVBoxLayout(w)
+        v.setContentsMargins(14, 14, 14, 14); v.setSpacing(10)
+
+        sa = QScrollArea(); sa.setWidgetResizable(True)
+        sa.setStyleSheet("QScrollArea { border: none; background: transparent; }")
+        inner = QWidget(); lay = QVBoxLayout(inner)
+        lay.setContentsMargins(2, 2, 2, 2); lay.setSpacing(6)
+        lay.addStretch()
+        sa.setWidget(inner)
+        self._trackers_lay = lay
+        v.addWidget(sa, 1)
+
+        add_row = QHBoxLayout(); add_row.setSpacing(8)
+        self.tracker_input = QLineEdit()
+        self.tracker_input.setPlaceholderText("udp://tracker.example:80/announce, udp://other:6969")
+        self.tracker_input.setToolTip("One or more tracker URLs, separated by commas")
+        self.tracker_input.setStyleSheet(
+            f"QLineEdit {{ background:{COLORS['surface2']}; color:{COLORS['text']};"
+            f" border:1px solid {COLORS['border']}; border-radius:6px; padding:6px; }}")
+        self.tracker_input.returnPressed.connect(self._add_trackers)
+        btn = QPushButton(" Add"); btn.setIcon(themed_icon("plus", "text"))
+        btn.setCursor(Qt.PointingHandCursor)
+        btn.setStyleSheet(
+            f"QPushButton {{ padding:6px 14px; font-weight:600; background:{COLORS['surface2']};"
+            f" border:1px solid {COLORS['border']}; border-radius:7px; }}"
+            f"QPushButton:hover {{ background:{COLORS['card_hover']}; }}")
+        btn.clicked.connect(self._add_trackers)
+        add_row.addWidget(self.tracker_input, 1); add_row.addWidget(btn)
+        v.addLayout(add_row)
+
+        self.tracker_msg = QLabel("")
+        self.tracker_msg.setWordWrap(True)
+        self.tracker_msg.setStyleSheet(
+            f"color:{COLORS['muted']}; font-size:{fpx(11)}; background:transparent;")
+        v.addWidget(self.tracker_msg)
+        return w
+
+    def _add_trackers(self):
+        """Merge comma-separated trackers into this magnet and, if it is
+        running, hand them to aria2 so they take effect without a restart."""
+        raw = self.tracker_input.text()
+        entries = [s.strip() for s in raw.split(",") if s.strip()]
+        if not entries:
+            return
+        win = self._window()
+        t = next((x for x in win.queue.tasks if x.id == self._tid), None) if win else None
+        if not t:
+            return
+        if not _torrent.is_magnet(t.url):
+            self.tracker_msg.setText("Trackers can only be added to magnet links.")
+            return
+
+        bad = [e for e in entries if "://" not in e]
+        if bad:
+            self.tracker_msg.setText(f"Not a tracker URL: {bad[0]}")
+            return
+
+        new_url, added = _torrent.merge_magnet_trackers(t.url, entries)
+        if not added:
+            self.tracker_msg.setText("Already in this torrent's tracker list.")
+            return
+        t.url = new_url                      # persisted with the task
+        t.log_event(f"Added {len(added)} tracker(s)")
+
+        live = False
+        if getattr(t, "gid", None):
+            try:
+                import aria2d
+                aria2d.DAEMON.call("aria2.changeOption", t.gid,
+                                   {"bt-tracker": ",".join(_torrent.magnet_trackers(new_url))})
+                live = True
+            except Exception:
+                live = False
+        self.tracker_input.clear()
+        self.tracker_msg.setText(
+            f"Added {len(added)} tracker(s)."
+            + ("" if live else " They will be used the next time this torrent starts."))
+        if win:
+            win._save_state()
+        self._render_trackers(t)
+
+    def _render_trackers(self, t):
+        lay = self._trackers_lay
+        while lay.count():
+            it = lay.takeAt(0)
+            if it.widget():
+                it.widget().deleteLater()
+        urls = _torrent.magnet_trackers(t.url) if _torrent.is_magnet(t.url) else []
+        if not urls:
+            urls = [u for u in getattr(self, "_static_trackers", []) or []]
+        for u in urls:
+            l = QLabel(str(u)); l.setWordWrap(True)
+            l.setTextInteractionFlags(Qt.TextSelectableByMouse)
+            l.setStyleSheet(f"color:{COLORS['text']}; font-size:{fpx(11)};"
+                            " font-family: Consolas, monospace; background:transparent;")
+            lay.addWidget(l)
+        if not urls:
+            e = QLabel("No trackers — this torrent relies on DHT.")
+            e.setStyleSheet(f"color:{COLORS['muted']}; background:transparent;")
+            lay.addWidget(e)
+        lay.addStretch()
 
     def _conns_tab(self):
         """Live connections. For torrents these are swarm peers (aria2.getPeers);
@@ -819,22 +930,36 @@ class DetailsDrawer(QFrame):
         lay.addStretch()
 
     # ---- open / close ----
+    def _window(self):
+        """The DownloadAppV2 that owns this drawer (it holds the queue).
+
+        NOT QApplication.instance() — that has no `queue`, so looking there
+        made every file-selection change silently do nothing.
+        """
+        w = self.parent()
+        while w is not None and not hasattr(w, "queue"):
+            w = w.parent()
+        return w
+
     def _apply_file_selection(self):
-        if not hasattr(self, '_file_row_widgets') or not self._file_row_widgets: return
-        selected = []
-        for idx, cb, _ in self._file_row_widgets:
-            if cb.isChecked():
-                selected.append(str(idx + 1))
-        
-        # update aria2 if this is a torrent
-        from PySide6.QtWidgets import QApplication
-        app = QApplication.instance()
-        if not hasattr(app, 'queue'): return
-        
-        t = next((task for task in app.queue.tasks if task.id == self._tid), None)
-        if t and getattr(t, 'is_torrent', False):
-            # In IDMClone, change_torrent_files handles this
-            app.queue.change_torrent_files(self._tid, ','.join(selected))
+        if not getattr(self, "_file_row_widgets", None):
+            return
+        # aria2 indexes files from 1
+        selected = [str(idx + 1) for idx, cb, _ in self._file_row_widgets if cb.isChecked()]
+        win = self._window()
+        if not win:
+            return
+        t = next((x for x in win.queue.tasks if x.id == self._tid), None)
+        # is_torrent_task(), not a task attribute that never existed
+        if not t or not _torrent.is_torrent_task(t.url, t.filename):
+            return
+        if not selected:
+            # aria2 reads an empty select-file as "everything", so an empty
+            # selection would silently re-enable every file. Keep the last file
+            # ticked instead of doing the opposite of what the user asked.
+            self._file_row_widgets[0][1].setChecked(True)
+            return
+        win.queue.change_torrent_files(self._tid, ",".join(selected))
 
     def _load(self, t):
         """Point the drawer at a task and refresh its content (no slide)."""
@@ -1036,6 +1161,11 @@ class DetailsDrawer(QFrame):
         # Headers (cookies/auth stripped)
         is_tor = _torrent.is_torrent_task(t.url, t.filename)
         self.headers_stack.setCurrentIndex(1 if is_tor else 0)
+        # the slot shows trackers for a torrent and request headers for an
+        # HTTP download — say which, instead of always claiming 'Headers'
+        self.tabs.setTabText(self._hdr_tab_index, "Trackers" if is_tor else "Headers")
+        if is_tor:
+            self._render_trackers(t)
         tab_index = self.tabs.indexOf(self.headers_stack)
         self.tabs.setTabText(tab_index, "Trackers" if is_tor else "Headers")
         
@@ -1044,8 +1174,6 @@ class DetailsDrawer(QFrame):
             lines = []
             for tr in trk:
                 st = tr.get("status", "Unknown")
-                lines.append((f"{tr.get('url', '')} - {st}", False))
-            self._fill("trackers", lines, empty=("magnet", "No Trackers", "This torrent has no trackers."))
         else:
             self._fill_headers(t)
 
@@ -1199,20 +1327,7 @@ class DetailsDrawer(QFrame):
                     item.setText(f"{pct}%" if pct < 100 else status_str)
                     item.setForeground(QColor(COLORS['accent'] if pct < 100 else COLORS['muted']))
 
-        if _torrent.is_torrent_task(t.url, t.filename):
-            # aria2 exposes no per-tracker stats and no reannounce, so this is
-            # the announce LIST, not a status table. Showing "Active"/peer
-            # counts here would be invented — the tab says what we know: which
-            # trackers this torrent will announce to.
-            trk = getattr(t, "trackers", [])
-            lines = []
-            if trk:
-                lines = [(str(tr.get("url", "")), False) for tr in trk if tr.get("url")]
-            elif getattr(self, "_static_trackers", None):
-                lines = [(str(tr), False) for tr in self._static_trackers]
-            self._fill("trackers", lines,
-                       empty=("magnet", "No trackers",
-                              "This magnet carries no tracker list — it relies on DHT."))
+        # (trackers are rendered by _render_trackers from _populate_static)
 
         # Logs timeline: rebuild only when a new event landed
         n = len(getattr(t, "events", []))
