@@ -10,14 +10,18 @@ import logging
 import threading
 
 import task as T
+import utils
 from downloader import Downloader
 import torrent as _torrent
 
 log = logging.getLogger("hyperfetch.queue")
 
-# Independent torrents contend for tracker/DHT sockets and, in the legacy
-# engine, the same BitTorrent listen port. Keep this lower than the general
-# download limit so a large HTTP queue cannot starve peer discovery.
+# Cap on concurrent torrents under the LEGACY engine only. It spawns one aria2
+# process per torrent, and they all try to bind the same BitTorrent listen port
+# — measured: three concurrent torrents, only two listeners, so the third ran
+# outbound-only with a starved peer set. The shared daemon has no such problem
+# (one process, one port, one DHT table), so it follows the user's own limit
+# instead. See _torrent_limit.
 MAX_ACTIVE_TORRENTS = 3
 
 
@@ -243,6 +247,21 @@ class QueueManager:
     def _is_torrent(task):
         return _torrent.is_torrent_task(task.url, task.filename)
 
+    @staticmethod
+    def _torrent_limit(queue_limit):
+        """How many torrents may run at once in a queue whose limit is
+        ``queue_limit``.
+
+        Under the shared daemon that IS the queue limit: one aria2 process owns
+        one listen port and one DHT table, so concurrent torrents no longer
+        contend for either and there is nothing left for a second, invisible cap
+        to protect. Silently running 3 when the user asked for 5 is just a bug
+        from their side of the screen.
+        """
+        if getattr(utils, "TORRENT_RPC", False):
+            return queue_limit
+        return min(queue_limit, MAX_ACTIVE_TORRENTS)
+
     def _active_torrent_count(self):
         return sum(bool(getattr(task, "_torrent_slot_reserved", False))
                    for task in self.tasks)
@@ -261,7 +280,8 @@ class QueueManager:
             if not q:
                 q = Queue(task.queue_name, 3)
                 self.queues[task.queue_name] = q
-            torrent_full = self._is_torrent(task) and active_torrents >= MAX_ACTIVE_TORRENTS
+            torrent_full = (self._is_torrent(task)
+                            and active_torrents >= self._torrent_limit(q.max_concurrent))
             if q.active < q.max_concurrent and not torrent_full:
                 ready_task = task
                 break
