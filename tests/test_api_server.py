@@ -2,6 +2,8 @@
 from collections import deque
 
 import os
+import sys
+
 import pytest
 
 import task as T
@@ -322,6 +324,9 @@ def test_restart_waits_for_predecessor_then_focuses_if_it_lingers(monkeypatch):
 
 
 # ---- single-instance mutex: the guard must not depend on the HTTP server ----
+@pytest.mark.skipif(sys.platform != "win32",
+                    reason="named mutexes are a Windows facility; elsewhere "
+                           "_claim_single_instance deliberately fails open")
 def test_mutex_blocks_a_second_claim_and_releases_on_death():
     """A kernel mutex, not an HTTP round-trip: the old guard asked the running
     instance over its localhost server, but that server is exactly what fails
