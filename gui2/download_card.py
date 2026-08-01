@@ -177,6 +177,27 @@ class DownloadCardWidget(QFrame):
         mid.addWidget(self.sub)
         root.addLayout(mid, 1)
 
+        # ETA column — outside the text block and fixed-width, so it forms a
+        # straight column down the list instead of drifting with each row's
+        # filename. Kept in the layout even when empty, or the action buttons
+        # would shuffle left on every row that is not downloading.
+        self.eta_box = QWidget()
+        self.eta_box.setFixedWidth(74)
+        etacol = QVBoxLayout(self.eta_box)
+        etacol.setContentsMargins(0, 0, 0, 0); etacol.setSpacing(0)
+        self.eta_cap = QLabel("")
+        self.eta_cap.setAlignment(Qt.AlignRight | Qt.AlignBottom)
+        self.eta_cap.setStyleSheet(
+            f"color: {COLORS['muted']}; font-size: {fpx(9)}; font-weight: 700; "
+            f"background: transparent;")
+        self.eta_val = QLabel("")
+        self.eta_val.setAlignment(Qt.AlignRight | Qt.AlignTop)
+        self.eta_val.setStyleSheet(
+            f"color: {COLORS['text']}; font-size: {fpx(12)}; font-weight: 700; "
+            f"background: transparent;")
+        etacol.addWidget(self.eta_cap); etacol.addWidget(self.eta_val)
+        root.addWidget(self.eta_box, 0, Qt.AlignVCenter)
+
         actions = QHBoxLayout(); actions.setSpacing(4)
         self.btn_primary = self._iconbtn("pause", "pause")
         self.btn_more = self._iconbtn("more", "more")
@@ -184,6 +205,23 @@ class DownloadCardWidget(QFrame):
         root.addLayout(actions)
 
         self.update_task(task, 0.0)
+
+    def _set_eta(self, t, bps, done):
+        """Fill the right-hand ETA column.
+
+        Only a live download has a meaningful estimate: it needs a real speed
+        and a known total. A torrent still fetching metadata has no total yet,
+        and a paused one has no speed — both show nothing rather than a stale
+        number left over from when it was running.
+        """
+        eta = ""
+        if t.status == T.DOWNLOADING and bps > 0 and t.total_size:
+            remaining = t.total_size - t.downloaded
+            if remaining > 0:
+                eta = fmt_eta(remaining / bps)
+        self.eta_cap.setText("ETA" if eta else "")
+        self.eta_val.setText(eta)
+        self.eta_val.setToolTip(f"About {eta} remaining" if eta else "")
 
     def _iconbtn(self, icon_name, action):
         b = QPushButton(); b.setObjectName("iconbtn"); b.setFixedSize(36, 26)
@@ -296,13 +334,13 @@ class DownloadCardWidget(QFrame):
                     parts.append(spd)
                 if is_tor:
                     parts.append(f"{getattr(t,'tor_conns',0)} peers · {getattr(t,'tor_seeds',0)} seeds")
-                else:
-                    eta = fmt_eta((t.total_size - t.downloaded) / bps) if bps > 0 and t.total_size else ""
-                    if eta:
-                        parts.append(f"ETA {eta}")
+                # ETA moved out to its own right-hand column; repeating it here
+                # would just be the same value twice on one row
             else:
                 parts.append(str(t.status))
             self.sub.setText("  -  ".join(parts))
+
+        self._set_eta(t, bps, done)
 
         # live speed sparkline — only while actively downloading
         if t.status == T.DOWNLOADING and history and len(history) >= 2:
