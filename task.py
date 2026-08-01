@@ -142,6 +142,12 @@ class DownloadTask:
         # live torrent swarm stats (transient; set by TorrentDownloader's reader)
         self.tor_conns = 0          # connected peers
         self.tor_seeds = 0          # seeders
+        # stall-yield bookkeeping (transient): a torrent whose swarm has gone
+        # quiet hands its queue slot back rather than blocking the ones behind
+        # it, and waits out a growing delay before trying again.
+        self.stall_count = 0
+        self.retry_after = 0.0
+        self._stall_yield = False
         # SHA-256 verification result (transient): "", "ok", "fail", "nohash"
         self.hash_status = ""
 

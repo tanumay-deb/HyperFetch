@@ -111,6 +111,16 @@ class QueueManager:
 
     def resume_task(self, task: "T.DownloadTask"):
         """Re-queue a paused/errored task; keeps its segments to resume from disk."""
+        # A stalled torrent sits in QUEUED waiting out its backoff. An explicit
+        # Resume is the user overruling that, so drop the delay and let it run
+        # now — otherwise the click looks like it did nothing.
+        if float(getattr(task, "retry_after", 0) or 0) > time.time():
+            task.retry_after = 0.0
+            task.stall_count = 0
+            with self.cond:
+                self.cond.notify_all()
+            if task.status == T.QUEUED:
+                return                      # already in the heap, now eligible
         if task.status in (T.DOWNLOADING, T.QUEUED, T.COMPLETED):
             return
         task.clear_pause()
@@ -274,8 +284,18 @@ class QueueManager:
         passed_over = []
         ready_task = None
         active_torrents = self._active_torrent_count()
+        now = time.time()
+        soonest = None                 # when the next backed-off task is due
         while self._heap:
             task = heapq.heappop(self._heap)
+            # A torrent that yielded its slot with a dead swarm waits out its
+            # backoff. Without this it would be picked straight back up and
+            # would simply block the queue again.
+            due = float(getattr(task, "retry_after", 0) or 0)
+            if due > now:
+                soonest = due if soonest is None else min(soonest, due)
+                passed_over.append(task)
+                continue
             q = self.queues.get(task.queue_name)
             if not q:
                 q = Queue(task.queue_name, 3)
@@ -287,11 +307,15 @@ class QueueManager:
                 break
             else:
                 passed_over.append(task)
-                
+
         for t in passed_over:
             heapq.heappush(self._heap, t)
-            
-        return ready_task, None
+
+        # wake by ourselves when the earliest backoff expires; nothing else will
+        wait = None
+        if ready_task is None and soonest is not None:
+            wait = max(0.1, soonest - now)
+        return ready_task, wait
 
     def _scheduler(self):
         while True:
@@ -337,7 +361,15 @@ class QueueManager:
             # Pause button and no way out. Force a terminal status here so the card
             # always leaves Active. Honor a pending pause/cancel; otherwise Error
             # (resumable from the bytes already on disk).
-            if task.status in (T.DOWNLOADING, T.QUEUED, T.SCHEDULED):
+            # A stalled torrent gave its slot back on purpose — it is waiting,
+            # not finished, so it must not be forced to a terminal status here.
+            stalled = bool(getattr(task, "_stall_yield", False))
+            if stalled and (task.cancel_requested or task.pause_requested):
+                stalled = False                      # the user overrode it
+            if stalled:
+                task._stall_yield = False
+                task.status = T.QUEUED
+            elif task.status in (T.DOWNLOADING, T.QUEUED, T.SCHEDULED):
                 if task.cancel_requested:
                     task.status = T.CANCELLED
                 elif task.pause_requested:
@@ -348,6 +380,8 @@ class QueueManager:
                 log.warning("forced terminal status for %s -> %s", task.filename, task.status)
             with self.cond:
                 task._torrent_slot_reserved = False
+                if stalled:
+                    heapq.heappush(self._heap, task)
                 q = self.queues.get(started_queue)
                 if q:
                     q.active -= 1

@@ -39,6 +39,13 @@ STALL_TIMEOUT = 1800  # 30 min
 # is merely busy (allocating a file, hash-checking) blocks RPC for seconds; the
 # first miss used to pause the download outright.
 RPC_RETRIES = 10
+# A torrent has to earn its queue slot. After this long with NO peers and NO new
+# bytes, it hands the slot back so healthy torrents behind it can run: with a
+# concurrency of 1, one dead swarm otherwise blocks the whole list forever.
+STALL_YIELD = 180
+# Delays before a yielded torrent is tried again; the last value repeats. Long
+# enough that a genuinely dead swarm is not re-announced every minute.
+STALL_BACKOFF = (120, 300, 900)
 # How often to refresh per-file progress. getFiles returns the WHOLE file list,
 # so calling it on every 0.3s poll would be wasteful on a torrent with hundreds
 # of files; the drawer only redraws twice a second anyway.
@@ -469,6 +476,8 @@ class TorrentDownloader:
         self.t = dtask
         self._proc = None
         self._gid = None          # aria2 download id, when driven over RPC
+        self._stall_since = None  # when this torrent last earned its slot
+        self._stall_bytes = -1
 
     def _build_cmd(self, exe, out_dir):
         src = self.t.url
@@ -790,6 +799,41 @@ class TorrentDownloader:
             self.t.gid = None
         return top
 
+    def _note_stall(self, peers, done):
+        """True once this torrent has gone STALL_YIELD seconds earning nothing.
+
+        Earning nothing means no peers AND no new bytes. Peers-but-slow is NOT
+        stalled: a torrent trickling from a single seeder is alive, and taking
+        its slot away would be worse than letting it finish. Only a swarm that
+        is not answering at all gives way.
+        """
+        now = time.time()
+        if peers > 0 or done != self._stall_bytes:
+            if peers > 0 and done != self._stall_bytes:
+                self.t.stall_count = 0        # it recovered; forgive the record
+            self._stall_bytes = done
+            self._stall_since = now
+            return False
+        if self._stall_since is None:
+            self._stall_since = now
+            return False
+        return (now - self._stall_since) >= STALL_YIELD
+
+    def _yield_slot(self, d, gid, out_dir):
+        """Hand the queue slot back, to be retried after a growing delay."""
+        n = int(getattr(self.t, "stall_count", 0) or 0)
+        delay = STALL_BACKOFF[min(n, len(STALL_BACKOFF) - 1)]
+        self.t.stall_count = n + 1
+        self.t.retry_after = time.time() + delay
+        self.t._stall_yield = True            # queue_manager re-queues on this
+        if d is not None and gid:
+            self._rpc_remove(d, gid, force=True)
+        archive_metadata(self.t, out_dir)
+        self.t.status = T.QUEUED
+        self.t.error = ""
+        log.info("stalled (no peers, no progress): %s — slot released, retry in %ds",
+                 self.t.filename, delay)
+
     def _disk_guard(self, total, out_dir):
         """True if the volume cannot hold what is left of this torrent.
 
@@ -932,6 +976,10 @@ class TorrentDownloader:
                     self.t.status = T.ERROR
                     self.t.error = "torrent failed" + (f": {msg}" if msg else "")
                 log.info("torrent ended (%s): %s", status, self.t.filename)
+                return top
+
+            if self._note_stall(self.t.tor_conns, self.t.downloaded):
+                self._yield_slot(d, cur, out_dir)
                 return top
 
             time.sleep(POLL)

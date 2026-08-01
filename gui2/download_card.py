@@ -206,6 +206,22 @@ class DownloadCardWidget(QFrame):
 
         self.update_task(task, 0.0)
 
+    @staticmethod
+    def _queue_state(t):
+        """"Queued", or why it is queued.
+
+        A torrent that yielded its slot with a dead swarm is back in the queue
+        on purpose. Saying only "Queued" would look like the app had quietly
+        reordered the list behind the user's back, so say what happened and when
+        it will be tried again.
+        """
+        import time as _time
+        left = float(getattr(t, "retry_after", 0) or 0) - _time.time()
+        if left <= 0:
+            return str(t.status)
+        when = f"{int(left // 60) + 1}m" if left >= 60 else f"{int(left)}s"
+        return f"Stalled — no peers, retrying in {when}"
+
     def _set_eta(self, t, bps, done):
         """Fill the right-hand ETA column.
 
@@ -337,7 +353,7 @@ class DownloadCardWidget(QFrame):
                 # ETA moved out to its own right-hand column; repeating it here
                 # would just be the same value twice on one row
             else:
-                parts.append(str(t.status))
+                parts.append(self._queue_state(t))
             self.sub.setText("  -  ".join(parts))
 
         self._set_eta(t, bps, done)
