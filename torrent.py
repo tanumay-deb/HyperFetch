@@ -18,6 +18,7 @@ import re
 import sys
 import time
 import shutil
+import hashlib
 import signal
 import logging
 import threading
@@ -219,6 +220,70 @@ def merge_magnet_trackers(url, trackers):
         return url, []
     return urllib.parse.urlunsplit((parts.scheme, parts.netloc, parts.path,
                                     urllib.parse.urlencode(pairs), parts.fragment)), added
+
+
+def _info_span(data):
+    """Byte offsets (start, end) of a .torrent's top-level ``info`` value.
+
+    The infohash is the SHA-1 of those RAW bytes. Re-encoding the parsed dict
+    would be easier, but bencode's sorted-key rule is a spec requirement rather
+    than a guarantee about files in the wild — a torrent that breaks it would
+    re-encode to different bytes and hash to something no other client agrees
+    with, silently, and only for the files where it matters.
+    """
+    def skip(i):
+        c = data[i:i + 1]
+        if c == b"i":
+            return data.index(b"e", i) + 1
+        if c in (b"l", b"d"):
+            i += 1
+            while data[i:i + 1] != b"e":
+                i = skip(i)
+            return i + 1
+        j = data.index(b":", i)
+        return j + 1 + int(data[i:j])
+
+    if data[:1] != b"d":
+        return -1, -1
+    i = 1
+    while data[i:i + 1] != b"e":
+        key_end = skip(i)
+        key = data[i:key_end].split(b":", 1)[-1]
+        val_end = skip(key_end)
+        if key == b"info":
+            return key_end, val_end
+        i = val_end
+    return -1, -1
+
+
+def torrent_infohash(path):
+    """The 40-hex infohash of a .torrent file; '' if it cannot be read."""
+    try:
+        with open(path, "rb") as f:
+            data = f.read()
+    except OSError:
+        return ""
+    try:
+        start, end = _info_span(data)
+    except (ValueError, IndexError, TypeError):
+        return ""
+    if start < 0:
+        return ""
+    return hashlib.sha1(data[start:end]).hexdigest()
+
+
+def infohash_for(url, filename=""):
+    """Infohash for a magnet URL or a .torrent file path; '' for anything else.
+
+    Two tasks with the same infohash are the same torrent no matter how they
+    were added — a magnet and the .torrent it resolves to included.
+    """
+    ih = magnet_infohash(url or "")
+    if ih:
+        return ih
+    if is_torrent(url or "", filename or "") and os.path.isfile(url or ""):
+        return torrent_infohash(url)
+    return ""
 
 
 def _bdecode(data):
@@ -495,6 +560,7 @@ class TorrentDownloader:
             exe,
             "--dir", out_dir,
             *preference_opts(),           # seeding + preview, from Settings
+            *(["--check-integrity=true"] if self._take_recheck() else []),
             # Stall timeout. Only meaningful once the payload is transferring:
             # during the metadata phase a magnet legitimately sits at 0 B/s for
             # minutes while DHT is queried, and a short timeout there is what
@@ -773,6 +839,8 @@ class TorrentDownloader:
         d = aria2d.DAEMON
         d.ensure()                                   # raises -> caller falls back
         opts = {"dir": out_dir}
+        if self._take_recheck():
+            opts["check-integrity"] = "true"
         gid = self._rpc_add(d, opts)
         self._gid = gid
         self.t.gid = gid
@@ -804,6 +872,20 @@ class TorrentDownloader:
             self._gid = None
             self.t.gid = None
         return top
+
+    def _take_recheck(self):
+        """True once if Force Recheck was asked for, clearing the request.
+
+        Consumed rather than read so a recheck happens exactly once: leaving the
+        flag set would re-hash the whole payload on every pause/resume from then
+        on, which on a 50 GB torrent is not a small mistake.
+        """
+        if not getattr(self.t, "force_recheck", False):
+            return False
+        self.t.force_recheck = False
+        self.t.log_event("Verifying downloaded data")
+        log.info("force recheck: %s", self.t.filename)
+        return True
 
     def _note_stall(self, peers, done):
         """True once this torrent has gone STALL_YIELD seconds earning nothing.

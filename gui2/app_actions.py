@@ -165,6 +165,28 @@ class ActionsMixin:
         self._save_state()
         self.refresh()
 
+    def _recheck_torrent(self, t):
+        """Re-hash a torrent's data against the .torrent's piece hashes.
+
+        The point is to repair rather than restart: aria2 keeps every piece that
+        verifies and re-fetches only the ones that do not, so a payload damaged
+        by a bad disk or a half-written file costs minutes instead of the whole
+        download again. A completed torrent has to leave COMPLETED first, or
+        resume_task would refuse it as already finished.
+        """
+        if t.status == T.DOWNLOADING:
+            return
+        t.force_recheck = True
+        if t.status == T.COMPLETED:
+            t.status = T.PAUSED
+        t.error = ""
+        t.log_event("Force recheck requested")
+        self.queue.resume_task(t)
+        self._save_state()
+        self.refresh()
+        self._toasts.show("info", "Rechecking",
+                          f"Verifying {t.filename or 'torrent'} against its piece hashes…")
+
     def _force_recheck(self, t):
         """Re-run SHA-256 verification on a completed file in the background;
         the drawer's Integrity section shows the result on the next tick."""
@@ -258,6 +280,9 @@ class ActionsMixin:
             m.addAction(ico("history"), "Restart", lambda: self._restart_task(t))
         if t.status == T.COMPLETED and not is_tor:
             m.addAction(ico("check"), "Force Recheck", lambda: self._force_recheck(t))
+        if is_tor and t.status in (T.COMPLETED, T.PAUSED, T.ERROR):
+            m.addAction(ico("check"), "Force Recheck",
+                        lambda: self._recheck_torrent(t))
         m.addSeparator()
         m.addAction(ico("info"), "Properties", lambda: (self.list.set_selection({t.id}), self.drawer.open_for(t)))
         m.addAction(ico("link"), "Copy URL", lambda: QApplication.clipboard().setText(t.url or ""))

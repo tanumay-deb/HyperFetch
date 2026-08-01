@@ -764,11 +764,15 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, QW
         # Magnets with the same infohash are the same torrent even when their
         # display name or tracker list differs. Import fresh trackers instead
         # of creating a second downloader against the same payload.
-        incoming_hash = _torrent.magnet_infohash(v["url"])
+        # infohash_for, not magnet_infohash: a .torrent file is the same torrent
+        # as the magnet that resolves to it, and adding the same .torrent twice
+        # was not caught at all.
+        incoming_hash = _torrent.infohash_for(v["url"], v.get("filename", ""))
         if incoming_hash:
             existing_torrent = next(
                 (x for x in self.queue.tasks
-                 if _torrent.magnet_infohash(x.url) == incoming_hash), None)
+                 if _torrent.infohash_for(x.url, x.filename) == incoming_hash
+                 and x.status != T.CANCELLED), None)
             if existing_torrent:
                 updated_url, added = _torrent.merge_magnet_trackers(
                     existing_torrent.url, _torrent.magnet_trackers(v["url"]))
@@ -818,14 +822,28 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, QW
                 self._toasts.show("success", "Trackers imported",
                                   f"Added {len(added)} tracker(s) to {existing_torrent.filename}.")
                 return
-        # duplicate detection — same URL already in the list
-        existing = next((x for x in self.queue.tasks if x.url == v["url"]), None)
+        # duplicate detection — same URL already in the list. A cancelled task is
+        # not a duplicate: the user threw it away, and re-adding it is the normal
+        # way to start over.
+        existing = next((x for x in self.queue.tasks
+                         if x.url == v["url"] and x.status != T.CANCELLED), None)
         if existing:
-            ans = QMessageBox.question(
-                self, "Already added",
-                f"This URL is already in the list as “{existing.filename}”.\nAdd it again anyway?",
-                QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
-            if ans not in (QMessageBox.Yes, QMessageBox.StandardButton.Yes):
+            box = QMessageBox(self)
+            box.setIcon(QMessageBox.Question)
+            box.setWindowTitle("Already added")
+            box.setText(f"This URL is already in the list as “{existing.filename}”.")
+            box.setInformativeText(f"It is currently {str(existing.status).lower()}.")
+            show_btn = box.addButton("Show Existing", QMessageBox.AcceptRole)
+            again_btn = box.addButton("Add Anyway", QMessageBox.DestructiveRole)
+            box.addButton("Cancel", QMessageBox.RejectRole)
+            box.setDefaultButton(show_btn)
+            box.exec()
+            if box.clickedButton() is show_btn:
+                self._set_filter("All")
+                self.list.set_selection({existing.id})
+                self.drawer.open_for(existing)
+                return
+            if box.clickedButton() is not again_btn:
                 return
         base = v["save_dir"] if os.path.isdir(v["save_dir"]) else self.save_dir
         filename = utils.filename_from_url(v["url"], v["filename"] or suggested)

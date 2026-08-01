@@ -148,6 +148,8 @@ class DownloadTask:
         self.stall_count = 0
         self.retry_after = 0.0
         self._stall_yield = False
+        # one-shot Force Recheck request; the engine consumes it on the next run
+        self.force_recheck = False
         # SHA-256 verification result (transient): "", "ok", "fail", "nohash"
         self.hash_status = ""
 
