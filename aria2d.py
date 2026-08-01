@@ -312,32 +312,71 @@ class Aria2Daemon:
                 self.pid, self.port, self.secret = pid, port, secret
             self.shutdown()
 
-    def shutdown(self):
-        """Stop the daemon we own (called on app exit). Saves the session first
-        so in-flight downloads resume next launch."""
+    def shutdown(self, wait=5.0, force=True):
+        """Stop the daemon we own. Saves the session first so in-flight
+        downloads resume next launch.
+
+        ``wait`` is how long to watch for the process to actually go, and
+        ``force`` whether to hard-kill it if it does not. The app's exit path
+        passes force=False deliberately: a hard kill is what stops aria2
+        flushing its .aria2 control files, and a payload without one cannot be
+        resumed at all. A daemon that is slow to close is still closing — and
+        if it really is wedged, the next launch's _attach finds it, reuses it if
+        it answers, and replaces it if it does not. Nothing is leaked either
+        way, so there is no reason to destroy state on the way out.
+        """
         with self._lock:
-            if not self.alive():
+            if not (self.port and self.secret):
                 return
+            # forceShutdown, not shutdown: the graceful one contacts every
+            # tracker to unregister first, and against dead or slow public
+            # trackers it simply does not return — measured, a daemon told to
+            # shut down was still running minutes later. forceShutdown skips
+            # that but is still aria2's OWN exit path, so it flushes the .aria2
+            # control files (verified: exits in ~4s, control file written).
+            # That is the whole difference from TerminateProcess, which does not
+            # flush and leaves payloads that cannot be resumed.
+            #
+            # No saveSession here: the daemon runs without --save-session on
+            # purpose (the app owns the task list), so the call fails with
+            # "Filename is not given." Resume comes from the .aria2 control
+            # files, which aria2 writes every --auto-save-interval seconds and
+            # again on the way out.
+            asked = True
             try:
-                self._post(self.port, self.secret, "aria2.saveSession", [], timeout=5)
-            except Exception:
-                pass
-            try:
-                self._post(self.port, self.secret, "aria2.shutdown", [], timeout=5)
-            except Exception:
+                self._post(self.port, self.secret, "aria2.forceShutdown", [],
+                           timeout=3)
+            except Exception as e:
+                log.warning("aria2 daemon did not accept forceShutdown: %s", e)
+                asked = False
+            if not asked and force:
                 _kill(self.pid)
-            for _ in range(20):
-                if not _pid_alive(self.pid):
-                    break
+            if wait <= 0 and not force:
+                # Nothing below depends on knowing whether it has gone yet, and
+                # _pid_alive shells out to tasklist — pure latency on the path
+                # between clicking the cross and the process ending. aria2 has
+                # been told to save and close; leave aria2d.json for the next
+                # run to reuse or clean up.
+                return
+            gone = not _pid_alive(self.pid)
+            deadline = time.monotonic() + max(0.0, wait)
+            while not gone and time.monotonic() < deadline:
                 time.sleep(0.25)
-            else:
+                gone = not _pid_alive(self.pid)
+            if not gone and force:
                 _kill(self.pid)
+                gone = True
+            if not gone:
+                # still on its way out: keep aria2d.json so the next run can
+                # find it rather than spawning a rival for the same ports
+                return
             try:
                 os.remove(_state_path())
             except OSError:
                 pass
             self.pid = self.port = 0
             self.secret = ""
+            self._last_ok = 0.0
 
 
 def _aria2c_path():

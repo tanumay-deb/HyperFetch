@@ -459,3 +459,92 @@ def test_poll_records_per_file_progress(tmp_path, monkeypatch):
     t = _drive_with(tmp_path, monkeypatch, daemon)
     assert t.file_progress[0]["completed"] == 400
     assert t.file_progress[0]["length"] == 1000
+
+
+# ------------------------------------------------------------ exit behaviour
+def test_exit_shutdown_never_hard_kills(tmp_path, monkeypatch):
+    """The app's close path passes force=False on purpose: a hard kill stops
+    aria2 flushing its .aria2 control files, and a payload without one cannot be
+    resumed at all. A slow-closing daemon is still closing."""
+    monkeypatch.setattr(utils, "app_data_dir", lambda: str(tmp_path))
+    d = aria2d.Aria2Daemon()
+    d.pid, d.port, d.secret = 4242, 6800, "s"
+    monkeypatch.setattr(d, "_post", lambda *a, **k: {})
+    monkeypatch.setattr(aria2d, "_pid_alive", lambda p: True)   # never exits
+    killed = []
+    monkeypatch.setattr(aria2d, "_kill", killed.append)
+    monkeypatch.setattr(aria2d.time, "sleep", lambda *_: None)
+
+    d.shutdown(wait=0.5, force=False)
+    assert killed == []
+
+
+def test_a_daemon_that_outlives_us_keeps_its_state_file(tmp_path, monkeypatch):
+    """If we did not confirm it died, aria2d.json must survive — otherwise the
+    next launch spawns a rival for the same BitTorrent port instead of finding
+    the one already there."""
+    monkeypatch.setattr(utils, "app_data_dir", lambda: str(tmp_path))
+    state = tmp_path / "aria2d.json"
+    state.write_text(json.dumps({"pid": 4242, "port": 6800, "secret": "s"}),
+                     encoding="utf-8")
+    d = aria2d.Aria2Daemon()
+    d.pid, d.port, d.secret = 4242, 6800, "s"
+    monkeypatch.setattr(d, "_post", lambda *a, **k: {})
+    monkeypatch.setattr(aria2d, "_pid_alive", lambda p: True)
+    monkeypatch.setattr(aria2d.time, "sleep", lambda *_: None)
+
+    d.shutdown(wait=0.5, force=False)
+    assert state.is_file()
+
+
+def test_a_daemon_that_exits_is_forgotten(tmp_path, monkeypatch):
+    monkeypatch.setattr(utils, "app_data_dir", lambda: str(tmp_path))
+    state = tmp_path / "aria2d.json"
+    state.write_text(json.dumps({"pid": 4242, "port": 6800, "secret": "s"}),
+                     encoding="utf-8")
+    d = aria2d.Aria2Daemon()
+    d.pid, d.port, d.secret = 4242, 6800, "s"
+    sent = []
+    monkeypatch.setattr(d, "_post",
+                        lambda p, s, m, *a, **k: sent.append(m) or {})
+    monkeypatch.setattr(aria2d, "_pid_alive", lambda p: False)   # exited
+
+    d.shutdown(wait=0.5, force=False)
+    assert sent == ["aria2.forceShutdown"]
+    assert not state.exists()
+    assert d.port == 0
+
+
+def test_shutdown_does_not_probe_a_busy_daemon_first(tmp_path, monkeypatch):
+    """shutdown() used to call alive() first, whose probe timeout is 10s — so
+    closing the app could block on the very daemon it was trying to stop."""
+    monkeypatch.setattr(utils, "app_data_dir", lambda: str(tmp_path))
+    d = aria2d.Aria2Daemon()
+    d.pid, d.port, d.secret = 4242, 6800, "s"
+    calls = []
+    monkeypatch.setattr(d, "_post",
+                        lambda p, s, m, *a, **k: calls.append((m, k.get("timeout"))) or {})
+    monkeypatch.setattr(aria2d, "_pid_alive", lambda p: False)
+
+    d.shutdown(wait=0, force=False)
+    assert all(m != "aria2.getGlobalStat" for m, _ in calls)
+    assert all((tmo or 0) <= 3 for _, tmo in calls)
+
+
+def test_exit_uses_force_shutdown_not_the_graceful_one(tmp_path, monkeypatch):
+    """aria2.shutdown unregisters from every tracker first, and against dead
+    public trackers it does not return — a daemon told to shut down was still
+    running minutes later. forceShutdown skips the tracker round-trip but is
+    still aria2's own exit, so control files are still flushed.
+
+    saveSession must NOT be called: the daemon runs without --save-session, so
+    it fails with "Filename is not given." — and when that failure aborted the
+    rest of the sequence, forceShutdown was never sent and the daemon leaked."""
+    monkeypatch.setattr(utils, "app_data_dir", lambda: str(tmp_path))
+    d = aria2d.Aria2Daemon()
+    d.pid, d.port, d.secret = 4242, 6800, "s"
+    sent = []
+    monkeypatch.setattr(d, "_post", lambda p, s, m, *a, **k: sent.append(m) or {})
+
+    d.shutdown(wait=0, force=False)
+    assert sent == ["aria2.forceShutdown"]

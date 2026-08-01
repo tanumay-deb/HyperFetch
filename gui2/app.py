@@ -987,6 +987,15 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, QW
             e.ignore()
 
     def _shutdown(self, e):
+        # Vanish first, tidy up after. Everything below runs on the GUI thread —
+        # pausing tasks, stopping the scheduler, telling the aria2 daemon to
+        # close — and until it finishes the window just sits there looking
+        # frozen. Hiding up front makes the click feel instant while the same
+        # work still completes before the process exits.
+        self.hide()
+        if self.tray:
+            self.tray.hide()
+        QApplication.processEvents()
         self._save_state()
         self._extras["geometry"] = bytes(self.saveGeometry().toBase64().data()).decode()
         self._extras["last_filter"] = self._filter
@@ -999,14 +1008,14 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, QW
         # stop the shared aria2 daemon we own. It outlives its parent if left
         # alone (it survives a killed parent), so an explicit shutdown is what
         # keeps it from holding the BitTorrent port after the app is gone.
+        # force=False: hard-killing it here is what leaves payloads with no
+        # .aria2 control file, which aria2 then refuses to resume.
         try:
             import aria2d
-            aria2d.DAEMON.shutdown()
+            aria2d.DAEMON.shutdown(wait=0, force=False)
         except Exception:
             pass
         self.queue.wait_active(2.0)
-        if self.tray:
-            self.tray.hide()
         super().closeEvent(e)
 
 
