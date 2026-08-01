@@ -38,6 +38,10 @@ STALL_TIMEOUT = 1800  # 30 min
 # is merely busy (allocating a file, hash-checking) blocks RPC for seconds; the
 # first miss used to pause the download outright.
 RPC_RETRIES = 10
+# How often to refresh per-file progress. getFiles returns the WHOLE file list,
+# so calling it on every 0.3s poll would be wasteful on a torrent with hundreds
+# of files; the drawer only redraws twice a second anyway.
+FILES_POLL = 2.0
 # aria2 refuses to touch an existing payload that has no .aria2 control file: it
 # cannot tell finished bytes from garbage, so it stops rather than truncate.
 _CTL_MISSING = re.compile(r"control file.*does not exist", re.I)
@@ -195,6 +199,38 @@ def _bdecode(data):
         return parse(0)[0]
     except (ValueError, IndexError, TypeError) as e:
         raise ValueError("malformed bencode") from e
+
+
+def _file_rows(files):
+    """Normalise an ``aria2.getFiles`` reply into the task's file_progress.
+
+    aria2 sends every number as a string and marks skipped files with
+    ``selected: "false"``. A magnet still resolving its metadata reports a
+    single ``[METADATA]`` pseudo-file, which is not part of the payload and must
+    not be shown as one.
+    """
+    rows = []
+    for f in files or []:
+        path = f.get("path") or ""
+        if "[METADATA]" in path.upper() or "[MEMORY]" in path.upper():
+            continue
+        try:
+            length = int(f.get("length") or 0)
+            completed = int(f.get("completedLength") or 0)
+            index = int(f.get("index") or 0)
+        except (TypeError, ValueError):
+            continue
+        rows.append({
+            "index": index,
+            "path": path,
+            "length": length,
+            # aria2 can report a completedLength above the file length on the
+            # piece that straddles a file boundary; clamp so the UI cannot show
+            # 103% or a bar past its end.
+            "completed": max(0, min(completed, length)) if length else completed,
+            "selected": str(f.get("selected", "true")).lower() != "false",
+        })
+    return rows
 
 
 def parse_torrent_files(path):
@@ -714,6 +750,7 @@ class TorrentDownloader:
         cur = gid
         top = ""
         fails = 0
+        last_files = 0.0
         while True:
             if self.t.cancel_requested:
                 self._rpc_remove(d, cur, force=True)
@@ -769,6 +806,20 @@ class TorrentDownloader:
                 self.t.total_size = total
             self.t.tor_conns = int(st.get("connections") or 0)
             self.t.tor_seeds = int(st.get("numSeeders") or 0)
+
+            # Per-file progress. The Files tab used to derive this from the size
+            # of each file on disk, which is not progress at all: aria2
+            # preallocates, so every file read 100% the moment the download
+            # started, and even without preallocation BitTorrent fetches pieces
+            # out of order, so a file reaches full size when its LAST piece
+            # lands. Only aria2 knows how much of each file is really there.
+            now = time.time()
+            if now - last_files >= FILES_POLL:
+                last_files = now
+                try:
+                    self.t.file_progress = _file_rows(d.call("aria2.getFiles", cur))
+                except Exception as e:
+                    log.debug("getFiles failed for %s: %s", self.t.filename, e)
 
             files = st.get("files") or []
             if not top and files:

@@ -391,3 +391,71 @@ def test_an_ordinary_torrent_error_is_not_retried(tmp_path, monkeypatch):
     adds = [p for m, p in daemon.calls if m in ("aria2.addUri", "aria2.addTorrent")]
     assert len(adds) == 1
     assert t.status == T.ERROR
+
+
+# ------------------------------------------------------- per-file progress
+def test_file_rows_normalises_aria2s_reply():
+    """aria2 sends every number as a string and flags skipped files with
+    selected:"false"."""
+    rows = torrent._file_rows([
+        {"index": "1", "path": "/d/T/a.mkv", "length": "1000",
+         "completedLength": "250", "selected": "true"},
+        {"index": "2", "path": "/d/T/b.srt", "length": "100",
+         "completedLength": "0", "selected": "false"},
+    ])
+    assert rows[0] == {"index": 1, "path": "/d/T/a.mkv", "length": 1000,
+                       "completed": 250, "selected": True}
+    assert rows[1]["selected"] is False
+
+
+def test_file_rows_drops_the_metadata_pseudo_file():
+    """A magnet still fetching metadata reports one [METADATA] entry that is not
+    part of the payload — showing it as a file would be a lie."""
+    rows = torrent._file_rows([
+        {"index": "1", "path": "[METADATA]abcdef", "length": "0",
+         "completedLength": "0", "selected": "true"},
+    ])
+    assert rows == []
+
+
+def test_file_rows_clamps_a_straddling_piece():
+    """The piece spanning a file boundary can push completedLength past the
+    file length; the UI must never render 103%."""
+    rows = torrent._file_rows([
+        {"index": "1", "path": "/d/a.bin", "length": "1000",
+         "completedLength": "1030", "selected": "true"},
+    ])
+    assert rows[0]["completed"] == 1000
+
+
+def test_file_rows_survives_junk():
+    rows = torrent._file_rows([{"index": "x", "path": "/d/a", "length": "n/a"}])
+    assert rows == []
+    assert torrent._file_rows(None) == []
+
+
+def test_poll_records_per_file_progress(tmp_path, monkeypatch):
+    """The Files tab used to compute progress from the file's size on disk,
+    which reads 100% instantly because aria2 preallocates. Only getFiles knows
+    how much of each file is really present."""
+    payload = str(tmp_path / "Movie.mkv")
+    open(payload, "w").close()
+
+    class _WithFiles(_FakeDaemon):
+        def call(self, method, *params, **kw):
+            if method == "aria2.getFiles":
+                self.calls.append((method, params))
+                return [{"index": "1", "path": payload, "length": "1000",
+                         "completedLength": "400", "selected": "true"}]
+            return super().call(method, *params, **kw)
+
+    daemon = _WithFiles([
+        {"status": "active", "completedLength": "400", "totalLength": "1000",
+         "files": [{"path": payload}]},
+        {"status": "complete", "completedLength": "1000", "totalLength": "1000",
+         "files": [{"path": payload}]},
+    ])
+    monkeypatch.setattr(torrent, "FILES_POLL", 0)      # no throttle in the test
+    t = _drive_with(tmp_path, monkeypatch, daemon)
+    assert t.file_progress[0]["completed"] == 400
+    assert t.file_progress[0]["length"] == 1000

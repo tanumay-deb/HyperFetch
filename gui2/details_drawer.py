@@ -684,9 +684,44 @@ class DetailsDrawer(QFrame):
         setattr(self, f"_{key}_lay", lay)
         return sa
 
+    def _fstat_card(self, icon, label):
+        """One summary tile above the file list. Returns (card, value_label) so
+        the value can be refreshed live without rebuilding the tile."""
+        c = QFrame()
+        c.setStyleSheet(
+            f"QFrame {{ background: {COLORS['surface2']}; border: 1px solid "
+            f"{COLORS['border']}; border-radius: 8px; }}")
+        v = QVBoxLayout(c); v.setContentsMargins(8, 7, 8, 7); v.setSpacing(2)
+        top = QHBoxLayout(); top.setSpacing(4)
+        ic = QLabel(); ic.setPixmap(themed_icon(icon, "accent").pixmap(12, 12))
+        ic.setStyleSheet("background: transparent;")
+        ic.setFixedWidth(12)
+        lb = QLabel(label)
+        # four tiles share a narrow drawer, so the longest label ("Downloading")
+        # is what decides the font size — at fpx(10) it clipped mid-word
+        lb.setStyleSheet(f"color: {COLORS['muted']}; font-size: {fpx(9)}; "
+                         f"background: transparent;")
+        lb.setMinimumWidth(0)
+        top.addWidget(ic); top.addWidget(lb, 1)
+        val = QLabel("—")
+        val.setStyleSheet(f"color: {COLORS['text']}; font-size: {fpx(13)}; "
+                          f"font-weight: 700; background: transparent;")
+        v.addLayout(top); v.addWidget(val)
+        return c, val
+
     def _files_tab(self):
         w = QWidget(); v = QVBoxLayout(w); v.setContentsMargins(14, 14, 14, 14); v.setSpacing(12)
-        
+
+        # Summary tiles
+        cards = QHBoxLayout(); cards.setSpacing(8)
+        c1, self.fs_size = self._fstat_card("archive", "Total Size")
+        c2, self.fs_done = self._fstat_card("check", "Completed")
+        c3, self.fs_active = self._fstat_card("download", "Downloading")
+        c4, self.fs_count = self._fstat_card("document", "Files")
+        for c in (c1, c2, c3, c4):
+            cards.addWidget(c, 1)
+        v.addLayout(cards)
+
         # Top toolbar
         top_bar = QHBoxLayout()
         
@@ -714,7 +749,7 @@ class DetailsDrawer(QFrame):
         # Table
         self.files_table = QTableWidget()
         self.files_table.setColumnCount(3)
-        self.files_table.setHorizontalHeaderLabels(["Name", "Size", "Status"])
+        self.files_table.setHorizontalHeaderLabels(["Name", "Size", "Progress"])
         self.files_table.verticalHeader().setVisible(False)
         self.files_table.setShowGrid(False)
         self.files_table.setSelectionBehavior(QAbstractItemView.SelectRows)
@@ -731,10 +766,92 @@ class DetailsDrawer(QFrame):
         header.setSectionResizeMode(1, QHeaderView.Fixed)
         self.files_table.setColumnWidth(1, 80)
         header.setSectionResizeMode(2, QHeaderView.Fixed)
-        self.files_table.setColumnWidth(2, 90)
+        self.files_table.setColumnWidth(2, 110)
         
         v.addWidget(self.files_table, 1)
         return w
+
+    def _style_file_bar(self, bar, pct, skipped=False):
+        col = (COLORS['muted'] if skipped else
+               COLORS['success'] if pct >= 100 else COLORS['accent'])
+        bar.setStyleSheet(
+            f"QProgressBar {{ background: {COLORS['surface2']}; border: 1px solid "
+            f"{COLORS['border']}; border-radius: 4px; text-align: center; "
+            f"color: {COLORS['text']}; font-size: {fpx(9)}; }}"
+            f"QProgressBar::chunk {{ background: {col}; border-radius: 3px; }}")
+
+    @staticmethod
+    def _live_file_entries(t):
+        """(rel_path, length, completed, selected) per file, from aria2's live
+        numbers. Empty when the engine has not reported yet — the caller then
+        falls back to the static .torrent listing, which has sizes but no
+        progress.
+
+        Deriving progress from the size of each file on disk (what this tab used
+        to do) does not work: aria2 preallocates, so every file measures full
+        size the instant the download starts, and BitTorrent fetches pieces out
+        of order anyway, so a file reaches full size when its LAST piece lands.
+        """
+        rows = getattr(t, "file_progress", None) or []
+        base = os.path.dirname(t.save_path or "") or "."
+        out = []
+        for f in rows:
+            p = (f.get("path") or "").replace("\\", "/")
+            try:
+                rel = os.path.relpath(p, base).replace("\\", "/")
+            except ValueError:                       # different drive
+                rel = os.path.basename(p)
+            if rel.startswith(".."):                 # outside out_dir
+                rel = os.path.basename(p)
+            out.append((rel, int(f.get("length") or 0),
+                        int(f.get("completed") or 0),
+                        bool(f.get("selected", True))))
+        return out
+
+    @staticmethod
+    def _file_pct(size, completed):
+        if completed is None:
+            return 0
+        if size <= 0:
+            return 100 if completed else 0
+        return max(0, min(100, int(completed * 100 / size)))
+
+    def _set_file_cards(self, total_sz, total_files, done, active):
+        self.fs_size.setText(human_size(total_sz) if total_sz else "—")
+        if total_files:
+            self.fs_done.setText(f"{done} ({int(done * 100 / total_files)}%)")
+        else:
+            self.fs_done.setText("—")
+        self.fs_active.setText(str(active))
+        self.fs_count.setText(str(total_files))
+
+    def _refresh_files(self, t):
+        """Update the per-file bars and the summary tiles in place. Rebuilding
+        the table each tick would drop the user's checkbox edits and scroll
+        position, so only the values move."""
+        if not _torrent.is_torrent_task(t.url, t.filename):
+            return
+        live = self._live_file_entries(t)
+        if not live:
+            return
+        if len(live) != len(self._file_bars):
+            self._populate_static(t)      # metadata arrived, file list changed
+            return
+        total_sz = done = active = 0
+        for bar, (_rel, size, completed, selected) in zip(self._file_bars, live):
+            total_sz += size
+            pct = self._file_pct(size, completed)
+            if not selected:
+                bar.setFormat("Skipped")
+            else:
+                bar.setFormat(f"{pct}%")
+                if pct >= 100:
+                    done += 1
+                elif completed > 0:
+                    active += 1
+            bar.setValue(pct)
+            self._style_file_bar(bar, pct, skipped=not selected)
+        self._set_file_cards(total_sz, len(live), done, active)
 
     def _filter_files(self):
         query = self.file_search.text().lower()
@@ -1094,20 +1211,27 @@ class DetailsDrawer(QFrame):
                     pass
 
         self._file_row_widgets = []
+        self._file_bars = []
         self.files_table.setRowCount(0)
-        
+
         sp = t.save_path
         total_sz = 0
         total_files = 0
+        done_files = 0
+        active_files = 0
         
-        def add_file_row(idx, name, size, is_folder, pct, status_str, indent=0):
+        def add_file_row(idx, name, size, is_folder, pct, status_str, indent=0,
+                         selected=True):
             r = self.files_table.rowCount()
             self.files_table.insertRow(r)
-            
+
             # Col 0: Name (Checkbox + Icon + Label)
             w = QWidget()
             h = QHBoxLayout(w); h.setContentsMargins(4 + indent*16, 2, 4, 2); h.setSpacing(8)
-            cb = QCheckBox(); cb.setChecked(True)
+            cb = QCheckBox()
+            # set state BEFORE connecting, or restoring aria2's own selection
+            # would fire _apply_file_selection and push it straight back
+            cb.setChecked(selected)
             cb.stateChanged.connect(self._apply_file_selection)
             ic_name = "folder" if is_folder else "document"
             ic_color = "warning" if is_folder else "muted"
@@ -1129,16 +1253,26 @@ class DetailsDrawer(QFrame):
             sz_item.setForeground(QColor(COLORS['muted']))
             self.files_table.setItem(r, 1, sz_item)
             
-            # Col 2: Status
-            status_item = QTableWidgetItem(f"{pct}%" if pct < 100 else status_str)
-            status_item.setTextAlignment(Qt.AlignCenter)
-            status_item.setForeground(QColor(COLORS['accent'] if pct < 100 else COLORS['muted']))
-            self.files_table.setItem(r, 2, status_item)
-            
+            # Col 2: Progress — a real bar, driven by _refresh_files
+            bar = QProgressBar()
+            bar.setRange(0, 100)
+            bar.setValue(pct)
+            bar.setFixedHeight(16)
+            bar.setTextVisible(True)
+            bar.setFormat("Skipped" if not selected else f"{pct}%")
+            bar.setToolTip(status_str)
+            self._style_file_bar(bar, pct, skipped=not selected)
+            self.files_table.setCellWidget(r, 2, bar)
+
             self._file_row_widgets.append((idx, cb, size))
+            self._file_bars.append(bar)
             
         if is_tor:
-            entries = _torrent.list_files(t)
+            # aria2's live file list wins when the engine has reported it; the
+            # static .torrent listing is the fallback before metadata arrives.
+            live = self._live_file_entries(t)
+            entries = live or [(rel, size, None, True)
+                               for rel, size in _torrent.list_files(t)]
             if not entries:
                 self.files_table.setRowCount(1)
                 self.files_table.setSpan(0, 0, 1, 3)
@@ -1147,22 +1281,25 @@ class DetailsDrawer(QFrame):
                 wait_item.setForeground(QColor(COLORS['muted']))
                 self.files_table.setItem(0, 0, wait_item)
             else:
-                for i, (rel, size) in enumerate(entries):
+                for i, (rel, size, completed, selected) in enumerate(entries):
                     total_sz += size
                     total_files += 1
                     parts = rel.split("/")
                     indent = len(parts) - 1
                     name = parts[-1]
-                    pct = 0
-                    if sp:
-                        base = sp if os.path.isdir(sp) else os.path.dirname(sp) or "."
-                        fp = os.path.join(base, *parts)
-                        if os.path.isfile(fp):
-                            got = os.path.getsize(fp)
-                            if size: pct = int(got * 100 / size)
-                            elif size == 0: pct = 100
-                    status_str = "Completed" if pct >= 100 else ("Downloading" if t.status == T.DOWNLOADING else "Idle")
-                    add_file_row(i, name, size, False, pct, status_str, indent)
+                    pct = self._file_pct(size, completed)
+                    if not selected:
+                        status_str = "Skipped"
+                    elif pct >= 100:
+                        status_str = "Completed"
+                        done_files += 1
+                    elif completed:
+                        status_str = "Downloading"
+                        active_files += 1
+                    else:
+                        status_str = "Downloading" if t.status == T.DOWNLOADING else "Idle"
+                    add_file_row(i, name, size, False, pct, status_str, indent,
+                                 selected)
         else:
             if sp and os.path.isdir(sp):
                 try:
@@ -1171,6 +1308,7 @@ class DetailsDrawer(QFrame):
                         sz = os.path.getsize(fp) if os.path.isfile(fp) else 0
                         total_sz += sz
                         total_files += 1
+                        done_files += 1
                         add_file_row(i, name, sz, os.path.isdir(fp), 100, "Completed")
                 except OSError: pass
             else:
@@ -1179,8 +1317,14 @@ class DetailsDrawer(QFrame):
                 total_files += 1
                 pct = 100 if t.status == T.COMPLETED else t.percent
                 status_str = "Completed" if t.status == T.COMPLETED else ("Downloading" if t.status == T.DOWNLOADING else "Idle")
+                if pct >= 100:
+                    done_files += 1
+                elif t.downloaded:
+                    active_files += 1
                 add_file_row(0, t.filename or "file", sz, False, pct, status_str)
-        
+
+        self._set_file_cards(total_sz, total_files, done_files, active_files)
+
 
 
         # Headers (cookies/auth stripped)
@@ -1301,6 +1445,7 @@ class DetailsDrawer(QFrame):
         if t.id != self._tid:
             return
         is_tor = _torrent.is_torrent_task(t.url, t.filename)
+        self._refresh_files(t)
         pct = 100 if t.status == T.COMPLETED else t.percent
         self.ov_pct.setText(f"{pct}%")
         self.bar.setValue(pct)

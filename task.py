@@ -118,6 +118,11 @@ class DownloadTask:
         self.response_headers = {}
         self.response_status = 0
         self.remote_address = ""
+        # per-file torrent progress, refreshed from aria2.getFiles by the RPC
+        # engine: [{index, path, length, completed, selected}, ...]. Transient —
+        # it describes a live download, and the drawer falls back to the static
+        # .torrent listing when it is empty.
+        self.file_progress = []
 
         # queue ordering: lower priority value runs first; seq breaks ties FIFO
         self.priority = priority
