@@ -18,6 +18,24 @@ MAX_CONCURRENT = 3
 SEGMENTS = 8
 
 
+def _parse_rate(text):
+    """"500 KB/s" -> bytes per second. 0 for "Unlimited" or anything odd."""
+    if not text or "Unlimited" in text:
+        return 0
+    try:
+        n = float(str(text).split()[0])
+    except (ValueError, IndexError):
+        return 0
+    unit = str(text).upper()
+    if "MB" in unit:
+        return int(n * 1024 * 1024)
+    if "KB" in unit:
+        return int(n * 1024)
+    if "MB/S" in unit or "M" in unit.split("/")[0]:
+        return int(n * 1024 * 1024)
+    return int(n)
+
+
 class SettingsMixin:
     # ------------------------------------------------------------- load / save
     def _load_settings(self):
@@ -146,6 +164,7 @@ class SettingsMixin:
         utils.SEED_ENABLED = bool(ex.get("seed_enabled", False))
         utils.SEED_RATIO = float(ex.get("seed_ratio", 1.0) or 0)
         utils.SEED_MINUTES = int(ex.get("seed_minutes", 0) or 0)
+        utils.MAX_UPLOAD_BPS = _parse_rate(ex.get("upload_limit"))
         utils.HASH_CHECK = bool(ex.get("hash_check", False))
         # Auto-capture allowlist (Settings -> Browser). The Flask /download endpoint
         # reads utils.CAPTURE_EXTS to filter the extension's auto-captures.

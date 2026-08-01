@@ -77,6 +77,12 @@ def preference_opts():
             # the user has to opt into rather than something they land on by
             # clearing two boxes
             opts.append("--seed-ratio=1.0")
+    up = int(getattr(utils, "MAX_UPLOAD_BPS", 0) or 0)
+    if up > 0:
+        # Applies whether or not seeding is on: a torrent uploads to its peers
+        # while it downloads too, and that is the traffic most likely to choke
+        # an asymmetric line.
+        opts.append(f"--max-overall-upload-limit={up}")
     if getattr(utils, "TORRENT_PREVIEW", False):
         # head and tail first: media containers keep their index at one end or
         # the other, so this is what lets a partial file play and seek

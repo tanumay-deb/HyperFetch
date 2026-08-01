@@ -75,6 +75,11 @@ SEED_MINUTES = 0          # also stop after this long (0 = no time limit)
 # Fetch the start and end of each file first, so a part-downloaded video plays
 # and seeks instead of having to finish first.
 TORRENT_PREVIEW = False
+# Upload ceiling in bytes/sec across all torrents (0 = unlimited). Matters most
+# once seeding is on: home connections are asymmetric, so an uncapped upload
+# saturates the upstream and takes the DOWNLOAD down with it — TCP ACKs for the
+# incoming data have to fit in the same starved pipe.
+MAX_UPLOAD_BPS = 0
 
 
 def disk_shortfall(path, needed):

@@ -221,6 +221,7 @@ class SettingsDialogV2(PageBuilderMixin, QDialog):
             "seed_enabled": self.seed_enabled.isChecked(),
             "seed_ratio": self.seed_ratio.value(),
             "seed_minutes": self.seed_minutes.value(),
+            "upload_limit": self.upload_limit.currentText(),
             "proxy": self._proxy_url,
             "font_size": self.font_size.currentText(),
             "speed_units": "bytes" if self.speed_units.currentText().startswith("Bytes") else "bits",

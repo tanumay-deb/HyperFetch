@@ -71,6 +71,7 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, QW
         self._filter = "All"
         self._search = ""
         self._completed_seen = None
+        self._power_dlg = None       # live shutdown countdown, if one is armed
         self._errored_seen = None
         self._sidebar_collapsed = False
         self._scheduler_active = False
@@ -664,7 +665,35 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, QW
         # disk — kill/crash the app there and it resurrected as Paused.
         if done != self._completed_seen or errd != self._errored_seen:
             self._save_state()
+        newly_done = bool(done - self._completed_seen)
         self._completed_seen, self._errored_seen = done, errd
+        if newly_done and wc in ("Shut down PC", "Sleep"):
+            self._maybe_power_off(wc)
+
+    def _maybe_power_off(self, wc):
+        """Arm the shutdown countdown once the WHOLE queue is finished.
+
+        Deliberately not per-download: the point is an overnight queue, and
+        powering off after the first of forty files would be absurd. Paused
+        tasks do not hold it back — the user parked those on purpose, and one
+        forgotten pause would otherwise disable the feature permanently.
+        """
+        if getattr(self, "_power_dlg", None) is not None:
+            return                                  # already counting down
+        busy = (T.DOWNLOADING, T.QUEUED, T.SCHEDULED)
+        if any(t.status in busy for t in self.queue.tasks):
+            return
+        from gui2.dialogs.shutdown import ShutdownDialog
+        action = "Sleep" if wc == "Sleep" else "Shut down"
+        dlg = ShutdownDialog(self, action=action)
+        self._power_dlg = dlg
+        dlg.finished.connect(lambda *_: setattr(self, "_power_dlg", None))
+        # raise it above a minimised/tray'd window — an invisible countdown is
+        # exactly the thing this dialog exists to prevent
+        self._show_from_tray()
+        dlg.show()
+        dlg.raise_()
+        dlg.activateWindow()
 
     def _drain_pending(self):
         while self.pending:

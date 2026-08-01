@@ -152,7 +152,8 @@ class PageBuilderMixin:
         trow.addSpacing(8); trow.addWidget(QLabel("to")); trow.addWidget(self.thr_stop)
         trow.addSpacing(12); trow.addWidget(QLabel("limit")); trow.addWidget(self.thr_limit); trow.addStretch()
         g.addLayout(trow)
-        self.when_complete = self._combo(["Show notification", "Open file", "Open folder", "Do nothing"],
+        self.when_complete = self._combo(["Show notification", "Open file", "Open folder",
+                                          "Shut down PC", "Sleep", "Do nothing"],
                                          ex.get("when_complete"))
         self._row(g, "When download is complete", "Action when a download finishes", self.when_complete)
         self.open_complete = self._toggle(ex.get("open_on_complete", False))
@@ -349,6 +350,15 @@ class PageBuilderMixin:
         self._row(g, "Stop seeding after",
                   "Also stop once this long has passed. 0 = no time limit.",
                   self.seed_minutes)
+        self.upload_limit = self._combo(
+            ["Unlimited", "50 KB/s", "100 KB/s", "250 KB/s", "500 KB/s",
+             "1 MB/s", "2 MB/s", "5 MB/s"],
+            ex.get("upload_limit", "Unlimited"))
+        self._row(g, "Upload speed limit",
+                  "Caps what torrents send. Home connections upload far slower "
+                  "than they download, so an uncapped upload slows the download "
+                  "too — and everything else on the network.",
+                  self.upload_limit)
         self.seed_enabled.toggled.connect(self._sync_seed_rows)
         self._sync_seed_rows(self.seed_enabled.isChecked())
         self.hash_check = self._toggle(ex.get("hash_check", False))
