@@ -63,6 +63,35 @@ TORRENT_RPC = False
 # its internal queue to match. aria2 must never be the narrower of the two, or
 # it silently holds downloads the app has already decided to run.
 MAX_CONCURRENT_DOWNLOADS = 3
+# Breathing room left on the volume after a download: filling a disk to the last
+# byte breaks far more than the download.
+DISK_SLACK = 64 << 20
+# Seeding. Off by default (the app has always stopped dead on completion), but
+# a ratio-zero client is unwelcome on private trackers and gives nothing back to
+# the swarms it takes from.
+SEED_ENABLED = False
+SEED_RATIO = 1.0          # share ratio to stop at (0 = no ratio limit)
+SEED_MINUTES = 0          # also stop after this long (0 = no time limit)
+# Fetch the start and end of each file first, so a part-downloaded video plays
+# and seeks instead of having to finish first.
+TORRENT_PREVIEW = False
+
+
+def disk_shortfall(path, needed):
+    """How many bytes ``path``'s volume is short of holding ``needed``.
+
+    0 means it fits — or that the volume could not be queried, in which case the
+    write is left to find out for itself rather than blocking on a guess.
+    """
+    import shutil
+    if needed <= 0:
+        return 0
+    probe = path if os.path.isdir(path) else (os.path.dirname(path) or ".")
+    try:
+        free = shutil.disk_usage(probe).free
+    except OSError:
+        return 0
+    return max(0, needed + DISK_SLACK - free)
 BADGE_CORNER = "top-right"  # extension's on-page download-button corner (served via /ping)
 
 # Per-host download rules (Settings -> Network). {host: {"segments": int,

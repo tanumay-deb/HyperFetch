@@ -255,7 +255,7 @@ class Aria2Daemon:
             # 5 active / 22 waiting / 75 stopped, so nothing new ever started
             # and magnets sat in "waiting" forever.
             f"--max-concurrent-downloads={max_concurrent()}",
-            "--seed-time=0",
+            *torrent.preference_opts(),        # seeding + preview, from Settings
             f"--bt-stop-timeout={torrent.STALL_TIMEOUT}",
             "--bt-save-metadata=true",
             "--bt-load-saved-metadata=true",

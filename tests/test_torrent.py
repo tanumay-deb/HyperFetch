@@ -90,6 +90,7 @@ class _FakeProc:
         self._rc = rc
         self.returncode = None
         self.terminated = False
+        self.signalled = None               # mirrors Popen.send_signal
 
     def poll(self):
         return self.returncode
@@ -98,6 +99,12 @@ class _FakeProc:
         if self.returncode is None:
             self.returncode = self._rc      # first wait "finishes" the process
         return self.returncode
+
+    def send_signal(self, sig):
+        # aria2 is asked politely first (CTRL_BREAK) so it can write out its
+        # DHT routing table; a real Popen always has this.
+        self.signalled = sig
+        self.returncode = 0
 
     def terminate(self):
         self.terminated = True
@@ -195,7 +202,9 @@ def test_run_cancel_terminates(tmp_path, monkeypatch):
     t.request_cancel()                     # cancel before the control loop runs
     torrent.TorrentDownloader(t).run()
     assert t.status == T.CANCELLED
-    assert proc.terminated
+    # stopped gracefully: aria2 is signalled, not TerminateProcess'd, so it can
+    # still write out its DHT routing table on the way down
+    assert proc.signalled is not None or proc.terminated
 
 
 # ---- torrent file listing (drawer Files tab) ----

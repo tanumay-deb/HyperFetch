@@ -18,6 +18,7 @@ import re
 import sys
 import time
 import shutil
+import signal
 import logging
 import threading
 import subprocess
@@ -45,6 +46,43 @@ FILES_POLL = 2.0
 # aria2 refuses to touch an existing payload that has no .aria2 control file: it
 # cannot tell finished bytes from garbage, so it stops rather than truncate.
 _CTL_MISSING = re.compile(r"control file.*does not exist", re.I)
+
+
+def preference_opts():
+    """aria2 options that come from user settings, shared by both engines.
+
+    Kept in one place so the per-torrent subprocess and the shared daemon cannot
+    drift apart — a setting that works on one engine and silently does nothing
+    on the other is worse than not having it.
+    """
+    opts = []
+    if not getattr(utils, "SEED_ENABLED", False):
+        opts.append("--seed-time=0")          # stop the moment it completes
+    else:
+        ratio = float(getattr(utils, "SEED_RATIO", 0) or 0)
+        minutes = float(getattr(utils, "SEED_MINUTES", 0) or 0)
+        if ratio > 0:
+            opts.append(f"--seed-ratio={ratio:g}")
+        if minutes > 0:
+            opts.append(f"--seed-time={minutes:g}")
+        if ratio <= 0 and minutes <= 0:
+            # aria2 reads --seed-ratio=0 as "seed forever"; make that a choice
+            # the user has to opt into rather than something they land on by
+            # clearing two boxes
+            opts.append("--seed-ratio=1.0")
+    if getattr(utils, "TORRENT_PREVIEW", False):
+        # head and tail first: media containers keep their index at one end or
+        # the other, so this is what lets a partial file play and seek
+        opts.append("--bt-prioritize-piece=head,tail")
+    return opts
+
+
+def _mib(n):
+    """Short human size for engine-side error text (gui.theme is GUI-only)."""
+    for unit, step in (("GB", 1 << 30), ("MB", 1 << 20), ("KB", 1 << 10)):
+        if n >= step:
+            return f"{n / step:.1f} {unit}"
+    return f"{int(n)} B"
 # Default BitTorrent listen port when the user has not chosen one. It used to be
 # left unset, which meant aria2 picked from its own range and UPnP had no single
 # port to forward — so we only ever made OUTBOUND connections and never accepted
@@ -441,7 +479,7 @@ class TorrentDownloader:
         cmd = [
             exe,
             "--dir", out_dir,
-            "--seed-time=0",              # don't seed after completing
+            *preference_opts(),           # seeding + preview, from Settings
             # Stall timeout. Only meaningful once the payload is transferring:
             # during the metadata phase a magnet legitimately sits at 0 B/s for
             # minutes while DHT is queried, and a short timeout there is what
@@ -539,7 +577,10 @@ class TorrentDownloader:
                 self._build_cmd(exe, out_dir),
                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                 text=True, bufsize=1,
-                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+                # Its own process group, so _stop can send it a CTRL_BREAK
+                # without the signal also reaching HyperFetch itself.
+                creationflags=(getattr(subprocess, "CREATE_NO_WINDOW", 0)
+                               | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)))
         except OSError as e:
             self.t.status = T.ERROR
             self.t.error = f"failed to start aria2c: {e}"
@@ -553,7 +594,8 @@ class TorrentDownloader:
         # the FILE:/separator line and missed the progress line entirely —
         # leaving the task pinned at 0% until completion. Parse in place instead.
         tail = []
-        seen = {"top": ""}
+        seen = {"top": "", "disk": False}
+        self._disk_abort = False
         # epoch tying this reader to this run: downloader.py builds a fresh
         # TorrentDownloader on every resume against the SAME task, so an old
         # reader draining a dying aria2 could clobber the new run's progress.
@@ -580,6 +622,13 @@ class TorrentDownloader:
                         # pinning genuinely small torrents at 0%.
                         if seen["top"] or total >= 1_000_000:
                             self.t.downloaded, self.t.total_size = done, total
+                            if not seen["disk"]:
+                                seen["disk"] = True
+                                if self._disk_guard(total, out_dir):
+                                    # _disk_guard has set the status/error; the
+                                    # control loop below tears aria2 down
+                                    self._disk_abort = True
+                                    return
                         peers = parse_peers(ln)
                         if peers:
                             self.t.tor_conns, self.t.tor_seeds = peers
@@ -610,7 +659,7 @@ class TorrentDownloader:
         rt.start()
 
         while self._proc.poll() is None:
-            if self.t.cancel_requested or self.t.pause_requested:
+            if self.t.cancel_requested or self.t.pause_requested or self._disk_abort:
                 self._stop()
                 break
             try:
@@ -624,6 +673,11 @@ class TorrentDownloader:
             self.t._tor_gen = gen + 1
         rt.join(timeout=2)
 
+        if self._disk_abort:
+            # status and error already say why; keep the control file so the
+            # partial payload resumes once space has been freed
+            archive_metadata(self.t, out_dir)
+            return
         if self.t.cancel_requested:
             # cancelled for good: take the control file and metadata with it
             # instead of leaving them next to the half-downloaded payload
@@ -736,6 +790,26 @@ class TorrentDownloader:
             self.t.gid = None
         return top
 
+    def _disk_guard(self, total, out_dir):
+        """True if the volume cannot hold what is left of this torrent.
+
+        A magnet has no size until its metadata arrives, so this cannot be a
+        pre-flight check — it runs the moment the total becomes known. Only the
+        REMAINING bytes matter: a resumed torrent has already paid for what is
+        on disk. Without it a torrent larger than the free space preallocates,
+        runs for hours and dies on ENOSPC with nothing to show.
+        """
+        short = utils.disk_shortfall(out_dir, max(0, total - self.t.downloaded))
+        if not short:
+            return False
+        self.t.status = T.ERROR
+        self.t.error = (
+            f"Not enough disk space — {_mib(short)} more needed on this drive. "
+            "Free some space, or pick another folder in Settings, then Resume.")
+        log.warning("insufficient disk space for %s: short by %s",
+                    self.t.filename, _mib(short))
+        return True
+
     def _rpc_add(self, d, opts):
         """Hand the torrent/magnet to the daemon and return its gid."""
         import base64
@@ -751,6 +825,7 @@ class TorrentDownloader:
         top = ""
         fails = 0
         last_files = 0.0
+        checked_disk = False
         while True:
             if self.t.cancel_requested:
                 self._rpc_remove(d, cur, force=True)
@@ -804,6 +879,11 @@ class TorrentDownloader:
             total = int(st.get("totalLength") or 0)
             if total:
                 self.t.total_size = total
+                if not checked_disk:
+                    checked_disk = True
+                    if self._disk_guard(total, out_dir):
+                        self._rpc_remove(d, cur, force=True)
+                        return top
             self.t.tor_conns = int(st.get("connections") or 0)
             self.t.tor_seeds = int(st.get("numSeeders") or 0)
 
@@ -912,9 +992,29 @@ class TorrentDownloader:
             # an unrelated file; keep the reliable magnet dn / FILE-line name
 
     def _stop(self):
+        """Ask aria2 to stop, and only force it if it will not.
+
+        Popen.terminate() on Windows is TerminateProcess — the process dies
+        where it stands with no chance to write anything out. Measured against a
+        real magnet: after a terminate() the DHT routing table was simply gone,
+        while the same run stopped with a CTRL_BREAK saved it. A cold routing
+        table every launch is the difference between finding peers in seconds
+        and bootstrapping the swarm from nothing, which is exactly the "works in
+        qBittorrent but stalls here" complaint.
+        """
         p = self._proc
         if not p:
             return
+        brk = getattr(signal, "CTRL_BREAK_EVENT", None)
+        if brk is not None:
+            try:
+                p.send_signal(brk)
+                p.wait(timeout=STOP_GRACE)
+                return
+            except subprocess.TimeoutExpired:
+                pass          # ignored the polite request; escalate below
+            except (OSError, ValueError):
+                pass          # not a console process / already gone
         try:
             p.terminate()
             p.wait(timeout=STOP_GRACE)

@@ -7,7 +7,7 @@ the dialog behaviour (nav, search, values).
 """
 from PySide6.QtWidgets import (
     QHBoxLayout, QVBoxLayout, QGridLayout, QLabel, QPushButton, QLineEdit,
-    QComboBox, QSlider, QSpinBox, QWidget, QFrame, QFileDialog, QTimeEdit,
+    QComboBox, QSlider, QSpinBox, QDoubleSpinBox, QWidget, QFrame, QFileDialog, QTimeEdit,
     QScrollArea, QApplication, QSizePolicy
 )
 from PySide6.QtCore import Qt, QTime, QTimer
@@ -325,6 +325,32 @@ class PageBuilderMixin:
         self._row(g, "Shared torrent engine (beta)",
                   "One aria2 daemon for all torrents — better peer discovery. "
                   "Falls back automatically if it can't start.", self.torrent_rpc)
+        self.torrent_preview = self._toggle(ex.get("torrent_preview", False))
+        self._row(g, "Preview while downloading",
+                  "Fetch the start and end of each file first, so a partly "
+                  "downloaded video plays and seeks. Slightly slower overall.",
+                  self.torrent_preview)
+        self.seed_enabled = self._toggle(ex.get("seed_enabled", False))
+        self._row(g, "Seed after completing",
+                  "Keep sharing finished torrents. Off means you never give "
+                  "back, which some private trackers ban.", self.seed_enabled)
+        self.seed_ratio = QDoubleSpinBox()
+        self.seed_ratio.setRange(0.0, 100.0); self.seed_ratio.setSingleStep(0.5)
+        self.seed_ratio.setDecimals(1)
+        self.seed_ratio.setValue(float(ex.get("seed_ratio", 1.0)))
+        self.seed_ratio.setFixedWidth(80)
+        self._row(g, "Stop seeding at ratio",
+                  "Share this much of the download's size, then stop. 0 = no "
+                  "ratio limit.", self.seed_ratio)
+        self.seed_minutes = QSpinBox()
+        self.seed_minutes.setRange(0, 10080); self.seed_minutes.setSuffix(" min")
+        self.seed_minutes.setValue(int(ex.get("seed_minutes", 0)))
+        self.seed_minutes.setFixedWidth(96)
+        self._row(g, "Stop seeding after",
+                  "Also stop once this long has passed. 0 = no time limit.",
+                  self.seed_minutes)
+        self.seed_enabled.toggled.connect(self._sync_seed_rows)
+        self._sync_seed_rows(self.seed_enabled.isChecked())
         self.hash_check = self._toggle(ex.get("hash_check", False))
         self._row(g, "Enable hash verification", "Verify file integrity after download", self.hash_check)
         self.debug_log = self._toggle(ex.get("debug_log", False))
@@ -335,6 +361,12 @@ class PageBuilderMixin:
         self._row(g, "Developer Console", "Live log viewer for troubleshooting", self.console_btn)
         v.addWidget(f); v.addStretch()
         return sa
+
+    def _sync_seed_rows(self, on):
+        """Grey the two limits out when seeding is off — they decide nothing
+        then, and a live-looking control that does nothing is a lie."""
+        self.seed_ratio.setEnabled(bool(on))
+        self.seed_minutes.setEnabled(bool(on))
 
     def _open_console(self):
         from gui2.dialogs.console import ConsoleDialog

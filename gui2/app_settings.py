@@ -142,6 +142,10 @@ class SettingsMixin:
         utils.DISK_CACHE = bool(ex.get("disk_cache", True))
         utils.PREALLOCATE = bool(ex.get("preallocate", False))
         utils.TORRENT_RPC = bool(ex.get("torrent_rpc", False))
+        utils.TORRENT_PREVIEW = bool(ex.get("torrent_preview", False))
+        utils.SEED_ENABLED = bool(ex.get("seed_enabled", False))
+        utils.SEED_RATIO = float(ex.get("seed_ratio", 1.0) or 0)
+        utils.SEED_MINUTES = int(ex.get("seed_minutes", 0) or 0)
         utils.HASH_CHECK = bool(ex.get("hash_check", False))
         # Auto-capture allowlist (Settings -> Browser). The Flask /download endpoint
         # reads utils.CAPTURE_EXTS to filter the extension's auto-captures.
