@@ -67,6 +67,14 @@ class SettingsMixin:
         self.max_concurrent = v["max_concurrent"]
         self.segments = v["segments"]
         self.queue.set_max_concurrent("Main", v["max_concurrent"])
+        # keep the aria2 daemon's own queue wider than the app's, live — else
+        # raising the limit appears to do nothing while aria2 holds the extras
+        utils.MAX_CONCURRENT_DOWNLOADS = v["max_concurrent"]
+        try:
+            import aria2d
+            aria2d.DAEMON.apply_concurrency()
+        except Exception:
+            pass
         self.queue.segments = v["segments"]
         self.verify_tls = v["verify_tls"]
         utils.VERIFY_TLS = v["verify_tls"]

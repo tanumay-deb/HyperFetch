@@ -42,10 +42,20 @@ CALL_TIMEOUT = 15.0
 PROBE_TIMEOUT = 10.0
 LIVENESS_TTL = 2.0          # how long one successful probe is trusted for
 DEAD_STRIKES = 3            # consecutive missed probes before declaring death
-# Concurrency inside the daemon. Comfortably above the app's own torrent gate
-# (queue_manager.MAX_ACTIVE_TORRENTS) so aria2 never becomes the bottleneck —
-# the app decides what runs, not aria2's queue.
-MAX_CONCURRENT = 12
+# Headroom over the app's own limit. aria2 must never be the narrower of the
+# two: the app decides what runs, and anything aria2 holds back sits in its
+# queue looking stalled with no explanation anywhere in the UI. This used to be
+# a flat 12 while the queue spinbox went to 16, so asking for more than 12
+# quietly did nothing.
+CONCURRENCY_HEADROOM = 4
+MIN_CONCURRENT = 8
+
+
+def max_concurrent():
+    """How many downloads the daemon may run at once."""
+    return max(MIN_CONCURRENT,
+               int(getattr(utils, "MAX_CONCURRENT_DOWNLOADS", 0) or 0)
+               + CONCURRENCY_HEADROOM)
 
 
 class Aria2Error(RuntimeError):
@@ -244,7 +254,7 @@ class Aria2Daemon:
             # concurrency slot with dead entries from previous runs — measured
             # 5 active / 22 waiting / 75 stopped, so nothing new ever started
             # and magnets sat in "waiting" forever.
-            f"--max-concurrent-downloads={MAX_CONCURRENT}",
+            f"--max-concurrent-downloads={max_concurrent()}",
             "--seed-time=0",
             f"--bt-stop-timeout={torrent.STALL_TIMEOUT}",
             "--bt-save-metadata=true",
@@ -296,6 +306,18 @@ class Aria2Daemon:
             self._post(self.port, self.secret, "aria2.purgeDownloadResult", [], timeout=5)
         except Exception:
             pass
+
+    def apply_concurrency(self):
+        """Push the current limit to a daemon that is already running, so
+        changing the setting takes effect without restarting the app."""
+        if not (self.port and self.secret):
+            return
+        try:
+            self._post(self.port, self.secret, "aria2.changeGlobalOption",
+                       [{"max-concurrent-downloads": str(max_concurrent())}],
+                       timeout=3)
+        except Exception as e:
+            log.debug("could not update daemon concurrency: %s", e)
 
     def stop_recorded(self):
         """Stop whatever daemon aria2d.json points at, even from a fresh object.

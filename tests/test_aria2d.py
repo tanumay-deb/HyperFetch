@@ -548,3 +548,41 @@ def test_exit_uses_force_shutdown_not_the_graceful_one(tmp_path, monkeypatch):
 
     d.shutdown(wait=0, force=False)
     assert sent == ["aria2.forceShutdown"]
+
+
+# ------------------------------------------------------------- concurrency
+def test_daemon_queue_is_wider_than_the_users_limit(monkeypatch):
+    """aria2 must never be the narrower of the two. It was a flat 12 while the
+    queue spinbox went to 16, so asking for more than 12 quietly did nothing —
+    the extras sat in aria2's queue looking stalled, unexplained anywhere."""
+    monkeypatch.setattr(utils, "MAX_CONCURRENT_DOWNLOADS", 16, raising=False)
+    assert aria2d.max_concurrent() > 16
+
+
+def test_daemon_queue_has_a_floor(monkeypatch):
+    """A queue of 1 still wants headroom: metadata fetches and the payload that
+    follows them both occupy slots."""
+    monkeypatch.setattr(utils, "MAX_CONCURRENT_DOWNLOADS", 1, raising=False)
+    assert aria2d.max_concurrent() >= aria2d.MIN_CONCURRENT
+
+
+def test_spawn_options_carry_the_current_limit(monkeypatch, tmp_path):
+    monkeypatch.setattr(utils, "MAX_CONCURRENT_DOWNLOADS", 9, raising=False)
+    d = aria2d.Aria2Daemon()
+    d.port, d.secret = 6800, "s"
+    opts = " ".join(d._options())
+    assert f"--max-concurrent-downloads={aria2d.max_concurrent()}" in opts
+
+
+def test_raising_the_limit_reaches_a_running_daemon(monkeypatch):
+    """Changing the setting must not need an app restart."""
+    monkeypatch.setattr(utils, "MAX_CONCURRENT_DOWNLOADS", 12, raising=False)
+    d = aria2d.Aria2Daemon()
+    d.port, d.secret = 6800, "s"
+    sent = []
+    monkeypatch.setattr(d, "_post",
+                        lambda p, s, m, params, **k: sent.append((m, params)) or {})
+    d.apply_concurrency()
+    method, params = sent[0]
+    assert method == "aria2.changeGlobalOption"
+    assert params[0]["max-concurrent-downloads"] == str(aria2d.max_concurrent())

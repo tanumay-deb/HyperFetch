@@ -1,4 +1,5 @@
 """Small SVG icon loader with theme-aware tinting."""
+import logging
 import os
 
 from PySide6.QtCore import Qt
@@ -13,6 +14,7 @@ except ImportError:  # pragma: no cover - PySide6 normally ships QtSvg.
 
 
 _CACHE = {}
+_MISSING = set()          # names already warned about, so the log stays readable
 
 
 def icon_path(name):
@@ -39,6 +41,13 @@ def themed_icon(name, color="text", size=18):
 
     path = icon_path(name)
     if not os.path.exists(path):
+        # An empty QIcon renders as nothing at all, so a typo'd or never-added
+        # name is invisible rather than obviously broken — three buttons shipped
+        # iconless that way. Say so once per name; tests assert the set is empty.
+        if name not in _MISSING:
+            _MISSING.add(name)
+            logging.getLogger("hyperfetch.gui").warning(
+                "no icon named %r in assets/icons — rendering blank", name)
         return QIcon()
 
     if QSvgRenderer is None:

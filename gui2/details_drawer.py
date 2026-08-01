@@ -1236,7 +1236,10 @@ class DetailsDrawer(QFrame):
             ic_name = "folder" if is_folder else "document"
             ic_color = "warning" if is_folder else "muted"
             icon = QLabel(); icon.setPixmap(themed_icon(ic_name, ic_color).pixmap(16, 16))
-            lbl = QLabel(name); lbl.setStyleSheet("background: transparent;")
+            # elide rather than clip: the drawer is narrow and a long release
+            # name was being cut off mid-character with no ellipsis
+            from gui2.download_card import ElideLabel
+            lbl = ElideLabel(name); lbl.setStyleSheet("background: transparent;")
             lbl.setToolTip(name)
             h.addWidget(cb)
             h.addWidget(icon)

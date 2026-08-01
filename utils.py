@@ -59,6 +59,10 @@ SPEED_IN_BYTES = False    # speed readout units: False = bits (Kb/s), True = byt
 # gives each its own cold table and they collide on the port. Default off until
 # the RPC path has proven itself on real downloads.
 TORRENT_RPC = False
+# The queue's own concurrency limit, mirrored here so the aria2 daemon can size
+# its internal queue to match. aria2 must never be the narrower of the two, or
+# it silently holds downloads the app has already decided to run.
+MAX_CONCURRENT_DOWNLOADS = 3
 BADGE_CORNER = "top-right"  # extension's on-page download-button corner (served via /ping)
 
 # Per-host download rules (Settings -> Network). {host: {"segments": int,
