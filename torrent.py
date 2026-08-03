@@ -40,6 +40,12 @@ STALL_TIMEOUT = 1800  # 30 min
 # is merely busy (allocating a file, hash-checking) blocks RPC for seconds; the
 # first miss used to pause the download outright.
 RPC_RETRIES = 10
+# How long the daemon may go unanswered before a download gives up on it.
+# This is a DURATION, not a retry count: at POLL=0.3s ten retries came to about
+# three seconds, and a hash check on a multi-GB torrent blocks aria2's RPC
+# thread for minutes. Force Recheck therefore paused itself almost immediately
+# and then errored, which is exactly what a "recheck does nothing" looks like.
+RPC_RETRY_GRACE = 300.0
 # A torrent has to earn its queue slot. After this long with NO peers and NO new
 # bytes, it hands the slot back so healthy torrents behind it can run: with a
 # concurrency of 1, one dead swarm otherwise blocks the whole list forever.
@@ -1019,6 +1025,7 @@ class TorrentDownloader:
         cur = gid
         top = ""
         fails = 0
+        fail_since = 0.0
         last_files = 0.0
         checked_disk = False
         while True:
@@ -1050,12 +1057,16 @@ class TorrentDownloader:
                     log.warning("gid %s lost for %s (daemon replaced)",
                                 cur, self.t.filename)
                     return top
+                if not fails:
+                    fail_since = time.time()
                 fails += 1
-                if fails < RPC_RETRIES:
-                    # busy daemon, not a dead one: keep polling
-                    log.debug("tellStatus retry %d/%d for %s: %s",
-                              fails, RPC_RETRIES, self.t.filename, e)
-                    time.sleep(POLL)
+                waited = time.time() - fail_since
+                if waited < RPC_RETRY_GRACE:
+                    # Busy, not dead. Back off instead of hammering a daemon
+                    # that is already blocked on a hash check.
+                    log.debug("tellStatus retry %d (%.0fs of %.0fs) for %s: %s",
+                              fails, waited, RPC_RETRY_GRACE, self.t.filename, e)
+                    time.sleep(min(2.0, POLL * fails))
                     continue
                 # daemon vanished mid-download: leave the task resumable rather
                 # than failing it — the bytes and control file are still on disk

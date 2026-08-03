@@ -55,6 +55,10 @@ def test_unreachable_but_live_daemon_is_killed(tmp_path, monkeypatch):
     is alive but no longer answering must eventually be killed, not left
     holding ports — but only after it has really stopped answering."""
     d, killed = _silent_daemon(tmp_path, monkeypatch)
+    # A kill now needs BOTH the strikes and a long quiet spell, so that a hash
+    # check (which blocks aria2's RPC thread for minutes) is not mistaken for a
+    # dead daemon. Collapse the grace for the test.
+    monkeypatch.setattr(aria2d, "DEAD_GRACE", 0.0)
     for _ in range(aria2d.DEAD_STRIKES - 1):
         with pytest.raises(aria2d.Aria2Error):
             d._attach()
@@ -338,6 +342,9 @@ def test_a_busy_daemon_does_not_pause_a_healthy_download(tmp_path, monkeypatch):
 def test_a_daemon_that_stays_silent_still_pauses_the_task(tmp_path, monkeypatch):
     """Retrying must not become retrying forever — a genuinely dead engine has
     to surface, and resumably."""
+    # the budget is a DURATION now, not a retry count — collapse it so the test
+    # does not have to sit through the real grace period
+    monkeypatch.setattr(torrent, "RPC_RETRY_GRACE", 0.0)
     daemon = _FlakyDaemon([], misses=torrent.RPC_RETRIES + 5)
     t = _drive_with(tmp_path, monkeypatch, daemon)
     assert t.status == T.PAUSED
@@ -645,3 +652,28 @@ def test_an_unrelated_add_failure_still_fails(tmp_path, monkeypatch):
         monkeypatch.setattr(torrent, "POLL", 0)
         monkeypatch.setattr(aria2d, "DAEMON", _Broken([]))
         torrent.TorrentDownloader(t)._run_rpc()
+
+
+def test_a_long_hash_check_is_not_mistaken_for_a_dead_daemon(tmp_path, monkeypatch):
+    """Strikes alone were enough to kill: three missed 10s probes is 30s, and a
+    hash check on a large torrent blocks RPC for far longer than that. Killing
+    there is both wrong and destructive."""
+    d, killed = _silent_daemon(tmp_path, monkeypatch)
+    for _ in range(aria2d.DEAD_STRIKES + 5):
+        with pytest.raises(aria2d.Aria2Error):
+            d._attach()
+    assert killed == [], "killed a daemon that was merely busy"
+
+
+def test_a_hash_check_length_stall_does_not_pause_the_download(tmp_path, monkeypatch):
+    """Force Recheck makes aria2 hash-check, which blocks its RPC thread for
+    minutes. Ten retries at POLL=0.3s was about three seconds, so the recheck
+    paused itself almost immediately and then errored."""
+    payload = str(tmp_path / "Movie.mkv")
+    open(payload, "w").close()
+    daemon = _FlakyDaemon(
+        [{"status": "complete", "completedLength": "1000", "totalLength": "1000",
+          "files": [{"path": payload}]}],
+        misses=200)                       # far more than any retry COUNT
+    t = _drive_with(tmp_path, monkeypatch, daemon)
+    assert t.status == T.COMPLETED, f"gave up on a busy daemon: {t.error}"

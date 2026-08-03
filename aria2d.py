@@ -42,6 +42,11 @@ CALL_TIMEOUT = 15.0
 PROBE_TIMEOUT = 10.0
 LIVENESS_TTL = 2.0          # how long one successful probe is trusted for
 DEAD_STRIKES = 3            # consecutive missed probes before declaring death
+# ...and it must have been quiet for at least this long as well. Strikes alone
+# are not enough: a hash check blocks aria2's RPC thread for MINUTES, so three
+# missed probes can mean "verifying a 40 GB torrent", and killing it there is
+# both wrong and destructive.
+DEAD_GRACE = 300.0
 # Headroom over the app's own limit. aria2 must never be the narrower of the
 # two: the app decides what runs, and anything aria2 holds back sits in its
 # queue looking stalled with no explanation anywhere in the UI. This used to be
@@ -108,6 +113,7 @@ class Aria2Daemon:
         self._proc = None
         self._last_ok = 0.0     # monotonic stamp of the last successful probe
         self._strikes = 0       # consecutive missed probes
+        self._strike_since = 0.0
 
     # ------------------------------------------------------------- transport
     def _post(self, port, secret, method, params, timeout=CALL_TIMEOUT):
@@ -196,14 +202,18 @@ class Aria2Daemon:
                 self._strikes = 0
                 return False
             self._strikes += 1
-            if self._strikes < DEAD_STRIKES:
-                log.warning("aria2 daemon pid %s did not answer (%s) — strike %d/%d",
-                            pid, e, self._strikes, DEAD_STRIKES)
+            if self._strikes == 1:
+                self._strike_since = time.monotonic()
+            quiet = time.monotonic() - self._strike_since
+            if self._strikes < DEAD_STRIKES or quiet < DEAD_GRACE:
+                log.warning("aria2 daemon pid %s did not answer (%s) — strike "
+                            "%d/%d, quiet for %.0fs of %.0fs",
+                            pid, e, self._strikes, DEAD_STRIKES, quiet, DEAD_GRACE)
                 # Busy, not dead. Tell the caller to retry rather than letting
                 # it spawn a rival daemon that would fight for the same ports.
                 raise Aria2Error(f"aria2 daemon busy: {e}")
-            log.warning("aria2 daemon pid %s missed %d probes — replacing it",
-                        pid, self._strikes)
+            log.warning("aria2 daemon pid %s silent for %.0fs over %d probes — "
+                        "replacing it", pid, quiet, self._strikes)
             self._strikes = 0
             _kill(pid)
             return False
