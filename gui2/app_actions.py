@@ -381,7 +381,7 @@ class ActionsMixin:
         m.addAction(ico("info"), "Properties", lambda: (self.list.set_selection({t.id}), self.drawer.open_for(t)))
         m.addAction(ico("link"), "Copy URL", lambda: QApplication.clipboard().setText(t.url or ""))
         m.addAction(ico("trash"), "Remove", lambda: self._do(self.queue.remove_task, t))
-        m.exec(self.cursor().pos())
+        return m
 
     def _on_selection_changed(self, ids):
         # contextual bulk-action bar: visible only while something is selected
