@@ -849,6 +849,11 @@ class TorrentDownloader:
         opts = {"dir": out_dir}
         if self._take_recheck():
             opts["check-integrity"] = "true"
+            # The daemon almost certainly still holds this torrent (pausing only
+            # pauses it), and re-attaching to that registration would carry the
+            # OLD options — so the recheck would quietly not happen, which is
+            # exactly what "Force Recheck does nothing" looks like.
+            self._rpc_drop_existing(d)
         gid = self._rpc_add(d, opts)
         self._gid = gid
         self.t.gid = gid
@@ -872,6 +877,7 @@ class TorrentDownloader:
                          "integrity check", self.t.filename)
                 self.t.error = ""
                 self.t.status = T.DOWNLOADING
+                self._rpc_drop_existing(d)      # same reason as the recheck path
                 gid = self._rpc_add(d, dict(opts, **{"check-integrity": "true"}))
                 self._gid = gid
                 self.t.gid = gid
@@ -951,13 +957,62 @@ class TorrentDownloader:
         return True
 
     def _rpc_add(self, d, opts):
-        """Hand the torrent/magnet to the daemon and return its gid."""
+        """Hand the torrent/magnet to the daemon and return its gid.
+
+        The daemon outlives both the task and the app, so the torrent may
+        already be in it — pausing only calls aria2.pause, which leaves it
+        registered, and a restart reattaches to the same daemon. Adding it again
+        then fails with "InfoHash ... is already registered" and the download
+        goes to Error, which is the opposite of what resuming should do.
+        """
+        try:
+            return self._rpc_add_new(d, opts)
+        except Exception as e:
+            if "already registered" not in str(e).lower():
+                raise
+            gid = self._rpc_find_existing(d)
+            if not gid:
+                raise
+            log.info("torrent already in the daemon, re-attaching: %s",
+                     self.t.filename)
+            try:
+                d.call("aria2.unpause", gid)
+            except Exception:
+                pass                      # already running is fine
+            return gid
+
+    def _rpc_add_new(self, d, opts):
         import base64
         if is_torrent(self.t.url) and os.path.isfile(self.t.url):
             with open(self.t.url, "rb") as f:
                 return d.call("aria2.addTorrent",
                               base64.b64encode(f.read()).decode(), [], opts)
         return d.call("aria2.addUri", [self.t.url], opts)
+
+    def _rpc_drop_existing(self, d):
+        """Unregister this torrent from the daemon so the next add is a real
+        add, with the options we are about to pass, rather than a re-attach to
+        whatever it was started with."""
+        gid = self._rpc_find_existing(d)
+        if gid:
+            self._rpc_remove(d, gid, force=True)
+
+    def _rpc_find_existing(self, d):
+        """The gid the daemon already holds for this torrent, or ''."""
+        want = infohash_for(self.t.url, self.t.filename)
+        if not want:
+            return ""
+        for method, params in (("aria2.tellActive", ()),
+                               ("aria2.tellWaiting", (0, 500)),
+                               ("aria2.tellStopped", (0, 500))):
+            try:
+                rows = d.call(method, *params) or []
+            except Exception:
+                continue
+            for r in rows:
+                if str(r.get("infoHash") or "").lower() == want:
+                    return r.get("gid") or ""
+        return ""
 
     def _poll_rpc(self, d, gid, out_dir):
         """Mirror aria2's state onto the task until it reaches a terminal one."""

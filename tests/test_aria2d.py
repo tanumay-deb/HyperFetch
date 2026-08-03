@@ -586,3 +586,62 @@ def test_raising_the_limit_reaches_a_running_daemon(monkeypatch):
     method, params = sent[0]
     assert method == "aria2.changeGlobalOption"
     assert params[0]["max-concurrent-downloads"] == str(aria2d.max_concurrent())
+
+
+# ------------------------------------------- re-attaching to a live daemon
+class _RegisteredDaemon(_FakeDaemon):
+    """Refuses a duplicate add the way aria2 does, and lists the existing one."""
+
+    def __init__(self, states, infohash, gid="oldgid"):
+        super().__init__(states)
+        self.infohash = infohash
+        self.gid = gid
+        self.unpaused = []
+
+    def call(self, method, *params, **kw):
+        if method in ("aria2.addUri", "aria2.addTorrent"):
+            self.calls.append((method, params))
+            raise aria2d.Aria2Error(
+                f"InfoHash {self.infohash} is already registered.")
+        if method == "aria2.tellActive":
+            return [{"gid": self.gid, "infoHash": self.infohash}]
+        if method in ("aria2.tellWaiting", "aria2.tellStopped"):
+            return []
+        if method == "aria2.unpause":
+            self.unpaused.append(params[0])
+            return params[0]
+        return super().call(method, *params, **kw)
+
+
+def test_a_torrent_already_in_the_daemon_is_reattached(tmp_path, monkeypatch):
+    """Pausing only calls aria2.pause, so the torrent stays registered; the
+    daemon also outlives the app. Re-adding then failed with "InfoHash ... is
+    already registered" and the download went to Error — the opposite of what
+    Resume should do."""
+    ih = "e6a095070aa5918e336f189b3e1d5f23103b7ff0"
+    payload = str(tmp_path / "Movie.mkv")
+    open(payload, "w").close()
+    daemon = _RegisteredDaemon(
+        [{"status": "complete", "completedLength": "1000", "totalLength": "1000",
+          "files": [{"path": payload}]}], ih)
+    t = T.DownloadTask(f"magnet:?xt=urn:btih:{ih}&dn=Movie",
+                       str(tmp_path / "download.bin"))
+    _drive_with(tmp_path, monkeypatch, daemon, task=t)
+    assert daemon.unpaused == ["oldgid"], "did not re-attach to the existing gid"
+    assert t.status == T.COMPLETED
+
+
+def test_an_unrelated_add_failure_still_fails(tmp_path, monkeypatch):
+    """Only the duplicate case is recoverable; a real error must surface."""
+    class _Broken(_FakeDaemon):
+        def call(self, method, *params, **kw):
+            if method in ("aria2.addUri", "aria2.addTorrent"):
+                raise aria2d.Aria2Error("Could not parse the magnet")
+            return super().call(method, *params, **kw)
+
+    t = T.DownloadTask("magnet:?xt=urn:btih:abc", str(tmp_path / "d.bin"))
+    with pytest.raises(aria2d.Aria2Error):
+        monkeypatch.setattr(utils, "app_data_dir", lambda: str(tmp_path))
+        monkeypatch.setattr(torrent, "POLL", 0)
+        monkeypatch.setattr(aria2d, "DAEMON", _Broken([]))
+        torrent.TorrentDownloader(t)._run_rpc()

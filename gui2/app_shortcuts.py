@@ -39,7 +39,17 @@ class ShortcutsMixin:
         return [x for x in (self.queue.get_task(i) for i in self.list.selected_ids()) if x]
 
     def _del_selected(self):
-        ts = self._sel_tasks()
+        self._delete_tasks(self._sel_tasks())
+
+    def _delete_tasks(self, ts):
+        """Confirm, then remove — the single entry point for deleting anything.
+
+        Every route here has to ask first: the context menu's Remove used to
+        call queue.remove_task straight, so it neither confirmed nor offered to
+        delete the files, and the same word meant two different things
+        depending on where you clicked it.
+        """
+        ts = [t for t in (ts or []) if t]
         if not ts:
             return
 
@@ -48,35 +58,64 @@ class ShortcutsMixin:
 
         from gui2.dialogs.delete import DeleteDialog
         dlg = DeleteDialog(finished=finished, downloading=downloading, parent=self)
-        if dlg.exec():
-            delete_disk = dlg.deleteDisk.isChecked()
-            for t in ts:
-                self.queue.remove_task(t)
-                # always clear the engine's leftovers (aria2 .aria2 control file
-                # + our saved metadata) — they are useless once the task is gone
-                try:
-                    import torrent as _tor
-                    if _tor.is_torrent_task(t.url, t.filename):
-                        _tor.cleanup_artifacts(t)
-                except Exception:
-                    pass
-                path = getattr(t, "save_path", None)
-                if delete_disk and path and os.path.exists(path):
-                    try:
-                        # a torrent's payload is a DIRECTORY; os.remove only
-                        # handles files, so multi-file torrents used to survive
-                        # "also delete from disk" untouched
-                        if os.path.isdir(path):
-                            import shutil
-                            shutil.rmtree(path, ignore_errors=True)
-                        else:
-                            os.remove(path)
-                    except OSError:
-                        pass
-            # the user asked for this, so an empty result is legitimate
-            self._allow_empty_save = True
-            self._save_state()
-            self.refresh()
+        if not dlg.exec():
+            return
+
+        delete_disk = dlg.deleteDisk.isChecked()
+        failed = []
+        for t in ts:
+            self.queue.remove_task(t)
+            # always clear the engine's leftovers (aria2 .aria2 control file
+            # + our saved metadata) — they are useless once the task is gone
+            try:
+                import torrent as _tor
+                if _tor.is_torrent_task(t.url, t.filename):
+                    _tor.cleanup_artifacts(t)
+            except Exception:
+                pass
+            path = getattr(t, "save_path", None)
+            if delete_disk and path and os.path.exists(path):
+                if not self._remove_path(path):
+                    failed.append(os.path.basename(path) or path)
+
+        # the user asked for this, so an empty result is legitimate
+        self._allow_empty_save = True
+        self._save_state()
+        self.refresh()
+        if failed:
+            # Never silent: "delete from disk" that quietly did nothing is
+            # worse than an error, because the files are still taking up space
+            # and the user believes they are gone.
+            self._toasts.show(
+                "error", "Could not delete some files",
+                ", ".join(failed[:3]) + ("…" if len(failed) > 3 else "")
+                + " — still in use. Try again in a moment.")
+
+    @staticmethod
+    def _remove_path(path, attempts=5, delay=0.4):
+        """Delete a file or a whole torrent folder, retrying briefly.
+
+        remove_task only ASKS the engine to stop; aria2 still has the files open
+        for a moment after, and on Windows an open handle makes the delete fail
+        outright. One attempt therefore left the payload on disk exactly when
+        the user had just asked for it to go.
+        """
+        import shutil
+        import time as _time
+        for attempt in range(attempts):
+            try:
+                if os.path.isdir(path):
+                    shutil.rmtree(path)         # not ignore_errors: we report
+                else:
+                    os.remove(path)
+                return True
+            except OSError:
+                if not os.path.exists(path):
+                    return True                 # something else got there first
+                if attempt == attempts - 1:
+                    return False
+                _time.sleep(delay)
+        return False
 
     def _space_selected(self):
         for t in self._sel_tasks():

@@ -95,3 +95,53 @@ def test_the_legacy_engine_also_rechecks(tmp_path):
     assert "--check-integrity=true" in td._build_cmd("aria2c.exe", str(tmp_path))
     td2 = torrent.TorrentDownloader(_task(tmp_path))
     assert "--check-integrity=true" not in td2._build_cmd("aria2c.exe", str(tmp_path))
+
+
+def test_a_recheck_drops_the_daemons_copy_first(tmp_path, monkeypatch):
+    """A torrent the daemon still holds would be re-attached, carrying its OLD
+    options — so check-integrity never applied and Force Recheck did nothing."""
+    ih = "e6a095070aa5918e336f189b3e1d5f23103b7ff0"
+    payload = str(tmp_path / "Movie.mkv")
+    open(payload, "w").close()
+
+    class _Held(_FakeDaemon):
+        def __init__(self, states):
+            super().__init__(states)
+            self.removed = []
+
+        def call(self, method, *params, **kw):
+            if method == "aria2.tellActive":
+                self.calls.append((method, params))
+                return [{"gid": "oldgid", "infoHash": ih}]
+            if method in ("aria2.tellWaiting", "aria2.tellStopped"):
+                return []
+            if method in ("aria2.forceRemove", "aria2.removeDownloadResult"):
+                self.removed.append(params[0])
+                return params[0]
+            return super().call(method, *params, **kw)
+
+    daemon = _Held([
+        {"status": "complete", "completedLength": "1000", "totalLength": "1000",
+         "files": [{"path": payload}]},
+    ])
+    t = T.DownloadTask(f"magnet:?xt=urn:btih:{ih}&dn=Movie",
+                       str(tmp_path / "download.bin"))
+    t.force_recheck = True
+    _drive_with(tmp_path, monkeypatch, daemon, task=t)
+
+    assert "oldgid" in daemon.removed, "stale registration was not dropped"
+    adds = [p for m, p in daemon.calls if m in ("aria2.addUri", "aria2.addTorrent")]
+    assert adds and adds[0][-1].get("check-integrity") == "true"
+
+
+def test_a_normal_start_does_not_drop_anything(tmp_path, monkeypatch):
+    """Only a recheck needs the fresh registration; a plain resume should
+    re-attach rather than throw the torrent away and re-announce."""
+    payload = str(tmp_path / "Movie.mkv")
+    open(payload, "w").close()
+    daemon = _FakeDaemon([
+        {"status": "complete", "completedLength": "1000", "totalLength": "1000",
+         "files": [{"path": payload}]},
+    ])
+    _drive_with(tmp_path, monkeypatch, daemon)
+    assert not any(m == "aria2.forceRemove" for m, _ in daemon.calls)

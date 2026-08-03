@@ -307,7 +307,10 @@ class ActionsMixin:
             m.addAction(ico("pause"), f"Pause {len(ts)} selected", lambda: self._bulk(ts, self.queue.pause_task))
             m.addAction(ico("play"), f"Resume {len(ts)} selected", lambda: self._bulk(ts, self.queue.resume_task))
             m.addSeparator()
-            m.addAction(ico("trash"), f"Remove {len(ts)} selected", lambda: self._bulk(ts, self.queue.remove_task))
+            # through _delete_tasks, so it confirms and can delete the files —
+            # calling queue.remove_task here did neither
+            m.addAction(ico("trash"), f"Delete {len(ts)} selected…",
+                        lambda: self._delete_tasks(ts))
             m.exec(self.cursor().pos())
             return
 
@@ -380,7 +383,7 @@ class ActionsMixin:
         m.addSeparator()
         m.addAction(ico("info"), "Properties", lambda: (self.list.set_selection({t.id}), self.drawer.open_for(t)))
         m.addAction(ico("link"), "Copy URL", lambda: QApplication.clipboard().setText(t.url or ""))
-        m.addAction(ico("trash"), "Remove", lambda: self._do(self.queue.remove_task, t))
+        m.addAction(ico("trash"), "Delete…", lambda: self._delete_tasks([t]))
         return m
 
     def _on_selection_changed(self, ids):
