@@ -8,6 +8,7 @@ import os
 from PySide6.QtWidgets import QMenu, QInputDialog, QLineEdit, QApplication
 
 import task as T
+import utils
 import torrent as _torrent
 from gui.icons import themed_icon
 from gui2 import palette
@@ -165,6 +166,75 @@ class ActionsMixin:
         self._save_state()
         self.refresh()
 
+    # video containers worth offering to play mid-download
+    _VIDEO_EXTS = {".mkv", ".mp4", ".avi", ".mov", ".m4v", ".webm", ".ts",
+                   ".mpg", ".mpeg", ".wmv", ".flv"}
+
+    def _playable_file(self, t):
+        """The biggest video file in this torrent that has bytes on disk.
+
+        Biggest because a release's feature file is what someone wants to watch,
+        not the sample or the trailer. Requires real progress: opening a
+        preallocated but empty file just hands the player zeroes.
+        """
+        best, best_len = "", 0
+        rows = getattr(t, "file_progress", None) or []
+        for f in rows:
+            path = f.get("path") or ""
+            if os.path.splitext(path)[1].lower() not in self._VIDEO_EXTS:
+                continue
+            if int(f.get("completed") or 0) <= 0:
+                continue
+            if int(f.get("length") or 0) >= best_len and os.path.exists(path):
+                best, best_len = path, int(f.get("length") or 0)
+        if best:
+            return best
+        if rows:
+            # The engine listed every file and none of them has data yet.
+            # Falling through to the disk here would hand back a preallocated,
+            # empty file — the exact thing the completed>0 check rejects.
+            return ""
+        # Legacy engine reports no per-file progress, so fall back to the disk.
+        root = t.save_path or ""
+        root = root if os.path.isdir(root) else os.path.dirname(root)
+        if not os.path.isdir(root):
+            return ""
+        try:
+            for base, _dirs, files in os.walk(root):
+                for name in files:
+                    if os.path.splitext(name)[1].lower() not in self._VIDEO_EXTS:
+                        continue
+                    p = os.path.join(base, name)
+                    try:
+                        size = os.path.getsize(p)
+                    except OSError:
+                        continue
+                    if size > best_len:
+                        best, best_len = p, size
+        except OSError:
+            return ""
+        return best
+
+    def _play_partial(self, t):
+        """Open the part-downloaded video in the system player."""
+        path = self._playable_file(t)
+        if not path:
+            self._toasts.show("info", "Nothing to preview yet",
+                              "No video file has data on disk yet.")
+            return
+        if not getattr(utils, "TORRENT_PREVIEW", False):
+            # Without head/tail priority the opening pieces may simply not be
+            # there yet, so say why it might not play rather than letting the
+            # player fail silently.
+            self._toasts.show(
+                "warning", "Preview not optimised",
+                "Turn on Settings → Advanced → Preview while downloading so the "
+                "start of each file is fetched first.")
+        try:
+            os.startfile(path)
+        except OSError as e:
+            self._toasts.show("error", "Could not open", str(e)[:70])
+
     def _recheck_torrent(self, t):
         """Re-hash a torrent's data against the .torrent's piece hashes.
 
@@ -244,6 +314,13 @@ class ActionsMixin:
         m = self._menu()
         if t.status == T.COMPLETED:
             m.addAction(ico("open"), "Open File", lambda: self._open_file(t))
+            m.addAction(ico("folder"), "Open Folder", lambda: self._open_folder(t))
+            m.addSeparator()
+        elif t.status == T.DOWNLOADING and is_tor and self._playable_file(t):
+            # The point of head/tail piece priority: a video with its start
+            # already fetched is watchable now. Without somewhere to click, that
+            # setting only ever produced a differently-ordered download.
+            m.addAction(ico("video"), "Play preview", lambda: self._play_partial(t))
             m.addAction(ico("folder"), "Open Folder", lambda: self._open_folder(t))
             m.addSeparator()
         if t.status == T.DOWNLOADING:
