@@ -1,6 +1,12 @@
 """New Download dialog (v2) — tabbed URL / Torrent / Magnet with Save-to,
-Category, Queue, Priority and a collapsible Advanced section. Returns a plain
-dict via values(); the app builds the DownloadTask from it.
+Category, Queue and a collapsible Advanced section. Returns a plain dict via
+values(); the app builds the DownloadTask from it.
+
+Kept deliberately short. Every row here is a row between the user and the thing
+they actually asked for, so anything that does not change the outcome is gone:
+the in-window title (the title bar already says it), Priority (the queue runs
+by concurrency, not by rank), and the Filename/Category fields on the torrent
+tabs, where a torrent names itself and nothing is categorised.
 """
 import os
 
@@ -15,7 +21,7 @@ import utils
 from gui2.palette import COLORS
 from gui.icons import themed_icon
 
-_PRIORITIES = [("High", -10), ("Normal", 0), ("Low", 10)]
+URL_TAB, TORRENT_TAB, MAGNET_TAB = 0, 1, 2
 
 # yt-dlp quality presets -> format string. Single-file (progressive) selectors so
 # no ffmpeg merge is needed; "Best (auto)" defers to yt-dlp's default.
@@ -35,75 +41,80 @@ class NewDownloadDialog(QDialog):
                  url="", suggested="", headers=None, categorize=True):
         super().__init__(parent)
         self.setWindowTitle("New Download")
-        self.setMinimumWidth(560)
+        self.setMinimumWidth(430)
         self.setStyleSheet(parent.styleSheet() if parent else "")
         self._headers = dict(headers or {})
         self._categorize = categorize
+        # A magnet or .torrent has no useful suggested filename — callers derive
+        # one from the URL and get literally "magnet:". Left in the box it was
+        # not just ugly: switching to the URL tab afterwards would have submitted
+        # "magnet:" as the download's name.
+        low = (url or "").lower()
+        if low.startswith("magnet:") or low.endswith(".torrent"):
+            suggested = ""
 
         lay = QVBoxLayout(self)
-        lay.setContentsMargins(22, 20, 22, 18)
-        lay.setSpacing(14)
-
-        from gui2.dialogs.common import DialogHeader
-        lay.addWidget(DialogHeader("New Download"))
+        lay.setContentsMargins(18, 16, 18, 14)
+        lay.setSpacing(8)
+        # No in-window title: the title bar already reads "New Download", and a
+        # second copy of it was the tallest thing on the dialog.
 
         # ---- tabs: URL / Torrent / Magnet ----
         self.tabs = QTabWidget()
+        pad = (0, 10, 0, 2)
         # URL
-        url_tab = QWidget(); ut = QVBoxLayout(url_tab); ut.setContentsMargins(0, 14, 0, 0); ut.setSpacing(6)
-        ut.addWidget(self._label("Enter download URL"))
-        urow = QHBoxLayout()
+        url_tab = QWidget(); ut = QVBoxLayout(url_tab); ut.setContentsMargins(*pad); ut.setSpacing(5)
+        urow = QHBoxLayout(); urow.setSpacing(6)
         self.url_edit = QLineEdit(url); self.url_edit.setPlaceholderText("https://example.com/file.zip")
         self.url_edit.setClearButtonEnabled(True)
-        paste = QPushButton(); paste.setIcon(themed_icon("clipboard", "text")); paste.setObjectName("iconbtn"); paste.setFixedSize(38, 38)
+        paste = QPushButton(); paste.setIcon(themed_icon("clipboard", "text")); paste.setObjectName("iconbtn"); paste.setFixedSize(34, 34)
         paste.setToolTip("Paste"); paste.clicked.connect(self._paste)
         urow.addWidget(self.url_edit, 1); urow.addWidget(paste)
-        ut.addLayout(urow); ut.addStretch()
+        ut.addLayout(urow)
         self.tabs.addTab(url_tab, themed_icon("link", "muted"), "URL")
         # Torrent
-        tor_tab = QWidget(); tt = QVBoxLayout(tor_tab); tt.setContentsMargins(0, 14, 0, 0); tt.setSpacing(6)
-        tt.addWidget(self._label("Torrent file"))
-        trow = QHBoxLayout()
+        tor_tab = QWidget(); tt = QVBoxLayout(tor_tab); tt.setContentsMargins(*pad); tt.setSpacing(5)
+        trow = QHBoxLayout(); trow.setSpacing(6)
         self.tor_edit = QLineEdit(); self.tor_edit.setPlaceholderText("Select a .torrent file…"); self.tor_edit.setReadOnly(True)
         browse_tor = QPushButton("Browse…"); browse_tor.clicked.connect(self._browse_torrent)
         trow.addWidget(self.tor_edit, 1); trow.addWidget(browse_tor)
-        tt.addLayout(trow); tt.addStretch()
+        tt.addLayout(trow)
         self.tabs.addTab(tor_tab, themed_icon("plus-circle", "muted"), "Torrent")
         # Magnet
-        mag_tab = QWidget(); mt = QVBoxLayout(mag_tab); mt.setContentsMargins(0, 14, 0, 0); mt.setSpacing(6)
-        mt.addWidget(self._label("Magnet link"))
+        mag_tab = QWidget(); mt = QVBoxLayout(mag_tab); mt.setContentsMargins(*pad); mt.setSpacing(5)
         self.mag_edit = QLineEdit(); self.mag_edit.setPlaceholderText("magnet:?xt=urn:btih:…")
         self.mag_edit.setClearButtonEnabled(True)
-        mt.addWidget(self.mag_edit); mt.addStretch()
+        mt.addWidget(self.mag_edit)
         self.tabs.addTab(mag_tab, themed_icon("magnet", "muted"), "Magnet")
         lay.addWidget(self.tabs)
 
         # ---- Save to ----
         lay.addWidget(self._label("Save to"))
-        srow = QHBoxLayout()
+        srow = QHBoxLayout(); srow.setSpacing(6)
         self.dir_edit = QLineEdit(save_dir)
         browse_dir = QPushButton("Browse…"); browse_dir.clicked.connect(self._browse_dir)
         srow.addWidget(self.dir_edit, 1); srow.addWidget(browse_dir)
         lay.addLayout(srow)
 
-        # ---- Filename ----
-        lay.addWidget(self._label("Filename (optional)"))
+        # ---- Filename (URL downloads only) ----
+        self.name_lbl = self._label("Filename (optional)")
         self.name_edit = QLineEdit(suggested); self.name_edit.setPlaceholderText("auto-detected")
+        lay.addWidget(self.name_lbl)
         lay.addWidget(self.name_edit)
 
-        # ---- Category | Queue | Priority ----
-        grid = QGridLayout(); grid.setHorizontalSpacing(12); grid.setVerticalSpacing(4)
-        grid.addWidget(self._label("Category"), 0, 0)
+        # ---- Category | Queue ----
+        grid = QGridLayout(); grid.setHorizontalSpacing(10); grid.setVerticalSpacing(3)
+        self.cat_lbl = self._label("Category")
+        grid.addWidget(self.cat_lbl, 0, 0)
         grid.addWidget(self._label("Queue"), 0, 1)
-        grid.addWidget(self._label("Priority"), 0, 2)
         self.cat = QComboBox(); self.cat.addItems(["Auto"] + list(utils.CATEGORIES) + ["Other"])
         self.q = QComboBox(); self.q.addItems(queues or ["Main"])
-        self.prio = QComboBox(); self.prio.addItems([p[0] for p in _PRIORITIES]); self.prio.setCurrentText("Normal")
-        grid.addWidget(self.cat, 1, 0); grid.addWidget(self.q, 1, 1); grid.addWidget(self.prio, 1, 2)
+        grid.addWidget(self.cat, 1, 0); grid.addWidget(self.q, 1, 1)
         lay.addLayout(grid)
 
-        # live destination hint — shows the actual folder (incl. the auto category
-        # subfolder) so it's clear where the file lands before downloading
+        # Destination hint — only when it differs from the folder shown directly
+        # above it. Repeating "Saved to: <the path you just read>" is a line of
+        # noise on every non-categorised download.
         self.dest_hint = QLabel("")
         self.dest_hint.setStyleSheet(f"color:{COLORS['muted']};background:transparent;font-size:11px;")
         self.dest_hint.setWordWrap(True)
@@ -111,7 +122,7 @@ class NewDownloadDialog(QDialog):
         for sig in (self.name_edit.textChanged, self.url_edit.textChanged,
                     self.cat.currentTextChanged, self.dir_edit.textChanged):
             sig.connect(self._update_dest_hint)
-        self._update_dest_hint()
+        self.tabs.currentChanged.connect(self._sync_tab_fields)
 
         # ---- advanced (collapsible) ----
         self.adv_btn = QPushButton("  Advanced Options"); self.adv_btn.setObjectName("ghost")
@@ -147,9 +158,15 @@ class NewDownloadDialog(QDialog):
         lay.addWidget(self.adv)
 
         # ---- footer ----
-        foot = QHBoxLayout()
         self.start_now = QCheckBox("Start download immediately"); self.start_now.setChecked(True)
-        foot.addWidget(self.start_now); foot.addStretch()
+        lay.addWidget(self.start_now)
+        self.skip_next = QCheckBox("Don't show this again")
+        self.skip_next.setToolTip(
+            "Downloads are added straight away with these defaults.\n"
+            "Turn back on in Settings → Downloads.")
+        lay.addWidget(self.skip_next)
+
+        foot = QHBoxLayout(); foot.addStretch()
         cancel = QPushButton("Cancel"); cancel.clicked.connect(self.reject)
         dl = QPushButton("  Download"); dl.setIcon(themed_icon("download", "white")); dl.setObjectName("primary"); dl.clicked.connect(self._accept)
         foot.addWidget(cancel); foot.addWidget(dl)
@@ -159,19 +176,34 @@ class NewDownloadDialog(QDialog):
         if url.lower().startswith("magnet:"):
             self.url_edit.clear()
             self.mag_edit.setText(url)
-            self.tabs.setCurrentIndex(2)
+            self.tabs.setCurrentIndex(MAGNET_TAB)
         elif url.lower().endswith(".torrent"):
             self.url_edit.clear()
             self.tor_edit.setText(url)
-            self.tabs.setCurrentIndex(1)
+            self.tabs.setCurrentIndex(TORRENT_TAB)
+        self._sync_tab_fields()
 
     # ---- helpers ----
     def _label(self, text):
         l = QLabel(text); l.setObjectName("fieldLabel"); return l
 
+    def _sync_tab_fields(self, *_):
+        """Hide the fields that do nothing on the current tab.
+
+        A torrent takes its name and layout from its own metadata, so Filename
+        and Category decide nothing there — leaving them visible invites the
+        user to fill in a value that is then ignored.
+        """
+        url_tab = self.tabs.currentIndex() == URL_TAB
+        for w in (self.name_lbl, self.name_edit, self.cat_lbl, self.cat):
+            w.setVisible(url_tab)
+        self._update_dest_hint()
+        self.adjustSize()
+
     def _update_dest_hint(self):
-        """Show the real destination — including the auto category subfolder — so
-        it's clear the file lands in e.g. Downloads\\Video, not just Downloads."""
+        """Name the real destination only when it is NOT the folder already
+        shown above — i.e. when an auto category adds a subfolder. Otherwise it
+        just repeats the line above it."""
         base = self.dir_edit.text().strip()
         cat = self.cat.currentText()
         name = self.name_edit.text().strip()
@@ -181,15 +213,18 @@ class NewDownloadDialog(QDialog):
             except Exception:
                 name = ""
         sub = ""
-        if self.tabs.currentIndex() == 0:              # only the URL tab categorises
+        if self.tabs.currentIndex() == URL_TAB:        # only the URL tab categorises
             if cat == "Auto":
                 if self._categorize and name:
                     c = utils.category_for(name)
                     sub = "" if c == "Other" else c
             else:
                 sub = cat                              # explicit pick (incl. "Other")
-        dest = os.path.join(base, sub) if sub else base
-        self.dest_hint.setText(f"Saved to:  {dest or '…'}")
+        if sub:
+            self.dest_hint.setText(f"Saved to:  {os.path.join(base, sub)}")
+            self.dest_hint.setVisible(True)
+        else:
+            self.dest_hint.setVisible(False)
 
     def _paste(self):
         self.url_edit.setText(QApplication.clipboard().text().strip())
@@ -230,14 +265,19 @@ class NewDownloadDialog(QDialog):
             h["Referer"] = self.referer.text().strip()
         if self.ua.text().strip():
             h["User-Agent"] = self.ua.text().strip()
-        prio = dict(_PRIORITIES).get(self.prio.currentText(), 0)
+        torrent_tab = self.tabs.currentIndex() != URL_TAB
         return {
             "url": self._source_url(),
             "save_dir": self.dir_edit.text().strip(),
-            "filename": self.name_edit.text().strip(),
-            "category": self.cat.currentText(),
+            # a torrent names itself from its metadata, so whatever is sitting in
+            # the box (often a useless "magnet:") must not be forced onto it
+            "filename": "" if torrent_tab else self.name_edit.text().strip(),
+            "category": "Auto" if torrent_tab else self.cat.currentText(),
             "queue": self.q.currentText(),
-            "priority": prio,
+            # Priority is gone from the UI: the queue runs by concurrency, and a
+            # rank the scheduler barely acts on was one more decision to make.
+            "priority": 0,
+            "skip_dialog": self.skip_next.isChecked(),
             "connections": self.conns.value(),
             "start_now": self.start_now.isChecked(),
             "use_ytdlp": self.use_ytdlp.isChecked(),

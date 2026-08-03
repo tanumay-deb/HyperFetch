@@ -135,6 +135,10 @@ class PageBuilderMixin:
         self._row(g, "Segments per Download", "Simultaneous HTTP range segments per file", self.conns)
         self.def_queue = self._combo(["Main"], ex.get("default_queue"))
         self._row(g, "Default Queue", "Where new downloads land", self.def_queue)
+        self.ask_before_add = self._toggle(not ex.get("skip_new_download_dialog", False))
+        self._row(g, "Ask before adding a download",
+                  "Show the New Download screen. Off means downloads are added "
+                  "straight away with these defaults.", self.ask_before_add)
         self.auto_start = self._toggle(ex.get("auto_start", True))
         self._row(g, "Auto start downloads", "Start downloads immediately after adding", self.auto_start)
         self.categorize = self._toggle(ex.get("categorize", True))

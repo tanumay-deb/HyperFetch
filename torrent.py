@@ -56,6 +56,14 @@ FILES_POLL = 2.0
 _CTL_MISSING = re.compile(r"control file.*does not exist", re.I)
 
 
+# aria2 keeps recruiting MORE peers only while a torrent's total speed is below
+# this. It is a "try harder below this" threshold, NOT a cap — but its default
+# is 50 KiB/s (~0.4 Mb/s), so on any modern connection aria2 stops looking for
+# peers almost immediately and settles for whatever handful it already has.
+# Verified against a live daemon: bt-request-peer-speed-limit was 51200.
+PEER_SPEED_TARGET = "50M"
+
+
 def preference_opts():
     """aria2 options that come from user settings, shared by both engines.
 
@@ -63,7 +71,7 @@ def preference_opts():
     drift apart — a setting that works on one engine and silently does nothing
     on the other is worse than not having it.
     """
-    opts = []
+    opts = [f"--bt-request-peer-speed-limit={PEER_SPEED_TARGET}"]
     if not getattr(utils, "SEED_ENABLED", False):
         opts.append("--seed-time=0")          # stop the moment it completes
     else:

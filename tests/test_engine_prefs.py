@@ -162,3 +162,20 @@ def test_defaults_keep_the_old_behaviour(tmp_path, monkeypatch):
     S.SettingsMixin._apply_network_settings(stub)
     assert utils.SEED_ENABLED is False
     assert "--seed-time=0" in torrent.preference_opts()
+
+
+def test_peer_recruitment_threshold_is_raised(monkeypatch):
+    """aria2 only hunts for MORE peers while total speed is under
+    bt-request-peer-speed-limit. Its 50 KiB/s default means it stops looking
+    almost immediately on a modern line and plateaus on the peers it has."""
+    o = torrent.preference_opts()
+    assert f"--bt-request-peer-speed-limit={torrent.PEER_SPEED_TARGET}" in o
+    assert torrent.PEER_SPEED_TARGET != "50K"
+
+
+def test_it_is_a_threshold_not_a_download_cap(monkeypatch):
+    """Nothing here may ever cap download speed — that is the one thing this
+    option must not be confused with."""
+    o = torrent.preference_opts()
+    assert not any("max-overall-download-limit" in x for x in o)
+    assert not any("--max-download-limit" in x for x in o)

@@ -744,21 +744,53 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, QW
             # the normal dialog so the user can paste one
             self._add_download(clip if clip.lower().startswith("magnet:") else "", "", None)
 
+    def _quick_values(self, url, suggested, headers):
+        """The dialog's answers, without the dialog — for "Don't show this
+        again". Mirrors its defaults exactly, so turning the prompt off changes
+        how a download is added, never where it lands."""
+        from yt_dl import is_ytdlp_url
+        queues = list(self.queue.queues.keys()) or ["Main"]
+        dq = self._extras.get("default_queue")
+        return {
+            "url": url,
+            "save_dir": self.save_dir,
+            "filename": "" if _torrent.is_torrent_task(url, suggested) else (suggested or ""),
+            "category": "Auto",
+            "queue": dq if dq in queues else queues[0],
+            "priority": 0,
+            "connections": self.segments,
+            "start_now": bool(self._extras.get("auto_start", True)),
+            "use_ytdlp": is_ytdlp_url(url),
+            "yt_format": "",
+            "headers": dict(headers or {}),
+            "skip_dialog": True,
+        }
+
     def _add_download(self, url, suggested, headers, flash=False):
         queues = list(self.queue.queues.keys()) or ["Main"]
-        dlg = NewDownloadDialog(self, self.save_dir, queues, self.segments,
-                                url=url, suggested=suggested, headers=headers,
-                                categorize=self._extras.get("categorize", True))
-        dq = self._extras.get("default_queue")          # Settings -> Downloads
-        if dq and dq in queues:
-            dlg.q.setCurrentText(dq)
-        dlg.start_now.setChecked(bool(self._extras.get("auto_start", True)))
-        if flash:
-            dlg.setWindowFlag(Qt.WindowStaysOnTopHint, True)
-            self.raise_(); self.activateWindow()
-        if dlg.exec() != QDialog.Accepted:
-            return
-        v = dlg.values()
+        if self._extras.get("skip_new_download_dialog") and url:
+            v = self._quick_values(url, suggested, headers)
+            # nothing was shown, so say something: an invisible add is
+            # indistinguishable from a click that did not register
+            self._toasts.show("info", "Added",
+                              v["filename"] or utils.filename_from_url(url) or url[:60])
+        else:
+            dlg = NewDownloadDialog(self, self.save_dir, queues, self.segments,
+                                    url=url, suggested=suggested, headers=headers,
+                                    categorize=self._extras.get("categorize", True))
+            dq = self._extras.get("default_queue")      # Settings -> Downloads
+            if dq and dq in queues:
+                dlg.q.setCurrentText(dq)
+            dlg.start_now.setChecked(bool(self._extras.get("auto_start", True)))
+            if flash:
+                dlg.setWindowFlag(Qt.WindowStaysOnTopHint, True)
+                self.raise_(); self.activateWindow()
+            if dlg.exec() != QDialog.Accepted:
+                return
+            v = dlg.values()
+            if v.get("skip_dialog"):
+                self._extras["skip_new_download_dialog"] = True
+                self._save_settings()
         if not v["url"]:
             return
         # Magnets with the same infohash are the same torrent even when their
