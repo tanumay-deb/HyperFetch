@@ -150,6 +150,11 @@ class DownloadTask:
         self._stall_yield = False
         # one-shot Force Recheck request; the engine consumes it on the next run
         self.force_recheck = False
+        # still sharing a finished torrent (transient): aria2 keeps a seeding
+        # torrent "active", so without this a seeding task would sit at 100%
+        # looking like it had hung
+        self.seeding = False
+        self.tor_upload = 0
         # SHA-256 verification result (transient): "", "ok", "fail", "nohash"
         self.hash_status = ""
 

@@ -311,6 +311,24 @@ class ActionsMixin:
             m.exec(self.cursor().pos())
             return
 
+        m = self._build_card_menu(t)
+        m.exec(self.cursor().pos())
+
+    def _build_card_menu(self, t):
+        """Assemble the context menu WITHOUT showing it.
+
+        Split from _card_menu so it can be tested: exec() blocks on real input,
+        so any test that opened the menu would hang, and the only way to cover
+        it was to call the individual handlers instead. That is precisely how a
+        NameError in one branch shipped — right-click raised before the menu
+        appeared, and every handler test still passed.
+        """
+        ico = lambda n: themed_icon(n, "text")
+        # Defined up here because the very first branch below needs it. It used
+        # to be initialised further down, so adding the Play-preview branch
+        # raised NameError and the context menu simply never opened.
+        is_tor = _torrent.is_torrent_task(t.url, t.filename)
+
         m = self._menu()
         if t.status == T.COMPLETED:
             m.addAction(ico("open"), "Open File", lambda: self._open_file(t))
@@ -350,7 +368,6 @@ class ActionsMixin:
                     act.setEnabled(False)
                 act.triggered.connect(lambda _=False, n=q.name: self._move_task_to_queue(t, n))
         m.addSeparator()
-        is_tor = _torrent.is_torrent_task(t.url, t.filename)
         m.addAction(ico("document"), "Rename", lambda: self._rename_task(t))
         m.addAction(ico("folder"), "Move to…", lambda: self._move_task_files(t))
         if t.status in (T.PAUSED, T.ERROR, T.CANCELLED, T.COMPLETED) and not is_tor:

@@ -220,7 +220,16 @@ class DetailsDrawer(QFrame):
         super().__init__(parent)
         self.setObjectName("drawer")
         self.setStyleSheet(f"#drawer {{ background: {COLORS['surface']}; border-left: 1px solid {COLORS['border']}; }}")
-        self.setFixedWidth(WIDTH)
+        # Width is a preference, not a constant: the Files tab lists real
+        # release names, and no fixed width suits both a short filename and a
+        # season pack. Drag the left edge; the size is remembered.
+        self._user_width = int(utils.load_json(
+            os.path.join(utils.app_data_dir(), "settings.json"), {}
+        ).get("drawer_width", 0) or 0)
+        self.setFixedWidth(self._clamp_width(self._user_width or WIDTH))
+        self._drag_from = None
+        self._drag_w0 = 0
+        self.setMouseTracking(True)
         self._tid = None
         self.hide()
 
@@ -714,8 +723,11 @@ class DetailsDrawer(QFrame):
 
         # Summary tiles
         cards = QHBoxLayout(); cards.setSpacing(8)
+        # "Total Size" counts only what is actually going to be fetched, so
+        # unticking a file makes it drop — the number has to answer "how much
+        # will this cost me", which is the reason to untick anything.
         c1, self.fs_size = self._fstat_card("archive", "Total Size")
-        c2, self.fs_done = self._fstat_card("check", "Completed")
+        c2, self.fs_sel = self._fstat_card("check-square", "Selected")
         c3, self.fs_active = self._fstat_card("download", "Downloading")
         c4, self.fs_count = self._fstat_card("document", "Files")
         for c in (c1, c2, c3, c4):
@@ -755,6 +767,9 @@ class DetailsDrawer(QFrame):
         self.files_table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.files_table.setSelectionMode(QAbstractItemView.NoSelection)
         self.files_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        # Name stretches, so there is nothing to scroll to sideways — the bar
+        # only ever appeared as a stray strip under the last row.
+        self.files_table.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.files_table.setStyleSheet(
             f"QTableWidget {{ background: {COLORS['surface']}; border: 1px solid {COLORS['border']}; border-radius: 6px; }}"
             f"QTableWidget::item {{ border-bottom: 1px solid {COLORS['border']}; padding: 4px; }}"
@@ -816,14 +831,31 @@ class DetailsDrawer(QFrame):
             return 100 if completed else 0
         return max(0, min(100, int(completed * 100 / size)))
 
-    def _set_file_cards(self, total_sz, total_files, done, active):
+    def _set_file_cards(self, total_sz, total_files, selected, active):
         self.fs_size.setText(human_size(total_sz) if total_sz else "—")
-        if total_files:
-            self.fs_done.setText(f"{done} ({int(done * 100 / total_files)}%)")
-        else:
-            self.fs_done.setText("—")
+        self.fs_sel.setText(f"{selected} of {total_files}" if total_files else "—")
         self.fs_active.setText(str(active))
         self.fs_count.setText(str(total_files))
+
+    def _tally(self):
+        """Recompute the tiles from the CHECKBOXES, not from aria2.
+
+        Unticking a file has to change the totals straight away: aria2 is not
+        told until the selection is applied, and a size that only updates after
+        a round trip reads as the click not having worked.
+        """
+        rows = getattr(self, "_file_row_widgets", None) or []
+        bars = getattr(self, "_file_bars", None) or []
+        size = sum(sz for _idx, cb, sz in rows if cb.isChecked())
+        selected = sum(1 for _idx, cb, _sz in rows if cb.isChecked())
+        active = 0
+        for (_idx, cb, _sz), bar in zip(rows, bars):
+            # NOT `bar.value() > 0`: a file with a handful of bytes rounds to 0,
+            # and inferring "has data" from the rounded bar is what made the
+            # tile disagree with the rows in the first place.
+            if cb.isChecked() and bar.property("hf_partial"):
+                active += 1
+        self._set_file_cards(size, len(rows), selected, active)
 
     def _refresh_files(self, t):
         """Update the per-file bars and the summary tiles in place. Rebuilding
@@ -837,21 +869,19 @@ class DetailsDrawer(QFrame):
         if len(live) != len(self._file_bars):
             self._populate_static(t)      # metadata arrived, file list changed
             return
-        total_sz = done = active = 0
         for bar, (_rel, size, completed, selected) in zip(self._file_bars, live):
-            total_sz += size
             pct = self._file_pct(size, completed)
+            partial = bool(completed > 0 and pct < 100)
+            bar.setProperty("hf_partial", partial)
             if not selected:
                 bar.setFormat("Skipped")
             else:
-                bar.setFormat(f"{pct}%")
-                if pct >= 100:
-                    done += 1
-                elif completed > 0:
-                    active += 1
+                # A file with a few bytes rounds to "0%", which made the
+                # Downloading tile count rows that all read zero. Say <1%.
+                bar.setFormat("<1%" if pct == 0 and completed > 0 else f"{pct}%")
             bar.setValue(pct)
             self._style_file_bar(bar, pct, skipped=not selected)
-        self._set_file_cards(total_sz, len(live), done, active)
+        self._tally()
 
     def _filter_files(self):
         query = self.file_search.text().lower()
@@ -1072,6 +1102,61 @@ class DetailsDrawer(QFrame):
         lay.addStretch()
 
     # ---- open / close ----
+    # ---- resizing: drag the left edge ----
+    GRIP = 6                     # px of the left edge that starts a drag
+    MIN_W, MAX_W = 320, 900
+
+    def _clamp_width(self, w):
+        return max(self.MIN_W, min(self.MAX_W, int(w)))
+
+    def _on_grip(self, pos):
+        return pos.x() <= self.GRIP
+
+    def mouseMoveEvent(self, e):
+        if self._drag_from is not None:
+            # dragging LEFT widens it, so the delta is inverted
+            delta = self._drag_from - e.globalPosition().toPoint().x()
+            self.setFixedWidth(self._clamp_width(self._drag_w0 + delta))
+            w = self.parentWidget()
+            if w is not None:
+                self._reposition(w)
+            e.accept()
+            return
+        self.setCursor(Qt.SizeHorCursor if self._on_grip(e.position().toPoint())
+                       else Qt.ArrowCursor)
+        super().mouseMoveEvent(e)
+
+    def mousePressEvent(self, e):
+        if e.button() == Qt.LeftButton and self._on_grip(e.position().toPoint()):
+            self._drag_from = e.globalPosition().toPoint().x()
+            self._drag_w0 = self.width()
+            e.accept()
+            return
+        super().mousePressEvent(e)
+
+    def mouseReleaseEvent(self, e):
+        if self._drag_from is not None:
+            self._drag_from = None
+            self._user_width = self.width()
+            win = self._window()
+            if win is not None and hasattr(win, "_extras"):
+                win._extras["drawer_width"] = self._user_width
+                try:
+                    win._save_settings()
+                except Exception:
+                    pass
+            e.accept()
+            return
+        super().mouseReleaseEvent(e)
+
+    def _reposition(self, host):
+        """Keep the drawer pinned to the right edge at its current width."""
+        try:
+            self.setGeometry(host.width() - self.width(), 0,
+                             self.width(), host.height())
+        except Exception:
+            pass
+
     def _window(self):
         """The DownloadAppV2 that owns this drawer (it holds the queue).
 
@@ -1115,7 +1200,7 @@ class DetailsDrawer(QFrame):
         self.reposition()
         self.show(); self.raise_()
         start = QPoint(self.parent().width(), 0)
-        end = QPoint(self.parent().width() - WIDTH, 0)
+        end = QPoint(self.parent().width() - self.width(), 0)
         self.move(start)
         self.anim.stop(); self.anim.setStartValue(start); self.anim.setEndValue(end); self.anim.start()
         if hasattr(self, 'op_anim'):
@@ -1149,7 +1234,7 @@ class DetailsDrawer(QFrame):
             self.setFixedHeight(self.parent().height())
             if not self.isVisible():
                 return
-            self.move(self.parent().width() - WIDTH, 0)
+            self.move(self.parent().width() - self.width(), 0)
 
     def _primary(self):
         if self._tid:
@@ -1221,7 +1306,7 @@ class DetailsDrawer(QFrame):
         active_files = 0
         
         def add_file_row(idx, name, size, is_folder, pct, status_str, indent=0,
-                         selected=True):
+                         selected=True, partial=False):
             r = self.files_table.rowCount()
             self.files_table.insertRow(r)
 
@@ -1233,6 +1318,8 @@ class DetailsDrawer(QFrame):
             # would fire _apply_file_selection and push it straight back
             cb.setChecked(selected)
             cb.stateChanged.connect(self._apply_file_selection)
+            # retally immediately so the size drops the moment it is unticked
+            cb.stateChanged.connect(lambda *_: self._tally())
             ic_name = "folder" if is_folder else "document"
             ic_color = "warning" if is_folder else "muted"
             icon = QLabel(); icon.setPixmap(themed_icon(ic_name, ic_color).pixmap(16, 16))
@@ -1262,7 +1349,13 @@ class DetailsDrawer(QFrame):
             bar.setValue(pct)
             bar.setFixedHeight(16)
             bar.setTextVisible(True)
-            bar.setFormat("Skipped" if not selected else f"{pct}%")
+            bar.setProperty("hf_partial", bool(partial))
+            if not selected:
+                bar.setFormat("Skipped")
+            elif pct == 0 and partial:
+                bar.setFormat("<1%")          # has bytes, just not a whole %
+            else:
+                bar.setFormat(f"{pct}%")
             bar.setToolTip(status_str)
             self._style_file_bar(bar, pct, skipped=not selected)
             self.files_table.setCellWidget(r, 2, bar)
@@ -1302,7 +1395,7 @@ class DetailsDrawer(QFrame):
                     else:
                         status_str = "Downloading" if t.status == T.DOWNLOADING else "Idle"
                     add_file_row(i, name, size, False, pct, status_str, indent,
-                                 selected)
+                                 selected, partial=bool(completed and pct < 100))
         else:
             if sp and os.path.isdir(sp):
                 try:
@@ -1326,7 +1419,7 @@ class DetailsDrawer(QFrame):
                     active_files += 1
                 add_file_row(0, t.filename or "file", sz, False, pct, status_str)
 
-        self._set_file_cards(total_sz, total_files, done_files, active_files)
+        self._tally()
 
 
 

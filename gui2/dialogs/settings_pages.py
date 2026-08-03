@@ -388,7 +388,24 @@ class PageBuilderMixin:
 
     def _open_console(self):
         from gui2.dialogs.console import ConsoleDialog
-        ConsoleDialog(self).exec()
+        # show(), not exec(): a log viewer you cannot use the app behind is
+        # useless — the whole point is watching the log WHILE doing the thing
+        # that misbehaves. The reference is kept on the dialog so it is not
+        # garbage-collected the moment this method returns.
+        # Parented to the MAIN WINDOW, not to Settings. Settings itself runs
+        # modal via exec(), so a console owned by it stays blocked behind that
+        # modality no matter how it is shown — the app would still be frozen.
+        owner = self.parent() or self
+        dlg = getattr(owner, "_console_dlg", None)
+        if dlg is None:
+            dlg = ConsoleDialog(owner)
+            dlg.setModal(False)
+            dlg.setWindowModality(Qt.NonModal)
+            owner._console_dlg = dlg
+            dlg.finished.connect(lambda *_: setattr(owner, "_console_dlg", None))
+        dlg.show()
+        dlg.raise_()
+        dlg.activateWindow()
 
     def _p_about(self):
         sa, v = self._page("About", "")

@@ -1026,6 +1026,22 @@ class TorrentDownloader:
                         return top
             self.t.tor_conns = int(st.get("connections") or 0)
             self.t.tor_seeds = int(st.get("numSeeders") or 0)
+            self.t.tor_upload = int(st.get("uploadSpeed") or 0)
+
+            # Seeding: the payload is fully downloaded but aria2 keeps the
+            # torrent "active" while it shares. Without recognising that, the
+            # task sat at 100% in the Active list looking hung — and the stall
+            # check below would eventually decide a quiet swarm meant it should
+            # give up its slot.
+            if (total and self.t.downloaded >= total
+                    and st.get("status") == "active"):
+                if not self.t.seeding:
+                    self.t.seeding = True
+                    self.t.status = T.COMPLETED
+                    self.t.log_event("Seeding")
+                    log.info("seeding: %s", self.t.filename)
+                time.sleep(POLL)
+                continue
 
             # Per-file progress. The Files tab used to derive this from the size
             # of each file on disk, which is not progress at all: aria2
@@ -1052,6 +1068,8 @@ class TorrentDownloader:
 
             status = st.get("status")
             if status == "complete":
+                self.t.seeding = False
+                self.t.tor_upload = 0
                 if self.t.total_size:
                     self.t.downloaded = self.t.total_size
                 archive_metadata(self.t, out_dir)

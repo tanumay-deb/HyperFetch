@@ -51,7 +51,7 @@ def test_bars_show_aria2s_numbers_not_the_size_on_disk(tmp_path):
     assert bar.value() == 25, "read the file's size on disk instead of its progress"
 
 
-def test_summary_tiles_count_files_and_bytes(tmp_path):
+def test_summary_tiles_report_selection_and_progress(tmp_path):
     app = _app()
     host = QWidget()
     drawer = DetailsDrawer(host)
@@ -70,7 +70,7 @@ def test_summary_tiles_count_files_and_bytes(tmp_path):
     drawer.open_for(t)
     app.processEvents()
     assert drawer.fs_count.text() == "4"
-    assert drawer.fs_done.text() == "2 (50%)"      # 2 of 4 complete
+    assert drawer.fs_sel.text() == "4 of 4"        # nothing unticked yet
     assert drawer.fs_active.text() == "1"          # only c.mkv is part-done
     assert "400" in drawer.fs_size.text() or "B" in drawer.fs_size.text()
 
@@ -133,3 +133,46 @@ def test_static_listing_is_used_before_metadata_arrives(tmp_path, monkeypatch):
     app.processEvents()
     assert drawer.files_table.rowCount() == 1
     assert _rows(drawer)[0].value() == 0
+
+
+def test_unticking_a_file_drops_the_total_size(tmp_path):
+    """The reason anyone unticks a file is to not pay for it, so the size has
+    to answer that immediately — aria2 is not even told until the selection is
+    applied, and a number that waits for a round trip reads as a dead click."""
+    app = _app()
+    host = QWidget()
+    drawer = DetailsDrawer(host)
+    base = str(tmp_path / "Show")
+    t = _torrent_task(tmp_path, [
+        {"index": 1, "path": f"{base}/a.mkv", "length": 50 << 20, "completed": 0,
+         "selected": True},
+        {"index": 2, "path": f"{base}/b.mkv", "length": 50 << 20, "completed": 0,
+         "selected": True},
+    ])
+    drawer.open_for(t)
+    app.processEvents()
+    both = drawer.fs_size.text()
+    assert drawer.fs_sel.text() == "2 of 2"
+
+    drawer._file_row_widgets[1][1].setChecked(False)     # untick the second
+    app.processEvents()
+    assert drawer.fs_sel.text() == "1 of 2"
+    assert drawer.fs_size.text() != both
+    assert "50" in drawer.fs_size.text()                 # half of 100 MB
+
+
+def test_a_file_with_a_few_bytes_reads_under_one_percent(tmp_path):
+    """Rounding made these rows show 0% while the Downloading tile counted
+    them, so the tile looked wrong."""
+    app = _app()
+    host = QWidget()
+    drawer = DetailsDrawer(host)
+    base = str(tmp_path / "Show")
+    t = _torrent_task(tmp_path, [
+        {"index": 1, "path": f"{base}/a.mkv", "length": 100000, "completed": 5,
+         "selected": True},
+    ])
+    drawer.open_for(t)
+    app.processEvents()
+    assert _rows(drawer)[0].format() == "<1%"
+    assert drawer.fs_active.text() == "1"

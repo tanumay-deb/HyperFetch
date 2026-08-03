@@ -135,6 +135,7 @@ class DownloadCardWidget(QFrame):
         root.addWidget(self.chk, 0, Qt.AlignVCenter)
 
         # serial number
+        self._sl_no = sl_no
         self.sl_lbl = QLabel(f"#{sl_no}")
         self.sl_lbl.setFixedWidth(30)
         self.sl_lbl.setStyleSheet(f"color: {COLORS['muted']}; font-size: {fpx(11)}; font-weight: 700; background: transparent;")
@@ -334,7 +335,21 @@ class DownloadCardWidget(QFrame):
             f"QProgressBar{{background:{COLORS['surface2']};border:none;border-radius:4px;max-height:6px;}}"
             f"QProgressBar::chunk{{background:{col};border-radius:4px;}}")
 
-        if done:
+        # A finished download has no queue position left to describe, so the
+        # serial number is noise there. The label keeps its width so the
+        # filenames below it stay in one column.
+        self.sl_lbl.setText("" if done else f"#{self._sl_no}")
+
+        if done and getattr(t, "seeding", False):
+            up = human_speed(getattr(t, "tor_upload", 0) or 0)
+            bits = ["Seeding"]
+            if up:
+                bits.append(f"↑ {up}")
+            peers = getattr(t, "tor_conns", 0)
+            if peers:
+                bits.append(f"{peers} peer{'' if peers == 1 else 's'}")
+            self.sub.setText("  •  ".join(bits))
+        elif done:
             age = humanize_age(getattr(t, "added", 0))
             self.sub.setText(f"Completed  •  {human_size(t.total_size or t.downloaded)}"
                              + (f"  •  {age}" if age else ""))
