@@ -7,7 +7,8 @@ import math
 import random
 
 from PySide6.QtWidgets import (
-    QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QFrame, QGraphicsDropShadowEffect, QWidget
+    QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QFrame,
+    QGraphicsDropShadowEffect, QWidget, QCheckBox
 )
 from PySide6.QtCore import Qt, Signal, QTimer, QPropertyAnimation, QEasingCurve, QRectF, QPointF
 from PySide6.QtGui import QPainter, QColor, QPainterPath, QPen
@@ -85,54 +86,59 @@ class CompleteDialog(QDialog):
     def __init__(self, parent, t):
         super().__init__(parent)
         self.setWindowTitle("Download Complete")
-        self.setMinimumWidth(440)
+        # Bounded on BOTH axes: this pops up unprompted, so it must never grow to
+        # fit a long release name or a wall of stats and land as a huge window
+        # over whatever the user was doing.
+        self.setFixedWidth(380)
+        self.setMaximumHeight(430)
         self.setStyleSheet(parent.styleSheet() if parent else "")
         self.t = t
 
-        v = QVBoxLayout(self); v.setContentsMargins(32, 32, 32, 28); v.setSpacing(16)
+        v = QVBoxLayout(self); v.setContentsMargins(20, 18, 20, 16); v.setSpacing(9)
         v.setAlignment(Qt.AlignHCenter)
 
         # Celebratory Checkmark
         check = QLabel()
         check.setAlignment(Qt.AlignCenter)
-        check.setFixedSize(84, 84)
-        check.setPixmap(themed_icon("check", "white").pixmap(44, 44))
-        
+        check.setFixedSize(56, 56)
+        check.setPixmap(themed_icon("check", "white").pixmap(30, 30))
+
         # Glowing gradient background for the check
         check.setStyleSheet(
             f"background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 {COLORS['success']}, stop:1 #059669);"
-            f"border-radius: 42px;"
+            f"border-radius: 28px;"
         )
         shadow = QGraphicsDropShadowEffect(self)
-        shadow.setBlurRadius(30)
+        shadow.setBlurRadius(22)
         shadow.setColor(QColor(COLORS['success']))
-        shadow.setOffset(0, 4)
+        shadow.setOffset(0, 3)
         check.setGraphicsEffect(shadow)
-        
+
         v.addWidget(check, 0, Qt.AlignHCenter)
 
-        # Typography
-        title = QLabel("Download Completed!"); title.setAlignment(Qt.AlignCenter)
-        title.setStyleSheet(f"font-size:22px; font-weight:800; color: {COLORS['text']}; background:transparent;")
-        sub = QLabel("The file has been downloaded successfully."); sub.setAlignment(Qt.AlignCenter)
-        sub.setStyleSheet(f"color:{COLORS['muted']}; font-size: 13px; background:transparent;")
-        v.addWidget(title); v.addWidget(sub)
-        v.addSpacing(4)
+        # One line, not two: the subtitle only restated the title.
+        title = QLabel("Download complete"); title.setAlignment(Qt.AlignCenter)
+        title.setStyleSheet(f"font-size:17px; font-weight:800; color: {COLORS['text']}; background:transparent;")
+        v.addWidget(title)
 
         # Glassmorphism Stats Panel
         panel = QFrame(); panel.setObjectName("panel")
         panel.setStyleSheet(f"QFrame#panel {{ background: rgba(255, 255, 255, 0.03); border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 14px; }}")
-        pg = QVBoxLayout(panel); pg.setContentsMargins(20, 16, 20, 16); pg.setSpacing(12)
-        
+        pg = QVBoxLayout(panel); pg.setContentsMargins(14, 11, 14, 11); pg.setSpacing(8)
+
         top = QHBoxLayout()
         ic = QLabel(); ic.setStyleSheet("background:transparent;")
         ic_name = "magnet" if _torrent.is_torrent_task(t.url, t.filename) else "document"
-        ic.setPixmap(themed_icon(ic_name, COLORS['accent']).pixmap(28, 28))
-        
-        nm = QVBoxLayout(); nm.setSpacing(2)
-        name = QLabel(t.filename or "download"); name.setStyleSheet(f"font-size: 14px; font-weight:700; color:{COLORS['text']}; background:transparent;")
-        name.setWordWrap(True)
-        size = QLabel(human_size(t.total_size or t.downloaded)); size.setStyleSheet(f"color:{COLORS['accent']}; font-weight: 600; font-size:12px; background:transparent;")
+        ic.setPixmap(themed_icon(ic_name, COLORS['accent']).pixmap(22, 22))
+
+        nm = QVBoxLayout(); nm.setSpacing(1)
+        from gui2.download_card import ElideLabel
+        # elide, never wrap: a long release name used to reflow into three lines
+        # and push the whole popup taller
+        name = ElideLabel(t.filename or "download")
+        name.setToolTip(t.filename or "")
+        name.setStyleSheet(f"font-size: 13px; font-weight:700; color:{COLORS['text']}; background:transparent;")
+        size = QLabel(human_size(t.total_size or t.downloaded)); size.setStyleSheet(f"color:{COLORS['accent']}; font-weight: 600; font-size:11px; background:transparent;")
         nm.addWidget(name); nm.addWidget(size)
         top.addWidget(ic); top.addSpacing(8); top.addLayout(nm, 1)
         pg.addLayout(top)
@@ -143,52 +149,60 @@ class CompleteDialog(QDialog):
         
         stats_frame = QFrame()
         stats_frame.setStyleSheet("background: transparent;")
-        s_lay = QVBoxLayout(stats_frame); s_lay.setContentsMargins(0, 0, 0, 0); s_lay.setSpacing(8)
-        
-        for label, value in (
-            ("Downloaded", human_size(t.downloaded)),
-            ("Total Time", fmt_eta(elapsed) if elapsed else "—"),
-            ("Average Speed", human_speed(avg) if avg else "—"),
-            ("Connections", str(len(t.segments) or "—")),
-        ):
+        s_lay = QVBoxLayout(stats_frame); s_lay.setContentsMargins(0, 0, 0, 0); s_lay.setSpacing(5)
+
+        # "Downloaded" repeated the size already shown beside the filename, and
+        # Connections is meaningless for a torrent (it has no HTTP segments), so
+        # each line here now says something the others do not.
+        stats = [("Time", fmt_eta(elapsed) if elapsed else "—"),
+                 ("Average speed", human_speed(avg) if avg else "—")]
+        if not _torrent.is_torrent_task(t.url, t.filename) and t.segments:
+            stats.append(("Connections", str(len(t.segments))))
+        for label, value in stats:
             r = QHBoxLayout()
-            l = QLabel(label); l.setStyleSheet(f"color:{COLORS['muted']}; font-size: 13px; background:transparent;")
-            x = QLabel(value); x.setStyleSheet(f"color:{COLORS['text']}; font-weight:600; font-size: 13px; background:transparent;")
+            l = QLabel(label); l.setStyleSheet(f"color:{COLORS['muted']}; font-size: 12px; background:transparent;")
+            x = QLabel(value); x.setStyleSheet(f"color:{COLORS['text']}; font-weight:600; font-size: 12px; background:transparent;")
             r.addWidget(l); r.addStretch(); r.addWidget(x)
             s_lay.addLayout(r)
-            
+
         pg.addWidget(stats_frame)
         v.addWidget(panel)
-        v.addSpacing(8)
 
         # Buttons
-        row = QHBoxLayout(); row.setSpacing(10)
-        of = QPushButton(" Open File"); of.setIcon(themed_icon("open", "text")); of.clicked.connect(self._open_file)
-        of.setStyleSheet(f"QPushButton {{ padding: 8px 14px; font-weight: 600; background: {COLORS['surface2']}; border: 1px solid {COLORS['border']}; border-radius: 8px; }}"
-                         f"QPushButton:hover {{ background: {COLORS['card_hover']}; }}")
-                         
-        ofd = QPushButton(" Folder"); ofd.setIcon(themed_icon("folder", "text")); ofd.clicked.connect(self._open_folder)
-        ofd.setStyleSheet(f"QPushButton {{ padding: 8px 14px; font-weight: 600; background: {COLORS['surface2']}; border: 1px solid {COLORS['border']}; border-radius: 8px; }}"
-                          f"QPushButton:hover {{ background: {COLORS['card_hover']}; }}")
-                          
-        vl = QPushButton("View in List"); vl.clicked.connect(lambda: (self.viewInList.emit(self.t.id), self.accept()))
-        vl.setStyleSheet(f"QPushButton {{ padding: 8px 14px; font-weight: 600; background: transparent; color: {COLORS['muted']}; border: none; }}"
-                         f"QPushButton:hover {{ color: {COLORS['text']}; }}")
-                         
+        # Three buttons, not four. At this width the old row overflowed into
+        # "Open F / Folde / iew in Lis", and "View in List" was the one worth
+        # losing: closing the popup already reveals the list behind it.
+        row = QHBoxLayout(); row.setSpacing(8)
+        _flat = (f"QPushButton {{ padding: 7px 9px; font-weight: 600; background: {COLORS['surface2']};"
+                 f" border: 1px solid {COLORS['border']}; border-radius: 8px; }}"
+                 f"QPushButton:hover {{ background: {COLORS['card_hover']}; }}")
+        of = QPushButton("Open"); of.setIcon(themed_icon("open", "text")); of.clicked.connect(self._open_file)
+        of.setStyleSheet(_flat)
+
+        ofd = QPushButton("Folder"); ofd.setIcon(themed_icon("folder", "text")); ofd.clicked.connect(self._open_folder)
+        ofd.setStyleSheet(_flat)
+
         close = QPushButton("Close"); close.setObjectName("primary"); close.clicked.connect(self.accept)
-        close.setStyleSheet(f"QPushButton {{ padding: 8px 24px; font-weight: 700; background: {COLORS['accent']}; color: white; border: none; border-radius: 8px; }}"
+        close.setStyleSheet(f"QPushButton {{ padding: 7px 16px; font-weight: 700; background: {COLORS['accent']}; color: white; border: none; border-radius: 8px; }}"
                             f"QPushButton:hover {{ background: {COLORS['accent']}dd; }}")
-                            
+
         row.addWidget(of)
         row.addWidget(ofd)
         row.addStretch()
-        row.addWidget(vl)
         row.addWidget(close)
         v.addLayout(row)
-        
+
+        self.skip_next = QCheckBox("Don't show this again")
+        self.skip_next.setToolTip(
+            "Finished downloads still appear in the list and as a toast.\n"
+            "Turn back on in Settings → Downloads.")
+        self.skip_next.setStyleSheet(
+            f"color:{COLORS['muted']};font-size:11px;background:transparent;")
+        v.addWidget(self.skip_next, 0, Qt.AlignLeft)
+
         # Confetti Overlay
         self.confetti = ConfettiWidget(self)
-        self.confetti.resize(440, 500)
+        self.confetti.resize(self.width(), self.maximumHeight())
         
     def showEvent(self, event):
         super().showEvent(event)

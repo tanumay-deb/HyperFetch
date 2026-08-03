@@ -650,9 +650,11 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, QW
                     self._open_file(t)
                 elif wc == "Open folder":
                     self._open_folder(t)
-                if wc != "Do nothing":
+                if wc != "Do nothing" and not self._extras.get("skip_complete_popup"):
                     dlg = CompleteDialog(self, t)
                     dlg.viewInList.connect(lambda *_: self._set_filter("All"))
+                    dlg.finished.connect(
+                        lambda *_, d=dlg: self._remember_skip_complete(d))
                     dlg.show()
             elif t.status == T.ERROR and t.id not in self._errored_seen:
                 if wc != "Do nothing":
@@ -669,6 +671,13 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, QW
         self._completed_seen, self._errored_seen = done, errd
         if newly_done and wc in ("Shut down PC", "Sleep"):
             self._maybe_power_off(wc)
+
+    def _remember_skip_complete(self, dlg):
+        """Honour "Don't show this again" on the completion popup, whichever
+        button closed it — the checkbox is a preference, not a submission."""
+        if getattr(dlg, "skip_next", None) is not None and dlg.skip_next.isChecked():
+            self._extras["skip_complete_popup"] = True
+            self._save_settings()
 
     def _maybe_power_off(self, wc):
         """Arm the shutdown countdown once the WHOLE queue is finished.

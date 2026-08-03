@@ -139,6 +139,10 @@ class PageBuilderMixin:
         self._row(g, "Ask before adding a download",
                   "Show the New Download screen. Off means downloads are added "
                   "straight away with these defaults.", self.ask_before_add)
+        self.show_complete = self._toggle(not ex.get("skip_complete_popup", False))
+        self._row(g, "Show the completion popup",
+                  "The celebration window when a download finishes. Off still "
+                  "leaves the toast and the list entry.", self.show_complete)
         self.auto_start = self._toggle(ex.get("auto_start", True))
         self._row(g, "Auto start downloads", "Start downloads immediately after adding", self.auto_start)
         self.categorize = self._toggle(ex.get("categorize", True))
