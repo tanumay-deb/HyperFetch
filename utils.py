@@ -161,17 +161,43 @@ def app_data_dir():
     return d
 
 
-def get_or_create_token():
+def get_or_create_token(retries=6, delay=0.2):
     """Stable per-install pairing secret the extension must present on /download.
-    Generated once, stored 0600 in the app-data dir."""
+    Generated once, stored 0600 in the app-data dir.
+
+    A FAILED READ MUST NOT MINT A NEW TOKEN. This used to treat any OSError as
+    "no token yet" and generate a fresh one, which silently unpairs the browser
+    extension: it presents the token it stored, the app answers 401, and the
+    user is told to pair by hand. A brief lock on the file is enough to trigger
+    it — an antivirus scan right after an installer replaces the app is exactly
+    that, which is why pairing broke on update while the file itself was never
+    modified. Same shape as the bug that let a locked downloads.json read as an
+    empty download list.
+
+    So: retry a genuinely locked file, and only mint when the file is really
+    absent or empty.
+    """
     path = os.path.join(app_data_dir(), "pair_token")
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            tok = f.read().strip()
+    for attempt in range(retries):
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                tok = f.read().strip()
             if tok:
                 return tok
-    except OSError:
-        pass
+            break                          # exists but empty -> mint below
+        except FileNotFoundError:
+            break                          # genuinely absent -> mint below
+        except OSError as e:
+            if attempt == retries - 1:
+                # Still unreadable, and it EXISTS. Minting now would unpair the
+                # extension, so say so loudly rather than doing it quietly.
+                log = get_logger("utils")
+                log.error("pair_token exists but could not be read (%s) — "
+                          "issuing a temporary token; the extension will need "
+                          "to re-pair", e)
+                break
+            time.sleep(delay)
+
     tok = secrets.token_urlsafe(24)
     try:
         with open(path, "w", encoding="utf-8") as f:
@@ -180,8 +206,12 @@ def get_or_create_token():
             os.chmod(path, 0o600)
         except OSError:
             pass
-    except OSError:
-        pass
+    except OSError as e:
+        # Not persisted: this token dies with the process, so the next launch
+        # hands out a different one and the extension has to re-pair every time.
+        get_logger("utils").error(
+            "could not save pair_token (%s) — pairing will not survive a "
+            "restart", e)
     return tok
 
 
