@@ -1099,15 +1099,34 @@ class TorrentDownloader:
                 cur = follow[0]
                 continue
 
-            self.t.downloaded = int(st.get("completedLength") or 0)
-            total = int(st.get("totalLength") or 0)
-            if total:
-                self.t.total_size = total
-                if not checked_disk:
-                    checked_disk = True
-                    if self._disk_guard(total, out_dir):
-                        self._rpc_remove(d, cur, force=True)
-                        return top
+            # Identify the payload FIRST. A magnet starts as a download of the
+            # .torrent itself, reported as a "[METADATA]" pseudo-file whose
+            # completedLength and totalLength are the metadata's own few KB.
+            # Reading progress from that is how a torrent that had downloaded
+            # nothing reported itself complete: the two were briefly equal, the
+            # seeding branch fired, and because that branch continues, the code
+            # that identifies the real payload never ran again.
+            files = st.get("files") or []
+            first = (files[0].get("path") or "") if files else ""
+            meta_stage = bool(first) and ("[METADATA]" in first.upper()
+                                          or "[MEMORY]" in first.upper())
+            if not top and files and not meta_stage:
+                entry = self._top_entry(first, out_dir)
+                if entry:
+                    top = entry
+                    self.t.filename = entry
+
+            total = 0
+            if not meta_stage:
+                self.t.downloaded = int(st.get("completedLength") or 0)
+                total = int(st.get("totalLength") or 0)
+                if total:
+                    self.t.total_size = total
+                    if not checked_disk:
+                        checked_disk = True
+                        if self._disk_guard(total, out_dir):
+                            self._rpc_remove(d, cur, force=True)
+                            return top
             self.t.tor_conns = int(st.get("connections") or 0)
             self.t.tor_seeds = int(st.get("numSeeders") or 0)
             self.t.tor_upload = int(st.get("uploadSpeed") or 0)
@@ -1117,7 +1136,7 @@ class TorrentDownloader:
             # task sat at 100% in the Active list looking hung — and the stall
             # check below would eventually decide a quiet swarm meant it should
             # give up its slot.
-            if (total and self.t.downloaded >= total
+            if (not meta_stage and total and self.t.downloaded >= total
                     and st.get("status") == "active"):
                 if not self.t.seeding:
                     self.t.seeding = True
@@ -1141,16 +1160,13 @@ class TorrentDownloader:
                 except Exception as e:
                     log.debug("getFiles failed for %s: %s", self.t.filename, e)
 
-            files = st.get("files") or []
-            if not top and files:
-                p = files[0].get("path") or ""
-                if "[METADATA]" not in p.upper() and "[MEMORY]" not in p.upper():
-                    entry = self._top_entry(p, out_dir)
-                    if entry:
-                        top = entry
-                        self.t.filename = entry
-
             status = st.get("status")
+            if status == "complete" and meta_stage:
+                # The METADATA download finished, not the torrent. followedBy
+                # normally appears in the same reply and is handled above, but
+                # if it lags by a poll we must not report the payload done.
+                time.sleep(POLL)
+                continue
             if status == "complete":
                 self.t.seeding = False
                 self.t.tor_upload = 0

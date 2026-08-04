@@ -73,10 +73,13 @@ class ShortcutsMixin:
                     _tor.cleanup_artifacts(t)
             except Exception:
                 pass
-            path = getattr(t, "save_path", None)
-            if delete_disk and path and os.path.exists(path):
-                if not self._remove_path(path):
-                    failed.append(os.path.basename(path) or path)
+            if delete_disk:
+                targets = self._payload_paths(t)
+                if not targets:
+                    continue
+                for path in targets:
+                    if not self._remove_path(path):
+                        failed.append(os.path.basename(path) or path)
 
         # the user asked for this, so an empty result is legitimate
         self._allow_empty_save = True
@@ -90,6 +93,40 @@ class ShortcutsMixin:
                 "error", "Could not delete some files",
                 ", ".join(failed[:3]) + ("…" if len(failed) > 3 else "")
                 + " — still in use. Try again in a moment.")
+
+    @staticmethod
+    def _payload_paths(t):
+        """Everything on disk that belongs to this download.
+
+        save_path alone is not enough. For a torrent it stays at the
+        placeholder the task was created with — literally
+        "…\\Downloads\\download.bin" — until _resolve_save_path runs on
+        COMPLETION. So for anything paused or unfinished it names a file that
+        never existed, and "also delete from disk" quietly removed nothing while
+        the real payload, a folder named after the torrent beside it, stayed put.
+
+        The torrent's real entry is its filename, which the engine sets from the
+        first non-[METADATA] file it sees.
+        """
+        out = []
+        save = getattr(t, "save_path", "") or ""
+        base = os.path.dirname(save) or "."
+        if save and os.path.exists(save):
+            out.append(save)
+
+        name = (getattr(t, "filename", "") or "").strip()
+        # "torrent" and "download" are the engine's own placeholders; joining
+        # either would point at something that is not this download's payload
+        if name and name.lower() not in ("torrent", "download", "download.bin"):
+            payload = os.path.join(base, name)
+            real = os.path.abspath(payload)
+            # never step outside the download folder, and never delete the
+            # folder itself — one bad join here would take the lot
+            if (os.path.abspath(base) != real
+                    and real.startswith(os.path.abspath(base) + os.sep)
+                    and os.path.exists(real) and real not in map(os.path.abspath, out)):
+                out.append(payload)
+        return out
 
     @staticmethod
     def _remove_path(path, attempts=5, delay=0.4):

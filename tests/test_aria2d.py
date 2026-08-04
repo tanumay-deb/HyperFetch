@@ -817,3 +817,79 @@ def test_a_non_windows_host_reaps_nothing(monkeypatch):
     monkeypatch.setattr(aria2d.sys, "platform", "linux")
     monkeypatch.setattr(aria2d, "_aria2c_path", lambda: "/usr/bin/aria2c")
     assert aria2d._our_aria2_pids() == []
+
+
+# ------------------------------------------- the metadata phase is not the payload
+def test_metadata_progress_is_never_taken_for_the_payload(tmp_path, monkeypatch):
+    """A magnet starts as a download of the .torrent itself, reported as a
+    [METADATA] pseudo-file whose completedLength == totalLength (a few KB) while
+    the status is still "active". Reading that as progress marked torrents
+    COMPLETE that had downloaded nothing — and because the seeding branch
+    continues, the code that finds the real payload never ran again."""
+    payload = str(tmp_path / "Movie.mkv")
+    open(payload, "w").close()
+    daemon = _FakeDaemon([
+        # metadata fetched: sizes equal, status active, no followedBy yet
+        {"status": "active", "completedLength": "31000", "totalLength": "31000",
+         "files": [{"path": "[METADATA]d3aed7d1"}]},
+        {"status": "active", "completedLength": "31000", "totalLength": "31000",
+         "files": [{"path": "[METADATA]d3aed7d1"}]},
+        # payload appears and is genuinely incomplete
+        {"status": "active", "completedLength": "0", "totalLength": "7000000000",
+         "files": [{"path": payload}]},
+        {"status": "complete", "completedLength": "7000000000",
+         "totalLength": "7000000000", "files": [{"path": payload}]},
+    ])
+    t = _drive_with(tmp_path, monkeypatch, daemon)
+    assert t.total_size == 7000000000, "took the metadata's size as the payload's"
+    assert t.status == T.COMPLETED
+
+
+def test_a_metadata_download_reporting_complete_is_not_the_torrent(tmp_path, monkeypatch):
+    """followedBy usually arrives in the same reply, but if it lags a poll the
+    payload must not be declared done."""
+    payload = str(tmp_path / "Movie.mkv")
+    open(payload, "w").close()
+    daemon = _FakeDaemon([
+        {"status": "complete", "completedLength": "31000", "totalLength": "31000",
+         "files": [{"path": "[METADATA]abc"}]},
+        {"status": "active", "completedLength": "10", "totalLength": "1000",
+         "files": [{"path": payload}]},
+        {"status": "complete", "completedLength": "1000", "totalLength": "1000",
+         "files": [{"path": payload}]},
+    ])
+    t = _drive_with(tmp_path, monkeypatch, daemon)
+    assert t.total_size == 1000
+    assert t.status == T.COMPLETED
+
+
+def test_seeding_is_not_declared_during_the_metadata_phase(tmp_path, monkeypatch):
+    """The exact false positive seen in the wild: 'seeding: <name>' logged for a
+    torrent that had downloaded nothing."""
+    payload = str(tmp_path / "Movie.mkv")
+    open(payload, "w").close()
+    daemon = _FakeDaemon([
+        {"status": "active", "completedLength": "31000", "totalLength": "31000",
+         "files": [{"path": "[METADATA]abc"}]},
+        {"status": "active", "completedLength": "0", "totalLength": "5000",
+         "files": [{"path": payload}]},
+        {"status": "complete", "completedLength": "5000", "totalLength": "5000",
+         "files": [{"path": payload}]},
+    ])
+    t = _drive_with(tmp_path, monkeypatch, daemon)
+    assert t.status == T.COMPLETED
+    assert t.downloaded == 5000
+
+
+def test_a_genuinely_complete_payload_still_seeds(tmp_path, monkeypatch):
+    """The guard must not break real seeding detection."""
+    payload = str(tmp_path / "Movie.mkv")
+    open(payload, "w").close()
+    daemon = _FakeDaemon([
+        {"status": "active", "completedLength": "1000", "totalLength": "1000",
+         "files": [{"path": payload}], "uploadSpeed": "5000"},
+        {"status": "complete", "completedLength": "1000", "totalLength": "1000",
+         "files": [{"path": payload}]},
+    ])
+    t = _drive_with(tmp_path, monkeypatch, daemon)
+    assert t.status == T.COMPLETED
