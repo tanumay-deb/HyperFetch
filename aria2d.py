@@ -206,13 +206,29 @@ class Aria2Daemon:
         except Exception:
             return 0, 0, ""
 
-    def _save_state(self):
-        try:
-            with open(_state_path(), "w", encoding="utf-8") as f:
-                json.dump({"pid": self.pid, "port": self.port,
-                           "secret": self.secret}, f)
-        except OSError:
-            pass
+    def _save_state(self, retries=3, delay=0.2):
+        """Record the daemon we just started.
+
+        This used to swallow OSError silently, and a failed write is not a small
+        thing: aria2d.json is the ONLY way a later run finds this daemon. If it
+        keeps pointing at a dead one, the app cannot attach, cannot shut it
+        down, and cannot even reap it — which is exactly the stale record and
+        orphaned aria2c seen in the wild.
+        """
+        payload = {"pid": self.pid, "port": self.port, "secret": self.secret}
+        for attempt in range(retries):
+            try:
+                with open(_state_path(), "w", encoding="utf-8") as f:
+                    json.dump(payload, f)
+                return True
+            except OSError as e:
+                if attempt == retries - 1:
+                    log.error("could not record the aria2 daemon (%s) — a later "
+                              "run will not find pid %s and may leave it "
+                              "running", e, self.pid)
+                    return False
+                time.sleep(delay)
+        return False
 
     def _attach(self):
         """Reuse a daemon left by an earlier run. Returns True on success.
@@ -269,15 +285,26 @@ class Aria2Daemon:
             cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
         self.pid = self._proc.pid
+        # Do NOT use alive() here. It trusts a probe from up to LIVENESS_TTL ago,
+        # and that probe belonged to the PREVIOUS daemon — so a fresh spawn could
+        # be declared up without anything ever contacting it, and recorded before
+        # it was listening. Probe this port directly.
+        self._last_ok = 0.0
         deadline = time.time() + START_TIMEOUT
         while time.time() < deadline:
-            if self.alive():
-                self._save_state()
-                log.info("started aria2 daemon pid=%s port=%s", self.pid, self.port)
-                return True
-            if self._proc.poll() is not None:
-                raise Aria2Error(f"aria2 daemon exited immediately (code {self._proc.returncode})")
-            time.sleep(0.2)
+            try:
+                self._post(self.port, self.secret, "aria2.getGlobalStat", [],
+                           timeout=3)
+            except Exception:
+                if self._proc.poll() is not None:
+                    raise Aria2Error(
+                        f"aria2 daemon exited immediately (code {self._proc.returncode})")
+                time.sleep(0.2)
+                continue
+            self._last_ok = time.monotonic()
+            self._save_state()
+            log.info("started aria2 daemon pid=%s port=%s", self.pid, self.port)
+            return True
         _kill(self.pid)
         raise Aria2Error("aria2 daemon did not answer RPC in time")
 

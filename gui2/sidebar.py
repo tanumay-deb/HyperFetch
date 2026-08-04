@@ -204,7 +204,8 @@ class Sidebar(QFrame):
         self.lbl_conns = QLabel("0")
         self.lbl_conns.setAlignment(Qt.AlignRight)
         self.lbl_conns.setStyleSheet(f"font-size: {fpx(16)}; font-weight: 800; background: transparent; color: {COLORS['text']};")
-        cap2 = QLabel("Connections")
+        self.cap_conns = QLabel("Connections")
+        cap2 = self.cap_conns
         cap2.setAlignment(Qt.AlignRight)
         cap2.setStyleSheet(f"font-size: {fpx(11)}; color: {COLORS['muted']}; background: transparent;")
         ccol.addWidget(self.lbl_conns); ccol.addWidget(cap2)
@@ -243,12 +244,31 @@ class Sidebar(QFrame):
         for key, row in self._rows.items():
             row.set_count(counts.get(key, 0))
 
-    def set_stats(self, bps, conns):
+    def set_stats(self, bps, conns, seeds=None):
+        """Speed, connections, and — for torrents — seeders.
+
+        Connections alone is a flattering number: 49 connected peers next to
+        0 Mb/s is normal in a swarm where nobody holds a complete copy. Seeders
+        are what actually predict throughput, so they are shown beside it rather
+        than left for the user to infer.
+        """
         sp = human_speed(bps) or "0 B/s"
         self.lbl_speed.setText(sp)
-        self.lbl_conns.setText(str(conns))
+        if seeds is None:
+            self.lbl_conns.setText(str(conns))
+            self.cap_conns.setText("Connections")
+            tip = f"Speed {sp}  ·  {conns} connection{'s' if conns != 1 else ''}"
+        else:
+            self.lbl_conns.setText(f"{conns} / {seeds}")
+            # the caption has to name the format, or "104 / 5" is a riddle
+            self.cap_conns.setText("Peers / Seeds")
+            tip = (f"Speed {sp}  ·  {conns} peer connection"
+                   f"{'s' if conns != 1 else ''}  ·  {seeds} seeder"
+                   f"{'s' if seeds != 1 else ''}\n"
+                   "Seeders hold a complete copy — with none, a torrent cannot "
+                   "finish however many peers are connected.")
         self.graph.push(bps)
-        self.stats.setToolTip(f"Speed {sp}  ·  {conns} connection{'s' if conns != 1 else ''}")
+        self.stats.setToolTip(tip)
 
     def set_collapsed(self, on):
         # width is animated by the app (DownloadAppV2._toggle_sidebar); here we

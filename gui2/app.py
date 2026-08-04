@@ -489,6 +489,8 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, QW
         self._drain_pending()
         now = time.time()
         conns = 0
+        seeds = 0
+        any_torrent = False
         total_bps = 0.0
         for t in self.queue.tasks:
             last_dl, last_t, bps = self._speed.get(t.id, (t.downloaded, now, 0.0))
@@ -504,7 +506,9 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, QW
                 hist.append(bps)
                 total_bps += bps
                 if _torrent.is_torrent_task(t.url, t.filename):
+                    any_torrent = True
                     conns += getattr(t, "tor_conns", 0)
+                    seeds += getattr(t, "tor_seeds", 0)
                 else:
                     conns += sum(1 for s in t.segments if not s.complete)
 
@@ -512,7 +516,9 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, QW
         histories = {tid: list(dq) for tid, dq in self._spark.items()}
         self.list.set_tasks(self._visible_tasks(), speeds, histories, self._sl_map())
         self.sidebar.set_counts(self._counts())
-        self.sidebar.set_stats(total_bps, conns)
+        # seeders only mean something when a torrent is running; an HTTP-only
+        # list would just show a permanent 0 that explains nothing
+        self.sidebar.set_stats(total_bps, conns, seeds if any_torrent else None)
         self._update_live_title(total_bps)
         if getattr(self, "_active_settings_dlg", None):
             self._active_settings_dlg.update_live(total_bps, conns)
