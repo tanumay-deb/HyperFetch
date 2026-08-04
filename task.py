@@ -155,6 +155,10 @@ class DownloadTask:
         # looking like it had hung
         self.seeding = False
         self.tor_upload = 0
+        # Torrent infohash, once known. Persisted: it is how a .torrent task
+        # finds our archived copy after the user's original file has moved or
+        # been deleted.
+        self.infohash = ""
         # SHA-256 verification result (transient): "", "ok", "fail", "nohash"
         self.hash_status = ""
 
@@ -271,6 +275,7 @@ class DownloadTask:
             "yt_format": self.yt_format,
             "events": self.events[-self.EVENTS_MAX:],
             "sha256": self.sha256,
+            "infohash": self.infohash,
             "is_scheduled": getattr(self, "is_scheduled", False),
             # never write cookies/auth to disk; keep only safe headers (Referer/UA)
             "headers": utils.strip_sensitive(self.headers)
@@ -305,6 +310,7 @@ class DownloadTask:
         )
         t.is_scheduled = d.get("is_scheduled", False)
         t.sha256 = d.get("sha256", "")
+        t.infohash = d.get("infohash", "")
         t.events = [e for e in map(_migrate_event, d.get("events") or []) if e]
         if forced_requeue:
             t._auto_resume = True

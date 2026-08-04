@@ -244,18 +244,47 @@ class ActionsMixin:
         download again. A completed torrent has to leave COMPLETED first, or
         resume_task would refuse it as already finished.
         """
-        if t.status == T.DOWNLOADING:
-            return
         t.force_recheck = True
-        if t.status == T.COMPLETED:
-            t.status = T.PAUSED
         t.error = ""
         t.log_event("Force recheck requested")
-        self.queue.resume_task(t)
-        self._save_state()
-        self.refresh()
         self._toasts.show("info", "Rechecking",
                           f"Verifying {t.filename or 'torrent'} against its piece hashes…")
+
+        # A run may still be in flight even when the status says otherwise: a
+        # SEEDING torrent reads as Completed while its poll loop is very much
+        # alive. Starting a second run then pulled the gid out from under the
+        # first, which reported "Torrent engine restarted" and paused the task.
+        # Ask the live run to stop, and recheck once it actually has.
+        if t.status == T.DOWNLOADING or getattr(t, "_torrent_slot_reserved", False):
+            t.request_pause()
+            self._start_when_idle(t)
+        else:
+            if t.status == T.COMPLETED:
+                t.status = T.PAUSED
+            self.queue.resume_task(t)
+        self._save_state()
+        self.refresh()
+
+    def _start_when_idle(self, t, tries=40):
+        """Re-queue t once its engine thread has actually let go.
+
+        Polled rather than waited on: this runs on the GUI thread, and blocking
+        it until a torrent engine unwinds would freeze the window.
+        """
+        from PySide6.QtCore import QTimer
+
+        def check(n=tries):
+            if getattr(t, "_torrent_slot_reserved", False) and n > 0:
+                QTimer.singleShot(300, lambda: check(n - 1))
+                return
+            t.clear_pause()
+            if t.status in (T.COMPLETED, T.CANCELLED):
+                t.status = T.PAUSED
+            self.queue.resume_task(t)
+            self._save_state()
+            self.refresh()
+
+        QTimer.singleShot(300, check)
 
     def _force_recheck(self, t):
         """Re-run SHA-256 verification on a completed file in the background;

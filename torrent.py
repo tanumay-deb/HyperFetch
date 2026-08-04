@@ -1007,11 +1007,50 @@ class TorrentDownloader:
 
     def _rpc_add_new(self, d, opts):
         import base64
-        if is_torrent(self.t.url) and os.path.isfile(self.t.url):
-            with open(self.t.url, "rb") as f:
+        if is_torrent(self.t.url):
+            src = self._torrent_file()
+            if not src:
+                # a plain error the caller can show; aria2's own wording for
+                # this ("No URI to download.") explains nothing to a user
+                raise FileNotFoundError(
+                    f"the .torrent file is no longer at {self.t.url}")
+            with open(src, "rb") as f:
                 return d.call("aria2.addTorrent",
                               base64.b64encode(f.read()).decode(), [], opts)
         return d.call("aria2.addUri", [self.t.url], opts)
+
+    def _torrent_file(self):
+        """A readable .torrent for this task, keeping our own copy.
+
+        The user's original file moves, gets cleaned up, or sits on a drive that
+        is not mounted — and then the add fell through to addUri() with a file
+        PATH, which aria2 rejects as "No URI to download." The task ended up
+        named just "torrent" and unable to start ever again.
+
+        So the first time it is readable we take a copy into app data, keyed by
+        infohash, and fall back to that copy afterwards.
+        """
+        src = self.t.url or ""
+        if os.path.isfile(src):
+            ih = getattr(self.t, "infohash", "") or torrent_infohash(src)
+            if ih:
+                self.t.infohash = ih
+                keep = os.path.join(metadata_dir(), ih + ".torrent")
+                if not os.path.isfile(keep):
+                    try:
+                        os.makedirs(metadata_dir(), exist_ok=True)
+                        shutil.copy2(src, keep)
+                    except OSError as e:
+                        log.debug("could not keep a copy of %s: %s", src, e)
+            return src
+        ih = getattr(self.t, "infohash", "")
+        if ih:
+            keep = os.path.join(metadata_dir(), ih + ".torrent")
+            if os.path.isfile(keep):
+                log.info("original .torrent is gone; using the archived copy "
+                         "for %s", self.t.filename)
+                return keep
+        return ""
 
     def _rpc_drop_existing(self, d):
         """Unregister this torrent from the daemon so the next add is a real
