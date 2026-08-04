@@ -136,6 +136,7 @@ class DownloadCardWidget(QFrame):
 
         # serial number
         self._sl_no = sl_no
+        self._last_done = False
         self.sl_lbl = QLabel(f"#{sl_no}")
         self.sl_lbl.setFixedWidth(30)
         self.sl_lbl.setStyleSheet(f"color: {COLORS['muted']}; font-size: {fpx(11)}; font-weight: 700; background: transparent;")
@@ -206,6 +207,19 @@ class DownloadCardWidget(QFrame):
         root.addLayout(actions)
 
         self.update_task(task, 0.0)
+
+    def set_serial(self, n):
+        """Set this card's number. Cards are RECYCLED across refreshes, so the
+        number is a property of the current row, not of the widget — reading a
+        value captured at construction gave several rows the same number."""
+        self._sl_no = int(n)
+        self._render_serial(self._last_done)
+
+    def _render_serial(self, done):
+        # a finished download has no queue position left to describe, but the
+        # label keeps its width so filenames stay in one column
+        self._last_done = bool(done)
+        self.sl_lbl.setText("" if done else f"#{self._sl_no}")
 
     @staticmethod
     def _queue_state(t):
@@ -338,7 +352,7 @@ class DownloadCardWidget(QFrame):
         # A finished download has no queue position left to describe, so the
         # serial number is noise there. The label keeps its width so the
         # filenames below it stay in one column.
-        self.sl_lbl.setText("" if done else f"#{self._sl_no}")
+        self._render_serial(done)
 
         if done and getattr(t, "seeding", False):
             up = human_speed(getattr(t, "tor_upload", 0) or 0)

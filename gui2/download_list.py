@@ -264,7 +264,9 @@ class DownloadList(QScrollArea):
                     self._lay.addWidget(card)
                     card.fade_in()                       # soft entrance for new cards
                     continue
-                card.sl_lbl.setText(f"#{sl_counter}")
+                # via the card, so the completed-row rule is applied consistently
+                # and the card does not later overwrite it from a stale field
+                card.set_serial(sl_counter)
                 self._lay.addWidget(card)
         self._lay.addStretch()
 
