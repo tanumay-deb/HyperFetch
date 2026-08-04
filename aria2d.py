@@ -24,6 +24,7 @@ import os
 import secrets
 import socket
 import subprocess
+import sys
 import threading
 import time
 import urllib.error
@@ -91,6 +92,40 @@ def _pid_alive(pid):
         return str(pid) in out
     except Exception:
         return False
+
+
+def _our_aria2_pids():
+    """PIDs of running aria2c processes started from OUR bundled binary.
+
+    Matching on the executable path is the whole point: the user may have their
+    own aria2 installed and running for something else, and that must never be
+    touched.
+    """
+    exe = _aria2c_path()
+    if not exe or sys.platform != "win32":
+        return []
+    try:
+        out = subprocess.run(
+            ["powershell", "-NoProfile", "-NonInteractive", "-Command",
+             "Get-CimInstance Win32_Process -Filter \"Name='aria2c.exe'\" | "
+             "ForEach-Object { \"$($_.ProcessId)|$($_.ExecutablePath)\" }"],
+            capture_output=True, text=True, timeout=20,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)).stdout
+    except Exception:
+        return []
+    want = os.path.normcase(os.path.abspath(exe))
+    pids = []
+    for line in (out or "").splitlines():
+        pid, _, path = line.partition("|")
+        path = path.strip()
+        if not path:
+            continue
+        try:
+            if os.path.normcase(os.path.abspath(path)) == want:
+                pids.append(int(pid.strip()))
+        except (ValueError, OSError):
+            continue
+    return pids
 
 
 def _kill(pid):
@@ -304,10 +339,29 @@ class Aria2Daemon:
                 return True
             if self._attach():
                 self._purge()
+                self._reap_others()
                 return True
             ok = self._spawn()
             self._purge()
+            self._reap_others()
             return ok
+
+    def _reap_others(self):
+        """Kill aria2 daemons of ours that nothing is tracking any more.
+
+        _attach only knows the daemon named in aria2d.json. The moment that
+        record is overwritten, any earlier daemon becomes both unreachable and
+        unkillable by the app: it keeps running, holding a BitTorrent listen
+        port and its memory, until the machine reboots. Found one in the wild
+        doing exactly that.
+
+        Only runs when we have just attached or spawned — never on the common
+        already-alive path, which every RPC call goes through.
+        """
+        for pid in _our_aria2_pids():
+            if pid and pid != self.pid:
+                log.info("reaping orphaned aria2 daemon pid=%s", pid)
+                _kill(pid)
 
     def _purge(self):
         """Drop finished/errored results. They are only history to aria2, but

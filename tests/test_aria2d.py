@@ -767,3 +767,53 @@ def test_a_duplicate_that_slips_through_is_followed_not_failed(tmp_path, monkeyp
 
     assert "dupgid" in daemon.removed, "left the dead duplicate in the daemon"
     assert t.status == T.COMPLETED, f"failed instead of following: {t.error}"
+
+
+# ------------------------------------------------------------ orphan reaping
+def test_only_our_own_aria2_binary_is_reaped(monkeypatch):
+    """The user may have their own aria2 running for something else. Matching
+    on the executable path is what keeps this from touching it."""
+    ours = os.path.join("C:" + os.sep, "App", "bin", "aria2c.exe")
+    monkeypatch.setattr(aria2d, "_aria2c_path", lambda: ours)
+    monkeypatch.setattr(aria2d.sys, "platform", "win32")
+
+    # raw strings: in a normal literal "\a" is BELL and "\b" is BACKSPACE, which
+    # silently mangles every Windows path written into a test like this
+    out = (r"111|C:\App\bin\aria2c.exe" "\n"
+           r"222|C:\Program Files\aria2\aria2c.exe" "\n"
+           r"333|c:\app\BIN\aria2c.exe" "\n")      # same path, different case
+
+    class _R:
+        stdout = out
+
+    monkeypatch.setattr(aria2d.subprocess, "run", lambda *a, **k: _R())
+    assert sorted(aria2d._our_aria2_pids()) == [111, 333]
+
+
+def test_reaping_spares_the_daemon_we_are_using(monkeypatch):
+    d = aria2d.Aria2Daemon()
+    d.pid = 111
+    monkeypatch.setattr(aria2d, "_our_aria2_pids", lambda: [111, 222, 333])
+    killed = []
+    monkeypatch.setattr(aria2d, "_kill", killed.append)
+    d._reap_others()
+    assert killed == [222, 333], "killed the daemon it was about to use"
+
+
+def test_reaping_never_runs_on_the_hot_path(monkeypatch, tmp_path):
+    """ensure() is called on EVERY rpc; listing processes there would shell out
+    to PowerShell constantly."""
+    monkeypatch.setattr(utils, "app_data_dir", lambda: str(tmp_path))
+    d = aria2d.Aria2Daemon()
+    d.port, d.secret, d.pid = 6800, "s", 111
+    monkeypatch.setattr(d, "_post", lambda *a, **k: {"ok": 1})   # already alive
+    calls = []
+    monkeypatch.setattr(aria2d, "_our_aria2_pids", lambda: calls.append(1) or [])
+    assert d.ensure() is True
+    assert calls == []
+
+
+def test_a_non_windows_host_reaps_nothing(monkeypatch):
+    monkeypatch.setattr(aria2d.sys, "platform", "linux")
+    monkeypatch.setattr(aria2d, "_aria2c_path", lambda: "/usr/bin/aria2c")
+    assert aria2d._our_aria2_pids() == []
