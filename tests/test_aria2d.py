@@ -677,3 +677,93 @@ def test_a_hash_check_length_stall_does_not_pause_the_download(tmp_path, monkeyp
         misses=200)                       # far more than any retry COUNT
     t = _drive_with(tmp_path, monkeypatch, daemon)
     assert t.status == T.COMPLETED, f"gave up on a busy daemon: {t.error}"
+
+
+class _DuplicateDaemon(_FakeDaemon):
+    """aria2's REAL duplicate behaviour, verified against a live daemon.
+
+    It does not reject the add. It accepts it, hands back a NEW gid, and that
+    download then sits in status=error with "InfoHash ... is already
+    registered". Modelling this as a raised exception — which the first version
+    of this test did — meant the code was written against behaviour aria2 never
+    exhibits, and the fix did nothing in practice.
+    """
+
+    def __init__(self, states, infohash, live_gid="livegid", hide_existing=False):
+        super().__init__(states)
+        self.infohash = infohash
+        self.live_gid = live_gid
+        self.hide_existing = hide_existing
+        self.unpaused = []
+        self.removed = []
+
+    def call(self, method, *params, **kw):
+        if method in ("aria2.addUri", "aria2.addTorrent"):
+            self.calls.append((method, params))
+            return "dupgid"
+        if method == "aria2.tellActive":
+            return [] if self.hide_existing else [
+                {"gid": self.live_gid, "infoHash": self.infohash}]
+        if method in ("aria2.tellWaiting", "aria2.tellStopped"):
+            return []
+        if method == "aria2.unpause":
+            self.unpaused.append(params[0])
+            return params[0]
+        if method in ("aria2.forceRemove", "aria2.removeDownloadResult"):
+            self.removed.append(params[0])
+            return params[0]
+        return super().call(method, *params, **kw)
+
+
+def test_a_duplicate_is_detected_before_adding(tmp_path, monkeypatch):
+    """Checking first is the only way to avoid creating the dead entry at all."""
+    ih = "d3aed7d116b132950acaf5ecbd0329544a204678"
+    payload = str(tmp_path / "Movie.mkv")
+    open(payload, "w").close()
+    daemon = _DuplicateDaemon(
+        [{"status": "complete", "completedLength": "1000", "totalLength": "1000",
+          "files": [{"path": payload}]}], ih)
+    t = T.DownloadTask(f"magnet:?xt=urn:btih:{ih}&dn=Movie",
+                       str(tmp_path / "download.bin"))
+    _drive_with(tmp_path, monkeypatch, daemon, task=t)
+
+    adds = [m for m, _ in daemon.calls if m in ("aria2.addUri", "aria2.addTorrent")]
+    assert not adds, "added a duplicate instead of re-attaching"
+    assert daemon.unpaused == ["livegid"]
+    assert t.status == T.COMPLETED
+
+
+def test_a_duplicate_that_slips_through_is_followed_not_failed(tmp_path, monkeypatch):
+    """If the add happens anyway (a race), the resulting gid errors with
+    "already registered" — the task must follow the real download instead of
+    reporting failure."""
+    ih = "d3aed7d116b132950acaf5ecbd0329544a204678"
+    payload = str(tmp_path / "Movie.mkv")
+    open(payload, "w").close()
+
+    class _Racy(_DuplicateDaemon):
+        def __init__(self, states, infohash):
+            super().__init__(states, infohash, hide_existing=True)
+            self.seen = 0
+
+        def call(self, method, *params, **kw):
+            if method == "aria2.tellActive":
+                # nothing to find at add time; the real one appears afterwards
+                self.seen += 1
+                return [] if self.seen <= 1 else [
+                    {"gid": self.live_gid, "infoHash": self.infohash}]
+            return super().call(method, *params, **kw)
+
+    daemon = _Racy([
+        {"status": "error",
+         "errorMessage": f"InfoHash {ih} is already registered.",
+         "files": [{"path": payload}]},
+        {"status": "complete", "completedLength": "1000", "totalLength": "1000",
+         "files": [{"path": payload}]},
+    ], ih)
+    t = T.DownloadTask(f"magnet:?xt=urn:btih:{ih}&dn=Movie",
+                       str(tmp_path / "download.bin"))
+    _drive_with(tmp_path, monkeypatch, daemon, task=t)
+
+    assert "dupgid" in daemon.removed, "left the dead duplicate in the daemon"
+    assert t.status == T.COMPLETED, f"failed instead of following: {t.error}"

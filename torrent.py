@@ -860,7 +860,11 @@ class TorrentDownloader:
             # OLD options — so the recheck would quietly not happen, which is
             # exactly what "Force Recheck does nothing" looks like.
             self._rpc_drop_existing(d)
-        gid = self._rpc_add(d, opts)
+        # A recheck must NOT re-attach: we just dropped the registration on
+        # purpose, and re-attaching would silently hand back the old one with
+        # its old options, so check-integrity would never apply. (force_recheck
+        # is already cleared by _take_recheck, so the opts are the signal.)
+        gid = self._rpc_add(d, opts, reattach="check-integrity" not in opts)
         self._gid = gid
         self.t.gid = gid
 
@@ -884,7 +888,8 @@ class TorrentDownloader:
                 self.t.error = ""
                 self.t.status = T.DOWNLOADING
                 self._rpc_drop_existing(d)      # same reason as the recheck path
-                gid = self._rpc_add(d, dict(opts, **{"check-integrity": "true"}))
+                gid = self._rpc_add(d, dict(opts, **{"check-integrity": "true"}),
+                                    reattach=False)
                 self._gid = gid
                 self.t.gid = gid
                 top = self._poll_rpc(d, gid, out_dir)
@@ -962,7 +967,7 @@ class TorrentDownloader:
                     self.t.filename, _mib(short))
         return True
 
-    def _rpc_add(self, d, opts):
+    def _rpc_add(self, d, opts, reattach=True):
         """Hand the torrent/magnet to the daemon and return its gid.
 
         The daemon outlives both the task and the app, so the torrent may
@@ -971,6 +976,21 @@ class TorrentDownloader:
         then fails with "InfoHash ... is already registered" and the download
         goes to Error, which is the opposite of what resuming should do.
         """
+        # Look BEFORE adding. aria2 does not reject a duplicate magnet at add
+        # time — verified against a live daemon: addUri succeeds, hands back a
+        # NEW gid, and that download then sits in status=error with "InfoHash
+        # ... is already registered" in errorMessage. Catching an exception here
+        # therefore never fires, and the dead duplicate is what the task ends up
+        # polling, which is how Resume and Force Recheck both landed in Error.
+        existing = self._rpc_find_existing(d) if reattach else ""
+        if existing:
+            log.info("torrent already in the daemon, re-attaching: %s",
+                     self.t.filename)
+            try:
+                d.call("aria2.unpause", existing)
+            except Exception:
+                pass                      # already running is fine
+            return existing
         try:
             return self._rpc_add_new(d, opts)
         except Exception as e:
@@ -979,12 +999,10 @@ class TorrentDownloader:
             gid = self._rpc_find_existing(d)
             if not gid:
                 raise
-            log.info("torrent already in the daemon, re-attaching: %s",
-                     self.t.filename)
             try:
                 d.call("aria2.unpause", gid)
             except Exception:
-                pass                      # already running is fine
+                pass
             return gid
 
     def _rpc_add_new(self, d, opts):
@@ -1144,8 +1162,23 @@ class TorrentDownloader:
                 log.info("torrent done: %s", self.t.filename)
                 return top
             if status in ("error", "removed"):
-                archive_metadata(self.t, out_dir)
                 msg = st.get("errorMessage") or ""
+                if "already registered" in msg.lower():
+                    # This gid is the dead duplicate aria2 creates rather than
+                    # refusing the add. The real download is elsewhere in the
+                    # daemon — switch to it instead of failing the task.
+                    real = self._rpc_find_existing(d)
+                    if real and real != cur:
+                        log.info("duplicate entry for %s — following the one "
+                                 "already running", self.t.filename)
+                        self._rpc_remove(d, cur, force=True)
+                        cur = real
+                        try:
+                            d.call("aria2.unpause", cur)
+                        except Exception:
+                            pass
+                        continue
+                archive_metadata(self.t, out_dir)
                 if not top and self.t.downloaded == 0:
                     # never reached the payload and never saw a peer: a cold
                     # swarm, not a broken torrent — stay resumable
