@@ -1115,6 +1115,11 @@ class TorrentDownloader:
                 if entry:
                     top = entry
                     self.t.filename = entry
+                    # aria2 drops <infohash>.torrent into --dir the moment the
+                    # metadata resolves. Move it out NOW rather than at the end
+                    # of the download, so it is not sitting next to the payload
+                    # for the hours in between.
+                    archive_metadata(self.t, out_dir)
 
             total = 0
             if not meta_stage:

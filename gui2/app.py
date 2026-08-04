@@ -585,6 +585,34 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, QW
         if getattr(self, "tray", None):
             self.tray.setToolTip(title)
 
+    @staticmethod
+    def _folder_category(path, limit=2000):
+        """Category for a torrent payload folder, from its biggest file.
+
+        Biggest rather than most-common: a release folder is full of small
+        samples, subtitles and nfos, and it is the one large file that says what
+        the download actually is.
+        """
+        best_name, best_size = "", -1
+        seen = 0
+        try:
+            for base, _dirs, files in os.walk(path):
+                for name in files:
+                    seen += 1
+                    if seen > limit:                  # pathological torrents
+                        break
+                    try:
+                        size = os.path.getsize(os.path.join(base, name))
+                    except OSError:
+                        continue
+                    if size > best_size:
+                        best_name, best_size = name, size
+                if seen > limit:
+                    break
+        except OSError:
+            return "Other"
+        return utils.category_for(best_name) if best_name else "Other"
+
     def _maybe_categorize(self, t):
         """Move a completed file that landed in a base folder into its category
         subfolder. Covers engines that only learn the real filename/extension
@@ -596,9 +624,20 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, QW
         if not self._extras.get("categorize", True):
             return
         path = getattr(t, "save_path", "") or ""
-        if not os.path.isfile(path):
+        if getattr(t, "seeding", False):
+            # aria2 still has the payload open to share it; moving the folder
+            # now would break the seed and can fail outright on Windows
             return
-        cat = utils.category_for(t.filename)
+        if os.path.isdir(path):
+            # A multi-file torrent resolves to a FOLDER, which this used to skip
+            # entirely — so torrents were never filed into category folders. The
+            # folder has no extension of its own, so the biggest file inside
+            # decides: a season pack is Video because the episodes are.
+            cat = self._folder_category(path)
+        elif os.path.isfile(path):
+            cat = utils.category_for(t.filename)
+        else:
+            return
         if cat == "Other":
             return
         cur_dir = os.path.dirname(path)
