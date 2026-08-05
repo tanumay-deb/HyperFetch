@@ -3,6 +3,7 @@
 Simple running list. Newest first. Keep entries to one line.
 
 ## Done
+- **v2.3.x** — Torrent engine and queue hardening, mostly driven by real logs and live-daemon measurement: shared aria2 daemon no longer kills healthy engines or orphans payloads; app exit 5s → 0.001s; concurrency setting actually honoured; per-file progress read from `getFiles` instead of file size on disk; stall-yield so a dead swarm stops blocking the queue; free-space guard; preview playback + Play action; opt-in seeding with an upload cap; shut down / sleep when the queue finishes; duplicates matched by infohash; Force Recheck for torrents; Queue Manager rebuilt; ETA column; file-list sorting; `file://` `.torrent` paths; hash-check progress; **`--file-allocation=falloc` instead of `prealloc`** (prealloc wrote zero bytes across multi-GB files and blocked aria2's single thread for up to 9.5s — the "10 Mb/s then 0" sawtooth).
 - **v2.0.0** — Interactive UI: per-card live speed sparkline + live speed in the window title/tray; floating selection action bar (bulk pause/resume/force/move/remove without right-click — overlay, so it never reflows the list); command palette (Ctrl+K); drag a card out (finished file → Explorer, any card → its URL). UI polish: themed delete-dialog border, selectable + Copy-able drawer logs, smoothed speed graphs (moving-avg + Catmull-Rom; the HLS spikes were a per-segment sampling artifact). Downloads auto-sort into category folders (Video/Music/Images/… by type; Settings toggle, default on; skips torrents).
 - _(uncommitted)_ — Polish/stability: safe_filename hardened (Windows reserved names CON/NUL/COM1…, length cap with extension preserved, +tests); byte downloader fails fast on 4xx with actionable messages (403/410 → "right-click → Refresh Address", 401/407 login, 404 moved) and a clear "Connection lost — Resume to retry" on transient give-up; first-run Welcome dialog walks through extension pairing (shown once).
 - _(uncommitted)_ — Light theme: `palette.set_theme(dark/light/system)` swaps the active COLORS (light palette added); applied at startup before the UI builds, so it's consistent. Settings → Appearance Light/System now work (toast prompts a restart on change, since widgets bake colours at construction). System detects Windows light/dark.
@@ -34,10 +35,38 @@ Simple running list. Newest first. Keep entries to one line.
 - earlier — ABDM-style UI overhaul, multi-queue + adaptive segments, crash reporter + update check, v1.2.0 release.
 
 ## Next (UX & polish — planned)
+- **Download health score**: colour rows green/amber/red from seeds·peers·stall count·retries. [low — data already collected] Highest value per hour on the list: a live snapshot showed 49 peers / 1 seeder / 0.00 Mb/s, and nothing in the UI said why.
+- **Piece map**: block view of the torrent's bitfield (uTorrent-style). [low] `tellStatus` already returns the bitfield and `_bitfield_pct` already parses one — this is a paint widget. Answers "stuck or just slow?" at a glance.
+- **Webhook on complete**: POST to a user URL (Discord / Telegram / Home Assistant / scripts). [low]
+- **Portable settings export**: single `.hyperfetch` file (settings + history). [low] Must exclude or encrypt the pairing token — `cryptography` is already bundled, so encrypted export covers the "encrypted backup" ask too.
+- **Speed profiles on a schedule**: Turbo / Background by time of day. [low-med] The scheduler and `_apply_throttle` window already exist; this extends them from start/stop to speed.
 - Watch Folder: auto-import downloads / `.torrent` files dropped into a monitored folder (IDM parity). [med]
 - Empty state follow-ups: Recent URLs list + Watch-Folder shortcut. [low]
 - Search follow-up: remember recent searches (dropdown). [low]  _(date: + ext: tokens shipped)_
 - Dialog polish: unified `DialogHeader` + design tokens (radius/spacing/margins) in palette; consolidate inline QSS. [med — from code audit]
+
+## Next (engine & automation — planned)
+- **Post-process pipeline**: on complete → extract → rename by pattern → move → notify. [med] Hangs off the existing "When download is complete" setting.
+- **RSS/Atom monitor**: poll a feed, add items matching a regex. [med-high] The realistic route to Sonarr-style use without emulating anyone's API.
+- **VPN kill switch**: pause torrents when the TUN/WireGuard adapter drops, resume when it returns. [med] Feasible on Windows by watching interface state.
+- **Rule-based routing**: pick queue/limit by URL host, size or extension. [med] Generalises the existing extension-based categorisation.
+- **Pre-start file preview** for `.torrent` files: show the tree before queuing. [low-med] `parse_torrent_files` already reads it; magnets can't do this before metadata, by definition.
+
+## Extension ideas (need explicit sign-off before touching `chrome_ext/` or `edge_ext/`)
+- **Batch link grabber**: panel listing every downloadable link on the page, tick and queue. [med] IDM's most-used feature.
+- **Offline queue**: hold URLs in the extension when the app is closed, sync on next start. [med] Nothing is lost to a closed app.
+- Context-aware right-click (image / torrent link / video page / selection). [med]
+- DASH (`.mpd`) + blob/fragmented-MP4 sniffing. [high]
+
+## Ideas
+- DASH (`.mpd`) native support (or lean on yt-dlp).
+- Per-thread SOCKS5 proxies (beat per-IP CDN rate limits).
+- Inline-on-page quality picker in the extension (near the video, not the panel).
+- Mini always-on-top window + global hotkeys (e.g. add-from-clipboard). [med]
+- Bandwidth profiler that suggests a connection count. [med] Weak evidence it helps: measured bottlenecks so far were swarm health and disk allocation, not connection count.
+- ZIP/RAR content peek + selective extract. [med-high]
+- LAN queue from a phone (`http://pc-ip:5000`, mDNS). [med] Only with real auth: the Flask server binds `127.0.0.1` deliberately, and that is one of three security gates alongside the CORS lock and the pairing token.
+- Python plugin hooks (`on_download_complete`, `on_queue_add`). [high] Note it means executing arbitrary user code in-process.
 
 ## Bugs
 - _(none open)_ — verified in v2: responsive layout holds at min (940×560) and large (1500×900); errored row shows the message on the card + in the drawer Logs; Delete works on a selection; Complete popup has working buttons.
@@ -47,9 +76,24 @@ Simple running list. Newest first. Keep entries to one line.
 - Per-thread SOCKS5 proxies (beat per-IP CDN rate limits).
 - Inline-on-page quality picker in the extension (near the video, not the panel).
 
+## Not possible with the current engine (checked, don't re-propose)
+- **Per-file priority** (High/Normal/Low). aria2 has only `--select-file`, i.e. include/exclude. Skip works; ranking does not. Needs a different engine.
+- **Peer blocklists / IP filtering** (PeerGuardian). No aria2 support, and the app does not own the socket layer.
+- **Force reannounce / clear peers / ban peer.** No such RPC methods exist — the full method list was checked.
+- **Relocating the `.aria2` control file.** aria2 offers only `--auto-save-interval` and `--remove-control-file`; there is no path option, and the file is what makes a torrent resumable. Only route is staging downloads in a temp folder and moving on completion — a real trade on multi-GB payloads, not a setting.
+- **Torrent + HTTP mirrors for the same file.** aria2 does Metalink, but nothing tells us a mirror exists.
+- **qBittorrent Web API compatibility.** Presupposes libtorrent; that is an engine rewrite.
+
+## Already shipped (do not re-add)
+- Dark/Light/System themes + accent presets — `palette.py`, Settings → Appearance.
+- Duplicate detection — infohash for magnets AND `.torrent` files, plus URL matching, with Show Existing / Add Anyway.
+- File tree with checkboxes and skip — drawer Files tab; the selection persists across pause, restart and closing the drawer.
+
 ## Decided to keep light (not building)
 - Auto-update — notify + open releases page (no installer-swap / signing).
 - Crash reporter — local JSON dumps only (no networked endpoint).
+- Telemetry, even opt-in — the app's one clear promise is localhost-only, no accounts, no remote services. A phone-home undermines it for data that GitHub issues already provide.
+- Cloud storage offload (Drive/OneDrive/S3) — drags in account management and OAuth for a fetch-and-park use case.
 
 ## Notes
 - HTTP/2/3 declined — multiplexing over one connection kills the multi-socket parallelism this app relies on.
