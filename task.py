@@ -163,6 +163,10 @@ class DownloadTask:
         # finds our archived copy after the user's original file has moved or
         # been deleted.
         self.infohash = ""
+        # Which files of a torrent to fetch, as aria2's 1-based select-file
+        # list ("1,3,5"); "" means all. Persisted, so unticking survives a
+        # pause, a restart, and the drawer being closed.
+        self.selected_files = ""
         # SHA-256 verification result (transient): "", "ok", "fail", "nohash"
         self.hash_status = ""
 
@@ -280,6 +284,7 @@ class DownloadTask:
             "events": self.events[-self.EVENTS_MAX:],
             "sha256": self.sha256,
             "infohash": self.infohash,
+            "selected_files": self.selected_files,
             "is_scheduled": getattr(self, "is_scheduled", False),
             # never write cookies/auth to disk; keep only safe headers (Referer/UA)
             "headers": utils.strip_sensitive(self.headers)
@@ -315,6 +320,7 @@ class DownloadTask:
         t.is_scheduled = d.get("is_scheduled", False)
         t.sha256 = d.get("sha256", "")
         t.infohash = d.get("infohash", "")
+        t.selected_files = d.get("selected_files", "")
         t.events = [e for e in map(_migrate_event, d.get("events") or []) if e]
         if forced_requeue:
             t._auto_resume = True

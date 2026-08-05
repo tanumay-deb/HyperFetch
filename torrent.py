@@ -881,6 +881,12 @@ class TorrentDownloader:
         d = aria2d.DAEMON
         d.ensure()                                   # raises -> caller falls back
         opts = {"dir": out_dir}
+        picked = (getattr(self.t, "selected_files", "") or "").strip()
+        if picked:
+            # Re-apply the user's file choice on every start. Without it, a
+            # paused torrent came back with everything selected again — aria2
+            # only ever knew about the selection through a live changeOption.
+            opts["select-file"] = picked
         if self._take_recheck():
             opts["check-integrity"] = "true"
             # The daemon almost certainly still holds this torrent (pausing only

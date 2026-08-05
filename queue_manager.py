@@ -171,14 +171,27 @@ class QueueManager:
             self.cond.notify_all()
 
     def change_torrent_files(self, task_id, indices_str):
-        """Change the selected files of a running torrent via aria2 RPC."""
+        """Choose which files of a torrent to download.
+
+        Recorded on the TASK first, and pushed to aria2 only if it happens to be
+        running. It used to do the opposite — return early unless there was a
+        live gid, and never store anything — so the choice was lost the moment
+        the drawer closed: nothing had been told to aria2 for a paused torrent,
+        and nothing was passed on the next add either. Reopening the Files tab
+        showed everything ticked again.
+        """
         with self.cond:
             task = self.get_task(task_id)
-            if not task or not getattr(task, "gid", None):
+            if not task:
                 return
+            task.selected_files = indices_str or ""
+            gid = getattr(task, "gid", None)
+        if not gid:
+            return                       # applied by _rpc_add when it next runs
         try:
             import aria2d
-            aria2d.DAEMON.call("aria2.changeOption", task.gid, {"select-file": indices_str})
+            aria2d.DAEMON.call("aria2.changeOption", gid,
+                               {"select-file": indices_str})
         except Exception as e:
             log.warning("failed to change select-file for %s: %s", task_id, e)
 
