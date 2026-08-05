@@ -352,7 +352,7 @@ class Aria2Daemon:
             opts.append(f"--dht-entry-point6={host}:{port}")
         if not utils.DISK_CACHE:
             opts.append("--disk-cache=0")
-        opts.append("--file-allocation=" + ("prealloc" if utils.PREALLOCATE else "none"))
+        opts.append(torrent.allocation_opt())
         if utils.PROXIES:
             purl = utils.PROXIES.get("https") or utils.PROXIES.get("http")
             if purl:

@@ -70,6 +70,25 @@ _CTL_MISSING = re.compile(r"control file.*does not exist", re.I)
 PEER_SPEED_TARGET = "50M"
 
 
+def allocation_opt():
+    """aria2's --file-allocation for the current Pre-allocate setting.
+
+    falloc, never prealloc. "prealloc" makes aria2 WRITE ZERO BYTES across the
+    whole file, and aria2 is single-threaded — so a 7 GB torrent blocks every
+    other transfer while it does it. Measured on a live daemon: RPC calls that
+    normally answer in 1-60ms took 1.6s, 7.3s, 8.7s, 9.5s, and the reported
+    download speed collapsed to near zero for the duration. That is the
+    "10 Mb/s, then 0, then it climbs back" sawtooth.
+
+    falloc asks the filesystem to reserve the space instead, which on NTFS
+    (this is the MinGW build) is near-instant, per aria2's own documentation.
+    On a legacy filesystem it degrades to prealloc's behaviour — no worse than
+    what it replaces.
+    """
+    return "--file-allocation=" + ("falloc" if getattr(utils, "PREALLOCATE", False)
+                                   else "none")
+
+
 def preference_opts():
     """aria2 options that come from user settings, shared by both engines.
 
@@ -645,7 +664,7 @@ class TorrentDownloader:
         cmd += [f"--listen-port={port}", f"--dht-listen-port={port}"]
         if not utils.DISK_CACHE:
             cmd.append("--disk-cache=0")
-        cmd.append("--file-allocation=" + ("prealloc" if utils.PREALLOCATE else "none"))
+        cmd.append(allocation_opt())
         if utils.PROXIES:
             purl = utils.PROXIES.get("https") or utils.PROXIES.get("http")
             if purl:

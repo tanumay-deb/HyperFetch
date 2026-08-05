@@ -179,3 +179,30 @@ def test_it_is_a_threshold_not_a_download_cap(monkeypatch):
     o = torrent.preference_opts()
     assert not any("max-overall-download-limit" in x for x in o)
     assert not any("--max-download-limit" in x for x in o)
+
+
+def test_preallocation_uses_falloc_not_prealloc(monkeypatch):
+    """prealloc WRITES ZERO BYTES across the whole file, and aria2 is single
+    threaded — measured on a live daemon, RPC that normally answers in 1-60ms
+    took up to 9.5s and the download speed collapsed for the duration. That is
+    the "10 Mb/s then 0 then it climbs back" sawtooth. falloc asks the
+    filesystem to reserve the space, which on NTFS is near-instant."""
+    monkeypatch.setattr(utils, "PREALLOCATE", True, raising=False)
+    assert torrent.allocation_opt() == "--file-allocation=falloc"
+
+
+def test_preallocation_off_allocates_nothing(monkeypatch):
+    monkeypatch.setattr(utils, "PREALLOCATE", False, raising=False)
+    assert torrent.allocation_opt() == "--file-allocation=none"
+
+
+def test_both_engines_use_the_same_allocation(monkeypatch):
+    monkeypatch.setattr(utils, "PREALLOCATE", True, raising=False)
+    d = aria2d.Aria2Daemon()
+    d.port, d.secret = 6800, "s"
+    assert torrent.allocation_opt() in d._options()
+
+    td = torrent.TorrentDownloader.__new__(torrent.TorrentDownloader)
+    td.t = type("T", (), {"url": "magnet:?xt=urn:btih:abc",
+                          "force_recheck": False})()
+    assert torrent.allocation_opt() in td._build_cmd("aria2c.exe", ".")
