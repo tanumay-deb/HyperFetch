@@ -1164,6 +1164,11 @@ class TorrentDownloader:
             follow = st.get("followedBy") or []
             if follow:
                 cur = follow[0]
+                # Publish the gid we are ACTUALLY polling. The task kept the
+                # original metadata gid, so the drawer's Connections tab asked
+                # aria2 for the peers of the metadata download — which has none,
+                # and the tab sat on "Connecting…" for the whole download.
+                self._gid = self.t.gid = cur
                 continue
 
             # Identify the payload FIRST. A magnet starts as a download of the
@@ -1278,6 +1283,7 @@ class TorrentDownloader:
                                  "already running", self.t.filename)
                         self._rpc_remove(d, cur, force=True)
                         cur = real
+                        self._gid = self.t.gid = cur      # keep the task in step
                         try:
                             d.call("aria2.unpause", cur)
                         except Exception:

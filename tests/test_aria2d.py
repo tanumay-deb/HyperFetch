@@ -893,3 +893,33 @@ def test_a_genuinely_complete_payload_still_seeds(tmp_path, monkeypatch):
     ])
     t = _drive_with(tmp_path, monkeypatch, daemon)
     assert t.status == T.COMPLETED
+
+
+def test_the_task_tracks_the_gid_actually_being_polled(tmp_path, monkeypatch):
+    """A magnet's first gid is the METADATA download; the payload arrives as
+    followedBy. The task kept the metadata gid, so the drawer asked aria2 for
+    the peers of a download that has none and the Connections tab sat on
+    "Connecting…" for the whole transfer."""
+    payload = str(tmp_path / "Movie.mkv")
+    open(payload, "w").close()
+    seen = []
+
+    class _Watch(_FakeDaemon):
+        def call(self, method, *params, **kw):
+            if method == "aria2.tellStatus":
+                seen.append(self.task.gid)
+            return super().call(method, *params, **kw)
+
+    daemon = _Watch([
+        {"status": "active", "followedBy": ["payloadgid"],
+         "files": [{"path": "[METADATA]abc"}]},
+        {"status": "active", "completedLength": "10", "totalLength": "1000",
+         "files": [{"path": payload}]},
+        {"status": "complete", "completedLength": "1000", "totalLength": "1000",
+         "files": [{"path": payload}]},
+    ])
+    t = T.DownloadTask("magnet:?xt=urn:btih:abc&dn=Movie",
+                       str(tmp_path / "download.bin"))
+    daemon.task = t
+    _drive_with(tmp_path, monkeypatch, daemon, task=t)
+    assert "payloadgid" in seen, "kept polling under the metadata gid"

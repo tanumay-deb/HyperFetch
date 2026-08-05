@@ -697,9 +697,14 @@ class DetailsDrawer(QFrame):
         """One summary tile above the file list. Returns (card, value_label) so
         the value can be refreshed live without rebuilding the tile."""
         c = QFrame()
+        # Scoped to this frame by object name. A bare "QFrame" selector also
+        # matches every QLabel inside it — QLabel INHERITS QFrame in Qt — so the
+        # caption and value each drew their own 1px rounded border, which read
+        # as a stray light outline inside every tile.
+        c.setObjectName("fstatCard")
         c.setStyleSheet(
-            f"QFrame {{ background: {COLORS['surface2']}; border: 1px solid "
-            f"{COLORS['border']}; border-radius: 8px; }}")
+            f"QFrame#fstatCard {{ background: {COLORS['surface2']}; "
+            f"border: 1px solid {COLORS['border']}; border-radius: 8px; }}")
         v = QVBoxLayout(c); v.setContentsMargins(8, 7, 8, 7); v.setSpacing(2)
         top = QHBoxLayout(); top.setSpacing(4)
         ic = QLabel(); ic.setPixmap(themed_icon(icon, "accent").pixmap(12, 12))
