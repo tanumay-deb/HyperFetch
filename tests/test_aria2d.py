@@ -249,6 +249,9 @@ def test_rpc_daemon_loss_leaves_task_resumable(tmp_path, monkeypatch):
     must come back as Paused rather than Error."""
     monkeypatch.setattr(utils, "app_data_dir", lambda: str(tmp_path))
     monkeypatch.setattr(torrent, "POLL", 0)
+    # the give-up budget is a DURATION now, not a retry count — without this the
+    # test really does sit here for the full five minutes
+    monkeypatch.setattr(torrent, "RPC_RETRY_GRACE", 0.0)
 
     class _Dying(_FakeDaemon):
         def call(self, method, *params, **kw):
@@ -923,3 +926,40 @@ def test_the_task_tracks_the_gid_actually_being_polled(tmp_path, monkeypatch):
     daemon.task = t
     _drive_with(tmp_path, monkeypatch, daemon, task=t)
     assert "payloadgid" in seen, "kept polling under the metadata gid"
+
+
+def test_per_file_progress_keeps_updating_while_seeding(tmp_path, monkeypatch):
+    """The seeding branch continues, so anything after it never runs. With the
+    getFiles refresh below it, per-file numbers froze the instant a torrent
+    completed — a finished, seeding torrent showed a file stuck at 98% and a
+    "Downloading 1" tile."""
+    payload = str(tmp_path / "Movie.mkv")
+    open(payload, "w").close()
+    partial = {"index": "1", "path": payload, "length": "1000",
+               "completedLength": "980", "selected": "true"}
+    whole = dict(partial, completedLength="1000")
+    calls = {"n": 0}
+
+    class _Files(_FakeDaemon):
+        def call(self, method, *params, **kw):
+            if method == "aria2.getFiles":
+                calls["n"] += 1
+                # first look is mid-download, every later one is finished
+                return [partial if calls["n"] <= 1 else whole]
+            return super().call(method, *params, **kw)
+
+    daemon = _Files([
+        {"status": "active", "completedLength": "980", "totalLength": "1000",
+         "files": [{"path": payload}]},
+        # now complete but still active == seeding
+        {"status": "active", "completedLength": "1000", "totalLength": "1000",
+         "files": [{"path": payload}]},
+        {"status": "active", "completedLength": "1000", "totalLength": "1000",
+         "files": [{"path": payload}]},
+        {"status": "complete", "completedLength": "1000", "totalLength": "1000",
+         "files": [{"path": payload}]},
+    ])
+    monkeypatch.setattr(torrent, "FILES_POLL", 0)
+    t = _drive_with(tmp_path, monkeypatch, daemon)
+    assert calls["n"] > 1, "stopped refreshing the file list once seeding"
+    assert t.file_progress[0]["completed"] == 1000, "left a file short of 100%"

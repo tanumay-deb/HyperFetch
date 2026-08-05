@@ -1250,6 +1250,25 @@ class TorrentDownloader:
                 log.info("verification finished: %s (%s of %s present)",
                          self.t.filename, _mib(self.t.downloaded), _mib(total))
 
+            # Per-file progress. The Files tab used to derive this from the size
+            # of each file on disk, which is not progress at all: aria2
+            # preallocates, so every file read 100% the moment the download
+            # started, and even without preallocation BitTorrent fetches pieces
+            # out of order, so a file reaches full size when its LAST piece
+            # lands. Only aria2 knows how much of each file is really there.
+            #
+            # Refreshed BEFORE the seeding branch below, which continues: with
+            # it the other way round the per-file numbers froze at whatever they
+            # were the instant the torrent completed, so a finished, seeding
+            # torrent showed a file stuck at 98% and a "Downloading 1" tile.
+            now = time.time()
+            if now - last_files >= FILES_POLL:
+                last_files = now
+                try:
+                    self.t.file_progress = _file_rows(d.call("aria2.getFiles", cur))
+                except Exception as e:
+                    log.debug("getFiles failed for %s: %s", self.t.filename, e)
+
             # Seeding: the payload is fully downloaded but aria2 keeps the
             # torrent "active" while it shares. Without recognising that, the
             # task sat at 100% in the Active list looking hung — and the stall
@@ -1264,20 +1283,6 @@ class TorrentDownloader:
                     log.info("seeding: %s", self.t.filename)
                 time.sleep(POLL)
                 continue
-
-            # Per-file progress. The Files tab used to derive this from the size
-            # of each file on disk, which is not progress at all: aria2
-            # preallocates, so every file read 100% the moment the download
-            # started, and even without preallocation BitTorrent fetches pieces
-            # out of order, so a file reaches full size when its LAST piece
-            # lands. Only aria2 knows how much of each file is really there.
-            now = time.time()
-            if now - last_files >= FILES_POLL:
-                last_files = now
-                try:
-                    self.t.file_progress = _file_rows(d.call("aria2.getFiles", cur))
-                except Exception as e:
-                    log.debug("getFiles failed for %s: %s", self.t.filename, e)
 
             status = st.get("status")
             if status == "complete" and meta_stage:
