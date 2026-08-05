@@ -777,6 +777,11 @@ class DetailsDrawer(QFrame):
         )
         
         header = self.files_table.horizontalHeader()
+        header.setSectionsClickable(True)
+        header.setSortIndicatorShown(True)
+        header.sectionClicked.connect(self._sort_files)
+        self._sort_col = None
+        self._sort_desc = False
         header.setSectionResizeMode(0, QHeaderView.Stretch)
         header.setSectionResizeMode(1, QHeaderView.Fixed)
         self.files_table.setColumnWidth(1, 80)
@@ -869,7 +874,15 @@ class DetailsDrawer(QFrame):
         if len(live) != len(self._file_bars):
             self._populate_static(t)      # metadata arrived, file list changed
             return
-        for bar, (_rel, size, completed, selected) in zip(self._file_bars, live):
+        # Look each row up by its aria2 INDEX, not by position. Once the table
+        # is sorted the on-screen order is no longer the engine's, and a zip()
+        # would paint every file's progress onto somebody else's row.
+        for row, bar in enumerate(self._file_bars):
+            idx = (self._file_row_widgets[row][0]
+                   if row < len(self._file_row_widgets) else row)
+            if not 0 <= idx < len(live):
+                continue
+            _rel, size, completed, selected = live[idx]
             pct = self._file_pct(size, completed)
             partial = bool(completed > 0 and pct < 100)
             bar.setProperty("hf_partial", partial)
@@ -882,6 +895,71 @@ class DetailsDrawer(QFrame):
             bar.setValue(pct)
             self._style_file_bar(bar, pct, skipped=not selected)
         self._tally()
+
+    def _add_sorted_file_rows(self, add_row):
+        """Emit the file rows in the current sort order.
+
+        `add_row` is _populate_static's row builder, passed in so this can be
+        reused for a re-sort without rebuilding the whole drawer.
+        """
+        for e in self._sorted_entries():
+            rel, size = e["rel"], e["size"]
+            completed, selected = e["completed"], e["selected"]
+            parts = rel.split("/")
+            name = parts[-1]
+            pct = self._file_pct(size, completed)
+            if not selected:
+                status = "Skipped"
+            elif pct >= 100:
+                status = "Completed"
+            elif completed:
+                status = "Downloading"
+            else:
+                status = "Downloading" if getattr(self, "_downloading", False) else "Idle"
+            add_row(e["index"], name, size, False, pct, status, len(parts) - 1,
+                    selected, partial=bool(completed and pct < 100))
+
+    def _sorted_entries(self):
+        """File rows in display order.
+
+        Size and progress sort by VALUE, not by the text in the cell: "1.2 GB"
+        must come after "900 MB", and "<1%" is not a number at all.
+        """
+        rows = list(getattr(self, "_file_entries", []) or [])
+        col = getattr(self, "_sort_col", None)
+        if col is None:
+            return rows
+        if col == 1:
+            key = lambda e: e["size"]
+        elif col == 2:
+            key = lambda e: (e["selected"],
+                             self._file_pct(e["size"], e["completed"]))
+        else:
+            key = lambda e: e["rel"].lower()
+        return sorted(rows, key=key, reverse=bool(getattr(self, "_sort_desc", False)))
+
+    def _sort_files(self, col):
+        """Click a header to sort: first click ascending, again for descending.
+
+        Rebuilt rather than handed to QTableWidget.setSortingEnabled, because
+        the Name and Progress cells are WIDGETS — Qt's own sort reorders items
+        and leaves cell widgets pinned to their row, so every checkbox and
+        progress bar would end up against the wrong file.
+        """
+        if not getattr(self, "_file_entries", None):
+            return
+        if col == getattr(self, "_sort_col", None):
+            self._sort_desc = not getattr(self, "_sort_desc", False)
+        else:
+            self._sort_col, self._sort_desc = col, False
+        self.files_table.horizontalHeader().setSortIndicator(
+            col, Qt.DescendingOrder if self._sort_desc else Qt.AscendingOrder)
+        # the task the drawer is already showing — not a fresh lookup through
+        # the parent window, which is not always reachable and would make a
+        # header click silently do nothing
+        t = getattr(self, "_task_ref", None)
+        if t is not None:
+            self._populate_static(t)
 
     def _filter_files(self):
         query = self.file_search.text().lower()
@@ -1242,6 +1320,7 @@ class DetailsDrawer(QFrame):
 
     # ---- data ----
     def _populate_static(self, t):
+        self._task_ref = t          # so a header click can re-sort in place
         self.h_name.setText(t.filename or "download")
         self._url = t.url or ""
         is_tor = _torrent.is_torrent_task(t.url, t.filename)
@@ -1377,25 +1456,17 @@ class DetailsDrawer(QFrame):
                 wait_item.setForeground(QColor(COLORS['muted']))
                 self.files_table.setItem(0, 0, wait_item)
             else:
-                for i, (rel, size, completed, selected) in enumerate(entries):
-                    total_sz += size
-                    total_files += 1
-                    parts = rel.split("/")
-                    indent = len(parts) - 1
-                    name = parts[-1]
-                    pct = self._file_pct(size, completed)
-                    if not selected:
-                        status_str = "Skipped"
-                    elif pct >= 100:
-                        status_str = "Completed"
-                        done_files += 1
-                    elif completed:
-                        status_str = "Downloading"
-                        active_files += 1
-                    else:
-                        status_str = "Downloading" if t.status == T.DOWNLOADING else "Idle"
-                    add_file_row(i, name, size, False, pct, status_str, indent,
-                                 selected, partial=bool(completed and pct < 100))
+                # Kept as DATA so the table can be re-sorted without going back
+                # to the engine, and so every row carries the aria2 index it
+                # came from — select-file and the progress refresh both key off
+                # that index once the display order stops matching the engine's.
+                self._file_entries = [
+                    {"index": i, "rel": rel, "size": size,
+                     "completed": completed, "selected": selected}
+                    for i, (rel, size, completed, selected) in enumerate(entries)
+                ]
+                self._downloading = (t.status == T.DOWNLOADING)
+                self._add_sorted_file_rows(add_file_row)
         else:
             if sp and os.path.isdir(sp):
                 try:
