@@ -176,3 +176,55 @@ def test_a_file_with_a_few_bytes_reads_under_one_percent(tmp_path):
     app.processEvents()
     assert _rows(drawer)[0].format() == "<1%"
     assert drawer.fs_active.text() == "1"
+
+
+def test_a_restored_torrent_does_not_claim_zero_percent(tmp_path, monkeypatch):
+    """file_progress is transient, so anything restored from disk starts with
+    none. Rendering that as "0%" told the user nothing had downloaded — on a
+    torrent the daemon reported as 7.49/7.49 GB complete."""
+    app = _app()
+    host = QWidget()
+    drawer = DetailsDrawer(host)
+    import gui2.details_drawer as dd
+    monkeypatch.setattr(dd._torrent, "list_files",
+                        lambda t: [("Show/ep1.mkv", 500), ("Show/ep2.mkv", 500)])
+    t = _torrent_task(tmp_path, [])          # no live per-file data
+    t.status = T.PAUSED
+    drawer.open_for(t)
+    app.processEvents()
+    fmts = [drawer.files_table.cellWidget(r, 2).format()
+            for r in range(drawer.files_table.rowCount())]
+    assert fmts == ["—", "—"], f"claimed a progress it does not know: {fmts}"
+
+
+def test_a_completed_torrent_shows_its_files_as_done(tmp_path, monkeypatch):
+    """A finished torrent's files ARE all present, so with no live numbers the
+    honest answer is 100%, not "unknown"."""
+    app = _app()
+    host = QWidget()
+    drawer = DetailsDrawer(host)
+    import gui2.details_drawer as dd
+    monkeypatch.setattr(dd._torrent, "list_files",
+                        lambda t: [("Show/ep1.mkv", 500), ("Show/ep2.mkv", 500)])
+    t = _torrent_task(tmp_path, [])
+    t.status = T.COMPLETED
+    drawer.open_for(t)
+    app.processEvents()
+    vals = [drawer.files_table.cellWidget(r, 2).value()
+            for r in range(drawer.files_table.rowCount())]
+    assert vals == [100, 100]
+
+
+def test_live_numbers_still_win(tmp_path):
+    """When the engine IS reporting, that is the truth — not the fallback."""
+    app = _app()
+    host = QWidget()
+    drawer = DetailsDrawer(host)
+    base = str(tmp_path / "Show")
+    t = _torrent_task(tmp_path, [
+        {"index": 1, "path": f"{base}/a.mkv", "length": 1000, "completed": 250,
+         "selected": True}])
+    t.status = T.COMPLETED                    # live data must override this
+    drawer.open_for(t)
+    app.processEvents()
+    assert drawer.files_table.cellWidget(0, 2).value() == 25

@@ -919,10 +919,13 @@ class DetailsDrawer(QFrame):
                 status = "Completed"
             elif completed:
                 status = "Downloading"
+            elif completed is None:
+                status = "Progress unknown until this download runs again"
             else:
                 status = "Downloading" if getattr(self, "_downloading", False) else "Idle"
             add_row(e["index"], name, size, False, pct, status, len(parts) - 1,
-                    selected, partial=bool(completed and pct < 100))
+                    selected, partial=bool(completed and pct < 100),
+                    unknown=completed is None)
 
     def _sorted_entries(self):
         """File rows in display order.
@@ -1390,7 +1393,7 @@ class DetailsDrawer(QFrame):
         active_files = 0
         
         def add_file_row(idx, name, size, is_folder, pct, status_str, indent=0,
-                         selected=True, partial=False):
+                         selected=True, partial=False, unknown=False):
             r = self.files_table.rowCount()
             self.files_table.insertRow(r)
 
@@ -1436,6 +1439,11 @@ class DetailsDrawer(QFrame):
             bar.setProperty("hf_partial", bool(partial))
             if not selected:
                 bar.setFormat("Skipped")
+            elif unknown:
+                # We have no per-file numbers for this task — showing "0%" here
+                # asserted that nothing had downloaded, on torrents the engine
+                # reports as complete.
+                bar.setFormat("—")
             elif pct == 0 and partial:
                 bar.setFormat("<1%")          # has bytes, just not a whole %
             else:
@@ -1451,7 +1459,12 @@ class DetailsDrawer(QFrame):
             # aria2's live file list wins when the engine has reported it; the
             # static .torrent listing is the fallback before metadata arrives.
             live = self._live_file_entries(t)
-            entries = live or [(rel, size, None, True)
+            # No live numbers (file_progress is transient, so anything restored
+            # from disk starts without it). A finished torrent's files ARE all
+            # present, so say so; otherwise completed stays None and the row
+            # shows "—" rather than claiming a confident 0%.
+            done_all = t.status == T.COMPLETED
+            entries = live or [(rel, size, size if done_all else None, True)
                                for rel, size in _torrent.list_files(t)]
             if not entries:
                 self.files_table.setRowCount(1)
