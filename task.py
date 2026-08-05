@@ -155,6 +155,10 @@ class DownloadTask:
         # looking like it had hung
         self.seeding = False
         self.tor_upload = 0
+        # hash-check in progress (transient). A recheck reads the whole payload
+        # off disk, so without this the UI shows nothing moving for minutes.
+        self.verifying = False
+        self.verified_pct = 0
         # Torrent infohash, once known. Persisted: it is how a .torrent task
         # finds our archived copy after the user's original file has moved or
         # been deleted.

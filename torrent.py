@@ -156,6 +156,31 @@ def is_torrent(url="", filename=""):
     return u.endswith(".torrent") or f.endswith(".torrent")
 
 
+def local_torrent_path(url):
+    """A filesystem path for a .torrent that may be given as a file:// URI.
+
+    Browsers and drag-and-drop hand over "file:///C:/Users/.../x.torrent", and
+    os.path.isfile() is False for that string even though the file is sitting
+    right there. The task then looked like its .torrent had vanished, and before
+    that it fell through to addUri() and got aria2's "No URI to download."
+    """
+    u = (url or "").strip()
+    if not u.lower().startswith("file:"):
+        return u
+    try:
+        parts = urllib.parse.urlsplit(u)
+        path = urllib.parse.unquote(parts.path or "")
+    except ValueError:
+        return u
+    # a UNC path arrives as file://server/share/x -> \\server\share\x
+    if parts.netloc:
+        return os.path.normpath(f"//{parts.netloc}{path}")
+    # "/C:/Users/..." -> "C:/Users/..."
+    if re.match(r"^/[A-Za-z]:", path):
+        path = path[1:]
+    return os.path.normpath(path)
+
+
 def is_torrent_task(url="", filename=""):
     return is_magnet(url) or is_torrent(url, filename)
 
@@ -295,8 +320,10 @@ def infohash_for(url, filename=""):
     ih = magnet_infohash(url or "")
     if ih:
         return ih
-    if is_torrent(url or "", filename or "") and os.path.isfile(url or ""):
-        return torrent_infohash(url)
+    if is_torrent(url or "", filename or ""):
+        local = local_torrent_path(url or "")
+        if os.path.isfile(local):
+            return torrent_infohash(local)
     return ""
 
 
@@ -471,7 +498,7 @@ def metadata_torrent_path(task, *dirs):
     else the copy aria2 saves as <infohash>.torrent (--bt-save-metadata) once a
     magnet's metadata arrives. '' when nothing is on disk yet."""
     url = task.url or ""
-    if is_torrent(url) and os.path.isfile(url):
+    if is_torrent(url) and os.path.isfile(local_torrent_path(url)):
         return url
     ih = magnet_infohash(url)
     if not ih:
@@ -565,7 +592,8 @@ class TorrentDownloader:
         self._stall_bytes = -1
 
     def _build_cmd(self, exe, out_dir):
-        src = self.t.url
+        # a file:// URI is not something aria2 can be handed as a path
+        src = local_torrent_path(self.t.url)
         all_trackers = list(PUBLIC_TRACKERS)
         if is_magnet(src):
             all_trackers.extend([t for t in magnet_trackers(src) if t not in all_trackers])
@@ -1030,7 +1058,7 @@ class TorrentDownloader:
         So the first time it is readable we take a copy into app data, keyed by
         infohash, and fall back to that copy afterwards.
         """
-        src = self.t.url or ""
+        src = local_torrent_path(self.t.url or "")
         if os.path.isfile(src):
             ih = getattr(self.t, "infohash", "") or torrent_infohash(src)
             if ih:
@@ -1174,6 +1202,23 @@ class TorrentDownloader:
             self.t.tor_conns = int(st.get("connections") or 0)
             self.t.tor_seeds = int(st.get("numSeeders") or 0)
             self.t.tor_upload = int(st.get("uploadSpeed") or 0)
+
+            # Hash checking. aria2 reports it separately from download progress,
+            # and it can take minutes on a large torrent — with nothing shown, a
+            # Force Recheck is indistinguishable from a hang.
+            verified = int(st.get("verifiedLength") or 0)
+            pending = str(st.get("verifyIntegrityPending") or "").lower() == "true"
+            was = self.t.verifying
+            self.t.verifying = bool(verified or pending)
+            self.t.verified_pct = (int(verified * 100 / total)
+                                   if (verified and total) else 0)
+            if self.t.verifying and not was:
+                self.t.log_event("Verifying downloaded data")
+                log.info("verifying: %s", self.t.filename)
+            elif was and not self.t.verifying:
+                self.t.log_event("Verification finished")
+                log.info("verification finished: %s (%s of %s present)",
+                         self.t.filename, _mib(self.t.downloaded), _mib(total))
 
             # Seeding: the payload is fully downloaded but aria2 keeps the
             # torrent "active" while it shares. Without recognising that, the

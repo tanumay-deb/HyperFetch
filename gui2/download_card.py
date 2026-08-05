@@ -354,7 +354,13 @@ class DownloadCardWidget(QFrame):
         # filenames below it stay in one column.
         self._render_serial(done)
 
-        if done and getattr(t, "seeding", False):
+        if getattr(t, "verifying", False):
+            # a recheck reads the entire payload; say so, with progress, or it
+            # is indistinguishable from a stuck download
+            pct = int(getattr(t, "verified_pct", 0) or 0)
+            self.sub.setText(f"Verifying downloaded data…  {pct}%" if pct
+                             else "Verifying downloaded data…")
+        elif done and getattr(t, "seeding", False):
             up = human_speed(getattr(t, "tor_upload", 0) or 0)
             bits = ["Seeding"]
             if up:
