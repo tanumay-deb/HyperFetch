@@ -462,10 +462,12 @@ class Downloader:
             torrent.TorrentDownloader(self.t).run()
             return
 
-        # media pages (YouTube etc.) -> yt-dlp; forced via the New Download toggle
-        # or auto-detected by host. Not a direct file, so it can't be byte-split.
+        # media pages (YouTube etc.) and DASH manifests -> yt-dlp; forced via the
+        # New Download toggle or auto-detected by host/extension. Not a direct
+        # file, so it can't be byte-split.
         import yt_dl
         if (getattr(self.t, "use_ytdlp", False) or yt_dl.is_ytdlp_url(self.t.url)
+                or yt_dl.is_dash(self.t.url, self.t.filename, self._probe_ctype)
                 or utils.host_rule(self.t.url).get("ytdlp")):
             yt_dl.YtDlpDownloader(self.t).run()
             return

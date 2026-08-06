@@ -53,13 +53,12 @@ Simple running list. Newest first. Keep entries to one line.
 - **Pre-start file preview** for `.torrent` files: show the tree before queuing. [low-med] `parse_torrent_files` already reads it; magnets can't do this before metadata, by definition.
 
 ## Extension ideas (need explicit sign-off before touching `chrome_ext/` or `edge_ext/`)
-- **Batch link grabber**: panel listing every downloadable link on the page, tick and queue. [med] IDM's most-used feature.
-- **Offline queue**: hold URLs in the extension when the app is closed, sync on next start. [med] Nothing is lost to a closed app.
-- Context-aware right-click (image / torrent link / video page / selection). [med]
-- DASH (`.mpd`) + blob/fragmented-MP4 sniffing. [high]
+- _(all four shipped — see "Already shipped" below.)_
+- Blob / fragmented-MP4 sniffing (MSE streams assembled in JS). [high] The
+  remaining half of the DASH item: there is no URL to grab, so it needs the
+  segments reassembled from the page side.
 
 ## Ideas
-- DASH (`.mpd`) native support (or lean on yt-dlp).
 - Per-thread SOCKS5 proxies (beat per-IP CDN rate limits).
 - Inline-on-page quality picker in the extension (near the video, not the panel).
 - Mini always-on-top window + global hotkeys (e.g. add-from-clipboard). [med]
@@ -70,11 +69,6 @@ Simple running list. Newest first. Keep entries to one line.
 
 ## Bugs
 - _(none open)_ — verified in v2: responsive layout holds at min (940×560) and large (1500×900); errored row shows the message on the card + in the drawer Logs; Delete works on a selection; Complete popup has working buttons.
-
-## Ideas
-- DASH (`.mpd`) native support (or lean on yt-dlp).
-- Per-thread SOCKS5 proxies (beat per-IP CDN rate limits).
-- Inline-on-page quality picker in the extension (near the video, not the panel).
 
 ## Not possible with the current engine (checked, don't re-propose)
 - **Per-file priority** (High/Normal/Low). aria2 has only `--select-file`, i.e. include/exclude. Skip works; ranking does not. Needs a different engine.
@@ -88,6 +82,10 @@ Simple running list. Newest first. Keep entries to one line.
 - Dark/Light/System themes + accent presets — `palette.py`, Settings → Appearance.
 - Duplicate detection — infohash for magnets AND `.torrent` files, plus URL matching, with Show Existing / Add Anyway.
 - File tree with checkboxes and skip — drawer Files tab; the selection persists across pause, restart and closing the drawer.
+- Batch link grabber — right-click → "Show all downloadable links…", panel in a closed shadow root, per-kind filters, tick and queue as one batch.
+- Offline queue — a click while the app is closed is held in `chrome.storage.local` (bounded to 50, newest kept) and replayed on the next successful send / worker wake / browser start. Cookies are deliberately not persisted: `storage.local` is unencrypted and an item can sit for days.
+- Context-aware right-click — torrent/magnet links, all images on the page, all links in the selection.
+- DASH (`.mpd`) — sniffed by the extension and routed to yt-dlp, which parses the manifest and merges the video/audio adaptation sets with the bundled ffmpeg. Previously an `.mpd` fell through every engine and byte-downloaded the XML index as if it were the video.
 
 ## Decided to keep light (not building)
 - Auto-update — notify + open releases page (no installer-swap / signing).

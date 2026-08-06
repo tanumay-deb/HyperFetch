@@ -45,7 +45,7 @@ function applyBadgeCorner() {
   w.style.right = h === "right" ? "20px" : "auto";
 }
 
-function sendToApp(url, suggestedName = null) {
+function sendToApp(url, suggestedName = null, opts = {}) {
   const filename = suggestedName || url.split("/").pop().split("?")[0];
   // route via the background worker so the browser's cookies for this URL
   // are attached (needed for Google Drive and other login-gated downloads)
@@ -55,10 +55,17 @@ function sendToApp(url, suggestedName = null) {
       return;
     }
     if (chrome.runtime.lastError || !res || !res.ok) {
-      // app offline -> fall back to a normal browser download
+      // Offline. The worker has already HELD this download and will replay it
+      // when the app comes back, so navigating would download it twice — and
+      // for a batch send it would also throw the user off the page entirely.
+      if (opts.quiet) return;
+      if (opts.noNavigate) {
+        showToast("App offline — queued until HyperFetch is running");
+        return;
+      }
       showToast("App offline — downloading in browser");
       window.location.href = url;
-    } else {
+    } else if (!opts.quiet) {
       showToast("Sent to Download Manager");
     }
   });
@@ -108,8 +115,201 @@ chrome.runtime.onMessage.addListener((msg) => {
   } else if (msg.type === "HYPERFETCH_TOAST") {
     // result of a right-click "Download with HyperFetch" (the menu has no UI)
     showToast(msg.text);
+  } else if (msg.type === "HYPERFETCH_GRAB") {
+    showGrabPanel(collectLinks(msg.scope));
   }
 });
+
+// ---------------------------------------------------------------------------
+// Batch link grabber. The content script is the only side that can see the DOM,
+// so the menu item in background.js just asks us to collect and show.
+
+// Extensions worth offering. Deliberately not "every href": a page is mostly
+// navigation, and a list padded with links to other pages is a list nobody
+// reads.
+const GRAB_EXT = new RegExp(
+  "\\.(zip|rar|7z|tar|gz|bz2|xz|iso|dmg|exe|msi|apk|deb|rpm|pkg" +
+  "|pdf|epub|mobi|djvu|docx?|xlsx?|pptx?|odt|ods|csv|txt|rtf" +
+  "|mp4|mkv|avi|mov|wmv|flv|webm|m4v|mpe?g|ts" +
+  "|mp3|flac|wav|aac|ogg|opus|m4a|wma" +
+  "|jpe?g|png|gif|webp|bmp|svg|tiff?|avif|heic" +
+  "|torrent)(\\?|#|$)", "i");
+
+function grabKind(url) {
+  if ((url || "").startsWith("magnet:")) return "torrent";
+  const m = (url || "").split("?")[0].match(/\.([a-z0-9]{2,5})$/i);
+  const e = m ? m[1].toLowerCase() : "";
+  if (/^(mp4|mkv|avi|mov|wmv|flv|webm|m4v|mpeg|mpg|ts)$/.test(e)) return "video";
+  if (/^(mp3|flac|wav|aac|ogg|opus|m4a|wma)$/.test(e)) return "audio";
+  if (/^(jpg|jpeg|png|gif|webp|bmp|svg|tif|tiff|avif|heic)$/.test(e)) return "image";
+  if (/^(zip|rar|7z|tar|gz|bz2|xz|iso|dmg)$/.test(e)) return "archive";
+  if (/^(exe|msi|apk|deb|rpm|pkg)$/.test(e)) return "app";
+  if (e === "torrent") return "torrent";
+  return "file";
+}
+
+function collectLinks(scope) {
+  const out = new Map();                       // url -> {url, name, kind}
+  const add = (raw) => {
+    if (!raw) return;
+    let url = raw;
+    if (!url.startsWith("magnet:")) {
+      try { url = new URL(raw, location.href).href; } catch (e) { return; }
+      if (!/^https?:/i.test(url)) return;      // no blob:, data:, javascript:
+      if (!GRAB_EXT.test(url)) return;
+    }
+    if (out.has(url)) return;
+    out.set(url, { url, name: filenameFromUrl(url), kind: grabKind(url) });
+  };
+
+  if (scope === "images") {
+    document.querySelectorAll("img[src]").forEach((i) => add(i.src));
+    // the <a> around a thumbnail is usually the full-size original
+    document.querySelectorAll("a[href]").forEach((a) => {
+      if (a.querySelector("img") && grabKind(a.href) === "image") add(a.href);
+    });
+    return [...out.values()];
+  }
+
+  let roots = [document];
+  if (scope === "selection") {
+    const sel = window.getSelection();
+    if (!sel || sel.isCollapsed) return [];
+    roots = [];
+    for (let i = 0; i < sel.rangeCount; i++) {
+      const frag = sel.getRangeAt(i).cloneContents();
+      roots.push(frag);
+      // a selection that lands INSIDE one link clones no <a> at all
+      const anc = sel.getRangeAt(i).commonAncestorContainer;
+      const host = anc.nodeType === 1 ? anc : anc.parentElement;
+      const near = host && host.closest && host.closest("a[href]");
+      if (near) add(near.getAttribute("href"));
+    }
+  }
+  roots.forEach((r) =>
+    r.querySelectorAll("a[href]").forEach((a) =>
+      add(a.getAttribute ? a.getAttribute("href") : a.href)));
+  return [...out.values()];
+}
+
+let grabHost = null;
+
+function showGrabPanel(items) {
+  if (grabHost) { grabHost.remove(); grabHost = null; }
+  if (!items.length) {
+    showToast("No downloadable links found here");
+    return;
+  }
+  grabHost = document.createElement("div");
+  grabHost.id = "hyperfetch-grab-root";
+  grabHost.style.cssText = "all:initial;position:fixed;inset:0;z-index:2147483647;";
+  // closed shadow root, like the media panel: the page's own CSS cannot reach
+  // in and restyle this, and our styles cannot leak out onto the page
+  const root = grabHost.attachShadow({ mode: "closed" });
+  const style = document.createElement("style");
+  style.textContent = `
+    .back{position:fixed;inset:0;background:rgba(0,0,0,.55);
+      display:flex;align-items:center;justify-content:center;
+      font:13px/1.45 -apple-system,Segoe UI,Roboto,sans-serif;}
+    .box{background:#191c25;color:#e8ecf4;border:1px solid #2a2f3b;
+      border-radius:14px;width:min(680px,92vw);max-height:82vh;
+      display:flex;flex-direction:column;box-shadow:0 18px 48px rgba(0,0,0,.5);}
+    .hd{display:flex;align-items:center;gap:10px;padding:14px 16px;
+      border-bottom:1px solid #2a2f3b;}
+    .hd b{font-size:14px;font-weight:800;}
+    .sub{color:#8b97ad;font-size:12px;}
+    .tools{display:flex;gap:6px;padding:10px 16px;border-bottom:1px solid #2a2f3b;
+      align-items:center;flex-wrap:wrap;}
+    button{font:inherit;background:#20242f;color:#e8ecf4;border:1px solid #2a2f3b;
+      border-radius:8px;padding:6px 12px;cursor:pointer;}
+    button:hover{background:#252a37;}
+    button.primary{background:#7c5cff;border-color:#7c5cff;color:#fff;font-weight:700;}
+    .list{overflow:auto;padding:6px 8px;}
+    .row{display:flex;align-items:center;gap:10px;padding:7px 8px;border-radius:8px;}
+    .row:hover{background:#20242f;}
+    .row input{width:16px;height:16px;accent-color:#7c5cff;flex:none;}
+    .nm{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+    .kind{color:#8b97ad;font-size:11px;flex:none;text-transform:uppercase;
+      letter-spacing:.4px;}
+    .ft{display:flex;gap:8px;justify-content:flex-end;padding:12px 16px;
+      border-top:1px solid #2a2f3b;}
+    .count{margin-right:auto;color:#8b97ad;align-self:center;}`;
+  root.appendChild(style);
+
+  const back = document.createElement("div");
+  back.className = "back";
+  const box = document.createElement("div");
+  box.className = "box";
+  back.appendChild(box);
+
+  const kinds = [...new Set(items.map((i) => i.kind))].sort();
+  box.innerHTML =
+    `<div class="hd"><b>Downloadable links</b>` +
+    `<span class="sub">${items.length} found on this page</span></div>` +
+    `<div class="tools"><button id="all">Select all</button>` +
+    `<button id="none">Select none</button>` +
+    kinds.map((k) => `<button data-kind="${k}">${k}</button>`).join("") +
+    `</div><div class="list" id="list"></div>` +
+    `<div class="ft"><span class="count" id="count"></span>` +
+    `<button id="cancel">Cancel</button>` +
+    `<button class="primary" id="send">Send to HyperFetch</button></div>`;
+
+  const list = box.querySelector("#list");
+  items.forEach((it, i) => {
+    const row = document.createElement("label");
+    row.className = "row";
+    const cb = document.createElement("input");
+    cb.type = "checkbox";
+    cb.checked = true;
+    cb.dataset.i = String(i);
+    const nm = document.createElement("span");
+    nm.className = "nm";
+    nm.textContent = it.name || it.url;
+    nm.title = it.url;
+    const kd = document.createElement("span");
+    kd.className = "kind";
+    kd.textContent = it.kind;
+    row.append(cb, nm, kd);
+    list.appendChild(row);
+  });
+
+  const boxes = () => [...list.querySelectorAll("input")];
+  const sync = () => {
+    const n = boxes().filter((b) => b.checked).length;
+    box.querySelector("#count").textContent = `${n} selected`;
+    box.querySelector("#send").disabled = n === 0;
+  };
+  list.addEventListener("change", sync);
+  box.querySelector("#all").onclick = () => { boxes().forEach((b) => b.checked = true); sync(); };
+  box.querySelector("#none").onclick = () => { boxes().forEach((b) => b.checked = false); sync(); };
+  box.querySelectorAll("[data-kind]").forEach((b) => {
+    b.onclick = () => {
+      boxes().forEach((x) => x.checked = items[+x.dataset.i].kind === b.dataset.kind);
+      sync();
+    };
+  });
+
+  const close = () => { if (grabHost) { grabHost.remove(); grabHost = null; } };
+  box.querySelector("#cancel").onclick = close;
+  back.addEventListener("click", (e) => { if (e.target === back) close(); });
+  // Escape closes it — a full-screen overlay with no keyboard exit is a trap
+  const onKey = (e) => {
+    if (e.key === "Escape") { close(); document.removeEventListener("keydown", onKey, true); }
+  };
+  document.addEventListener("keydown", onKey, true);
+
+  box.querySelector("#send").onclick = () => {
+    const picked = boxes().filter((b) => b.checked).map((b) => items[+b.dataset.i]);
+    close();
+    // quiet: one toast for the batch, not twenty — and never a navigation
+    picked.forEach((it) => sendToApp(it.url, it.name, { quiet: true }));
+    showToast(`Sent ${picked.length} link${picked.length === 1 ? "" : "s"} to HyperFetch`);
+  };
+
+  sync();
+  root.appendChild(back);
+  document.documentElement.appendChild(grabHost);
+}
 
 function formatSize(bytes) {
   if (!bytes) return "Unknown size";

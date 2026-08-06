@@ -41,6 +41,45 @@ chrome.storage.onChanged.addListener((ch) => {
   if (ch.enabled) captureEnabled = ch.enabled.newValue;
 });
 
+// ---------------------------------------------------------------------------
+// Offline queue. When the app is not running, a download is held here instead
+// of being lost, and replayed the next time we know the app is up.
+//
+// Cookies are deliberately NOT stored. They are the one part of a captured
+// download that is genuinely sensitive, chrome.storage.local is not encrypted,
+// and a queued item may sit there for days. They are re-read at replay time,
+// which is also when they are actually valid.
+const PENDING_KEY = "pending";
+const PENDING_MAX = 50;              // a bounded buffer, not a download history
+let flushing = false;
+
+function holdPending(item) {
+  chrome.storage.local.get({ [PENDING_KEY]: [] }, (v) => {
+    const list = (v[PENDING_KEY] || []).filter((p) => p.url !== item.url);
+    list.push({ ...item, at: Date.now() });
+    // keep the NEWEST on overflow: an old queued click is the one the user has
+    // most likely forgotten about
+    chrome.storage.local.set(
+      { [PENDING_KEY]: list.slice(-PENDING_MAX) }, ignoreErr);
+  });
+}
+
+function flushPending() {
+  if (flushing) return;              // one drain at a time, or a replay that
+  flushing = true;                   // fails re-queues into its own retry
+  chrome.storage.local.get({ [PENDING_KEY]: [] }, (v) => {
+    const list = v[PENDING_KEY] || [];
+    if (!list.length) { flushing = false; return; }
+    // clear FIRST: each replay goes back through sendToApp, which re-holds it
+    // if the app has gone away again mid-drain
+    chrome.storage.local.set({ [PENDING_KEY]: [] }, () => {
+      list.forEach((p) => sendToApp(p.url, p.filename, p.referrer,
+                                    () => {}, p.extra));
+      flushing = false;
+    });
+  });
+}
+
 // Send a download to the app WITH the browser's cookies for that URL —
 // required for auth-gated hosts (Google Drive, attachments behind login).
 // Authenticated with the pairing token (read fresh from storage so a freshly
@@ -73,10 +112,21 @@ function sendToApp(url, filename, referrer, done, extra) {
           }
           return r;
         })
-        .then((r) => r.json().then(
-          (j) => done(r.ok, r.status, j),
-          () => done(r.ok, r.status, {})))
-        .catch(() => done(false, 0, {}));
+        .then((r) => {
+          if (r.ok) flushPending();      // app is up — drain anything held
+          return r.json().then(
+            (j) => done(r.ok, r.status, j),
+            () => done(r.ok, r.status, {}));
+        })
+        .catch(() => {
+          // status 0 = the app is not listening at all (as opposed to a 401,
+          // which means it IS there and refused us). Hold the download instead
+          // of dropping it: a click that vanished because the app happened to
+          // be closed is the most annoying way to lose one.
+          holdPending({ url, filename: filename || "", referrer: referrer || "",
+                        extra: extra || {} });
+          done(false, 0, {});
+        });
     });
   });
 }
@@ -100,6 +150,29 @@ chrome.runtime.onInstalled.addListener((details) => {
       id: "hyperfetch-download",
       title: "Download with HyperFetch",
       contexts: ["link", "image", "video", "audio"]
+    }, ignoreErr);
+    // A .torrent link or a magnet is not "a file to download" — say what it
+    // actually does, so the menu matches the outcome.
+    chrome.contextMenus.create({
+      id: "hyperfetch-add-torrent",
+      title: "Add torrent to HyperFetch",
+      contexts: ["link"],
+      targetUrlPatterns: ["*://*/*.torrent", "*://*/*.torrent?*", "magnet:*"]
+    }, ignoreErr);
+    chrome.contextMenus.create({
+      id: "hyperfetch-all-images",
+      title: "Download all images on this page",
+      contexts: ["image"]
+    }, ignoreErr);
+    chrome.contextMenus.create({
+      id: "hyperfetch-selection-links",
+      title: "Download all links in selection",
+      contexts: ["selection"]
+    }, ignoreErr);
+    chrome.contextMenus.create({
+      id: "hyperfetch-grab-links",
+      title: "Show all downloadable links…",
+      contexts: ["page", "frame"]
     }, ignoreErr);
     // Media-page sites (YouTube etc.) play via blob:/MSE, so there is no
     // capturable media URL — instead offer a PAGE-level item that sends the page
@@ -127,7 +200,21 @@ if (chrome.runtime.setUninstallURL) {
 }
 
 chrome.contextMenus.onClicked.addListener((info, tab) => {
+  // The collect-from-page items are handled by the content script, which is the
+  // only side that can see the DOM.
+  const COLLECT = {
+    "hyperfetch-all-images": "images",
+    "hyperfetch-selection-links": "selection",
+    "hyperfetch-grab-links": "all"
+  };
+  if (COLLECT[info.menuItemId]) {
+    if (tab && tab.id >= 0)
+      chrome.tabs.sendMessage(tab.id,
+        { type: "HYPERFETCH_GRAB", scope: COLLECT[info.menuItemId] }, ignoreErr);
+    return;
+  }
   if (info.menuItemId !== "hyperfetch-download" &&
+      info.menuItemId !== "hyperfetch-add-torrent" &&
       info.menuItemId !== "hyperfetch-download-page") return;
   let url, name;
   if (info.menuItemId === "hyperfetch-download-page") {
@@ -136,7 +223,10 @@ chrome.contextMenus.onClicked.addListener((info, tab) => {
     name = "";                       // yt-dlp fills in the video title
   } else {
     url = info.linkUrl || info.srcUrl;
-    name = url ? url.split("?")[0].split(/[\\/]/).pop() || "" : "";
+    // A magnet has no filename to derive; splitting one yields the literal
+    // "magnet:", which the app would then use as the download's name.
+    name = (!url || url.startsWith("magnet:")) ? ""
+      : url.split("?")[0].split(/[\\/]/).pop() || "";
   }
   if (!url || url.startsWith("blob:") || url.startsWith("data:")) return;
   const referrer = (tab && tab.url) || info.frameUrl || info.pageUrl || "";
@@ -156,8 +246,30 @@ chrome.contextMenus.onClicked.addListener((info, tab) => {
   });
 });
 
+// Retry the held queue whenever this service worker wakes, and on browser
+// start. MV3 evicts the worker after ~30s idle and wakes it for menu clicks,
+// messages and downloads, so this retries often enough without an alarms
+// permission — which would mean a new permission prompt for every user.
+function retryPendingIfAppIsUp() {
+  fetch(`${APP.replace("/download", "")}/ping`)
+    .then((r) => { if (r.ok) flushPending(); })
+    .catch(() => {});
+}
+if (chrome.runtime.onStartup) chrome.runtime.onStartup.addListener(retryPendingIfAppIsUp);
+retryPendingIfAppIsUp();
+
 // Relay for content scripts (they cannot read cookies themselves).
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (msg && msg.type === "HYPERFETCH_FLUSH") {   // popup saw the app answer
+    retryPendingIfAppIsUp();
+    sendResponse({ ok: true });
+    return false;
+  }
+  if (msg && msg.type === "PENDING_COUNT") {
+    chrome.storage.local.get({ [PENDING_KEY]: [] },
+      (v) => sendResponse({ count: (v[PENDING_KEY] || []).length }));
+    return true;
+  }
   if (msg && msg.type === "DOWNLOAD_URL") {
     const ref = sender && sender.tab ? sender.tab.url : "";
     sendToApp(msg.url, msg.filename, ref,

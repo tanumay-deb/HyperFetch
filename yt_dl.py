@@ -28,6 +28,19 @@ def is_ytdlp_url(url):
     return any(d in u for d in _SITES)
 
 
+def is_dash(url="", filename="", ctype=""):
+    """A DASH manifest (``.mpd``) — an XML index, not the media.
+
+    Byte-downloading one writes a few KB of XML named like a video, and the HLS
+    engine can't read it either (different format). yt-dlp's generic extractor
+    parses the manifest, fetches the segments and merges the separate video/audio
+    adaptation sets with the bundled ffmpeg."""
+    u = (url or "").split("?")[0].lower()
+    f = (filename or "").lower()
+    c = (ctype or "").lower()
+    return u.endswith(".mpd") or f.endswith(".mpd") or "dash+xml" in c
+
+
 def available():
     try:
         import yt_dlp  # noqa: F401

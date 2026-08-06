@@ -40,10 +40,34 @@ function autoPair() {
     .catch(() => {});
 }
 
+// Downloads clicked while the app was closed are held by the worker. Opening the
+// popup is the moment to say so — and, if the app is back, to drain them. The
+// worker only pings at startup, so a worker that is already awake needs a nudge.
+const queuedEl = document.getElementById("queued");
+const queuedCard = document.getElementById("queuedCard");
+
+function refreshQueued() {
+  chrome.runtime.sendMessage({ type: "PENDING_COUNT" }, (res) => {
+    void chrome.runtime.lastError;
+    const n = (res && res.count) || 0;
+    queuedCard.hidden = n === 0;
+    queuedEl.textContent = n === 1 ? "1 download" : `${n} downloads`;
+  });
+}
+
 fetch(`${APP}/ping`)
   .then((r) => r.json().then((j) => ({ ok: r.ok, j })))
   .then(({ ok, j }) => {
     setStatus(ok);
+    if (ok) {
+      // app is up — drain the queue, then show what is left
+      chrome.runtime.sendMessage({ type: "HYPERFETCH_FLUSH" }, () => {
+        void chrome.runtime.lastError;
+        setTimeout(refreshQueued, 300);
+      });
+    } else {
+      refreshQueued();
+    }
     needsToken = !!(j && j.needsToken);
     refreshPairState();
     if (ok && needsToken) {
@@ -55,7 +79,7 @@ fetch(`${APP}/ping`)
       chrome.storage.local.set({ badgeCorner: j.badgeCorner });
     }
   })
-  .catch(() => { setStatus(false); refreshPairState(); });
+  .catch(() => { setStatus(false); refreshPairState(); refreshQueued(); });
 
 chrome.storage.local.get({ enabled: true, token: "" }, (v) => {
   enabledEl.checked = v.enabled;

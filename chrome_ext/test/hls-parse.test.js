@@ -86,6 +86,9 @@ test('hlsDuration sums #EXTINF segment durations', () => {
 // Spawn an isolated background.js instance per test (parsedHls is module-level
 // in the worker, so reusing the sandbox across tests would leak cache state).
 const PROBE_URL = 'http://127.0.0.1:5000/probe';
+// The worker pings /ping at startup to drain the offline queue. These tests
+// count playlist fetches, so that ping must not reach fetchImpl.
+const PING_URL = 'http://127.0.0.1:5000/ping';
 
 // probeImpl default = app "offline" ({ok:false}) so the 3 fallback tests below
 // exercise the SW-fetch path. The probe-success test passes its own probeImpl.
@@ -107,7 +110,10 @@ function loadBackgroundWithFakes({ fetchImpl, sent, probeImpl }) {
       cookies: { getAll: (q, cb) => cb([]) },   // must call back or probeViaApp hangs
     },
     URL,
-    fetch: (u, opts) => (u === PROBE_URL ? probe(u, opts) : fetchImpl(u, opts)),
+    fetch: (u, opts) => {
+      if (u === PING_URL) return Promise.reject(new Error('app offline'));
+      return u === PROBE_URL ? probe(u, opts) : fetchImpl(u, opts);
+    },
     navigator: { userAgent: 'test' },
     console,
   };
