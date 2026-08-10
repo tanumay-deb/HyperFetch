@@ -134,33 +134,43 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, QW
         path = self._state_path
 
         def _read(p):
-            """(rows, had_bytes). Reads the raw text itself rather than asking
-            whether the file 'exists' first: os.path.isfile/getsize are a
-            snapshot, and the file is swapped by os.replace on every save, so a
-            launch that races a save could see it vanish between the two calls
-            (getsize would even raise). had_bytes tells a genuinely empty list
-            apart from a read that failed."""
+            """(rows, ok). Reads the raw text itself rather than asking whether
+            the file 'exists' first: os.path.isfile/getsize are a snapshot, and
+            the file is swapped by os.replace on every save, so a launch that
+            races a save could see it vanish between the two calls (getsize
+            would even raise).
+
+            ok is False ONLY when the file could not be read or parsed. An empty
+            list is a VALID state — it is what "delete everything" saves — and
+            must never be mistaken for a failed read. It used to be: `[]` on disk
+            was indistinguishable from a blocked read, so the recovery path below
+            loaded the .bak, and because the backup is rotated from the CURRENT
+            file on the very save that emptied it, the .bak held exactly the
+            downloads the user had just deleted. They came back on every launch.
+            """
             try:
                 with open(p, "r", encoding="utf-8") as f:
                     raw = f.read()
             except FileNotFoundError:
-                return [], False         # first run: genuinely no list yet
+                return [], True          # first run: genuinely no list yet
             except OSError:
-                return [], True          # exists but unreadable -> stay safe
+                return [], False         # exists but unreadable -> stay safe
             if not raw.strip():
-                return [], False         # truly empty file
+                return [], True          # truly empty file
             try:
                 data = json.loads(raw)
             except ValueError:
-                return [], True          # present but unparsable -> a failure
-            return (data if isinstance(data, list) else []), True
+                return [], False         # present but unparsable -> a failure
+            if not isinstance(data, list):
+                return [], False         # wrong shape -> not "no downloads"
+            return data, True
 
-        rows, had_bytes = _read(path)
-        if had_bytes and not rows:
+        rows, ok = _read(path)
+        if not ok:
             for _ in range(5):
                 _time.sleep(0.2)
-                rows, _ = _read(path)
-                if rows:
+                rows, ok = _read(path)
+                if ok:
                     _log.warning("download list read succeeded on retry — the "
                                  "first attempt was blocked (concurrent save?)")
                     break

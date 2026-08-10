@@ -41,6 +41,19 @@ def is_dash(url="", filename="", ctype=""):
     return u.endswith(".mpd") or f.endswith(".mpd") or "dash+xml" in c
 
 
+def _formats_unavailable(err):
+    """True when extraction produced no usable video format.
+
+    Distinct from a download that started and then broke: this is the site
+    handing back nothing playable, which a retry with different request context
+    can genuinely fix.
+    """
+    low = str(err).lower()
+    return ("requested format is not available" in low
+            or "only images are available" in low
+            or "no video formats found" in low)
+
+
 def available():
     try:
         import yt_dlp  # noqa: F401
@@ -134,6 +147,15 @@ class YtDlpDownloader:
         if ffdir:
             opts["ffmpeg_location"] = ffdir
 
+        # No JS runtime is bundled. yt-dlp warns that YouTube extraction without
+        # one is deprecated, but measured against real videos it currently changes
+        # nothing: the same 33 formats up to 2160p come back with and without a
+        # runtime, because YouTube is not demanding the "n challenge" for anonymous
+        # requests. Bundling one is not free either — deno is ~110 MB, and quickjs
+        # is 2 MB but yt-dlp ships no solver lib for it, so it must fetch one at
+        # solve time. Revisit when YouTube actually starts requiring it; the
+        # cookie fallback below is what fixes the failure seen in practice.
+
         # Build a format string that never hard-fails with "requested format is
         # not available": prefer a height-capped merge when ffmpeg is present,
         # else a single muxed stream — always with a plain "b" fallback.
@@ -153,13 +175,40 @@ class YtDlpDownloader:
         if utils.PROXIES:
             opts["proxy"] = utils.PROXIES.get("https") or utils.PROXIES.get("http")
 
-        try:
-            with yt_dlp.YoutubeDL(opts) as ydl:
+        def _attempt(o):
+            """One yt-dlp run. Returns its guess at the output path."""
+            with yt_dlp.YoutubeDL(o) as ydl:
                 info = ydl.extract_info(self.t.url, download=True)
                 try:
-                    guess = ydl.prepare_filename(info)
+                    return ydl.prepare_filename(info)
                 except Exception:
-                    guess = ""
+                    return ""
+
+        try:
+            try:
+                guess = _attempt(opts)
+            except _Abort:
+                raise
+            except Exception as e:
+                # YouTube answers a cookie-bearing request with a player response
+                # whose formats need the "n challenge" solved. Without a JS runtime
+                # yt-dlp cannot solve it, every video format drops out ("Only images
+                # are available") and extraction dies with "Requested format is not
+                # available" — while the very same URL with no cookies serves normal
+                # formats. That is why the browser's right-click download failed on a
+                # video that New Download handled: only the extension sends cookies.
+                # Cookies still matter for private/members-only videos, so try them
+                # first and fall back rather than dropping them outright. The retry
+                # also covers a plain transient extraction failure.
+                if not (_formats_unavailable(e)
+                        and any(k.lower() == "cookie" for k in http_headers)):
+                    raise
+                log.info("yt-dlp: no formats with cookies, retrying without them: %s",
+                         str(e)[:120])
+                retry = dict(opts)
+                retry["http_headers"] = {k: v for k, v in http_headers.items()
+                                         if k.lower() != "cookie"}
+                guess = _attempt(retry)
             path = guess if (guess and os.path.exists(guess)) else final["path"]
             if not (path and os.path.exists(path)):
                 path = self._newest(out_dir, _pre_existing)
@@ -181,11 +230,18 @@ class YtDlpDownloader:
             import re as _re
             msg = _re.sub(r"\x1b\[[0-9;]*m", "", str(e)).strip()    # strip ANSI colour codes
             low = msg.lower()
-            if ("requested format is not available" in low or "ffmpeg" in low
-                    or "merging" in low):
+            if ffdir is None and ("requested format is not available" in low
+                                  or "ffmpeg" in low or "merging" in low):
                 self.t.error = ("This video has no combined audio+video stream — it needs "
                                 "ffmpeg to merge them (bundled in the app installer; on a "
                                 "source run, put ffmpeg on your PATH).")
+            elif "requested format is not available" in low:
+                # ffmpeg IS present, so merging is not the problem — the site
+                # served no downloadable video stream at all. Blaming ffmpeg here
+                # sent the user looking for a missing binary that was never missing.
+                self.t.error = ("The site offered no downloadable video stream for this "
+                                "one. It may be private, region-locked, or need a sign-in "
+                                "the app doesn't have.")
             else:
                 self.t.error = "yt-dlp: " + msg[:200]
             log.error("yt-dlp failed: %s — %s", self.t.url, str(e)[:200])
