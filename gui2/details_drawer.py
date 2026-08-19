@@ -621,11 +621,19 @@ class DetailsDrawer(QFrame):
         else:
             self.conns_table.hide(); self.conn_empty.show()
             if is_tor and t.status == T.DOWNLOADING and not getattr(t, "gid", None):
-                # honest about WHY it is empty rather than implying no peers
+                # Honest about WHY it is empty rather than implying no peers.
+                # No gid means this download is not on the shared daemon, but
+                # that has two very different causes, and telling someone to
+                # switch on a setting they already switched on reads as broken.
                 self.conn_summary.setText("")
-                self.conn_empty.setText(
-                    "Per-peer details need the shared torrent engine.\n"
-                    "Enable it in Settings → Advanced.")
+                if getattr(utils, "TORRENT_RPC", False):
+                    self.conn_empty.setText(
+                        "This download started on the per-torrent engine.\n"
+                        "Pause and resume it to move it onto the shared engine.")
+                else:
+                    self.conn_empty.setText(
+                        "Per-peer details need the shared torrent engine.\n"
+                        "Enable it in Settings → Advanced.")
             elif t.status == T.DOWNLOADING:
                 self.conn_summary.setText("")
                 self.conn_empty.setText("Connecting…")

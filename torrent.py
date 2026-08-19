@@ -46,6 +46,11 @@ RPC_RETRIES = 10
 # thread for minutes. Force Recheck therefore paused itself almost immediately
 # and then errored, which is exactly what a "recheck does nothing" looks like.
 RPC_RETRY_GRACE = 300.0
+# aria2 states that mean "this entry is a finished record, not a download".
+# "complete" is deliberately NOT here: re-attaching to a completed torrent
+# correctly reports it complete, whereas clearing it would restart a finished
+# download.
+_DEAD_RPC = ("error", "removed")
 # A torrent has to earn its queue slot. After this long with NO peers and NO new
 # bytes, it hands the slot back so healthy torrents behind it can run: with a
 # concurrency of 1, one dead swarm otherwise blocks the whole list forever.
@@ -613,6 +618,22 @@ class TorrentDownloader:
     def _build_cmd(self, exe, out_dir):
         # a file:// URI is not something aria2 can be handed as a path
         src = local_torrent_path(self.t.url)
+        # ...and a .torrent the user has since deleted from their Downloads
+        # folder is not something aria2 can be handed either: it rejects the
+        # stale path with "Unrecognized URI or unsupported protocol" and the
+        # torrent can never be started again. _torrent_file() keeps our own copy
+        # keyed by infohash and falls back to it. Only the RPC engine used to
+        # call it, so the same torrent worked there and failed here.
+        if is_torrent(self.t.url):
+            src = self._torrent_file()
+            if not src:
+                # Say what actually happened. Handing aria2 the stale path got
+                # "Unrecognized URI or unsupported protocol: C:\...\x.torrent",
+                # which reads like a bug in the app rather than a missing file.
+                raise FileNotFoundError(
+                    "the .torrent file is gone from "
+                    f"{local_torrent_path(self.t.url)} — re-add the torrent "
+                    "(or use its magnet link) to download it again")
         all_trackers = list(PUBLIC_TRACKERS)
         if is_magnet(src):
             all_trackers.extend([t for t in magnet_trackers(src) if t not in all_trackers])
@@ -714,9 +735,19 @@ class TorrentDownloader:
             self.t.filename = "torrent"
 
         self._started = time.time()           # used by the save_path fallback
+        # Built OUTSIDE the Popen try on purpose: a missing .torrent and a
+        # missing aria2c.exe both raise FileNotFoundError, and reporting one as
+        # the other sends the user looking in entirely the wrong place.
+        try:
+            cmd = self._build_cmd(exe, out_dir)
+        except FileNotFoundError as e:
+            self.t.status = T.ERROR
+            self.t.error = str(e)
+            log.warning("torrent source missing for %s: %s", self.t.filename, e)
+            return
         try:
             self._proc = subprocess.Popen(
-                self._build_cmd(exe, out_dir),
+                cmd,
                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                 text=True, bufsize=1,
                 # Its own process group, so _stop can send it a CTRL_BREAK
@@ -1109,15 +1140,30 @@ class TorrentDownloader:
         """Unregister this torrent from the daemon so the next add is a real
         add, with the options we are about to pass, rather than a re-attach to
         whatever it was started with."""
-        gid = self._rpc_find_existing(d)
+        gid = self._rpc_find_existing(d, live_only=False)
         if gid:
             self._rpc_remove(d, gid, force=True)
 
-    def _rpc_find_existing(self, d):
-        """The gid the daemon already holds for this torrent, or ''."""
+    def _rpc_find_existing(self, d, live_only=True):
+        """The gid the daemon already holds for this torrent, or ''.
+
+        tellStopped returns download RESULTS — the finished, removed and errored
+        entries aria2 keeps only for reporting. Re-attaching to one of those is
+        never right: aria2.unpause does nothing to a dead result, so the task
+        polled it, read status=error straight back, and failed in under a
+        second. Once a torrent had hit --bt-stop-timeout, every Force Start
+        re-attached to the corpse of the previous attempt and failed instantly,
+        forever. Measured in a real log: 14 failures at 0 minutes elapsed, the
+        same handful of titles over and over.
+
+        So a dead result is cleared instead of re-attached, which also stops the
+        fresh add being refused as "InfoHash ... is already registered".
+        Pass live_only=False when the caller wants to drop ANY registration.
+        """
         want = infohash_for(self.t.url, self.t.filename)
         if not want:
             return ""
+        dead = []
         for method, params in (("aria2.tellActive", ()),
                                ("aria2.tellWaiting", (0, 500)),
                                ("aria2.tellStopped", (0, 500))):
@@ -1126,8 +1172,22 @@ class TorrentDownloader:
             except Exception:
                 continue
             for r in rows:
-                if str(r.get("infoHash") or "").lower() == want:
-                    return r.get("gid") or ""
+                if str(r.get("infoHash") or "").lower() != want:
+                    continue
+                gid = r.get("gid") or ""
+                if not gid:
+                    continue
+                if live_only and str(r.get("status") or "").lower() in _DEAD_RPC:
+                    dead.append(gid)
+                    continue
+                return gid
+        for gid in dead:
+            log.info("clearing a dead daemon entry for %s so it can start fresh",
+                     self.t.filename)
+            try:
+                d.call("aria2.removeDownloadResult", gid)
+            except Exception:
+                pass
         return ""
 
     def _poll_rpc(self, d, gid, out_dir):
@@ -1328,8 +1388,22 @@ class TorrentDownloader:
                                     "or still waking up. Resume to try again.")
                 else:
                     self.t.status = T.ERROR
-                    self.t.error = "torrent failed" + (f": {msg}" if msg else "")
-                log.info("torrent ended (%s): %s", status, self.t.filename)
+                    if msg:
+                        self.t.error = f"torrent failed: {msg}"
+                    else:
+                        # aria2 leaves errorMessage empty when it stops a torrent
+                        # itself, which --bt-stop-timeout does after STALL_TIMEOUT
+                        # seconds of no progress. A bare "torrent failed" told the
+                        # user nothing; measured against a real log every one of
+                        # these had run for almost exactly 30 minutes.
+                        mins = int(STALL_TIMEOUT // 60)
+                        code = str(st.get("errorCode") or "")
+                        self.t.error = (
+                            f"No data received for {mins} minutes — the swarm "
+                            "has no active seeders right now. Resume to try again."
+                            + (f" (aria2 code {code})" if code and code != "0" else ""))
+                log.info("torrent ended (%s): %s%s", status, self.t.filename,
+                         f" errorCode={st.get('errorCode')}" if not msg else "")
                 return top
 
             if self._note_stall(self.t.tor_conns, self.t.downloaded):

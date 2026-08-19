@@ -48,8 +48,9 @@ def test_a_unc_path_survives():
 def test_a_file_uri_torrent_is_found_on_disk(tmp_path, monkeypatch):
     import shutil
     import utils
-    here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    real = os.path.join(here, "08ada5a7a6183aae1e09d831df6748d566095a10.torrent")
+    here = os.path.dirname(os.path.abspath(__file__))
+    real = os.path.join(here, "data",
+                        "08ada5a7a6183aae1e09d831df6748d566095a10.torrent")
     if not os.path.isfile(real):
         pytest.skip("sample torrent absent")
     monkeypatch.setattr(utils, "app_data_dir", lambda: str(tmp_path / "app"))

@@ -7,8 +7,9 @@ import task as T
 import torrent
 from test_aria2d import _FakeDaemon, _drive_with
 
-HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-REAL_TORRENT = os.path.join(HERE, "08ada5a7a6183aae1e09d831df6748d566095a10.torrent")
+HERE = os.path.dirname(os.path.abspath(__file__))
+REAL_TORRENT = os.path.join(HERE, "data",
+                             "08ada5a7a6183aae1e09d831df6748d566095a10.torrent")
 
 
 # ----------------------------------------------------------------- infohash
@@ -145,3 +146,75 @@ def test_a_normal_start_does_not_drop_anything(tmp_path, monkeypatch):
     ])
     _drive_with(tmp_path, monkeypatch, daemon)
     assert not any(m == "aria2.forceRemove" for m, _ in daemon.calls)
+
+
+# --- a dead daemon entry must never be re-attached to -----------------------
+# Real failure: once a torrent hit --bt-stop-timeout aria2 kept it in
+# tellStopped with status="error". Every Force Start then found that gid,
+# "re-attached", unpaused a corpse, read status=error straight back and failed
+# in under a second — 14 such 0-minute failures in one real log.
+
+class _DeadDaemon:
+    """tellStopped holds an errored entry for our infohash."""
+
+    def __init__(self, status="error"):
+        self.status = status
+        self.removed = []
+        self.added = False
+
+    def call(self, method, *a):
+        if method == "aria2.tellActive":
+            return []
+        if method == "aria2.tellWaiting":
+            return []
+        if method == "aria2.tellStopped":
+            if any(g == "deadgid" for g in self.removed):
+                return []
+            return [{"gid": "deadgid", "infoHash": "a" * 40, "status": self.status}]
+        if method == "aria2.removeDownloadResult":
+            self.removed.append(a[0])
+            return "OK"
+        if method == "aria2.unpause":
+            raise AssertionError("must not unpause a dead download result")
+        raise AssertionError("unexpected call " + method)
+
+
+def _magnet_td(tmp_path):
+    t = T.DownloadTask("magnet:?xt=urn:btih:" + "a" * 40, str(tmp_path / "out"))
+    return torrent.TorrentDownloader(t)
+
+
+def test_errored_entry_is_not_reattached(tmp_path):
+    td = _magnet_td(tmp_path)
+    d = _DeadDaemon("error")
+    assert td._rpc_find_existing(d) == "", \
+        "re-attached to an errored download result — Force Start fails instantly"
+    assert "deadgid" in d.removed, \
+        "the dead result must be cleared or the re-add is refused as a duplicate"
+
+
+def test_a_live_entry_is_still_reattached(tmp_path):
+    td = _magnet_td(tmp_path)
+
+    class _Live(_DeadDaemon):
+        def call(self, method, *a):
+            if method == "aria2.tellActive":
+                return [{"gid": "livegid", "infoHash": "a" * 40, "status": "active"}]
+            return super().call(method, *a)
+
+    assert td._rpc_find_existing(_Live()) == "livegid"
+
+
+def test_a_completed_entry_is_still_reattached(tmp_path):
+    """Clearing a finished torrent would restart a download that is done."""
+    td = _magnet_td(tmp_path)
+    d = _DeadDaemon("complete")
+    assert td._rpc_find_existing(d) == "deadgid"
+    assert d.removed == []
+
+
+def test_drop_existing_still_sees_dead_entries(tmp_path):
+    """_rpc_drop_existing wants ANY registration, dead ones included."""
+    td = _magnet_td(tmp_path)
+    d = _DeadDaemon("error")
+    assert td._rpc_find_existing(d, live_only=False) == "deadgid"
