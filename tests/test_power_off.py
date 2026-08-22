@@ -85,13 +85,27 @@ def test_closing_the_window_is_a_cancel(monkeypatch):
     assert fired == []
 
 
+def _watch_fire(monkeypatch):
+    """Record power-command launches without running one.
+
+    power_command() returns None off Windows, so patching only Popen made these
+    pass vacuously on Linux — including the cancel test, whose whole job is to
+    prove the machine stays on. Stub the command too: the countdown logic being
+    tested here is platform-independent, and only the command itself is not.
+    """
+    fired = []
+    monkeypatch.setattr("gui2.dialogs.shutdown.power_command",
+                        lambda action: ["_stub_power_command", action])
+    monkeypatch.setattr("gui2.dialogs.shutdown.subprocess.Popen",
+                        lambda *a, **k: fired.append(a))
+    return fired
+
+
 def test_a_cancelled_countdown_cannot_fire_later(monkeypatch):
     """A timer tick arriving after the cancel must not resurrect it."""
     app = _app()
     host = QWidget()
-    fired = []
-    monkeypatch.setattr("gui2.dialogs.shutdown.subprocess.Popen",
-                        lambda *a, **k: fired.append(a))
+    fired = _watch_fire(monkeypatch)
     dlg = ShutdownDialog(host, action="Shut down", seconds=1)
     dlg.reject()
     dlg._tick()
@@ -103,9 +117,7 @@ def test_a_cancelled_countdown_cannot_fire_later(monkeypatch):
 def test_it_does_fire_when_the_countdown_runs_out(monkeypatch):
     app = _app()
     host = QWidget()
-    fired = []
-    monkeypatch.setattr("gui2.dialogs.shutdown.subprocess.Popen",
-                        lambda *a, **k: fired.append(a))
+    fired = _watch_fire(monkeypatch)
     dlg = ShutdownDialog(host, action="Shut down", seconds=0)
     dlg._tick()
     app.processEvents()
@@ -115,9 +127,7 @@ def test_it_does_fire_when_the_countdown_runs_out(monkeypatch):
 def test_it_fires_only_once(monkeypatch):
     app = _app()
     host = QWidget()
-    fired = []
-    monkeypatch.setattr("gui2.dialogs.shutdown.subprocess.Popen",
-                        lambda *a, **k: fired.append(a))
+    fired = _watch_fire(monkeypatch)
     dlg = ShutdownDialog(host, action="Shut down", seconds=0)
     dlg._fire()
     dlg._fire()

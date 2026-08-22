@@ -56,7 +56,10 @@ def test_a_file_uri_torrent_is_found_on_disk(tmp_path, monkeypatch):
     monkeypatch.setattr(utils, "app_data_dir", lambda: str(tmp_path / "app"))
     src = tmp_path / "mine.torrent"
     shutil.copy2(real, src)
-    uri = "file:///" + str(src).replace("\\", "/")
+    # as_uri(), not "file:///" + path: on POSIX the path already starts with a
+    # slash, so the hand-built form produced file:////tmp/... and the extra
+    # slash survived normpath as a leading "//" (POSIX keeps exactly two).
+    uri = src.as_uri()
     t = T.DownloadTask(uri, str(tmp_path / "out"), filename="mine.torrent")
     td = torrent.TorrentDownloader(t)
     assert td._torrent_file() == str(src)

@@ -69,10 +69,24 @@ def test_ext_token():
     assert search.filter_tasks(TASKS, "ext:nope") == []
 
 
+def _today_ts(ago=3600):
+    """An epoch `ago` seconds back, but never earlier than midnight today.
+
+    date:today means "since local midnight", so a plain now-3600 lands on
+    YESTERDAY whenever the suite runs in the first hour after midnight — these
+    tests failed for an hour every night, and CI only ever ran mid-afternoon
+    UTC so it never caught it.
+    """
+    import datetime
+    import time
+    midnight = time.mktime(datetime.date.today().timetuple())
+    return max(midnight + 1, time.time() - ago)
+
+
 def test_date_token():
     import time
     now = time.time()
-    recent = _mk("fresh.zip", 1000, T.PAUSED); recent.added = now - 3600          # 1h ago
+    recent = _mk("fresh.zip", 1000, T.PAUSED); recent.added = _today_ts()          # today
     old = _mk("ancient.zip", 1000, T.PAUSED); old.added = now - 20 * 86400         # 20 days ago
     pool = [recent, old]
     assert names(search.filter_tasks(pool, "date:today")) == ["fresh.zip"]
@@ -83,8 +97,7 @@ def test_date_token():
 
 
 def test_combined_advanced():
-    import time
-    t = _mk("clip.mkv", 2_000_000_000, T.DOWNLOADING); t.added = time.time() - 1800
+    t = _mk("clip.mkv", 2_000_000_000, T.DOWNLOADING); t.added = _today_ts(1800)
     assert names(search.filter_tasks([t], "status:downloading ext:mkv date:today size:>1gb")) == ["clip.mkv"]
 
 

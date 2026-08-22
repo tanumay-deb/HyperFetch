@@ -6,6 +6,7 @@ the lifecycle rules and the status mapping can be asserted directly.
 import io
 import json
 import os
+import sys
 
 import pytest
 
@@ -773,9 +774,17 @@ def test_a_duplicate_that_slips_through_is_followed_not_failed(tmp_path, monkeyp
 
 
 # ------------------------------------------------------------ orphan reaping
+@pytest.mark.skipif(sys.platform != "win32",
+                    reason="Windows path semantics: os.path.normcase only "
+                           "folds case on ntpath, and reaping is win32-only")
 def test_only_our_own_aria2_binary_is_reaped(monkeypatch):
     """The user may have their own aria2 running for something else. Matching
-    on the executable path is what keeps this from touching it."""
+    on the executable path is what keeps this from touching it.
+
+    Faking sys.platform is not enough to run this elsewhere: the assertion
+    turns on 'c:\\app\\BIN' and 'C:\\App\\bin' comparing equal, which needs
+    os.path to BE ntpath. On posixpath normcase is the identity function.
+    """
     ours = os.path.join("C:" + os.sep, "App", "bin", "aria2c.exe")
     monkeypatch.setattr(aria2d, "_aria2c_path", lambda: ours)
     monkeypatch.setattr(aria2d.sys, "platform", "win32")
