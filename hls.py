@@ -31,6 +31,16 @@ TIMEOUT = 20
 SEG_RETRIES = 3
 PARALLEL = 6          # default concurrent segment downloads (overridden by the
                       # app's Max-connections setting when one is configured)
+# Hard ceiling on segment threads, whatever Max-connections says.
+#
+# That setting goes up to 1000 and this is the one place it RAISES a worker
+# count instead of lowering it — every worker being a real OS thread. Measured
+# on a live app with the slider at 1000 and a long playlist: 988 threads and
+# 7.3 GB of private bytes after 40 minutes, almost all of it thread stacks.
+# Past a couple of dozen parallel segment fetches there is nothing to win — the
+# link is already saturated and CDNs start rate-limiting the burst — so the
+# setting stays useful for tuning down without being able to melt the process.
+MAX_PARALLEL = 24
 
 
 def is_hls(url="", filename="", ctype=""):
@@ -353,7 +363,7 @@ class HlsDownloader:
         # parallelism follows the app's Max-connections setting when configured
         # (Settings -> Network), else the built-in default.
         cap = utils.MAX_CONNECTIONS if utils.MAX_CONNECTIONS > 0 else PARALLEL
-        workers = max(1, min(cap, max(1, len(segments))))
+        workers = max(1, min(cap, MAX_PARALLEL, max(1, len(segments))))
         host = urllib.parse.urlparse(base).netloc
         log.info("HLS start host=%s segments=%d parallel=%d%s",
                  host, total, workers, " (resume)" if can_resume else "")

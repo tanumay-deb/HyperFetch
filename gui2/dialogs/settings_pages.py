@@ -174,8 +174,13 @@ class PageBuilderMixin:
         f, g = self._card()
         self.conn_type = self._combo(["Default (Auto)", "Direct", "System Proxy"], ex.get("connection_type"))
         self._row(g, "Connection Type", "Select your internet connection type", self.conn_type)
-        self.max_conn = self._slider(1, 1000, int(ex.get("max_connections", 100) or 100))
-        self._row(g, "Max Connections", "Maximum total connections", self.max_conn)
+        # Capped at 64, not 1000. Each connection is a real OS thread, and the
+        # old range let the slider ask for a thousand of them — measured at 988
+        # threads and 7.3 GB on a live app. Nothing above a few dozen downloads
+        # any faster; a saved higher value still loads and is simply clamped.
+        self.max_conn = self._slider(1, 64, min(64, int(ex.get("max_connections", 16) or 16)))
+        self._row(g, "Max Connections", "Ceiling on parallel connections per download",
+                  self.max_conn)
         self.listen_port = QSpinBox(); self.listen_port.setRange(1024, 65535)
         self.listen_port.setValue(int(ex.get("listen_port", 56666) or 56666)); self.listen_port.setFixedWidth(130)
         self._row(g, "Listen Port", "Port for incoming (torrent) connections", self.listen_port)
