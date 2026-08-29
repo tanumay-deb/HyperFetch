@@ -62,6 +62,20 @@ STALL_BACKOFF = (120, 300, 900)
 # so calling it on every 0.3s poll would be wasteful on a torrent with hundreds
 # of files; the drawer only redraws twice a second anyway.
 FILES_POLL = 2.0
+# How often each torrent asks the daemon for its status.
+#
+# NOT the same thing as POLL. POLL is how often the loop checks the task's own
+# pause/cancel flags, which is local and free, and it has to stay small to keep
+# those responsive. tellStatus is an RPC round trip, and aria2 answers RPC from
+# the SAME single thread that does metadata lookups and file allocation.
+#
+# At POLL the two were the same, so ten running torrents put ~33 tellStatus
+# calls a second into that one thread. Adding five magnets on top — real work
+# for the same thread — starved it: measured in a live log, all ten torrents
+# timed out (15s each) in the same second and the whole list stalled, then
+# recovered. Polling status ~3x less often removes the congestion without
+# making pause or cancel any slower.
+STATUS_POLL = 1.0
 # aria2 refuses to touch an existing payload that has no .aria2 control file: it
 # cannot tell finished bytes from garbage, so it stops rather than truncate.
 _CTL_MISSING = re.compile(r"control file.*does not exist", re.I)
@@ -1198,6 +1212,11 @@ class TorrentDownloader:
         fail_since = 0.0
         last_files = 0.0
         checked_disk = False
+        # Spread the first status call across the interval. Torrents added
+        # together otherwise poll in lockstep for the rest of their lives and
+        # keep hitting the daemon as one burst instead of a trickle.
+        last_status = 0.0
+        first_delay = (sum(ord(c) for c in str(self.t.id)) % 100) / 100.0 * STATUS_POLL
         while True:
             if self.t.cancel_requested:
                 self._rpc_remove(d, cur, force=True)
@@ -1212,6 +1231,14 @@ class TorrentDownloader:
                 archive_metadata(self.t, out_dir)
                 self.t.status = T.PAUSED
                 return top
+
+            # Pause/cancel above are local flags and stay on the fast POLL beat;
+            # everything below is an RPC round trip, so it runs on STATUS_POLL.
+            now = time.time()
+            if now - last_status < (STATUS_POLL if last_status else first_delay):
+                time.sleep(POLL)
+                continue
+            last_status = now
 
             try:
                 st = d.call("aria2.tellStatus", cur)
@@ -1341,6 +1368,19 @@ class TorrentDownloader:
                     self.t.status = T.COMPLETED
                     self.t.log_event("Seeding")
                     log.info("seeding: %s", self.t.filename)
+                    # Downloading is done, so stop occupying a download slot.
+                    # This loop keeps running (pause, remove and the live upload
+                    # figure all need it) but the queue is free to start what is
+                    # waiting behind us. Without this, torrents that finish with
+                    # no peers seed forever at 0 B/s and block the queue — which
+                    # is what a Force Recheck on five finished torrents did.
+                    release = getattr(self.t, "_release_slot", None)
+                    if release:
+                        try:
+                            release()
+                        except Exception as e:
+                            log.debug("could not release the slot for %s: %s",
+                                      self.t.filename, e)
                 time.sleep(POLL)
                 continue
 

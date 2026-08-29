@@ -356,7 +356,36 @@ class QueueManager:
             threading.Thread(target=self._execute, args=(task, q.name),
                              daemon=True).start()
 
+    def _release_slot(self, task, started_queue):
+        """Give the queue slot back while the worker thread keeps running.
+
+        A seeding torrent has finished downloading — aria2 shares it in the
+        background whether or not we are still polling it — but the poll loop
+        stays alive so pause, remove and the live upload figure keep working.
+        Charging that against the DOWNLOAD concurrency meant a handful of
+        seeding torrents blocked everything queued behind them, with no way out
+        but pausing each one by hand. Reported after a Force Recheck put five
+        finished torrents straight into seeding at once.
+
+        Idempotent, and bound to the queue the slot was actually charged
+        against, so it cannot decrement a different one after a Move to Queue.
+        """
+        with self.cond:
+            if getattr(task, "_slot_released", False):
+                return
+            task._slot_released = True
+            task._torrent_slot_reserved = False
+            q = self.queues.get(started_queue)
+            if q:
+                q.active -= 1
+            self.active -= 1
+            log.info("slot released early for %s (seeding)", task.filename)
+            self.cond.notify_all()
+
     def _execute(self, task, started_queue):
+        task._slot_released = False
+        # the engine calls this when the torrent finishes and starts seeding
+        task._release_slot = lambda: self._release_slot(task, started_queue)
         try:
             if not task.cancel_requested:
                 log.info("start: %s (%s) queue=%s", task.filename, task.id[:8], started_queue)
@@ -395,10 +424,15 @@ class QueueManager:
                 task._torrent_slot_reserved = False
                 if stalled:
                     heapq.heappush(self._heap, task)
-                q = self.queues.get(started_queue)
-                if q:
-                    q.active -= 1
-                self.active -= 1
+                # a seeding torrent already handed its slot back; decrementing
+                # again here would let the queue run over its own limit
+                if not getattr(task, "_slot_released", False):
+                    q = self.queues.get(started_queue)
+                    if q:
+                        q.active -= 1
+                    self.active -= 1
+                task._slot_released = False
+                task._release_slot = None
                 # notify_all (not notify) so a closeEvent's wait_active waiter
                 # always wakes — a single notify can wake the scheduler instead,
                 # leaving wait_active parked until its full timeout fires.

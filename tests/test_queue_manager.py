@@ -369,3 +369,65 @@ def test_torrent_limit_never_exceeds_the_queue_limit(monkeypatch):
     assert QueueManager._torrent_limit(2) == 2
     monkeypatch.setattr(utils, "TORRENT_RPC", True, raising=False)
     assert QueueManager._torrent_limit(2) == 2
+
+
+# --- a seeding torrent must not hold a download slot ------------------------
+# Reported after a Force Recheck: five finished torrents all entered seeding at
+# once. Seeding keeps its worker thread (pause, remove and the live upload
+# figure need it), but downloading is over, so the slot has to go back or
+# everything queued behind them waits forever.
+
+class SeedingDownloader:
+    """Finishes, starts 'seeding', releases its slot, then keeps polling."""
+
+    instances = []
+
+    def __init__(self, task, segments=8):
+        self.t = task
+        SeedingDownloader.instances.append(task)
+
+    def run(self):
+        self.t.status = T.DOWNLOADING
+        time.sleep(0.05)
+        self.t.status = T.COMPLETED
+        self.t.seeding = True
+        rel = getattr(self.t, "_release_slot", None)
+        if rel:
+            rel()                      # what torrent.py does when seeding starts
+        while not (self.t.cancel_requested or self.t.pause_requested):
+            time.sleep(0.02)           # still alive, like a real seeding torrent
+
+
+def test_a_seeding_torrent_does_not_block_the_queue(monkeypatch):
+    monkeypatch.setattr(queue_manager, "Downloader", SeedingDownloader)
+    SeedingDownloader.instances = []
+    q = QueueManager(queues=[{"name": "Main", "max_concurrent": 1}])
+
+    seeder = q.add_task(T.DownloadTask("magnet:?xt=urn:btih:" + "a" * 40, "p_seed"))
+    assert _wait(lambda: getattr(seeder, "seeding", False)), "never reached seeding"
+
+    # with the slot handed back, the next task runs even though the seeder's
+    # thread is still alive and max_concurrent is 1
+    nxt = q.add_task(T.DownloadTask("magnet:?xt=urn:btih:" + "b" * 40, "p_next"))
+    assert _wait(lambda: nxt in SeedingDownloader.instances, timeout=5), (
+        "the seeding torrent still owns the only slot, so nothing else can start")
+
+    seeder.request_pause()
+    nxt.request_pause()
+    q.shutdown()
+
+
+def test_the_slot_is_not_returned_twice(monkeypatch):
+    """A double decrement would let the queue quietly exceed its own limit."""
+    monkeypatch.setattr(queue_manager, "Downloader", SeedingDownloader)
+    SeedingDownloader.instances = []
+    q = QueueManager(queues=[{"name": "Main", "max_concurrent": 2}])
+
+    t = q.add_task(T.DownloadTask("magnet:?xt=urn:btih:" + "c" * 40, "p1"))
+    assert _wait(lambda: getattr(t, "seeding", False))
+    t.request_pause()
+    assert _wait(lambda: q.active == 0, timeout=5), f"active went to {q.active}"
+    assert q.active == 0 and q.queues["Main"].active == 0, (
+        f"slot accounting drifted: active={q.active} "
+        f"main={q.queues['Main'].active}")
+    q.shutdown()

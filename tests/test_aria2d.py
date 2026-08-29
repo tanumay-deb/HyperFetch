@@ -167,6 +167,7 @@ def _task(tmp_path, url="magnet:?xt=urn:btih:abc&dn=Movie"):
 def _drive(tmp_path, monkeypatch, states, task=None):
     monkeypatch.setattr(utils, "app_data_dir", lambda: str(tmp_path))
     monkeypatch.setattr(torrent, "POLL", 0)
+    monkeypatch.setattr(torrent, "STATUS_POLL", 0)
     fake = _FakeDaemon(states)
     monkeypatch.setattr(aria2d, "DAEMON", fake)
     t = task or _task(tmp_path)
@@ -250,6 +251,7 @@ def test_rpc_daemon_loss_leaves_task_resumable(tmp_path, monkeypatch):
     must come back as Paused rather than Error."""
     monkeypatch.setattr(utils, "app_data_dir", lambda: str(tmp_path))
     monkeypatch.setattr(torrent, "POLL", 0)
+    monkeypatch.setattr(torrent, "STATUS_POLL", 0)
     # the give-up budget is a DURATION now, not a retry count — without this the
     # test really does sit here for the full five minutes
     monkeypatch.setattr(torrent, "RPC_RETRY_GRACE", 0.0)
@@ -324,6 +326,7 @@ class _FlakyDaemon(_FakeDaemon):
 def _drive_with(tmp_path, monkeypatch, daemon, task=None):
     monkeypatch.setattr(utils, "app_data_dir", lambda: str(tmp_path))
     monkeypatch.setattr(torrent, "POLL", 0)
+    monkeypatch.setattr(torrent, "STATUS_POLL", 0)
     monkeypatch.setattr(aria2d, "DAEMON", daemon)
     t = task or _task(tmp_path)
     torrent.TorrentDownloader(t)._run_rpc()
@@ -654,6 +657,7 @@ def test_an_unrelated_add_failure_still_fails(tmp_path, monkeypatch):
     with pytest.raises(aria2d.Aria2Error):
         monkeypatch.setattr(utils, "app_data_dir", lambda: str(tmp_path))
         monkeypatch.setattr(torrent, "POLL", 0)
+        monkeypatch.setattr(torrent, "STATUS_POLL", 0)
         monkeypatch.setattr(aria2d, "DAEMON", _Broken([]))
         torrent.TorrentDownloader(t)._run_rpc()
 
