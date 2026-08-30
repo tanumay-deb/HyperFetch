@@ -218,3 +218,84 @@ def test_drop_existing_still_sees_dead_entries(tmp_path):
     td = _magnet_td(tmp_path)
     d = _DeadDaemon("error")
     assert td._rpc_find_existing(d, live_only=False) == "deadgid"
+
+
+# --- a moved payload must not re-attach to the old folder -------------------
+# Reported: a torrent's files were moved from G: to D:, and the task then died
+# with "Write disk cache flush failure index=608". aria2's --dir is fixed at add
+# time, and re-attach matched on infohash alone, so it kept writing to G:.
+
+class _MovedDaemon:
+    """Holds a live entry whose dir is not where the task saves any more."""
+
+    def __init__(self, entry_dir):
+        self.entry_dir = entry_dir
+        self.removed = []
+        self.added = []
+
+    def call(self, method, *a):
+        if method == "aria2.tellActive":
+            return [{"gid": "oldgid", "infoHash": "a" * 40, "status": "active"}]
+        if method in ("aria2.tellWaiting", "aria2.tellStopped"):
+            return []
+        if method == "aria2.tellStatus":
+            return {"dir": self.entry_dir, "status": "active"}
+        if method in ("aria2.forceRemove", "aria2.remove",
+                      "aria2.removeDownloadResult"):
+            self.removed.append(a[0] if a else None)
+            return "OK"
+        if method == "aria2.addUri":
+            self.added.append(a[-1] if a else None)
+            return "newgid"
+        if method == "aria2.unpause":
+            raise AssertionError("re-attached to the entry writing to the old folder")
+        return {}
+
+
+def _moved_td(tmp_path):
+    t = T.DownloadTask("magnet:?xt=urn:btih:" + "a" * 40, str(tmp_path / "out"))
+    return torrent.TorrentDownloader(t)
+
+
+def test_a_moved_payload_is_re_added_not_re_attached(tmp_path):
+    d = _MovedDaemon(entry_dir=r"G:\HF\old")
+    td = _moved_td(tmp_path)
+    gid = td._rpc_add(d, {"dir": str(tmp_path / "new")})
+    assert "oldgid" in d.removed, "kept the registration pointing at the old folder"
+    assert gid == "newgid", f"did not re-add at the new location (got {gid})"
+
+
+def test_an_unmoved_payload_still_re_attaches(tmp_path):
+    """Re-attach is the whole point of the shared daemon; only a real move
+    should cost a re-add."""
+    same = str(tmp_path / "out")
+    d = _MovedDaemon(entry_dir=same)
+    d.call_unpause_ok = True
+
+    class _OK(_MovedDaemon):
+        def call(self, method, *a):
+            if method == "aria2.unpause":
+                return "OK"
+            return super().call(method, *a)
+
+    d = _OK(entry_dir=same)
+    td = _moved_td(tmp_path)
+    gid = td._rpc_add(d, {"dir": same})
+    assert gid == "oldgid", "re-added a torrent that had not moved"
+    assert d.removed == []
+
+
+def test_an_unanswering_daemon_does_not_trigger_a_re_add(tmp_path):
+    """Not knowing the folder is not evidence it changed."""
+    class _Silent(_MovedDaemon):
+        def call(self, method, *a):
+            if method == "aria2.tellStatus":
+                raise RuntimeError("timed out")
+            if method == "aria2.unpause":
+                return "OK"
+            return super().call(method, *a)
+
+    d = _Silent(entry_dir="whatever")
+    td = _moved_td(tmp_path)
+    gid = td._rpc_add(d, {"dir": str(tmp_path / "out")})
+    assert gid == "oldgid" and d.removed == []

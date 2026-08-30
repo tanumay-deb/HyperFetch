@@ -437,3 +437,37 @@ def test_real_failure_still_errors(tmp_path, monkeypatch):
     torrent.TorrentDownloader(t).run()
     assert t.status == T.ERROR
     assert "torrent failed" in t.error
+
+
+# --- a moved payload must not rename the torrent to one of its files --------
+# Reported: a season pack's card read "Pretty Little Liars S02E13 The First
+# Secret.mkv" instead of the season name. The files had been moved to another
+# drive, so relpath() raised and the fallback used the basename of whichever
+# file aria2 happened to report.
+
+def test_a_path_on_another_drive_does_not_rename_the_torrent():
+    top = torrent.TorrentDownloader._top_entry(
+        r"G:\HF\Pretty Little Liars Season 2\S02E13.mkv (12 more)", r"D:\HF")
+    assert top == "", f"renamed the torrent to {top!r} after the payload moved"
+
+
+def test_a_multi_file_torrent_never_resolves_to_a_bare_filename(tmp_path):
+    """'(N more)' says there are several files, so a filename cannot be the
+    top-level entry."""
+    out = str(tmp_path)
+    top = torrent.TorrentDownloader._top_entry(
+        os.path.join(out, "Episode.mkv") + " (12 more)", out)
+    assert top == ""
+
+
+def test_the_normal_multi_file_case_still_resolves(tmp_path):
+    out = str(tmp_path)
+    top = torrent.TorrentDownloader._top_entry(
+        os.path.join(out, "Season 2", "S02E13.mkv") + " (12 more)", out)
+    assert top == "Season 2"
+
+
+def test_a_single_file_torrent_still_resolves(tmp_path):
+    out = str(tmp_path)
+    top = torrent.TorrentDownloader._top_entry(os.path.join(out, "Movie.mkv"), out)
+    assert top == "Movie.mkv"

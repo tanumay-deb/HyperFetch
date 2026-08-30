@@ -143,6 +143,48 @@ def preference_opts():
     return opts
 
 
+def explain_failure(msg, save_path=""):
+    """Turn an aria2 failure into something the user can act on.
+
+    aria2's disk errors name an internal piece index and nothing else — the
+    card read "torrent failed: Write disk cache flush failure index=608", which
+    does not say that the download folder had been moved to another drive. The
+    folder is the thing to look at, so look at it and say what is actually
+    wrong. Returns '' when there is nothing better to say than aria2's text.
+    """
+    low = (msg or "").lower()
+    disk = ("disk cache flush" in low or "file write failure" in low
+            or "no space" in low or "cannot write" in low
+            or "disk full" in low)
+    if not disk:
+        return ""
+    folder = os.path.dirname(save_path or "") or ""
+    if not folder:
+        return ""
+    if not os.path.isdir(folder):
+        return (f"The download folder is gone — {folder} no longer exists. "
+                "It was moved, renamed, or its drive is disconnected. Put it "
+                "back or re-add the torrent, then Resume.")
+    try:
+        free = shutil.disk_usage(folder).free
+    except OSError:
+        free = None
+    # Only call it full when the measurement agrees, or when there is no
+    # measurement to contradict it. aria2 reports "disk full" for a quota or a
+    # per-file limit too, and "is full (271 GB free)" helps nobody.
+    if free is not None:
+        if free < 512 * 1024 * 1024:
+            return (f"The drive holding {folder} is full ({_mib(free)} free). "
+                    "Free some space, then Resume.")
+    elif "no space" in low or "disk full" in low:
+        return (f"The drive holding {folder} is full. Free some space, then "
+                "Resume.")
+    # Nothing specific found, so keep aria2's own words rather than replacing a
+    # vague message with a differently vague one — it is the only clue left.
+    return (f"Could not write to {folder} — {msg}. Check the folder still "
+            "exists and is writable, then Resume.")
+
+
 def _mib(n):
     """Short human size for engine-side error text (gui.theme is GUI-only)."""
     for unit, step in (("GB", 1 << 30), ("MB", 1 << 20), ("KB", 1 << 10)):
@@ -914,8 +956,10 @@ class TorrentDownloader:
         else:
             self.t.status = T.ERROR
             msg = " | ".join(tail[-3:])
-            self.t.error = "torrent failed" + (f": {msg}" if msg
-                                               else f" (aria2 exit {self._proc.returncode})")
+            self.t.error = (explain_failure(msg, self.t.save_path)
+                            or "torrent failed"
+                            + (f": {msg}" if msg
+                               else f" (aria2 exit {self._proc.returncode})"))
             log.warning("torrent failed: %s — %s", self.t.filename, self.t.error)
 
     # ------------------------------------------------------------- RPC engine
@@ -1081,6 +1125,14 @@ class TorrentDownloader:
         # therefore never fires, and the dead duplicate is what the task ends up
         # polling, which is how Resume and Force Recheck both landed in Error.
         existing = self._rpc_find_existing(d) if reattach else ""
+        if existing and not self._entry_dir_matches(d, existing, opts):
+            # The payload has moved since this entry was registered. aria2's
+            # --dir is fixed at add time, so re-attaching would keep writing to
+            # the OLD folder — and if that folder is gone the download dies with
+            # "Write disk cache flush failure", which says nothing about the
+            # move that caused it. Drop it and add again at the new location.
+            self._rpc_remove(d, existing, force=True)
+            existing = ""
         if existing:
             log.info("torrent already in the daemon, re-attaching: %s",
                      self.t.filename)
@@ -1149,6 +1201,30 @@ class TorrentDownloader:
                          "for %s", self.t.filename)
                 return keep
         return ""
+
+    def _entry_dir_matches(self, d, gid, opts):
+        """True when the daemon entry writes where this task now saves.
+
+        Unknown counts as a match: a daemon that will not answer is not
+        evidence that the folder changed, and dropping a healthy registration
+        on that basis would restart a download for no reason.
+        """
+        want = ((opts or {}).get("dir") or "").strip()
+        if not want:
+            return True
+        try:
+            have = str((d.call("aria2.tellStatus", gid) or {}).get("dir") or "")
+        except Exception:
+            return True
+        if not have:
+            return True
+        same = (os.path.normcase(os.path.abspath(have))
+                == os.path.normcase(os.path.abspath(want)))
+        if not same:
+            log.info("daemon entry for %s still writes to %s but the task now "
+                     "saves to %s — re-adding rather than re-attaching",
+                     self.t.filename, have, want)
+        return same
 
     def _rpc_drop_existing(self, d):
         """Unregister this torrent from the daemon so the next add is a real
@@ -1244,6 +1320,14 @@ class TorrentDownloader:
                 st = d.call("aria2.tellStatus", cur)
                 fails = 0
             except Exception as e:
+                # We no longer know how the swarm looks, so stop presenting the
+                # last reading as if it were current. A busy daemon left these
+                # standing for minutes: the sidebar showed "8 peers" while the
+                # daemon actually reported 1, because every task kept summing a
+                # count from its last successful poll.
+                self.t.tor_conns = 0
+                self.t.tor_seeds = 0
+                self.t.tor_upload = 0
                 if "is not found" in str(e):
                     # The daemon was replaced under us, so our gid died with it.
                     # Nothing is wrong with the download itself — the bytes and
@@ -1429,7 +1513,8 @@ class TorrentDownloader:
                 else:
                     self.t.status = T.ERROR
                     if msg:
-                        self.t.error = f"torrent failed: {msg}"
+                        self.t.error = (explain_failure(msg, self.t.save_path)
+                                        or f"torrent failed: {msg}")
                     else:
                         # aria2 leaves errorMessage empty when it stops a torrent
                         # itself, which --bt-stop-timeout does after STALL_TIMEOUT
@@ -1465,17 +1550,28 @@ class TorrentDownloader:
     def _top_entry(path, out_dir):
         """Top-level entry name under out_dir from an aria2 'FILE:' line value
         like ' C:/dir/TorrentName/sub/file.ext (12 more)'. '' if unresolved."""
-        path = re.sub(r"\s*\(\d+\s*more\)\s*$", "", path or "", flags=re.I)
+        raw = path or ""
+        multi = bool(re.search(r"\(\d+\s*more\)\s*$", raw, flags=re.I))
+        path = re.sub(r"\s*\(\d+\s*more\)\s*$", "", raw, flags=re.I)
         path = path.strip().strip('"')
         if not path:
             return ""
+        # Unresolvable means unknown, NOT "use the file's own name". aria2
+        # reports a path on the drive it was added against, so after the payload
+        # is moved to another drive relpath raises and the basename is one
+        # EPISODE of a season pack — which then replaced the torrent's real name
+        # on the card. Returning '' leaves the existing name alone.
         try:
             rel = os.path.relpath(path, out_dir)
         except ValueError:                         # different drive, etc.
-            return os.path.basename(path.rstrip("/\\"))
+            return ""
         first = rel.replace("\\", "/").split("/")[0]
         if first in ("", ".", ".."):
-            return os.path.basename(path.rstrip("/\\"))
+            return ""
+        # "(N more)" is aria2 telling us this torrent has several files, so a
+        # bare filename cannot be the top-level entry.
+        if multi and first == os.path.basename(path.rstrip("/\\")):
+            return ""
         return first
 
     def _resolve_save_path(self, out_dir, top):
