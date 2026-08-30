@@ -168,6 +168,7 @@ class DownloadTask:
         # off disk, so without this the UI shows nothing moving for minutes.
         self.verifying = False
         self.verified_pct = 0
+        self.verified_bytes = 0
         # Torrent infohash, once known. Persisted: it is how a .torrent task
         # finds our archived copy after the user's original file has moved or
         # been deleted.

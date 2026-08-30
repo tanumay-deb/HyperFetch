@@ -93,7 +93,9 @@ def test_verification_is_reported_while_it_runs(tmp_path, monkeypatch):
     assert t.verifying is False               # cleared once it finished
 
 
-def test_the_card_says_it_is_verifying():
+def test_the_card_says_it_is_rechecking_with_progress():
+    """A recheck reads the whole payload, so it has to be seen counting up —
+    "verifying" with no numbers looks exactly like a hang."""
     QApplication.instance() or QApplication([])
     from gui2.download_card import DownloadCardWidget
     t = T.DownloadTask("magnet:?xt=urn:btih:abc", "C:/dl/x", filename="x",
@@ -101,7 +103,9 @@ def test_the_card_says_it_is_verifying():
     t.status = T.DOWNLOADING
     t.verifying = True
     t.verified_pct = 42
+    t.verified_bytes = 420
     card = DownloadCardWidget(t, 1)
     card.update_task(t, 0.0)
-    assert "Verifying" in card.sub.text()
+    assert "Recheck" in card.sub.text()
     assert "42" in card.sub.text()
+

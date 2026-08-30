@@ -368,11 +368,17 @@ class DownloadCardWidget(QFrame):
         self._render_serial(done)
 
         if getattr(t, "verifying", False):
-            # a recheck reads the entire payload; say so, with progress, or it
-            # is indistinguishable from a stuck download
+            # A recheck reads the whole payload off disk and can take minutes.
+            # Show it counting up — a bare "verifying" is indistinguishable
+            # from a hang, which is exactly how it was reported.
             pct = int(getattr(t, "verified_pct", 0) or 0)
-            self.sub.setText(f"Verifying downloaded data…  {pct}%" if pct
-                             else "Verifying downloaded data…")
+            seen = int(getattr(t, "verified_bytes", 0) or 0)
+            total = t.total_size or 0
+            if seen and total:
+                self.sub.setText("Rechecking  •  %s / %s  •  %d%%"
+                                 % (human_size(seen), human_size(total), pct))
+            else:
+                self.sub.setText("Rechecking…")
         elif done and getattr(t, "seeding", False):
             up = human_speed(getattr(t, "tor_upload", 0) or 0)
             bits = ["Seeding"]
@@ -396,7 +402,10 @@ class DownloadCardWidget(QFrame):
             # is talking to peers from one that has found nobody.
             self.sub.setText("Fetching metadata…  •  " + _swarm(t))
         elif t.status == T.ERROR:
-            self.sub.setText(t.error[:70] if t.error else "Failed")
+            # ElideLabel already trims to the width and keeps the FULL text as
+            # its tooltip, so slicing here only threw the rest away — the
+            # tooltip was truncated too, and messages ended mid-sentence.
+            self.sub.setText(t.error or "Failed")
         else:
             parts = [f"{human_size(t.downloaded)} / {human_size(t.total_size)}"]
             if t.status == T.DOWNLOADING:

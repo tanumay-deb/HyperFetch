@@ -1309,6 +1309,7 @@ class TorrentDownloader:
             self.t.verifying = bool(verified or pending)
             self.t.verified_pct = (int(verified * 100 / total)
                                    if (verified and total) else 0)
+            self.t.verified_bytes = verified
             if self.t.verifying and not was:
                 self.t.log_event("Verifying downloaded data")
                 log.info("verifying: %s", self.t.filename)
