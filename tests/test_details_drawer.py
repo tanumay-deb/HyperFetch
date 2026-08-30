@@ -94,3 +94,38 @@ def test_does_not_say_enable_it_when_already_on(tmp_path, monkeypatch):
     assert "Enable it in Settings" not in txt, (
         "told the user to switch on a setting that is already on: " + txt)
     assert "Pause and resume" in txt, "must say how to actually fix it"
+
+
+# --- the GUI must never wait on a busy daemon -------------------------------
+# Reported as the window going "(Not Responding)". _peer_rows runs on the 500ms
+# tick whenever the Connections tab is open, and aria2 answers RPC from the same
+# single thread that does metadata and allocation — so a busy daemon froze the
+# whole app for the full 15s CALL_TIMEOUT.
+
+def test_peer_polling_uses_a_short_timeout(monkeypatch):
+    import aria2d
+    from gui2 import details_drawer as dd
+
+    seen = {}
+
+    class _Daemon:
+        def call(self, method, *a, **kw):
+            seen["method"] = method
+            seen["timeout"] = kw.get("timeout")
+            return []
+
+    monkeypatch.setattr(aria2d, "DAEMON", _Daemon())
+    app = QApplication.instance() or QApplication([])
+    drawer = DetailsDrawer(QWidget())
+    t = T.DownloadTask("magnet:?xt=urn:btih:abc", "C:/dl/x")
+    t.gid = "gid1"
+    drawer._peer_rows(t)
+    app.processEvents()
+
+    assert seen.get("method") == "aria2.getPeers"
+    assert seen.get("timeout") is not None, \
+        "no timeout passed — the GUI can block for the full CALL_TIMEOUT"
+    assert seen["timeout"] <= 3.0, (
+        f"{seen['timeout']}s on the GUI thread is long enough to look like a "
+        "hang; aria2 blocks RPC while it works")
+    assert dd.GUI_RPC_TIMEOUT <= 3.0

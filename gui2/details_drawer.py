@@ -24,6 +24,10 @@ from PySide6.QtGui import QPainter, QPen, QColor, QPainterPath
 import task as T
 import utils
 import torrent as _torrent
+
+# Ceiling on any RPC issued from the GUI thread. Anything slower than this is
+# not worth freezing the window for; the next tick will try again.
+GUI_RPC_TIMEOUT = 1.5
 from gui.theme import human_size, human_speed, fmt_eta, humanize_age
 from gui.icons import themed_icon
 from gui2.palette import COLORS, fpx
@@ -577,7 +581,14 @@ class DetailsDrawer(QFrame):
             return []
         try:
             import aria2d
-            peers = aria2d.DAEMON.call("aria2.getPeers", gid) or []
+            # Short timeout ON PURPOSE: this runs on the GUI thread from the
+            # 500ms tick. aria2 answers RPC from the same single thread that
+            # does metadata and allocation, so a busy daemon would otherwise
+            # freeze the whole window for the full 15s CALL_TIMEOUT — the app
+            # went "(Not Responding)" whenever the Connections tab was open and
+            # the daemon was working. Missing one refresh costs nothing.
+            peers = aria2d.DAEMON.call("aria2.getPeers", gid,
+                                       timeout=GUI_RPC_TIMEOUT) or []
         except Exception:
             return []
         out = []
