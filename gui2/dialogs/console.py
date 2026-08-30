@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (
     QCheckBox, QApplication
 )
 from PySide6.QtGui import QTextCursor
+from PySide6.QtCore import QTimer
 
 import utils
 from gui2.palette import COLORS, DIALOG_MARGIN
@@ -51,13 +52,14 @@ class ConsoleDialog(QDialog):
         foot = QHBoxLayout()
         clear = QPushButton("  Clear"); clear.setIcon(themed_icon("trash", "muted")); clear.clicked.connect(self._clear)
         openf = QPushButton("  Open Folder"); openf.setIcon(themed_icon("open", "text")); openf.clicked.connect(self._open_folder)
-        copy = QPushButton("  Copy"); copy.setIcon(themed_icon("clipboard", "text")); copy.clicked.connect(self._copy)
+        self.copy_btn = QPushButton("  Copy")
+        self.copy_btn.setIcon(themed_icon("clipboard", "text"))
+        self.copy_btn.clicked.connect(self._copy)
         close = QPushButton("Close"); close.setObjectName("primary"); close.clicked.connect(self.accept)
-        foot.addWidget(clear); foot.addWidget(openf); foot.addStretch(); foot.addWidget(copy); foot.addWidget(close)
+        foot.addWidget(clear); foot.addWidget(openf); foot.addStretch(); foot.addWidget(self.copy_btn); foot.addWidget(close)
         v.addLayout(foot)
 
         self._load_all()
-        from PySide6.QtCore import QTimer
         self._timer = QTimer(self); self._timer.timeout.connect(self._tail); self._timer.start(700)
 
     # ---- tailing ----
@@ -91,12 +93,28 @@ class ConsoleDialog(QDialog):
             self._scroll()
 
     def _scroll(self):
-        if self.autoscroll.isChecked():
+        # Never yank the view while the user is holding a selection: the whole
+        # point of selecting a line is to copy it, and scrolling to the bottom
+        # every 700ms made that a race against the log.
+        if self.autoscroll.isChecked() and not self.view.textCursor().hasSelection():
             sb = self.view.verticalScrollBar(); sb.setValue(sb.maximum())
 
     # ---- actions ----
     def _copy(self):
-        QApplication.clipboard().setText(self.view.toPlainText())
+        """Copy the selection, or the whole log when nothing is selected.
+
+        This used to always copy everything, so selecting the one line you
+        cared about and pressing Copy handed you the entire file instead.
+        """
+        cur = self.view.textCursor()
+        text = cur.selectedText() if cur.hasSelection() else self.view.toPlainText()
+        # Qt uses U+2029 (paragraph separator) for newlines inside a selection;
+        # pasted into anything else that shows up as one unbroken line.
+        text = text.replace(" ", "\n")
+        QApplication.clipboard().setText(text)
+        n = len(text.splitlines())
+        self.copy_btn.setText("  Copied %d line%s" % (n, "" if n == 1 else "s"))
+        QTimer.singleShot(1500, lambda: self.copy_btn.setText("  Copy"))
 
     def _clear(self):
         try:
