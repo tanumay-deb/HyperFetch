@@ -82,6 +82,10 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, QW
         self._load_settings()
 
         self.queue = QueueManager(queues=self.queues_config, segments=self.segments)
+        # Resolve magnet names/sizes for tasks that are only queued or paused,
+        # so a queue of magnets is not a list of identical placeholders.
+        self._meta = _torrent.MetadataPrefetcher(lambda: self.queue.tasks)
+        self._meta.start()
         self.pending = deque()
         self._speed = {}              # id -> (last_dl, last_t, bps)
         self._spark = {}              # id -> deque(bps) for the live card sparkline

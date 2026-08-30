@@ -154,6 +154,11 @@ class DownloadTask:
         # torrent "active", so without this a seeding task would sit at 100%
         # looking like it had hung
         self.seeding = False
+        # Metadata prefetch (magnets only). Transient: a fetch is cheap to
+        # repeat and a stale 'failed' must not outlive the session.
+        self.meta_fetching = False
+        self.meta_failed = False
+        self.meta_retry_after = 0.0
         self.tor_upload = 0
         # hash-check in progress (transient). A recheck reads the whole payload
         # off disk, so without this the UI shows nothing moving for minutes.

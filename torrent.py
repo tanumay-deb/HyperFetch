@@ -61,6 +61,22 @@ STALL_BACKOFF = (120, 300, 900)
 # How often to refresh per-file progress. getFiles returns the WHOLE file list,
 # so calling it on every 0.3s poll would be wasteful on a torrent with hundreds
 # of files; the drawer only redraws twice a second anyway.
+
+# ---------------------------------------------------------- metadata prefetch
+# A magnet carries no name, size or file list — those come from the swarm. Until
+# then a queued torrent shows a placeholder and the user cannot tell one row
+# from another. So resolve metadata WITHOUT downloading the payload, for tasks
+# that are only queued or paused.
+#
+# Measured on a real library: engine-start to metadata resolved was 2s at best,
+# 134s median, and one case ran 1h47m. aria2 never gives up on a metadata fetch
+# by itself, so both a concurrency cap and a deadline are required — without the
+# deadline a dead magnet holds a slot forever however large the cap is.
+META_MAX = 4              # concurrent metadata fetches, daemon-wide
+META_TIMEOUT = 60.0       # give up on one torrent after this, then move on
+META_RETRY = 900.0        # and leave it alone for this long before retrying
+META_SCAN = 3.0           # how often to look for new candidates
+
 FILES_POLL = 2.0
 # How often each torrent asks the daemon for its status.
 #
@@ -661,6 +677,186 @@ def parse_peers(line):
 
 class ARIA2_MISSING(RuntimeError):
     pass
+
+
+
+def apply_metadata(task, torrent_path):
+    """Fill in a task's name/size/file list from a .torrent on disk.
+
+    Returns True when something was learned. Never raises: this is a display
+    nicety and must not be able to break a download.
+    """
+    try:
+        rows = parse_torrent_files(torrent_path)
+    except Exception:
+        return False
+    if not rows:
+        return False
+    total = sum(sz for _, sz in rows)
+    top = ""
+    first = rows[0][0].replace("\\", "/")
+    if len(rows) > 1 or "/" in first:
+        top = first.split("/")[0]
+    else:
+        top = first
+    if top and (not task.filename or task.filename.lower() in _PLACEHOLDER_FILENAMES):
+        task.filename = top
+    if total and not task.total_size:
+        task.total_size = total
+    task.file_progress = _file_rows_from_meta(rows)
+    task.meta_failed = False
+    return True
+
+
+_PLACEHOLDER_FILENAMES = ("download.bin", "magnet_.bin", "torrent", "magnet.bin", "")
+
+
+def _file_rows_from_meta(rows):
+    """Files tab rows for a torrent that has not started: names and sizes are
+    known, progress is not."""
+    return [{"path": rel, "length": sz, "completed": 0, "selected": True}
+            for rel, sz in rows]
+
+
+class MetadataPrefetcher:
+    """Resolves magnet metadata for tasks that are only queued or paused.
+
+    Runs one background thread. It adds each magnet to the shared daemon with
+    bt-metadata-only, so aria2 fetches the .torrent and nothing else, then reads
+    the saved file and drops the entry. No queue slot is used and no payload is
+    written.
+    """
+
+    def __init__(self, tasks_fn):
+        self._tasks_fn = tasks_fn
+        self._stop = threading.Event()
+        self._thread = None
+        self._active = {}                  # task id -> (gid, started_at)
+
+    def start(self):
+        if self._thread:
+            return
+        self._thread = threading.Thread(target=self._loop, daemon=True,
+                                        name="metadata-prefetch")
+        self._thread.start()
+
+    def stop(self):
+        self._stop.set()
+
+    # ---- internals ----
+    def _candidates(self):
+        now = time.time()
+        out = []
+        for t in list(self._tasks_fn() or []):
+            if getattr(t, "id", None) in self._active:
+                continue
+            if t.status not in (T.QUEUED, T.PAUSED, T.SCHEDULED):
+                continue
+            if not is_torrent_task(t.url, t.filename):
+                continue
+            if t.total_size:                       # already known
+                continue
+            if now < float(getattr(t, "meta_retry_after", 0) or 0):
+                continue
+            out.append(t)
+        return out
+
+    def _loop(self):
+        while not self._stop.wait(META_SCAN):
+            try:
+                self._tick()
+            except Exception as e:
+                log.debug("metadata prefetch tick failed: %s", e)
+
+    def _tick(self):
+        self._reap()
+        if not getattr(utils, "TORRENT_RPC", False):
+            return                                  # daemon-only feature
+        free = META_MAX - len(self._active)
+        if free <= 0:
+            return
+        for t in self._candidates()[:free]:
+            self._begin(t)
+
+    def _begin(self, t):
+        # a .torrent already on disk needs no swarm at all
+        if is_torrent(t.url):
+            local = local_torrent_path(t.url)
+            if local and os.path.isfile(local) and apply_metadata(t, local):
+                log.info("metadata read from the .torrent file: %s", t.filename)
+                return
+        ih = magnet_infohash(t.url or "") or getattr(t, "infohash", "")
+        if ih:
+            cached = os.path.join(metadata_dir(), ih + ".torrent")
+            if os.path.isfile(cached) and apply_metadata(t, cached):
+                log.info("metadata already saved for %s", t.filename)
+                return
+        try:
+            import aria2d
+            d = aria2d.DAEMON
+            if not d.ensure():
+                return
+            gid = d.call("aria2.addUri", [t.url], {
+                "dir": metadata_dir(),
+                "bt-metadata-only": "true",
+                "bt-save-metadata": "true",
+            })
+        except Exception as e:
+            log.debug("metadata prefetch could not start for %s: %s", t.filename, e)
+            return
+        t.meta_fetching = True
+        self._active[t.id] = (gid, time.time())
+        log.info("fetching metadata for %s", t.filename or t.url[:60])
+
+    def _reap(self):
+        if not self._active:
+            return
+        try:
+            import aria2d
+            d = aria2d.DAEMON
+        except Exception:
+            return
+        now = time.time()
+        for t in list(self._tasks_fn() or []):
+            entry = self._active.get(getattr(t, "id", None))
+            if not entry:
+                continue
+            gid, started = entry
+            done = False
+            try:
+                st = d.call("aria2.tellStatus", gid) or {}
+            except Exception:
+                st = {}
+            ih = (st.get("infoHash") or magnet_infohash(t.url or "") or "").lower()
+            if ih:
+                saved = os.path.join(metadata_dir(), ih + ".torrent")
+                if os.path.isfile(saved) and apply_metadata(t, saved):
+                    log.info("metadata resolved: %s", t.filename)
+                    done = True
+            if not done and now - started >= META_TIMEOUT:
+                # Say so on the card rather than leaving it looking busy, and
+                # get out of the way so the next torrent can try.
+                t.meta_failed = True
+                t.meta_retry_after = now + META_RETRY
+                log.info("gave up fetching metadata for %s after %.0fs",
+                         t.filename or t.url[:60], META_TIMEOUT)
+                done = True
+            if done:
+                t.meta_fetching = False
+                self._active.pop(t.id, None)
+                try:
+                    self._drop(d, gid)
+                except Exception:
+                    pass
+
+    @staticmethod
+    def _drop(d, gid):
+        for method in ("aria2.forceRemove", "aria2.removeDownloadResult"):
+            try:
+                d.call(method, gid)
+            except Exception:
+                pass
+
 
 
 class TorrentDownloader:

@@ -21,6 +21,7 @@ import torrent as _torrent
 from gui.theme import human_size, human_speed, fmt_eta, humanize_age
 from gui.icons import themed_icon
 from gui2.palette import COLORS, fpx
+from gui2.graphing import moving_avg, smooth_path
 
 
 def _swarm(t):
@@ -34,7 +35,6 @@ def _swarm(t):
     p = int(getattr(t, "tor_conns", 0) or 0)
     s = int(getattr(t, "tor_seeds", 0) or 0)
     return f"{p} peer{'' if p == 1 else 's'} · {s} seed{'' if s == 1 else 's'}"
-from gui2.graphing import moving_avg, smooth_path
 
 _CAT_ICON = {
     "Video": ("video", "#FF80AB"), "Music": ("music", "#FF8A80"), "Compressed": ("archive", "#B388FF"),
@@ -384,6 +384,12 @@ class DownloadCardWidget(QFrame):
             age = humanize_age(getattr(t, "added", 0))
             self.sub.setText(f"Completed  •  {human_size(t.total_size or t.downloaded)}"
                              + (f"  •  {age}" if age else ""))
+        elif is_tor and not t.total_size and getattr(t, "meta_failed", False):
+            # Tried and could not reach the swarm. Saying so beats a row that
+            # looks busy forever; it retries on its own later.
+            self.sub.setText("Couldn't fetch details  •  " + _swarm(t))
+        elif is_tor and not t.total_size and getattr(t, "meta_fetching", False):
+            self.sub.setText("Fetching details…  •  " + _swarm(t))
         elif is_tor and t.status == T.DOWNLOADING and not t.total_size:
             # Peers matter most here: fetching metadata IS a swarm operation, and
             # "Fetching metadata…" on its own gives no way to tell a torrent that
