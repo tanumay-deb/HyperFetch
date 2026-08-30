@@ -45,93 +45,22 @@ def test_preview_priority_is_opt_in(monkeypatch):
         monkeypatch, TORRENT_PREVIEW=True)
 
 
-def test_both_engines_get_the_same_preferences(monkeypatch):
-    """A setting that works on one engine and silently does nothing on the
-    other is worse than not having it."""
+def test_settings_reach_the_daemon(monkeypatch):
+    """Every torrent setting has to turn into an aria2 flag. One that
+    persists but never reaches the engine looks like it works.
+
+    (Was a parity check across two engines; the per-torrent-process engine
+    has been removed, so only the daemon is left to assert.)
+    """
     monkeypatch.setattr(utils, "SEED_ENABLED", True, raising=False)
     monkeypatch.setattr(utils, "SEED_RATIO", 2.5, raising=False)
     monkeypatch.setattr(utils, "TORRENT_PREVIEW", True, raising=False)
 
     d = aria2d.Aria2Daemon()
     d.port, d.secret = 6800, "s"
-    daemon_opts = d._options()
-
-    t = torrent.TorrentDownloader.__new__(torrent.TorrentDownloader)
-    t.t = type("T", (), {"url": "magnet:?xt=urn:btih:abc"})()
-    legacy = t._build_cmd("aria2c.exe", ".")
-
+    opts = d._options()
     for flag in ("--seed-ratio=2.5", "--bt-prioritize-piece=head,tail"):
-        assert flag in daemon_opts, f"daemon missing {flag}"
-        assert flag in legacy, f"legacy engine missing {flag}"
-
-
-@pytest.mark.skipif(sys.platform != "win32", reason="CTRL_BREAK is Windows-only")
-def test_legacy_stop_asks_before_it_forces(monkeypatch):
-    """TerminateProcess gives aria2 no chance to write its DHT routing table —
-    measured: after a terminate() dht.dat was gone, after a CTRL_BREAK it was
-    written. So ask first, and only force a process that ignores the request."""
-    import signal as _signal
-    calls = []
-
-    class P:
-        def send_signal(self, sig):
-            calls.append(("signal", sig))
-
-        def wait(self, timeout=None):
-            calls.append(("wait", timeout))
-            return 0
-
-        def terminate(self):
-            calls.append(("terminate", None))
-
-        def kill(self):
-            calls.append(("kill", None))
-
-    td = torrent.TorrentDownloader.__new__(torrent.TorrentDownloader)
-    td._proc = P()
-    td._stop()
-    assert calls[0] == ("signal", _signal.CTRL_BREAK_EVENT)
-    assert not any(c[0] in ("terminate", "kill") for c in calls)
-
-
-@pytest.mark.skipif(sys.platform != "win32", reason="CTRL_BREAK is Windows-only")
-def test_a_process_that_ignores_the_break_is_still_forced(monkeypatch):
-    calls = []
-
-    class P:
-        def __init__(self):
-            self.n = 0
-
-        def send_signal(self, sig):
-            calls.append("signal")
-
-        def wait(self, timeout=None):
-            self.n += 1
-            if self.n == 1:
-                raise subprocess.TimeoutExpired("aria2c", timeout)
-            return 0
-
-        def terminate(self):
-            calls.append("terminate")
-
-        def kill(self):
-            calls.append("kill")
-
-    td = torrent.TorrentDownloader.__new__(torrent.TorrentDownloader)
-    td._proc = P()
-    td._stop()
-    assert calls == ["signal", "terminate"]
-
-
-@pytest.mark.skipif(sys.platform != "win32", reason="Windows process groups")
-def test_aria2_runs_in_its_own_process_group():
-    """Without this the CTRL_BREAK would also hit HyperFetch itself."""
-    assert hasattr(subprocess, "CREATE_NEW_PROCESS_GROUP")
-    src = (torrent.__file__)
-    with open(src, encoding="utf-8") as f:
-        text = f.read()
-    assert "CREATE_NEW_PROCESS_GROUP" in text
-
+        assert flag in opts, f"daemon missing {flag}"
 
 def test_settings_reach_the_engine(tmp_path, monkeypatch):
     """End to end: what the dialog saves must turn into aria2 flags. A setting
@@ -196,13 +125,9 @@ def test_preallocation_off_allocates_nothing(monkeypatch):
     assert torrent.allocation_opt() == "--file-allocation=none"
 
 
-def test_both_engines_use_the_same_allocation(monkeypatch):
+def test_the_daemon_uses_the_allocation_setting(monkeypatch):
     monkeypatch.setattr(utils, "PREALLOCATE", True, raising=False)
     d = aria2d.Aria2Daemon()
     d.port, d.secret = 6800, "s"
     assert torrent.allocation_opt() in d._options()
 
-    td = torrent.TorrentDownloader.__new__(torrent.TorrentDownloader)
-    td.t = type("T", (), {"url": "magnet:?xt=urn:btih:abc",
-                          "force_recheck": False})()
-    assert torrent.allocation_opt() in td._build_cmd("aria2c.exe", ".")

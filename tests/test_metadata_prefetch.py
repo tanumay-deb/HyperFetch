@@ -44,7 +44,6 @@ class _Daemon:
 @pytest.fixture
 def env(tmp_path, monkeypatch):
     monkeypatch.setattr(utils, "app_data_dir", lambda: str(tmp_path))
-    monkeypatch.setattr(utils, "TORRENT_RPC", True, raising=False)
     return tmp_path
 
 
@@ -146,8 +145,3 @@ def test_saved_metadata_is_used_without_touching_the_swarm(env, monkeypatch):
     assert t.total_size > 0, "did not apply the saved metadata"
 
 
-def test_nothing_happens_without_the_shared_daemon(env, monkeypatch):
-    monkeypatch.setattr(utils, "TORRENT_RPC", False, raising=False)
-    d = _Daemon()
-    _prefetcher([_magnet()], d, monkeypatch)._tick()
-    assert d.added == []

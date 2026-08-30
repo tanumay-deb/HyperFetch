@@ -216,7 +216,6 @@ class SettingsDialogV2(PageBuilderMixin, QDialog):
             "dns_https": self.dns_https.isChecked(),
             "host_rules": self._host_rules,
             "preallocate": self.preallocate.isChecked(),
-            "torrent_rpc": self.torrent_rpc.isChecked(),
             "torrent_preview": self.torrent_preview.isChecked(),
             "seed_enabled": self.seed_enabled.isChecked(),
             "seed_ratio": self.seed_ratio.value(),

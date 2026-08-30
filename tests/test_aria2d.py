@@ -269,45 +269,36 @@ def test_rpc_daemon_loss_leaves_task_resumable(tmp_path, monkeypatch):
     assert "Resume" in t.error
 
 
-def test_engine_falls_back_when_daemon_unavailable(tmp_path, monkeypatch):
-    """A broken daemon must degrade to the legacy per-task subprocess engine,
-    not fail the download."""
-    monkeypatch.setattr(utils, "TORRENT_RPC", True)
+def test_a_dead_daemon_leaves_the_task_resumable(tmp_path, monkeypatch):
+    """There is no second engine to fall back to any more, so a daemon that
+    cannot be reached must say so and stay resumable — the bytes and the
+    .aria2 control file are still on disk.
+    """
     monkeypatch.setattr(utils, "app_data_dir", lambda: str(tmp_path))
-    monkeypatch.setattr(torrent, "aria2c_path", lambda: "aria2c")
+    monkeypatch.setattr(torrent, "aria2c_path", lambda: "aria2c.exe")
 
-    class _Broken:
+    class _Dead:
         def ensure(self):
-            raise aria2d.Aria2Error("no daemon")
+            raise RuntimeError("daemon did not answer RPC in time")
 
-    monkeypatch.setattr(aria2d, "DAEMON", _Broken())
-
-    used = {"subprocess": False}
-
-    class _P:
-        stdout = iter(())
-        returncode = 0
-        def poll(self): return 0
-        def wait(self, timeout=None): return 0
-        def terminate(self): pass
-        def kill(self): pass
-
-    def fake_popen(*a, **k):
-        used["subprocess"] = True
-        return _P()
-
-    monkeypatch.setattr(torrent.subprocess, "Popen", fake_popen)
-    t = _task(tmp_path)
+    monkeypatch.setattr(aria2d, "DAEMON", _Dead())
+    t = T.DownloadTask("magnet:?xt=urn:btih:abc&dn=Movie",
+                       str(tmp_path / "download.bin"))
     torrent.TorrentDownloader(t).run()
-    assert used["subprocess"] is True          # legacy engine took over
+
+    assert t.status == T.PAUSED, f"ended {t.status}, so the download is stuck"
+    assert "engine" in t.error.lower() and "resume" in t.error.lower(), t.error
+
+def _drive_with(tmp_path, monkeypatch, daemon, task=None):
+    monkeypatch.setattr(utils, "app_data_dir", lambda: str(tmp_path))
+    monkeypatch.setattr(torrent, "POLL", 0)
+    monkeypatch.setattr(torrent, "STATUS_POLL", 0)
+    monkeypatch.setattr(aria2d, "DAEMON", daemon)
+    t = task or _task(tmp_path)
+    torrent.TorrentDownloader(t)._run_rpc()
+    return t
 
 
-def test_rpc_disabled_by_default():
-    """The daemon engine ships off until it has proven itself on real work."""
-    assert utils.TORRENT_RPC is False
-
-
-# ------------------------------------------------- resilience of the RPC poll
 class _FlakyDaemon(_FakeDaemon):
     """Fails the first `misses` tellStatus calls, then behaves normally."""
 
@@ -321,16 +312,6 @@ class _FlakyDaemon(_FakeDaemon):
             self.misses -= 1
             raise aria2d.Aria2Error(self.error)
         return super().call(method, *params, **kw)
-
-
-def _drive_with(tmp_path, monkeypatch, daemon, task=None):
-    monkeypatch.setattr(utils, "app_data_dir", lambda: str(tmp_path))
-    monkeypatch.setattr(torrent, "POLL", 0)
-    monkeypatch.setattr(torrent, "STATUS_POLL", 0)
-    monkeypatch.setattr(aria2d, "DAEMON", daemon)
-    t = task or _task(tmp_path)
-    torrent.TorrentDownloader(t)._run_rpc()
-    return t
 
 
 def test_a_busy_daemon_does_not_pause_a_healthy_download(tmp_path, monkeypatch):
@@ -973,6 +954,63 @@ def test_per_file_progress_keeps_updating_while_seeding(tmp_path, monkeypatch):
          "files": [{"path": payload}]},
     ])
     monkeypatch.setattr(torrent, "FILES_POLL", 0)
-    t = _drive_with(tmp_path, monkeypatch, daemon)
+    # getFiles is on-demand now, so state what this test always assumed: the
+    # Files tab is open. The regression it guards — seeding freezing the
+    # per-file numbers — is only observable while someone is looking.
+    watched = T.DownloadTask("magnet:?xt=urn:btih:abc&dn=Movie",
+                             str(tmp_path / "download.bin"))
+    watched.files_watched = True
+    t = _drive_with(tmp_path, monkeypatch, daemon, task=watched)
     assert calls["n"] > 1, "stopped refreshing the file list once seeding"
     assert t.file_progress[0]["completed"] == 1000, "left a file short of 100%"
+
+
+# --- daemon options -------------------------------------------------------
+# These moved here from test_torrent.py when the per-torrent-process engine was
+# removed. The options are identical and still live: they were only ever asserted
+# against the old _build_cmd, so deleting those tests with the engine would have
+# dropped real coverage of what the daemon is launched with.
+
+def _opts(tmp_path, monkeypatch):
+    monkeypatch.setattr(utils, "app_data_dir", lambda: str(tmp_path))
+    d = aria2d.Aria2Daemon()
+    d.port, d.secret = 6800, "s"
+    return d._options()
+
+
+def test_daemon_gets_dht_bootstrap_nodes(tmp_path, monkeypatch):
+    """aria2 ships no built-in entry point: without these a cold routing table
+    can never join the DHT, so magnets sit at 0 peers forever."""
+    cmd = _opts(tmp_path, monkeypatch)
+    eps = [a for a in cmd if a.startswith("--dht-entry-point=")]
+    assert len(eps) >= 1
+    assert any("router.bittorrent.com:6881" in a for a in eps)
+    assert any(a.startswith("--dht-entry-point6=") for a in cmd)
+
+
+def test_daemon_persists_the_dht_table_in_app_data(tmp_path, monkeypatch):
+    """aria2's default dht.dat directory does not exist, so it failed to save
+    every run and re-bootstrapped the DHT from scratch each time."""
+    cmd = _opts(tmp_path, monkeypatch)
+    paths = [a for a in cmd if a.startswith("--dht-file-path")]
+    assert len(paths) == 2
+    assert all(str(tmp_path) in a for a in paths)
+    assert os.path.isdir(torrent.dht_dir())        # created up front
+
+
+def test_daemon_always_binds_an_explicit_listen_port(tmp_path, monkeypatch):
+    """The port must be explicit so it matches what UPnP forwards."""
+    monkeypatch.setattr(utils, "LISTEN_PORT", 0, raising=False)
+    cmd = _opts(tmp_path, monkeypatch)
+    assert f"--listen-port={torrent.DEFAULT_LISTEN_PORT}" in cmd
+    assert f"--dht-listen-port={torrent.DEFAULT_LISTEN_PORT}" in cmd
+    monkeypatch.setattr(utils, "LISTEN_PORT", 6899, raising=False)
+    assert "--listen-port=6899" in _opts(tmp_path, monkeypatch)
+
+
+def test_daemon_reuses_saved_metadata_and_waits_long_enough(tmp_path, monkeypatch):
+    cmd = _opts(tmp_path, monkeypatch)
+    assert "--bt-load-saved-metadata=true" in cmd
+    assert "--enable-dht6=true" in cmd
+    stall = next(a for a in cmd if a.startswith("--bt-stop-timeout="))
+    assert int(stall.split("=")[1]) >= 900        # the metadata phase shares this timer

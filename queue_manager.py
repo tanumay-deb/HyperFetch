@@ -16,13 +16,6 @@ import torrent as _torrent
 
 log = logging.getLogger("hyperfetch.queue")
 
-# Cap on concurrent torrents under the LEGACY engine only. It spawns one aria2
-# process per torrent, and they all try to bind the same BitTorrent listen port
-# — measured: three concurrent torrents, only two listeners, so the third ran
-# outbound-only with a starved peer set. The shared daemon has no such problem
-# (one process, one port, one DHT table), so it follows the user's own limit
-# instead. See _torrent_limit.
-MAX_ACTIVE_TORRENTS = 3
 
 
 class Queue:
@@ -273,17 +266,17 @@ class QueueManager:
     @staticmethod
     def _torrent_limit(queue_limit):
         """How many torrents may run at once in a queue whose limit is
-        ``queue_limit``.
+        ``queue_limit`` — which is simply the queue limit.
 
-        Under the shared daemon that IS the queue limit: one aria2 process owns
-        one listen port and one DHT table, so concurrent torrents no longer
-        contend for either and there is nothing left for a second, invisible cap
-        to protect. Silently running 3 when the user asked for 5 is just a bug
-        from their side of the screen.
+        There used to be a second, invisible cap of 3 here, because the old
+        per-torrent engine spawned one aria2 process each and they all fought
+        over the same BitTorrent listen port (measured: three torrents, two
+        listeners, the third outbound-only). The shared daemon is one process
+        with one port and one DHT table, so there is nothing left to protect
+        against, and silently running 3 when the user asked for 16 was just a
+        bug from their side of the screen.
         """
-        if getattr(utils, "TORRENT_RPC", False):
-            return queue_limit
-        return min(queue_limit, MAX_ACTIVE_TORRENTS)
+        return queue_limit
 
     def _active_torrent_count(self):
         return sum(bool(getattr(task, "_torrent_slot_reserved", False))

@@ -335,10 +335,6 @@ class PageBuilderMixin:
         self._row(g, "Disk cache", "Improve disk writing performance", self.disk_cache)
         self.preallocate = self._toggle(ex.get("preallocate", False))
         self._row(g, "Pre-allocate disk space", "Reserve the full file size before downloading", self.preallocate)
-        self.torrent_rpc = self._toggle(ex.get("torrent_rpc", False))
-        self._row(g, "Shared torrent engine (beta)",
-                  "One aria2 daemon for all torrents — better peer discovery. "
-                  "Falls back automatically if it can't start.", self.torrent_rpc)
         self.torrent_preview = self._toggle(ex.get("torrent_preview", False))
         self._row(g, "Preview while downloading",
                   "Fetch the start and end of each file first, so a partly "

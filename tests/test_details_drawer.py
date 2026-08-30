@@ -71,8 +71,7 @@ def _tor_task(tmp_path):
     return t
 
 
-def _conn_text(tmp_path, rpc_on, monkeypatch):
-    monkeypatch.setattr(utils, "TORRENT_RPC", rpc_on, raising=False)
+def _conn_text(tmp_path):
     app = QApplication.instance() or QApplication([])
     host = QWidget()
     drawer = DetailsDrawer(host)
@@ -84,23 +83,14 @@ def _conn_text(tmp_path, rpc_on, monkeypatch):
     return d.conn_empty.text()
 
 
-def test_says_enable_it_only_when_it_is_off(tmp_path, monkeypatch):
-    txt = _conn_text(tmp_path, False, monkeypatch)
-    assert "Enable it in Settings" in txt
+def test_no_gid_says_the_engine_has_not_picked_it_up_yet(tmp_path):
+    """There is one engine now, so the old "enable the shared engine" advice
+    is gone. No gid simply means the daemon is not holding this torrent yet.
+    """
+    txt = _conn_text(tmp_path)
+    assert "Enable it in Settings" not in txt, txt
+    assert "Waiting for the torrent engine" in txt, txt
 
-
-def test_does_not_say_enable_it_when_already_on(tmp_path, monkeypatch):
-    txt = _conn_text(tmp_path, True, monkeypatch)
-    assert "Enable it in Settings" not in txt, (
-        "told the user to switch on a setting that is already on: " + txt)
-    assert "Pause and resume" in txt, "must say how to actually fix it"
-
-
-# --- the GUI must never wait on a busy daemon -------------------------------
-# Reported as the window going "(Not Responding)". _peer_rows runs on the 500ms
-# tick whenever the Connections tab is open, and aria2 answers RPC from the same
-# single thread that does metadata and allocation — so a busy daemon froze the
-# whole app for the full 15s CALL_TIMEOUT.
 
 def test_peer_polling_uses_a_short_timeout(monkeypatch):
     import aria2d

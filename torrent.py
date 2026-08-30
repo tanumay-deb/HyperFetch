@@ -19,10 +19,8 @@ import sys
 import time
 import shutil
 import hashlib
-import signal
 import logging
 import threading
-import subprocess
 import urllib.parse
 
 import task as T
@@ -652,34 +650,6 @@ def _to_bytes(num, unit):
         return 0
 
 
-def parse_progress(line):
-    """Return (downloaded_bytes, total_bytes) from an aria2c readout line,
-    or None if the line has no progress figure."""
-    m = _PROG_RE.search(line or "")
-    if not m:
-        return None
-    done = _to_bytes(m.group(1), m.group(2))
-    total = _to_bytes(m.group(3), m.group(4))
-    return done, total
-
-
-# CN = connected peers, SD = seeders in aria2's readout, e.g. "CN:51 SD:13"
-_PEERS_RE = re.compile(r"CN:(\d+).*?SD:(\d+)", re.I)
-
-
-def parse_peers(line):
-    """Return (connected_peers, seeders) from an aria2c readout line, or None."""
-    m = _PEERS_RE.search(line or "")
-    if not m:
-        return None
-    return int(m.group(1)), int(m.group(2))
-
-
-class ARIA2_MISSING(RuntimeError):
-    pass
-
-
-
 def apply_metadata(task, torrent_path):
     """Fill in a task's name/size/file list from a .torrent on disk.
 
@@ -770,8 +740,6 @@ class MetadataPrefetcher:
 
     def _tick(self):
         self._reap()
-        if not getattr(utils, "TORRENT_RPC", False):
-            return                                  # daemon-only feature
         free = META_MAX - len(self._active)
         if free <= 0:
             return
@@ -862,88 +830,9 @@ class MetadataPrefetcher:
 class TorrentDownloader:
     def __init__(self, dtask: "T.DownloadTask"):
         self.t = dtask
-        self._proc = None
         self._gid = None          # aria2 download id, when driven over RPC
         self._stall_since = None  # when this torrent last earned its slot
         self._stall_bytes = -1
-
-    def _build_cmd(self, exe, out_dir):
-        # a file:// URI is not something aria2 can be handed as a path
-        src = local_torrent_path(self.t.url)
-        # ...and a .torrent the user has since deleted from their Downloads
-        # folder is not something aria2 can be handed either: it rejects the
-        # stale path with "Unrecognized URI or unsupported protocol" and the
-        # torrent can never be started again. _torrent_file() keeps our own copy
-        # keyed by infohash and falls back to it. Only the RPC engine used to
-        # call it, so the same torrent worked there and failed here.
-        if is_torrent(self.t.url):
-            src = self._torrent_file()
-            if not src:
-                # Say what actually happened. Handing aria2 the stale path got
-                # "Unrecognized URI or unsupported protocol: C:\...\x.torrent",
-                # which reads like a bug in the app rather than a missing file.
-                raise FileNotFoundError(
-                    "the .torrent file is gone from "
-                    f"{local_torrent_path(self.t.url)} — re-add the torrent "
-                    "(or use its magnet link) to download it again")
-        all_trackers = list(PUBLIC_TRACKERS)
-        if is_magnet(src):
-            all_trackers.extend([t for t in magnet_trackers(src) if t not in all_trackers])
-        
-        cmd = [
-            exe,
-            "--dir", out_dir,
-            *preference_opts(),           # seeding + preview, from Settings
-            *(["--check-integrity=true"] if self._take_recheck() else []),
-            # Stall timeout. Only meaningful once the payload is transferring:
-            # during the metadata phase a magnet legitimately sits at 0 B/s for
-            # minutes while DHT is queried, and a short timeout there is what
-            # turned slow-but-fine magnets into "failed".
-            f"--bt-stop-timeout={STALL_TIMEOUT}",
-            "--summary-interval=1",      # emit a progress readout each second
-            "--console-log-level=warn",
-            "--bt-save-metadata=true",
-            # reuse metadata we already saved: a re-added or resumed magnet then
-            # skips the metadata fetch entirely instead of re-querying the swarm
-            "--bt-load-saved-metadata=true",
-            "--continue=true",           # resume from .aria2 control file
-            # peer discovery — match what desktop torrent clients do so a bare
-            # magnet finds peers via more than DHT alone (the usual reason a
-            # magnet "works in qBittorrent but stalls here").
-            "--enable-dht=true",
-            "--enable-dht6=true",
-            "--enable-peer-exchange=true",
-            "--bt-enable-lpd=true",       # local peer discovery
-            "--bt-max-peers=0",           # unlimited peers
-            "--bt-tracker=" + ",".join(all_trackers),
-            # Persist the DHT routing table so the next run starts with a warm
-            # table instead of bootstrapping from nothing. aria2's default path
-            # is ~/.cache/aria2/dht.dat, whose directory it does NOT create —
-            # it threw "Failed to save DHT routing table" on every run.
-            f"--dht-file-path={os.path.join(dht_dir(), 'dht.dat')}",
-            f"--dht-file-path6={os.path.join(dht_dir(), 'dht6.dat')}",
-        ]
-        # Bootstrap nodes — without these a cold routing table can never join
-        # the DHT, leaving magnets entirely dependent on the trackers above.
-        for host, port in DHT_ENTRY_POINTS:
-            cmd.append(f"--dht-entry-point={host}:{port}")
-        for host, port in DHT_ENTRY_POINTS6:
-            cmd.append(f"--dht-entry-point6={host}:{port}")
-        # --- settings wired from the GUI (Settings -> Network / Advanced) ---
-        # Always bind an explicit port (user's or the default) so it matches the
-        # one UPnP forwards; leaving it unset meant inbound peers had nowhere to
-        # land.
-        port = listen_port()
-        cmd += [f"--listen-port={port}", f"--dht-listen-port={port}"]
-        if not utils.DISK_CACHE:
-            cmd.append("--disk-cache=0")
-        cmd.append(allocation_opt())
-        if utils.PROXIES:
-            purl = utils.PROXIES.get("https") or utils.PROXIES.get("http")
-            if purl:
-                cmd.append(f"--all-proxy={purl}")
-        cmd.append(src)
-        return cmd
 
     def run(self):
         self.t.status = T.DOWNLOADING
@@ -951,212 +840,23 @@ class TorrentDownloader:
         self.t.supports_range = False
         log.info("torrent start: %s", self.t.filename or self.t.url[:80])
 
-        exe = aria2c_path()
-        if not exe:
+        if not aria2c_path():
             self.t.status = T.ERROR
             self.t.error = ("aria2c not found — bundle bin/aria2c.exe or install "
                             "aria2 to download torrents/magnets.")
             return
-
-        # Shared-daemon engine, when enabled. Falls back to the per-task
-        # subprocess below if the daemon cannot be reached, so a broken daemon
-        # degrades to the old behaviour instead of failing the download.
-        if getattr(utils, "TORRENT_RPC", False):
-            try:
-                return self._run_rpc()
-            except Exception as e:
-                log.warning("RPC engine unavailable (%s) — falling back to the "
-                            "per-task subprocess engine", e)
-                if self.t.cancel_requested or self.t.pause_requested:
-                    return
-
-        out_dir = os.path.dirname(self.t.save_path) or "."
         try:
-            os.makedirs(out_dir, exist_ok=True)
-        except OSError as e:
-            self.t.status = T.ERROR
-            self.t.error = f"cannot create folder: {e}"
-            return
-
-        # derive a sane display name: magnet dn= wins; else a junk default
-        # (the raw magnet string, "*.bin", "*.torrent") becomes "torrent".
-        if is_magnet(self.t.url):
-            self.t.filename = magnet_name(self.t.url) or "torrent"
-        elif (not self.t.filename or is_magnet(self.t.filename)
-              or self.t.filename.endswith((".torrent", ".bin"))):
-            self.t.filename = "torrent"
-
-        self._started = time.time()           # used by the save_path fallback
-        # Built OUTSIDE the Popen try on purpose: a missing .torrent and a
-        # missing aria2c.exe both raise FileNotFoundError, and reporting one as
-        # the other sends the user looking in entirely the wrong place.
-        try:
-            cmd = self._build_cmd(exe, out_dir)
-        except FileNotFoundError as e:
-            self.t.status = T.ERROR
-            self.t.error = str(e)
-            log.warning("torrent source missing for %s: %s", self.t.filename, e)
-            return
-        try:
-            self._proc = subprocess.Popen(
-                cmd,
-                stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                text=True, bufsize=1,
-                # Its own process group, so _stop can send it a CTRL_BREAK
-                # without the signal also reaching HyperFetch itself.
-                creationflags=(getattr(subprocess, "CREATE_NO_WINDOW", 0)
-                               | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)))
-        except OSError as e:
-            self.t.status = T.ERROR
-            self.t.error = f"failed to start aria2c: {e}"
-            return
-
-        # The reader parses each readout line AS IT ARRIVES and writes progress
-        # straight onto the task. aria2's --summary-interval prints a 3-line
-        # block per tick (the "[#.. X/Y(%)..]" progress line, then a "FILE:"
-        # line, then a "----" separator), so the old "keep only the latest line
-        # and sample it from the control loop" approach almost always sampled
-        # the FILE:/separator line and missed the progress line entirely —
-        # leaving the task pinned at 0% until completion. Parse in place instead.
-        tail = []
-        seen = {"top": "", "disk": False}
-        self._disk_abort = False
-        # epoch tying this reader to this run: downloader.py builds a fresh
-        # TorrentDownloader on every resume against the SAME task, so an old
-        # reader draining a dying aria2 could clobber the new run's progress.
-        # Each run bumps the task's epoch; a reader only writes while it's still
-        # the current one AND the task is still downloading.
-        gen = getattr(self.t, "_tor_gen", 0) + 1
-        self.t._tor_gen = gen
-        # aria2 always prints this footer/legend on a non-zero exit — it is NOT
-        # a real error, so drop it from the message we surface.
-        FOOTER = ("(OK):", "aria2 will resume", "If there are any errors",
-                  "See '-l'", "Download Results", "Status Legend", "===", "gid ")
-
-        def reader():
-            for ln in self._proc.stdout:
-                if self.t._tor_gen != gen:         # a newer run owns the task now
-                    return
-                prog = parse_progress(ln)
-                if prog is not None:
-                    if self.t.status == T.DOWNLOADING:
-                        done, total = prog
-                        # accept once the real payload is known (a FILE: line was
-                        # seen) or the size is clearly payload-sized — this skips
-                        # the magnet METADATA flash (a few KB at 100%) without
-                        # pinning genuinely small torrents at 0%.
-                        if seen["top"] or total >= 1_000_000:
-                            self.t.downloaded, self.t.total_size = done, total
-                            if not seen["disk"]:
-                                seen["disk"] = True
-                                if self._disk_guard(total, out_dir):
-                                    # _disk_guard has set the status/error; the
-                                    # control loop below tears aria2 down
-                                    self._disk_abort = True
-                                    return
-                        peers = parse_peers(ln)
-                        if peers:
-                            self.t.tor_conns, self.t.tor_seeds = peers
-                    continue
-                s = ln.strip()
-                if s.startswith("FILE:"):
-                    # capture the torrent's real top-level entry so save_path can
-                    # be repointed at the actual download (not the placeholder).
-                    # A magnet's FIRST download is the metadata, whose FILE: line
-                    # is the "[MEMORY][METADATA]<name>" pseudo-entry — not a real
-                    # path. Skip it (without consuming seen["top"]) so the real
-                    # payload FILE: line that follows is the one captured.
-                    val = s[5:].strip()
-                    if "[METADATA]" in val.upper() or "[MEMORY]" in val.upper():
-                        continue
-                    if not seen["top"]:
-                        top = self._top_entry(val, out_dir)
-                        if top:
-                            seen["top"] = top
-                            self.t.filename = top     # real torrent name (matches the on-disk entry)
-                    continue
-                if s and not any(k in s for k in FOOTER):   # keep real errors only
-                    tail.append(s)
-                    if len(tail) > 20:
-                        tail.pop(0)
-
-        rt = threading.Thread(target=reader, daemon=True)
-        rt.start()
-
-        while self._proc.poll() is None:
-            if self.t.cancel_requested or self.t.pause_requested or self._disk_abort:
-                self._stop()
-                break
-            try:
-                self._proc.wait(timeout=POLL)
-            except subprocess.TimeoutExpired:
-                pass
-
-        # stop this run's reader before finalizing so a late buffered line can't
-        # overwrite the final progress / completion state.
-        if self.t._tor_gen == gen:
-            self.t._tor_gen = gen + 1
-        rt.join(timeout=2)
-
-        if self._disk_abort:
-            # status and error already say why; keep the control file so the
-            # partial payload resumes once space has been freed
-            archive_metadata(self.t, out_dir)
-            return
-        if self.t.cancel_requested:
-            # cancelled for good: take the control file and metadata with it
-            # instead of leaving them next to the half-downloaded payload
-            cleanup_artifacts(self.t)
-            self.t.status = T.CANCELLED
-            return
-        if self.t.pause_requested:
-            # a pause KEEPS the .aria2 control file — it is what lets aria2
-            # resume from the partial data — but the metadata can still move
-            archive_metadata(self.t, out_dir)
+            return self._run_rpc()
+        except Exception as e:
+            # There is no second engine to fall back to any more, so say what
+            # happened rather than failing blankly — and stay resumable: the
+            # bytes and the .aria2 control file are still on disk.
+            if self.t.cancel_requested or self.t.pause_requested:
+                return
             self.t.status = T.PAUSED
-            return
-
-        # aria2 can exit non-zero even when the payload finished (seeding
-        # interrupted, a non-fatal per-file error). Trust the bytes: if it's all
-        # there, it's complete.
-        complete = (self._proc.returncode == 0
-                    or (self.t.total_size and self.t.downloaded >= self.t.total_size))
-        # aria2 removes its own .aria2 control file on success; the saved
-        # metadata is ours, so move it out of the user's download folder on
-        # every terminal outcome (the Files tab reads it from there).
-        archive_metadata(self.t, out_dir)
-        if complete:
-            if self.t.total_size:
-                self.t.downloaded = self.t.total_size
-            # repoint save_path at the real on-disk entry aria2 created (a folder
-            # for multi-file torrents, a file for single) so Properties and
-            # "Open File" work — the placeholder download.bin never existed.
-            # Resolve BEFORE flipping to COMPLETED: the GUI's completion tick
-            # categorizes by save_path, and must never see COMPLETED with the
-            # placeholder path. (The reader is already fenced off by the _tor_gen
-            # bump above, so status order no longer guards against stray writes.)
-            self._resolve_save_path(out_dir, seen["top"])
-            self.t.status = T.COMPLETED
-            log.info("torrent done: %s", self.t.filename)
-        elif not seen["top"] and self.t.downloaded == 0:
-            # Never got past the metadata phase and never saw a peer: the swarm
-            # is cold right now, not broken. Calling that a red "failed" was
-            # wrong — it is exactly the case that starts working later, so end
-            # PAUSED and resumable instead. (Resume re-launches aria2, which now
-            # reuses the saved metadata and the warm DHT table.)
-            self.t.status = T.PAUSED
-            self.t.error = ("No peers found yet — the swarm may be offline or "
-                            "still waking up. Resume to try again.")
-            log.info("torrent found no peers: %s (peers=%d seeds=%d)",
-                     self.t.filename, self.t.tor_conns, self.t.tor_seeds)
-        else:
-            self.t.status = T.ERROR
-            msg = " | ".join(tail[-3:])
-            self.t.error = (explain_failure(msg, self.t.save_path)
-                            or "torrent failed"
-                            + (f": {msg}" if msg
-                               else f" (aria2 exit {self._proc.returncode})"))
-            log.warning("torrent failed: %s — %s", self.t.filename, self.t.error)
+            self.t.error = f"Torrent engine unavailable ({e}) — Resume to retry"
+            log.warning("torrent engine unavailable for %s: %s",
+                        self.t.filename, e)
 
     # ------------------------------------------------------------- RPC engine
     def _run_rpc(self):
@@ -1629,7 +1329,14 @@ class TorrentDownloader:
             # were the instant the torrent completed, so a finished, seeding
             # torrent showed a file stuck at 98% and a "Downloading 1" tile.
             now = time.time()
-            if now - last_files >= FILES_POLL:
+            # On demand. getFiles is only ever consumed by the drawer's Files tab
+            # and the preview action, so polling it every FILES_POLL for every
+            # torrent spent a third of all torrent RPC on a panel that is usually
+            # closed. Fetch once when the list is first known (so the tab is not
+            # blank on opening) and then only while someone is watching.
+            watching = bool(getattr(self.t, "files_watched", False))
+            need_first = bool(total) and not self.t.file_progress
+            if (watching or need_first) and now - last_files >= FILES_POLL:
                 last_files = now
                 try:
                     self.t.file_progress = _file_rows(d.call("aria2.getFiles", cur))
@@ -1799,37 +1506,3 @@ class TorrentDownloader:
             # note: don't rename the task here — the newest-entry heuristic can pick
             # an unrelated file; keep the reliable magnet dn / FILE-line name
 
-    def _stop(self):
-        """Ask aria2 to stop, and only force it if it will not.
-
-        Popen.terminate() on Windows is TerminateProcess — the process dies
-        where it stands with no chance to write anything out. Measured against a
-        real magnet: after a terminate() the DHT routing table was simply gone,
-        while the same run stopped with a CTRL_BREAK saved it. A cold routing
-        table every launch is the difference between finding peers in seconds
-        and bootstrapping the swarm from nothing, which is exactly the "works in
-        qBittorrent but stalls here" complaint.
-        """
-        p = self._proc
-        if not p:
-            return
-        brk = getattr(signal, "CTRL_BREAK_EVENT", None)
-        if brk is not None:
-            try:
-                p.send_signal(brk)
-                p.wait(timeout=STOP_GRACE)
-                return
-            except subprocess.TimeoutExpired:
-                pass          # ignored the polite request; escalate below
-            except (OSError, ValueError):
-                pass          # not a console process / already gone
-        try:
-            p.terminate()
-            p.wait(timeout=STOP_GRACE)
-        except subprocess.TimeoutExpired:
-            try:
-                p.kill()
-            except OSError:
-                pass
-        except OSError:
-            pass

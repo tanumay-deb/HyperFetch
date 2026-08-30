@@ -88,7 +88,7 @@ def test_torrent_cap_does_not_throttle_normal_downloads(fake_worker):
     stop.set()
     monitor.join(timeout=1)
     q.shutdown()
-    assert peak[0] <= queue_manager.MAX_ACTIVE_TORRENTS
+    assert peak[0] <= 8          # the queue's own limit, the only one there is
 
 
 def test_pause_queued_never_runs(fake_worker):
@@ -316,10 +316,10 @@ def test_concurrency_stress_no_deadlock_no_leak(fake_worker):
 
 
 def test_shared_daemon_honours_the_users_concurrency_setting(fake_worker, monkeypatch):
-    """Setting 5 and getting 3 is a bug. The torrent cap exists to stop legacy
-    per-torrent processes fighting over one listen port; the shared daemon has
-    a single process and port, so the user's own limit is the only one left."""
-    monkeypatch.setattr(utils, "TORRENT_RPC", True, raising=False)
+    """Setting 5 and getting 3 is a bug. A second, invisible cap of 3 used to
+    exist because the old per-torrent engine fought over one listen port; with
+    one daemon there is a single process and port, so the user's limit is the
+    only one left."""
     q = QueueManager(queues=[{"name": "Main", "max_concurrent": 5}])
     torrents = [q.add_task(T.DownloadTask(
         f"magnet:?xt=urn:btih:{i:040x}", f"torrent-{i}")) for i in range(8)]
@@ -336,38 +336,13 @@ def test_shared_daemon_honours_the_users_concurrency_setting(fake_worker, monkey
     assert _wait(lambda: all(t.status == T.COMPLETED for t in torrents))
     stop.set(); monitor.join(timeout=1)
     q.shutdown()
-    assert peak[0] > queue_manager.MAX_ACTIVE_TORRENTS, "still stuck at the legacy cap"
+    assert peak[0] > 3, "still stuck at the old hidden cap of 3"
     assert peak[0] <= 5, "must not exceed what the user asked for"
-
-
-def test_legacy_engine_keeps_the_lower_torrent_cap(fake_worker, monkeypatch):
-    """Without the daemon, each torrent is its own aria2 process racing for the
-    same BitTorrent port, so the conservative cap still applies."""
-    monkeypatch.setattr(utils, "TORRENT_RPC", False, raising=False)
-    q = QueueManager(queues=[{"name": "Main", "max_concurrent": 8}])
-    torrents = [q.add_task(T.DownloadTask(
-        f"magnet:?xt=urn:btih:{i:040x}", f"torrent-{i}")) for i in range(6)]
-    peak = [0]
-    stop = threading.Event()
-
-    def sampler():
-        while not stop.is_set():
-            peak[0] = max(peak[0], sum(t.status == T.DOWNLOADING for t in torrents))
-            time.sleep(0.005)
-
-    monitor = threading.Thread(target=sampler, daemon=True)
-    monitor.start()
-    assert _wait(lambda: all(t.status == T.COMPLETED for t in torrents))
-    stop.set(); monitor.join(timeout=1)
-    q.shutdown()
-    assert peak[0] <= queue_manager.MAX_ACTIVE_TORRENTS
 
 
 def test_torrent_limit_never_exceeds_the_queue_limit(monkeypatch):
     """A queue set to 2 must not run 3 torrents just because the cap is 3."""
-    monkeypatch.setattr(utils, "TORRENT_RPC", False, raising=False)
     assert QueueManager._torrent_limit(2) == 2
-    monkeypatch.setattr(utils, "TORRENT_RPC", True, raising=False)
     assert QueueManager._torrent_limit(2) == 2
 
 

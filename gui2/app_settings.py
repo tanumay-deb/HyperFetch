@@ -159,7 +159,6 @@ class SettingsMixin:
         utils.LISTEN_PORT = int(ex.get("listen_port", 0) or 0)
         utils.DISK_CACHE = bool(ex.get("disk_cache", True))
         utils.PREALLOCATE = bool(ex.get("preallocate", False))
-        utils.TORRENT_RPC = bool(ex.get("torrent_rpc", False))
         utils.TORRENT_PREVIEW = bool(ex.get("torrent_preview", False))
         utils.SEED_ENABLED = bool(ex.get("seed_enabled", False))
         utils.SEED_RATIO = float(ex.get("seed_ratio", 1.0) or 0)

@@ -90,14 +90,6 @@ def test_a_normal_run_does_not_recheck(tmp_path, monkeypatch):
     assert "check-integrity" not in adds[0][-1]
 
 
-def test_the_legacy_engine_also_rechecks(tmp_path):
-    td = torrent.TorrentDownloader(_task(tmp_path))
-    td.t.force_recheck = True
-    assert "--check-integrity=true" in td._build_cmd("aria2c.exe", str(tmp_path))
-    td2 = torrent.TorrentDownloader(_task(tmp_path))
-    assert "--check-integrity=true" not in td2._build_cmd("aria2c.exe", str(tmp_path))
-
-
 def test_a_recheck_drops_the_daemons_copy_first(tmp_path, monkeypatch):
     """A torrent the daemon still holds would be re-attached, carrying its OLD
     options — so check-integrity never applied and Force Recheck did nothing."""

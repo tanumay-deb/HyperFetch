@@ -632,19 +632,12 @@ class DetailsDrawer(QFrame):
         else:
             self.conns_table.hide(); self.conn_empty.show()
             if is_tor and t.status == T.DOWNLOADING and not getattr(t, "gid", None):
-                # Honest about WHY it is empty rather than implying no peers.
-                # No gid means this download is not on the shared daemon, but
-                # that has two very different causes, and telling someone to
-                # switch on a setting they already switched on reads as broken.
+                # No gid means the daemon is not holding this torrent yet — it
+                # is starting up, or between retries after a stall.
                 self.conn_summary.setText("")
-                if getattr(utils, "TORRENT_RPC", False):
-                    self.conn_empty.setText(
-                        "This download started on the per-torrent engine.\n"
-                        "Pause and resume it to move it onto the shared engine.")
-                else:
-                    self.conn_empty.setText(
-                        "Per-peer details need the shared torrent engine.\n"
-                        "Enable it in Settings → Advanced.")
+                self.conn_empty.setText(
+                    "Waiting for the torrent engine…\n"
+                    "Peer details appear once it picks this download up.")
             elif t.status == T.DOWNLOADING:
                 self.conn_summary.setText("")
                 self.conn_empty.setText("Connecting…")
@@ -1327,7 +1320,26 @@ class DetailsDrawer(QFrame):
             self.op_anim.setEndValue(1.0)
             self.op_anim.start()
 
+    def _watch_files(self, t, on):
+        """Tell the engine whether anyone is looking at this task's file list.
+
+        Only one task can be watched at a time, so the previous one is always
+        released — otherwise closing the drawer would leave a torrent polling
+        getFiles forever for a panel nobody is looking at.
+        """
+        prev = getattr(self, "_files_watched_id", None)
+        if prev and (not on or prev != getattr(t, "id", None)):
+            win = self.parent()
+            old = win.queue.get_task(prev) if win and hasattr(win, "queue") else None
+            if old is not None:
+                old.files_watched = False
+            self._files_watched_id = None
+        if on and t is not None:
+            t.files_watched = True
+            self._files_watched_id = t.id
+
     def close_drawer(self):
+        self._watch_files(None, False)
         self._tid = None
         if self._pinned:
             self._pinned = False
@@ -1717,6 +1729,12 @@ class DetailsDrawer(QFrame):
             self.ov_conns.setText(str(len(live)) if t.status == T.DOWNLOADING else "0")
         # peers/segments only matter while the Connections tab is on screen —
         # getPeers is an RPC round trip and this runs on the 500ms tick
+        # Same idea for the per-file breakdown: aria2.getFiles ran every 2s for
+        # EVERY torrent, and file_progress is read only here and by the preview
+        # action. The engine fetches it while this tab is on screen and skips it
+        # otherwise, which is a third of all torrent RPC traffic reclaimed.
+        self._watch_files(t, self.tabs.currentIndex()
+                          == self.tabs.indexOf(self.files_table.parent()))
         if self.tabs.currentIndex() == self.tabs.indexOf(self.conns_table.parent()):
             self._fill_conns(t, is_tor)
 
