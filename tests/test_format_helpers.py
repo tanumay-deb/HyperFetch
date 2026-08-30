@@ -60,7 +60,11 @@ def test_human_size_is_non_decreasing_by_byte_value():
 def test_human_size_uses_bytes_units():
     assert human_size(1500 * 1024 * 1024).endswith("GB")   # ~1.5 GiB -> GB
     assert human_size(700 * 1024 * 1024).endswith("MB")
-    assert human_size(8192) == "8.0 KB"
+    assert human_size(8192) == "8.00 KB"
+    # two decimals on purpose: at GB scale one decimal quantises to ~100 MB
+    # steps, so distinct file sizes collapse onto the same label
+    assert human_size(1024 ** 3 + 300 * 1024 * 1024) == "1.29 GB"
+    assert human_size(512) == "512 B", "whole bytes keep no decimals"
 
 
 def test_human_speed_unit_toggle():
@@ -110,3 +114,28 @@ def test_humanize_age_never_raises_for_any_offset():
         off = rng.uniform(0, 5 * 365 * 86400)
         out = humanize_age(now - off)
         assert isinstance(out, str) and out
+
+
+# --- the "Added" toast must name what the user clicked ----------------------
+# Reported: adding a magnet announced "Added download.bin". A magnet URL has no
+# filename, so filename_from_url invents a placeholder; the real name is in dn=.
+
+def test_added_toast_prefers_the_magnet_name():
+    from gui2.app import _display_name
+    assert _display_name("magnet:?xt=urn:btih:abc&dn=Pretty+Little+Liars+S02",
+                         "download.bin") == "Pretty Little Liars S02"
+
+
+def test_added_toast_keeps_a_real_filename():
+    from gui2.app import _display_name
+    assert _display_name("https://x/Setup.exe", "Setup.exe") == "Setup.exe"
+
+
+def test_added_toast_falls_back_when_a_magnet_has_no_name():
+    from gui2.app import _display_name
+    assert _display_name("magnet:?xt=urn:btih:abc", "download.bin") == "download.bin"
+
+
+def test_a_torrent_file_keeps_its_own_name():
+    from gui2.app import _display_name
+    assert _display_name("https://x/Show.torrent", "Show.torrent") == "Show.torrent"

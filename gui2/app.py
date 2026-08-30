@@ -49,6 +49,23 @@ from gui2.app_system import SystemMixin
 
 
 
+# Placeholder names the engine uses before it knows better. A magnet has no
+# filename in its URL, so filename_from_url invents one, and the "Added"
+# toast announced "download.bin" instead of what the user just clicked.
+_PLACEHOLDER_NAMES = ("download.bin", "magnet_.bin", "torrent", "magnet.bin")
+
+
+def _display_name(url, filename=""):
+    """The best human name available for a freshly added download."""
+    name = (filename or "").strip()
+    if name and name.lower() not in _PLACEHOLDER_NAMES:
+        return name
+    dn = _torrent.magnet_name(url or "")
+    if dn:
+        return dn
+    return name or utils.filename_from_url(url or "") or (url or "")[:60]
+
+
 class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, QWidget):
     def __init__(self):
         super().__init__()
@@ -111,6 +128,20 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, QW
 
         if not self._extras.get("welcomed"):     # first run -> pairing onboarding
             QTimer.singleShot(500, self._show_welcome)
+
+    def _flash_taskbar(self):
+        """Make the taskbar button glow when something finishes or fails.
+
+        Only when the window is not the active one — flashing a window the
+        user is already looking at is just noise. Qt maps alert() to Windows'
+        FlashWindowEx, so this is the standard "needs attention" highlight
+        rather than anything custom.
+        """
+        try:
+            if not self.isActiveWindow():
+                QApplication.alert(self, 3000)
+        except Exception:
+            pass                   # cosmetic only; never break completion
 
     def _show_welcome(self):
         from gui2.dialogs.welcome import WelcomeDialog
@@ -704,6 +735,7 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, QW
                         "history.record failed for %s", getattr(t, "filename", "?"))
                 if wc != "Do nothing":
                     self._toasts.show("success", "Download Complete", t.filename or "download")
+                    self._flash_taskbar()
                     if self.tray and self.tray.isVisible():
                         self.tray.showMessage("Download Complete", t.filename or "download",
                                               QSystemTrayIcon.Information, 4000)
@@ -720,6 +752,7 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, QW
             elif t.status == T.ERROR and t.id not in self._errored_seen:
                 if wc != "Do nothing":
                     self._toasts.show("error", "Download Failed", (t.error or t.filename or "")[:60])
+                    self._flash_taskbar()
                     if self.tray and self.tray.isVisible():
                         self.tray.showMessage("Download Failed", t.filename or "download",
                                               QSystemTrayIcon.Critical, 4000)
@@ -842,8 +875,7 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, QW
             v = self._quick_values(url, suggested, headers)
             # nothing was shown, so say something: an invisible add is
             # indistinguishable from a click that did not register
-            self._toasts.show("info", "Added",
-                              v["filename"] or utils.filename_from_url(url) or url[:60])
+            self._toasts.show("info", "Added", _display_name(url, v["filename"]))
         else:
             dlg = NewDownloadDialog(self, self.save_dir, queues, self.segments,
                                     url=url, suggested=suggested, headers=headers,

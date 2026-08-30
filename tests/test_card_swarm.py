@@ -92,3 +92,22 @@ def test_a_seeding_torrent_is_left_out_of_the_total():
     assert _sidebar_total([downloading, seeding]) == (7, 2), (
         "a seeding torrent's peers are downloading FROM us and must not inflate "
         "the total")
+
+
+# --- the taskbar should glow when something finishes ------------------------
+def test_flash_only_when_the_window_is_not_active(app, monkeypatch):
+    """Flashing a window the user is already looking at is just noise."""
+    from gui2.app import DownloadAppV2
+    from PySide6.QtWidgets import QApplication as _QA
+
+    calls = []
+    monkeypatch.setattr(_QA, "alert", staticmethod(lambda w, m=0: calls.append(m)))
+
+    win = DownloadAppV2.__new__(DownloadAppV2)
+    monkeypatch.setattr(type(win), "isActiveWindow", lambda self: True, raising=False)
+    win._flash_taskbar()
+    assert calls == [], "flashed while the window was already focused"
+
+    monkeypatch.setattr(type(win), "isActiveWindow", lambda self: False, raising=False)
+    win._flash_taskbar()
+    assert calls and calls[0] > 0, "no taskbar flash when the window was in the background"

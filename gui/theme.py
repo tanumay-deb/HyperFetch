@@ -297,13 +297,18 @@ apply_theme("dark")   # default; the app re-applies the saved choice at startup
 
 def human_size(n):
     # File SIZE is always bytes (GB/MB/KB), regardless of the speed-unit setting.
+    #
+    # Two decimals, not one: at GB scale a single decimal quantises to ~100 MB
+    # steps, so a 1.71 GB and a 1.74 GB file both read "1.7 GB" and progress
+    # through them looks stuck. Whole bytes keep no decimals — "512.00 B" is
+    # just noise.
     if n <= 0:
         return "-"
     for unit in ("B", "KB", "MB", "GB", "TB"):
         if n < 1024:
-            return f"{n:.0f} {unit}" if unit == "B" else f"{n:.1f} {unit}"
+            return f"{n:.0f} {unit}" if unit == "B" else f"{n:.2f} {unit}"
         n /= 1024
-    return f"{n:.1f} PB"
+    return f"{n:.2f} PB"
 
 
 def human_speed(bytes_per_sec):
