@@ -517,8 +517,14 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, QW
                 total_bps += bps
                 if _torrent.is_torrent_task(t.url, t.filename):
                     any_torrent = True
-                    conns += getattr(t, "tor_conns", 0)
-                    seeds += getattr(t, "tor_seeds", 0)
+                    # A seeding torrent's peers are people downloading FROM us,
+                    # so they do not belong in a total that reads as "what this
+                    # app is pulling from". The card still shows them per-row.
+                    # (Seeding also flips the task to COMPLETED, so this is
+                    # belt and braces — but the intent should not be implicit.)
+                    if not getattr(t, "seeding", False):
+                        conns += getattr(t, "tor_conns", 0)
+                        seeds += getattr(t, "tor_seeds", 0)
                 else:
                     conns += sum(1 for s in t.segments if not s.complete)
 

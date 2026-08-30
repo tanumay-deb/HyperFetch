@@ -21,6 +21,19 @@ import torrent as _torrent
 from gui.theme import human_size, human_speed, fmt_eta, humanize_age
 from gui.icons import themed_icon
 from gui2.palette import COLORS, fpx
+
+
+def _swarm(t):
+    """"N peers · M seeds" for a torrent card.
+
+    Shown whenever the torrent is live — downloading, still fetching metadata,
+    or seeding — and shown even at zero. "0 peers · 0 seeds" is the single most
+    useful thing a stalled torrent can tell you; hiding it left "Fetching
+    metadata…" looking identical whether the swarm was answering or silent.
+    """
+    p = int(getattr(t, "tor_conns", 0) or 0)
+    s = int(getattr(t, "tor_seeds", 0) or 0)
+    return f"{p} peer{'' if p == 1 else 's'} · {s} seed{'' if s == 1 else 's'}"
 from gui2.graphing import moving_avg, smooth_path
 
 _CAT_ICON = {
@@ -365,16 +378,17 @@ class DownloadCardWidget(QFrame):
             bits = ["Seeding"]
             if up:
                 bits.append(f"↑ {up}")
-            peers = getattr(t, "tor_conns", 0)
-            if peers:
-                bits.append(f"{peers} peer{'' if peers == 1 else 's'}")
+            bits.append(_swarm(t))
             self.sub.setText("  •  ".join(bits))
         elif done:
             age = humanize_age(getattr(t, "added", 0))
             self.sub.setText(f"Completed  •  {human_size(t.total_size or t.downloaded)}"
                              + (f"  •  {age}" if age else ""))
         elif is_tor and t.status == T.DOWNLOADING and not t.total_size:
-            self.sub.setText("Fetching metadata…")
+            # Peers matter most here: fetching metadata IS a swarm operation, and
+            # "Fetching metadata…" on its own gives no way to tell a torrent that
+            # is talking to peers from one that has found nobody.
+            self.sub.setText("Fetching metadata…  •  " + _swarm(t))
         elif t.status == T.ERROR:
             self.sub.setText(t.error[:70] if t.error else "Failed")
         else:
@@ -384,7 +398,7 @@ class DownloadCardWidget(QFrame):
                 if spd:
                     parts.append(spd)
                 if is_tor:
-                    parts.append(f"{getattr(t,'tor_conns',0)} peers · {getattr(t,'tor_seeds',0)} seeds")
+                    parts.append(_swarm(t))
                 # ETA moved out to its own right-hand column; repeating it here
                 # would just be the same value twice on one row
             else:
