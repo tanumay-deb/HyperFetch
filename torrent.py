@@ -1299,6 +1299,7 @@ class TorrentDownloader:
             self.t.tor_conns = int(st.get("connections") or 0)
             self.t.tor_seeds = int(st.get("numSeeders") or 0)
             self.t.tor_upload = int(st.get("uploadSpeed") or 0)
+            self.t.tor_uploaded = int(st.get("uploadLength") or 0)
 
             # Hash checking. aria2 reports it separately from download progress,
             # and it can take minutes on a large torrent — with nothing shown, a

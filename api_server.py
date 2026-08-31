@@ -374,8 +374,12 @@ def create_app(queue, save_dir, pending=None, token=None):
             "added": float(getattr(t, "added", 0) or 0),
             "error": getattr(t, "error", "") or "",
             "isTorrent": _torrent.is_torrent_task(t.url, t.filename),
+            # Same buckets the desktop sidebar groups by, decided in one place
+            # so the two never disagree about what counts as a Video.
+            "category": utils.category_for(t.filename or ""),
             "peers": int(getattr(t, "tor_conns", 0) or 0),
             "seeds": int(getattr(t, "tor_seeds", 0) or 0),
+            "upSpeed": int(getattr(t, "tor_upload", 0) or 0),
             "seeding": bool(getattr(t, "seeding", False)),
             "verifying": bool(getattr(t, "verifying", False)),
             "verifiedPercent": int(getattr(t, "verified_pct", 0) or 0),
@@ -396,18 +400,38 @@ def create_app(queue, save_dir, pending=None, token=None):
         if deny:
             return deny
         counts = {}
-        down = up = 0
+        cats = {}
+        down = up_speed = up_total = 0
         for t in list(queue.tasks):
             counts[t.status] = counts.get(t.status, 0) + 1
             down += int(getattr(t, "downloaded", 0) or 0)
+            # Upload is torrent-only, and aria2 is the only thing that knows it.
+            up_speed += int(getattr(t, "tor_upload", 0) or 0)
+            up_total += int(getattr(t, "tor_uploaded", 0) or 0)
+            try:
+                cats[utils.category_for(t.filename)] = \
+                    cats.get(utils.category_for(t.filename), 0) + 1
+            except Exception:
+                pass
         try:
             import history
             hist = history.stats()
         except Exception:
             hist = {}
-        return jsonify({"byStatus": counts,
-                        "activeBytes": down,
-                        "history": hist})
+        return jsonify({
+            "byStatus": counts,
+            "byCategory": cats,
+            "activeBytes": down,
+            "history": hist,
+            "upSpeed": up_speed,
+            # Sent by the torrents CURRENTLY in the list. Not a lifetime figure:
+            # nothing persists an upload total once a torrent is removed, so
+            # calling this "total uploaded" would overstate what is known.
+            "uploadedNow": up_total,
+            # Lifetime bytes of COMPLETED downloads, from history.json.
+            "downloadedTotal": int((hist or {}).get("total_bytes") or 0),
+            "version": utils.APP_VERSION,
+        })
 
     # ---------------------------------------------------- web UI: control
     @app.route("/api/downloads", methods=["POST"])
@@ -502,6 +526,19 @@ def create_app(queue, save_dir, pending=None, token=None):
         if name not in ALLOWED_UI_FILES:
             return ("", 404)
         return send_from_directory(web_dir(), name)
+
+    @app.route("/ui/logo.png", methods=["GET"])
+    def ui_logo():
+        """The same bundled icon the desktop window and taskbar use.
+
+        Served from assets/ rather than copied into web/, so the page and the
+        app can never drift onto two different logos. One explicit route, not
+        a second static folder — assets/ holds more than the page should be
+        able to ask for.
+        """
+        base = getattr(sys, "_MEIPASS",
+                       os.path.dirname(os.path.abspath(__file__)))
+        return send_from_directory(os.path.join(base, "assets"), "icon.png")
 
     return app
 

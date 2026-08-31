@@ -164,6 +164,7 @@ class DownloadTask:
         # engine only asks aria2 for the per-file breakdown when it is visible.
         self.files_watched = False
         self.tor_upload = 0
+        self.tor_uploaded = 0      # total bytes sent for this torrent
         # hash-check in progress (transient). A recheck reads the whole payload
         # off disk, so without this the UI shows nothing moving for minutes.
         self.verifying = False

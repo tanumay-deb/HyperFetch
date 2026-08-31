@@ -28,7 +28,7 @@ from queue_manager import QueueManager
 from api_server import run_server, PORT
 
 
-APP_VERSION = "2.4.0"
+from utils import APP_VERSION        # re-exported; defined in utils so api_server can read it without Qt
 
 
 def resource_path(*parts):

@@ -146,6 +146,11 @@ def capture_allowed(name):
 SENSITIVE_HEADERS = {"cookie", "authorization", "proxy-authorization"}
 
 
+# The app version, kept here rather than in gui.theme so the headless server
+# can report it without importing PySide6.
+APP_VERSION = "2.4.0"
+
+
 def app_data_dir():
     """Per-user folder for settings + persisted download state."""
     base = os.environ.get("APPDATA") or os.path.expanduser("~")

@@ -101,3 +101,33 @@ def test_the_login_form_asks_for_a_username(client):
     body = client.get("/ui/", environ_overrides=LAN).get_data(as_text=True)
     assert 'id="user"' in body
     assert 'autocomplete="username"' in body
+
+
+def test_the_logo_is_the_app_s_own_icon(client):
+    """Served from assets/ rather than copied into web/, so the page and the
+    desktop window can never end up on two different logos."""
+    r = client.get("/ui/logo.png", environ_overrides=LAN)
+    assert r.status_code == 200
+    # the 8-byte PNG signature, spelled in hex so no escape survives a round trip
+    assert r.data[:8] == bytes.fromhex("89504e470d0a1a0a"), "not a PNG"
+
+    import os
+    from api_server import web_dir
+    on_disk = os.path.join(os.path.dirname(web_dir()), "assets", "icon.png")
+    assert r.data == open(on_disk, "rb").read()
+
+
+def test_the_logo_route_is_not_a_way_into_assets(client):
+    """One explicit file, not a second static folder — assets/ holds more than
+    the page should be able to ask for."""
+    for name in ("icon.ico", "icons/video.svg", "../api_server.py"):
+        r = client.get("/ui/" + name, environ_overrides=LAN)
+        assert r.status_code in (404, 400, 308), f"{name} was served"
+
+
+def test_the_page_ships_its_icons_inline(client):
+    """A phone on a LAN with no internet still has to draw them, and they must
+    match the desktop's — so they are inlined from assets/icons/*.svg."""
+    body = client.get("/ui/", environ_overrides=LAN).get_data(as_text=True)
+    for glyph in ("i-video", "i-music", "i-archive", "i-magnet", "i-pause"):
+        assert 'id="%s"' % glyph in body, glyph

@@ -1,246 +1,389 @@
-/* HyperFetch web UI — same palette as the desktop app (gui2/palette.py).
-   Phone first: this is mainly opened from a phone on the LAN, so touch targets
-   are 44px+ and the layout is single-column until there is room for more. */
+/* HyperFetch web client.
+ *
+ * This is a remote control for a machine doing the work somewhere else, so it
+ * is built as an instrument panel rather than a dashboard: quiet surfaces, one
+ * live readout, and numbers treated as the display type.
+ *
+ * Palette and category colours are the desktop app's own (gui2/palette.py and
+ * download_card.py) so the two read as one product.
+ *
+ * System fonts only — no CDN, and the phone opening this may have no internet
+ * at all. The personality comes from the numerals, not from a downloaded face.
+ */
 
 :root {
   --bg: #0b0e14;
   --surface: #141722;
   --surface2: #1c202d;
+  --raised: #222739;
   --border: #2a2f40;
-  --hover: #1e2333;
   --text: #f1f5f9;
   --muted: #94a3b8;
+  --faint: #64748b;
+
   --accent: #7c3aed;
   --accent2: #8b5cf6;
 
-  --downloading: #34d399;
-  --completed: #38bdf8;
-  --paused: #fbbf24;
-  --queued: #94a3b8;
-  --error: #f87171;
+  --down: #34d399;          /* the two channels, kept apart at a glance */
+  --up: #a78bfa;
+  --warn: #fbbf24;
+  --err: #f87171;
+  --info: #38bdf8;
 
-  --radius: 12px;
-  --gap: 12px;
+  /* Category chips, lifted from gui2/download_card.py _CAT_ICON. */
+  --c-video: #ff80ab;
+  --c-music: #ff8a80;
+  --c-compressed: #b388ff;
+  --c-programs: #82b1ff;
+  --c-documents: #80d8ff;
+  --c-images: #4dd0e1;
+  --c-other: #b5b5b5;
+
+  --side-w: 248px;
+  --status-h: 52px;
+  --r: 12px;
+
+  --ui: system-ui, -apple-system, "Segoe UI Variable Text", "Segoe UI", Roboto,
+        "Helvetica Neue", Arial, sans-serif;
 }
 
 * { box-sizing: border-box; }
 
-/* Any `display` rule beats the hidden attribute's own display:none, and both
-   the login and the no-password panes set display:grid — so without this they
-   render on top of each other whatever the attribute says. */
+/* Any `display` rule beats the hidden attribute's own display:none, and most
+   things here are grid or flex — without this, panes stack on top of each
+   other whatever the attribute says. */
 [hidden] { display: none !important; }
 
 html, body {
   margin: 0;
+  height: 100%;
   background: var(--bg);
   color: var(--text);
-  font-family: system-ui, -apple-system, "Segoe UI Variable Display", "Segoe UI",
-               Roboto, "Helvetica Neue", Arial, sans-serif;
+  font-family: var(--ui);
   font-size: 15px;
   line-height: 1.45;
   -webkit-text-size-adjust: 100%;
+  overflow-x: hidden;
 }
 
-body { padding-bottom: env(safe-area-inset-bottom); overflow-x: hidden; }
-
-h1 { font-size: 1.05rem; font-weight: 700; margin: 0; letter-spacing: .2px; }
-
-.sr-only {
-  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
-  overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+/* Numbers are the display face here, so they get the deliberate treatment:
+   tabular so digits stop jittering as they tick, and tightened. */
+.num {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
+  letter-spacing: -0.02em;
+  font-weight: 700;
 }
 
-/* ---------------------------------------------------------------- brand */
-.brand { display: flex; align-items: center; gap: 9px; }
-.bolt {
-  display: grid; place-items: center;
-  width: 30px; height: 30px; border-radius: 9px;
-  background: linear-gradient(135deg, var(--accent), var(--accent2));
-  font-size: 15px;
+/* Instrument-panel labelling: small, wide, quiet. */
+.micro {
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--faint);
 }
 
-/* ---------------------------------------------------------------- login */
-.login {
-  min-height: 100dvh;
-  display: grid;
-  place-items: center;
-  padding: 24px;
-}
-.login-card {
-  width: 100%; max-width: 360px;
+.ic { width: 18px; height: 18px; flex: 0 0 auto;
+      fill: none; stroke: currentColor; stroke-width: 2;
+      stroke-linecap: round; stroke-linejoin: round; }
+
+.grow { flex: 1; }
+
+:focus-visible { outline: 2px solid var(--accent2); outline-offset: 2px; }
+
+/* ============================================================ gate screens */
+.gate { min-height: 100dvh; display: grid; place-items: center; padding: 24px; }
+.gate-card {
+  width: 100%; max-width: 340px;
+  display: grid; gap: 10px;
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: 16px;
-  padding: 26px 22px;
-  display: grid; gap: 14px;
+  border-radius: 18px;
+  padding: 30px 26px;
+  text-align: left;
 }
-.hint { color: var(--muted); font-size: .9rem; margin: 0; }
+.gate-card .mark { border-radius: 11px; }
+.gate-card h1 { margin: 2px 0 0; font-size: 1.15rem; font-weight: 800; letter-spacing: -0.01em; }
+.gate-msg { margin: 0; color: var(--text); font-weight: 600; }
+.gate-hint { margin: 0 0 6px; color: var(--muted); font-size: .88rem; }
+.gate-card .micro { margin-top: 6px; }
+.gate-card label { display: block; }
 
-input[type="password"], input[type="url"] {
+input[type="text"], input[type="password"], input[type="url"],
+input[type="search"], input:not([type]) {
   width: 100%;
-  min-height: 46px;
-  padding: 11px 13px;
+  min-height: 44px;
+  padding: 10px 13px;
   background: var(--surface2);
   border: 1px solid var(--border);
   border-radius: 10px;
   color: var(--text);
   font: inherit;
 }
-input:focus-visible {
-  outline: none;
-  border-color: var(--accent2);
-  box-shadow: 0 0 0 3px rgb(124 58 237 / .28);
-}
-input::placeholder { color: var(--muted); }
+input::placeholder { color: var(--faint); }
+input:focus-visible { border-color: var(--accent2); outline: none;
+                      box-shadow: 0 0 0 3px rgb(124 58 237 / .3); }
+input:disabled { background: var(--surface); color: var(--faint); }
 
-button { font: inherit; cursor: pointer; }
+button { font: inherit; cursor: pointer; color: inherit; }
 
 .primary {
-  min-height: 46px;
-  padding: 11px 20px;
-  border: 0;
-  border-radius: 10px;
+  min-height: 44px; padding: 10px 18px;
+  border: 0; border-radius: 10px;
   background: linear-gradient(135deg, var(--accent), var(--accent2));
-  color: #fff;
-  font-weight: 650;
+  color: #fff; font-weight: 650;
+  display: inline-flex; align-items: center; justify-content: center; gap: 7px;
 }
-.primary:disabled { opacity: .55; cursor: default; }
+.primary:disabled { opacity: .5; cursor: default; }
 .primary:not(:disabled):active { transform: translateY(1px); }
 
-.ghost {
-  min-height: 38px;
-  padding: 7px 12px;
-  white-space: nowrap;         /* "Sign out" wrapped to two lines on a phone */
-  border: 1px solid var(--border);
+.err { margin: 0; color: var(--err); font-size: .85rem; }
+
+/* ================================================================== shell */
+/* Sidebar and list scroll independently; the status strip is pinned across
+   the full width, the way a desktop app's status bar is. */
+.shell {
+  display: grid;
+  grid-template-columns: var(--side-w) 1fr;
+  grid-template-rows: 1fr var(--status-h);
+  grid-template-areas: "side main" "status status";
+  height: 100dvh;
+}
+
+/* ---------------------------------------------------------------- sidebar */
+.side {
+  grid-area: side;
+  display: flex; flex-direction: column; gap: 8px;
+  padding: 14px 12px;
+  background: var(--surface);
+  border-right: 1px solid var(--border);
+  overflow-y: auto;
+}
+.side-top { display: flex; align-items: center; gap: 9px; padding: 2px 4px 6px; }
+.side-top .mark { border-radius: 8px; }
+.wordmark { font-size: 1.06rem; font-weight: 800; letter-spacing: -0.02em; }
+
+.add { display: flex; gap: 7px; }
+.add input { min-height: 40px; }
+.add-go { min-height: 40px; width: 44px; padding: 0; }
+
+.nav { display: flex; flex-direction: column; gap: 2px; margin-top: 4px; }
+
+/* The active row gets the app's left accent bar, not a full-bleed fill. */
+.nav-row {
+  display: flex; align-items: center; gap: 11px;
+  width: 100%;
+  min-height: 40px;
+  padding: 8px 11px;
+  border: 0; border-left: 3px solid transparent;
   border-radius: 9px;
   background: transparent;
   color: var(--muted);
+  font-weight: 600;
+  text-align: left;
 }
-.ghost:active { background: var(--hover); }
-
-.error { color: var(--error); font-size: .87rem; margin: 0; }
-.error.inline { padding: 0 16px 8px; }
-
-/* ---------------------------------------------------------------- shell */
-.topbar {
-  position: sticky; top: 0; z-index: 5;
-  display: flex; align-items: center; gap: 10px;
-  padding: 12px 16px calc(12px + env(safe-area-inset-top));
-  padding-top: max(12px, env(safe-area-inset-top));
-  background: color-mix(in srgb, var(--bg) 88%, transparent);
-  backdrop-filter: blur(10px);
-  border-bottom: 1px solid var(--border);
-}
-.spacer { flex: 1; }
-.totals { color: var(--muted); font-size: .82rem; text-align: right; white-space: nowrap; }
-
-.addbar {
-  display: flex; gap: 8px;
-  padding: 14px 16px 6px;
-}
-.addbar input { flex: 1; }
-
-.filters {
-  display: flex; gap: 8px;
-  padding: 8px 16px 4px;
-  overflow-x: auto;
-  scrollbar-width: none;
-}
-.filters::-webkit-scrollbar { display: none; }
-.chip {
-  flex: 0 0 auto;
-  min-height: 36px;
-  padding: 6px 15px;
-  border: 1px solid transparent;
-  border-radius: 18px;
-  background: transparent;
-  color: var(--muted);
-  font-weight: 600; font-size: .87rem;
-}
-.chip.is-on {
+.nav-row .ic { color: var(--muted); }
+.nav-row:hover { background: var(--surface2); }
+.nav-row.is-on {
   background: var(--surface2);
-  border-color: var(--accent);
-  color: #fff;
+  border-left-color: var(--accent);
+  color: var(--text);
+  font-weight: 700;
 }
-
-/* ---------------------------------------------------------------- list */
-.list { list-style: none; margin: 0; padding: 10px 16px 28px; display: grid; gap: 10px; }
-
-.card {
-  min-width: 0;             /* same reason, for the grid track */
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 13px 14px;
-  display: grid;
-  gap: 9px;
+.nav-row.is-on .ic { color: var(--tint, var(--text)); }
+.nav-row .tally {
+  margin-left: auto;
+  font-size: 11.5px; font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--faint);
 }
+.side-foot { margin-top: auto; padding-top: 8px; }
 
-.row1 { display: flex; align-items: baseline; gap: 10px; min-width: 0; }
-.name {
-  flex: 1;
-  /* Without this a flex item will not shrink below its content, so one long
-     filename widens the whole card and pushes the buttons off screen. */
-  min-width: 0;
-  font-weight: 650;
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-}
-.pct { color: var(--muted); font-variant-numeric: tabular-nums; font-size: .88rem; }
+/* ------------------------------------------------------------------- main */
+.main { grid-area: main; display: flex; flex-direction: column; min-width: 0; overflow: hidden; }
 
 .bar {
-  height: 6px;
-  border-radius: 999px;
-  background: var(--surface2);
-  overflow: hidden;
+  display: flex; align-items: center; gap: 10px;
+  padding: 14px 20px 10px;
+  padding-top: max(14px, env(safe-area-inset-top));
 }
-.bar > i {
+.heading { margin: 0; font-size: 1.02rem; font-weight: 750; letter-spacing: -0.01em; }
+
+.icon-btn {
+  display: inline-grid; place-items: center;
+  width: 38px; height: 38px;
+  border: 1px solid var(--border); border-radius: 10px;
+  background: transparent; color: var(--muted);
+}
+.icon-btn:hover { background: var(--surface2); color: var(--text); }
+
+.find { display: flex; align-items: center; gap: 8px;
+        padding: 0 11px; border: 1px solid var(--border);
+        border-radius: 10px; background: var(--surface2); color: var(--faint); }
+.find input { border: 0; background: transparent; min-height: 38px; padding: 8px 0; width: 170px; }
+.find input:focus-visible { box-shadow: none; }
+.find:focus-within { border-color: var(--accent2); }
+
+.chips { display: flex; gap: 7px; padding: 2px 20px 10px;
+         overflow-x: auto; scrollbar-width: none; }
+.chips::-webkit-scrollbar { display: none; }
+.chip {
+  flex: 0 0 auto; min-height: 32px; padding: 5px 14px;
+  border: 1px solid var(--border); border-radius: 16px;
+  background: transparent; color: var(--muted);
+  font-size: .85rem; font-weight: 600;
+}
+.chip:hover { background: var(--surface2); }
+.chip.is-on { background: var(--surface2); border-color: var(--accent); color: var(--text); }
+
+/* ------------------------------------------------------------------ list */
+.list {
+  list-style: none; margin: 0;
+  padding: 2px 20px 24px;
+  display: grid; gap: 8px; align-content: start;
+  overflow-y: auto; flex: 1;
+}
+
+.card {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 38px 1fr auto;
+  grid-template-areas: "chip head act" "chip bar act" "chip sub act";
+  column-gap: 12px; row-gap: 5px;
+  align-items: center;
+  padding: 11px 13px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+}
+.card:hover { border-color: var(--raised); }
+
+/* The colour IS the file type — same mapping as the desktop card. */
+.chip-ic {
+  grid-area: chip;
+  display: grid; place-items: center;
+  width: 38px; height: 38px; border-radius: 10px;
+  background: var(--tint); color: #10141c;
+}
+.chip-ic .ic { width: 20px; height: 20px; stroke-width: 2.1; }
+
+.head { grid-area: head; display: flex; align-items: baseline; gap: 10px; min-width: 0; }
+.name {
+  flex: 1;
+  /* A flex item will not shrink below its content without this, so one long
+     filename widens the card and pushes the buttons off screen. */
+  min-width: 0;
+  font-weight: 650; letter-spacing: -0.01em;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.pct { font-size: .84rem; color: var(--muted); }
+
+.bar-track {
+  grid-area: bar;
+  height: 5px; border-radius: 999px;
+  background: var(--surface2); overflow: hidden;
+}
+.bar-track > i {
   display: block; height: 100%; width: 100%;
-  /* scaleX, not width: transform is composited, so easing a dozen bars at once
-     does not lay the page out again on every frame. The fill carries no radius
-     of its own — the parent's overflow:hidden already clips it to the pill, and
-     a radius here would be squashed by the scale. */
+  /* scaleX, not width: transform is composited, so easing a dozen bars at
+     once does not lay the page out again on every frame. No radius here — the
+     track already clips to the pill, and a radius would be squashed. */
   transform-origin: left center;
   background: var(--accent);
   transition: transform .45s ease;
 }
-.card[data-state="Completed"] .bar > i { background: var(--completed); }
-.card[data-state="Downloading"] .bar > i { background: var(--downloading); }
-.card[data-state="Paused"] .bar > i { background: var(--paused); }
-.card[data-state="Error"] .bar > i { background: var(--error); }
-.card[data-state="Queued"] .bar > i { background: var(--queued); }
+.card[data-state="Downloading"] .bar-track > i { background: var(--down); }
+.card[data-state="Completed"]   .bar-track > i { background: var(--info); }
+.card[data-state="Paused"]      .bar-track > i { background: var(--warn); }
+.card[data-state="Error"]       .bar-track > i { background: var(--err); }
+.card[data-state="Queued"]      .bar-track > i { background: var(--muted); }
 
-/* Wraps by default: on a phone this line is "1.63 GB / 1.80 GB · 20.67 MB/s ·
-   34 peers · 6 seeds · 8s left", and clipping it drops the time remaining —
-   the part most worth reading. Desktop cards are wide enough to ellipse. */
 .sub {
-  min-width: 0;
-  color: var(--muted);
-  font-size: .83rem;
+  grid-area: sub; min-width: 0;
+  font-size: .8rem; color: var(--muted);
+  font-variant-numeric: tabular-nums;
 }
-/* Higher specificity than the `.sub` nowrap added at >=720px, so a failure
-   keeps showing its whole message instead of losing the end of it. */
-.sub.bad { color: var(--error); white-space: normal; }
+.sub.bad { color: var(--err); }
 
-.actions { display: flex; gap: 8px; }
-.actions .ghost { flex: 1; }
-.actions .danger { color: var(--error); border-color: color-mix(in srgb, var(--error) 40%, var(--border)); }
+.act { grid-area: act; display: flex; gap: 6px; align-items: center; }
+.act .icon-btn { width: 36px; height: 36px; }
+.btn-label { display: none; font-size: .85rem; font-weight: 600; }
+.act .danger:hover { color: var(--err); border-color: var(--err); background: transparent; }
 
-.empty, .offline {
-  text-align: center; color: var(--muted);
-  padding: 34px 16px; margin: 0;
+.note { margin: 0; padding: 40px 20px; text-align: center; color: var(--muted); }
+.note.warn { color: var(--warn); }
+
+/* ============================================================ status strip */
+.status {
+  grid-area: status;
+  display: flex; align-items: center; gap: 16px;
+  padding: 0 20px;
+  padding-bottom: env(safe-area-inset-bottom);
+  background: var(--surface);
+  border-top: 1px solid var(--border);
 }
-.offline { color: var(--paused); }
+.graph { width: 120px; height: 34px; flex: 0 0 auto; }
 
-/* Roomier layout once there is width for it (tablet / desktop browser). */
-@media (min-width: 720px) {
-  .list { grid-template-columns: repeat(auto-fill, minmax(330px, 1fr)); }
-  .addbar, .filters, .list { padding-left: 24px; padding-right: 24px; }
-  .topbar { padding-left: 24px; padding-right: 24px; }
-  /* Keeps the grid's rows even. `.sub.bad` is more specific, so a failure
-     still wraps its full message rather than losing the end of it. */
-  .sub { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rate { display: flex; align-items: center; gap: 6px; }
+.rate .ic { width: 15px; height: 15px; stroke-width: 2.4; }
+.rate .num { font-size: .95rem; }
+.rate.down { color: var(--down); }
+.rate.up { color: var(--up); }
+
+.tot { display: flex; flex-direction: column; line-height: 1.15; }
+.tot .num { font-size: .84rem; color: var(--text); }
+.ver { font-size: 11px; font-weight: 700; color: var(--faint);
+       font-variant-numeric: tabular-nums; }
+
+/* =============================================================== narrow */
+.only-narrow { display: none; }
+
+@media (max-width: 860px) {
+  .only-narrow { display: inline-grid; }
+
+  /* The sidebar becomes a drawer rather than disappearing: the app has one,
+     and the categories are the fastest way through a long list on a phone. */
+  .shell { grid-template-columns: 1fr; grid-template-areas: "main" "status"; }
+  .side {
+    position: fixed; inset: 0 auto 0 0; z-index: 30;
+    width: min(84vw, var(--side-w));
+    transform: translateX(-102%);
+    transition: transform .22s ease;
+    padding-top: max(14px, env(safe-area-inset-top));
+  }
+  .side.open { transform: none; box-shadow: 0 0 0 100vmax rgb(0 0 0 / .5); }
+  .scrim { position: fixed; inset: 0; z-index: 29; }
+
+  .bar { padding: 12px 14px 8px; }
+  .find { display: none; }        /* the drawer's categories do this job here */
+  .chips { padding: 2px 14px 10px; }
+  .list { padding: 2px 14px 20px; }
+
+  .card { grid-template-columns: 34px 1fr; grid-template-areas:
+          "chip head" "chip bar" "chip sub" "act act"; row-gap: 6px; }
+  .chip-ic { width: 34px; height: 34px; }
+  .act { margin-top: 3px; }
+  .act .icon-btn { flex: 1; width: auto; min-height: 42px;
+                   display: flex; align-items: center; justify-content: center; gap: 7px; }
+  .btn-label { display: inline; }
+
+  /* Wraps on a phone: clipping this line drops the time remaining, which is
+     the part most worth reading. */
+  .sub { white-space: normal; }
+
+  .status { gap: 12px; padding: 0 14px; }
+  .graph { width: 64px; }
+  .tot:first-of-type { margin-left: auto; }
+}
+
+@media (max-width: 560px) {
+  .tot, .ver { display: none; }    /* speeds survive; totals are desk reading */
+  .graph { width: 84px; }
+  .status { gap: 14px; }
+  .rate.up { margin-left: auto; }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .bar > i { transition: none; }
+  .bar-track > i, .side { transition: none; }
 }
