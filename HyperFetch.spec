@@ -16,6 +16,7 @@ hidden = (
     # local modules reached via lazy `import` inside functions
     ['hls', 'downloader', 'queue_manager', 'api_server', 'task', 'utils',
      'crash_reporter', 'updater', 'torrent', 'aria2d', 'yt_dl', 'doh', 'upnp', 'history',
+     'site_server', 'site_auth', 'site_limits', 'waitress',
      'gui2.dialogs.history', 'gui2.dialogs.queues', 'gui2.dialogs.console',
      'gui2.dialogs.host_rules', 'gui2.dialogs.welcome']
     + crypto_hidden + ytdlp_hidden
@@ -31,6 +32,10 @@ extra_datas = []
 # cannot infer them — without this the frozen build serves a 404 for /ui.
 if os.path.isdir('web'):
     extra_datas.append(('web', 'web'))
+# The built users site, when the front-end step has run. Absent in a plain
+# build, which the server handles by serving a holding page.
+if os.path.isdir('site'):
+    extra_datas.append(('site', 'site'))
 if os.path.isfile(os.path.join('bin', 'aria2c.exe')):
     extra_datas.append(('bin/aria2c.exe', 'bin'))
 elif os.path.isfile(os.path.join('bin', 'aria2c')):
