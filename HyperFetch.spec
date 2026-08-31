@@ -18,7 +18,8 @@ hidden = (
      'crash_reporter', 'updater', 'torrent', 'aria2d', 'yt_dl', 'doh', 'upnp', 'history',
      'site_server', 'site_auth', 'site_limits', 'waitress',
      'gui2.dialogs.history', 'gui2.dialogs.queues', 'gui2.dialogs.console',
-     'gui2.dialogs.host_rules', 'gui2.dialogs.welcome']
+     'gui2.dialogs.host_rules', 'gui2.dialogs.welcome',
+     'gui2.dialogs.site_users']
     + crypto_hidden + ytdlp_hidden
     + collect_submodules('flask_cors')
 )

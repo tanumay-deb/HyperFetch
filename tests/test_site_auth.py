@@ -262,3 +262,81 @@ def test_the_lockout_does_not_extend_itself():
     first = t.locked_for("x")
     t.record_failure("x")
     assert t.locked_for("x") <= first
+
+
+# ---- invite expiry ---------------------------------------------------------
+def test_a_code_never_expires_unless_told_to():
+    assert site_auth.invite_expiry() == 0
+    assert site_auth.invite_expired() is False
+    assert site_auth.check_invite(site_auth.invite_code()) is True
+
+
+def test_an_expired_code_stops_working():
+    """A code shared in a group chat two years ago should not still be a key."""
+    import time
+    site_auth.set_invite_expiry(time.time() - 1)
+    assert site_auth.invite_expired() is True
+    assert site_auth.check_invite(site_auth.invite_code()) is False
+    with pytest.raises(ValueError, match="invite"):
+        _register()
+
+
+def test_removing_the_expiry_brings_the_code_back():
+    import time
+    site_auth.set_invite_expiry(time.time() - 1)
+    site_auth.set_invite_expiry(0)
+    assert site_auth.check_invite(site_auth.invite_code()) is True
+
+
+def test_a_future_expiry_still_lets_people_in():
+    import time
+    site_auth.set_invite_expiry(time.time() + 3600)
+    assert _register()["username"] == "tanumay"
+
+
+# ---- accounts created from the desktop app ---------------------------------
+def test_the_admin_can_create_an_account_without_the_code():
+    """The person doing this is already at the machine. The code exists to stop
+    strangers who found the URL, and has nothing to add here."""
+    u = site_auth.create_user_as_admin("tanumay", "t@e.test", PW)
+    assert u["username"] == "tanumay"
+    assert site_auth.verify("tanumay", PW) is not None
+
+
+def test_admin_creation_still_obeys_every_other_rule():
+    """Only the invite check is skipped. The username still becomes a folder
+    name and the password still faces the internet."""
+    with pytest.raises(ValueError):
+        site_auth.create_user_as_admin("../escape", "", PW)
+    with pytest.raises(ValueError):
+        site_auth.create_user_as_admin("tanumay", "", "short")
+    site_auth.create_user_as_admin("tanumay", "", PW)
+    with pytest.raises(ValueError, match="taken"):
+        site_auth.create_user_as_admin("TanuMay", "", PW)
+
+
+def test_admin_creation_works_even_with_an_expired_code():
+    """Otherwise letting a code lapse would lock the owner out of their own
+    user management."""
+    import time
+    site_auth.set_invite_expiry(time.time() - 1)
+    assert site_auth.create_user_as_admin("tanumay", "", PW)["username"] == "tanumay"
+
+
+def test_an_admin_created_account_can_be_given_more_space():
+    u = site_auth.create_user_as_admin("tanumay", "", PW, 10 * 1024 ** 3)
+    assert u["quota"] == 10 * 1024 ** 3
+
+
+def test_the_invite_bypass_is_not_reachable_from_a_request():
+    """`_skip_invite` is private on purpose: the invite code is the front door
+    for everyone arriving over the network."""
+    import inspect
+    sig = inspect.signature(site_auth.create_user)
+    assert "_skip_invite" in sig.parameters
+    assert sig.parameters["_skip_invite"].default is False
+
+    import site_server
+    src = inspect.getsource(site_server)
+    assert "_skip_invite" not in src, "the signup route can skip the invite code"
+    assert "create_user_as_admin" not in src, "the site can create accounts unchecked"

@@ -157,7 +157,34 @@ def rotate_invite_code():
         return d["invite_code"]
 
 
+def invite_expiry():
+    """When the code stops working, or 0 for never."""
+    return float(_load().get("invite_expires", 0) or 0)
+
+
+def set_invite_expiry(when):
+    """`when` is a unix time, or 0 to remove the expiry."""
+    with _lock:
+        d = _load()
+        d["invite_expires"] = float(when or 0)
+        return _save(d)
+
+
+def invite_expired(now=None):
+    exp = invite_expiry()
+    if not exp:
+        return False
+    return (time.time() if now is None else now) >= exp
+
+
 def check_invite(code):
+    """Constant-time, and refuses an expired code.
+
+    Expiry is checked first: a code that has run out should not also become an
+    oracle for what the current one is by answering at a different speed.
+    """
+    if invite_expired():
+        return False
     return hmac.compare_digest((code or "").strip(), invite_code())
 
 
@@ -229,12 +256,16 @@ def find_user(name_or_email):
     return None
 
 
-def create_user(username, email, password, code):
+def create_user(username, email, password, code, _skip_invite=False):
     """Register an account. Returns the public view.
 
     Raises ValueError with a message meant for the person reading it.
+
+    `_skip_invite` is for `create_user_as_admin` only — it is deliberately
+    private and never reachable from a request, because the invite code is the
+    front door for everyone arriving over the network.
     """
-    if not check_invite(code):
+    if not _skip_invite and not check_invite(code):
         raise ValueError("That invite code is not valid.")
     why = username_error(username)
     if why:
@@ -281,6 +312,19 @@ def create_user(username, email, password, code):
             raise ValueError("Could not save the account. Try again.")
         log.info("site account created: %s", low)
         return public(user)
+
+
+def create_user_as_admin(username, email, password, quota=None):
+    """Create an account from the desktop app, with no invite code.
+
+    The person doing this is already at the machine, so the code — which exists
+    to stop strangers who found the URL — has nothing to add here.
+    """
+    u = create_user(username, email, password, invite_code(), _skip_invite=True)
+    if quota:
+        set_quota(u["id"], quota)
+        u = public(get_user(u["id"]))
+    return u
 
 
 def verify(name_or_email, password):

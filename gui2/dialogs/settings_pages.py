@@ -395,6 +395,118 @@ class PageBuilderMixin:
         v.addStretch()
         return sa
 
+    def _p_users(self, ex):
+        """Users Site — the public one, its invite code, and its accounts.
+
+        Separate from Browser Integration and from Web Client: those are this
+        machine's own surfaces, and this one is the service other people reach.
+        """
+        import site_auth
+        import site_limits
+
+        sa, v = self._page("Users Site",
+                           "Let people you invite download through this machine")
+
+        # ---- the switch ----
+        f, g = self._card()
+        self.site_enabled = self._toggle(site_auth.is_enabled())
+        self._row(g, "Enable the users site",
+                  "While this is off the site answers every request with a "
+                  "maintenance page rather than failing to connect, so a link "
+                  "that is out for the evening does not look broken.",
+                  self.site_enabled)
+        v.addWidget(f)
+
+        # ---- where it is ----
+        f2, g2 = self._card()
+        from site_server import PORT as _site_port
+        local = "http://127.0.0.1:%d/" % _site_port
+        lab = QLabel("Address")
+        lab.setStyleSheet("font-weight:700;background:transparent;")
+        row = QHBoxLayout()
+        box = QLineEdit(local); box.setReadOnly(True)
+        openb = QPushButton("  Open"); openb.setIcon(themed_icon("open", "text"))
+        openb.clicked.connect(lambda: __import__("webbrowser").open(local))
+        row.addWidget(box, 1)
+        row.addWidget(self._copy_button(lambda: local))
+        row.addWidget(openb)
+        hint = QLabel(
+            "This PC only. To reach it from anywhere, point a tunnel at this "
+            "port — for example  tailscale funnel %d  — which gives "
+            "you an HTTPS address without opening anything on your router."
+            % _site_port)
+        hint.setWordWrap(True)
+        hint.setStyleSheet(
+            f"color:{COLORS['muted']};font-size:{fpx(11)};background:transparent;")
+        g2.addWidget(lab); g2.addLayout(row); g2.addWidget(hint)
+        v.addWidget(f2)
+
+        # ---- invite code ----
+        f3, g3 = self._card()
+        code_lab = QLabel("Invite code")
+        code_lab.setStyleSheet("font-weight:700;background:transparent;")
+        crow = QHBoxLayout()
+        self.invite_box = QLineEdit(site_auth.invite_code())
+        self.invite_box.setReadOnly(True)
+        roll = QPushButton("New code")
+        roll.setCursor(Qt.PointingHandCursor)
+
+        def _rotate():
+            site_auth.rotate_invite_code()
+            self.invite_box.setText(site_auth.invite_code())
+        roll.clicked.connect(_rotate)
+        crow.addWidget(self.invite_box, 1)
+        crow.addWidget(self._copy_button(lambda: self.invite_box.text()))
+        crow.addWidget(roll)
+        code_hint = QLabel(
+            "Anyone signing up needs this. Without it the address is a public "
+            "HTTPS page that search engines and scanners do find, so the code "
+            "is what stops strangers queueing downloads onto this machine.")
+        code_hint.setWordWrap(True)
+        code_hint.setStyleSheet(
+            f"color:{COLORS['muted']};font-size:{fpx(11)};background:transparent;")
+        g3.addWidget(code_lab); g3.addLayout(crow); g3.addWidget(code_hint)
+
+        _EXPIRIES = [("Never", 0), ("In 1 day", 1), ("In 7 days", 7),
+                     ("In 30 days", 30)]
+        self._expiry_map = dict(_EXPIRIES)
+        cur = site_auth.invite_expiry()
+        label = "Never"
+        if cur:
+            import time as _t
+            left = max(0, (cur - _t.time()) / 86400.0)
+            label = next((n for n, d in _EXPIRIES if d and left <= d), "In 30 days")
+        self.invite_expiry = self._combo([n for n, _ in _EXPIRIES], label)
+        self._row(g3, "Code stops working",
+                  "A code shared once keeps working forever unless you give it "
+                  "an end.", self.invite_expiry)
+        v.addWidget(f3)
+
+        # ---- accounts ----
+        f4, g4 = self._card()
+        from gui2.dialogs.site_users import SiteUsersPanel
+        self.users_panel = SiteUsersPanel(self._save_dir_for_users())
+        g4.addWidget(self.users_panel)
+        v.addWidget(f4)
+
+        def _sync(on):
+            for w in (self.invite_box, self.invite_expiry, self.users_panel):
+                w.setEnabled(bool(on))
+        self.site_enabled.toggled.connect(_sync)
+        _sync(self.site_enabled.isChecked())
+
+        v.addStretch()
+        return sa
+
+    def _save_dir_for_users(self):
+        """Where per-account folders live. Read off the General page so the two
+        cannot disagree about which folder is being measured."""
+        try:
+            return self.dir_lbl.text()
+        except AttributeError:
+            import utils
+            return utils.default_download_dir()
+
     def _p_appearance(self, theme, accent, ex):
         sa, v = self._page("Appearance", "Customize the look and feel")
         f, g = self._card()

@@ -22,7 +22,7 @@ from gui2.brand import BrandLogo
 from gui2.dialogs.settings_pages import PageBuilderMixin
 
 _SECTIONS = ["General", "Downloads", "Network", "Browser", "Web Client",
-             "Appearance", "Advanced", "About"]
+             "Users Site", "Appearance", "Advanced", "About"]
 
 
 class SettingsDialogV2(PageBuilderMixin, QDialog):
@@ -53,7 +53,7 @@ class SettingsDialogV2(PageBuilderMixin, QDialog):
             f"QListWidget::item:selected{{background:{COLORS['accent']};color:white;}}")
             
         icons = ["settings", "download", "link", "open", "link",
-                 "program", "menu", "info"]
+                 "open", "program", "menu", "info"]
         for s, ic in zip(_SECTIONS, icons):
             item = QListWidgetItem(themed_icon(ic, "muted"), s)
             self.nav.addItem(item)
@@ -113,7 +113,8 @@ class SettingsDialogV2(PageBuilderMixin, QDialog):
         self.stack.addWidget(self._p_downloads(max_concurrent, segments, ex))
         self.stack.addWidget(self._p_network(ex))
         self.stack.addWidget(self._p_browser(ex))
-        self.stack.addWidget(self._p_web(ex))
+        self.stack.addWidget(self._p_web(ex))
+        self.stack.addWidget(self._p_users(ex))
         self.stack.addWidget(self._p_appearance(theme, accent, ex))
         self.stack.addWidget(self._p_advanced(verify_tls, sched_en, sched_start, sched_stop, ex))
         self.stack.addWidget(self._p_about())
@@ -241,4 +242,7 @@ class SettingsDialogV2(PageBuilderMixin, QDialog):
             # it from — only a hash is stored.
             "web_password": self.web_pass.text(),
             "web_lan": self.web_lan.isChecked(),
+            "site_enabled": self.site_enabled.isChecked(),
+            "invite_expiry_days": self._expiry_map.get(
+                self.invite_expiry.currentText(), 0),
         }
