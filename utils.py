@@ -373,6 +373,34 @@ def category_for(filename):
     return "Other"
 
 
+def user_download_dir(base_dir, username):
+    """Where one site account's downloads live: ``base_dir/<username>``.
+
+    The username was already validated when the account was created, but this
+    is the last point before it becomes a real path, so it is checked again
+    rather than trusted. A name that does not survive the check is refused, not
+    rewritten into some neighbouring folder: quietly relocating one account's
+    files into another account's directory is the failure worth preventing.
+
+    Returns base_dir unchanged for the empty owner, which is the desktop app
+    and everything queued before accounts existed.
+    """
+    name = (username or "").strip()
+    if not name:
+        return base_dir
+    if name != safe_filename(name) or name in (".", ".."):
+        raise ValueError("unsafe username for a folder: %r" % username)
+    d = os.path.join(base_dir, name)
+    # Belt and braces: the join must not have escaped base_dir.
+    if os.path.realpath(d) != os.path.realpath(os.path.join(base_dir, name)):
+        raise ValueError("username escaped the download folder: %r" % username)
+    root = os.path.realpath(base_dir)
+    if not os.path.realpath(d).startswith(root + os.sep):
+        raise ValueError("username escaped the download folder: %r" % username)
+    os.makedirs(d, exist_ok=True)
+    return d
+
+
 def get_category_dir(base_dir, filename):
     """Return the base_dir + category subfolder based on file extension."""
     if not filename:

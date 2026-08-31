@@ -165,6 +165,11 @@ class DownloadTask:
         self.files_watched = False
         self.tor_upload = 0
         self.tor_uploaded = 0      # total bytes sent for this torrent
+        # Which site account queued this. "" means the machine's owner — the
+        # desktop app, the extension, and every download that existed before
+        # accounts did. Empty is the safe default: a task whose owner cannot be
+        # determined belongs to admin, never to whoever asked for it.
+        self.owner = ""
         # hash-check in progress (transient). A recheck reads the whole payload
         # off disk, so without this the UI shows nothing moving for minutes.
         self.verifying = False
@@ -297,6 +302,7 @@ class DownloadTask:
             "infohash": self.infohash,
             "selected_files": self.selected_files,
             "is_scheduled": getattr(self, "is_scheduled", False),
+            "owner": self.owner,
             # never write cookies/auth to disk; keep only safe headers (Referer/UA)
             "headers": utils.strip_sensitive(self.headers)
         }
@@ -329,6 +335,9 @@ class DownloadTask:
             yt_format=d.get("yt_format", "")
         )
         t.is_scheduled = d.get("is_scheduled", False)
+        # Missing on every task written before accounts existed, which is why
+        # it defaults to "" rather than raising — those belong to admin.
+        t.owner = d.get("owner", "") or ""
         t.sha256 = d.get("sha256", "")
         t.infohash = d.get("infohash", "")
         t.selected_files = d.get("selected_files", "")
