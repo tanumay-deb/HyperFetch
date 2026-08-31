@@ -109,6 +109,43 @@ def set_enabled(on):
     return _save(d)
 
 
+def lan_allowed():
+    """True when the user has opted into serving this to the whole network.
+
+    Checked at bind time, and separately from `enabled`: switching the client
+    on is about this PC's browser, opening it to the LAN is a bigger decision
+    and deserves its own switch.
+    """
+    d = _load()
+    if not (d.get("lan") and d.get("enabled")):
+        return False
+    # A password that was accepted under the loopback floor must not become the
+    # only thing standing between the network and the download queue.
+    return bool(d.get("salt") and d.get("hash")) and not d.get("weak")
+
+
+def lan_refusal():
+    """Why LAN access cannot be turned on, or "" when it can.
+
+    Returned as a sentence to show the user, because "the toggle did nothing"
+    is the worst possible answer here.
+    """
+    d = _load()
+    if not (d.get("salt") and d.get("hash")):
+        return "Set a password first."
+    if d.get("weak"):
+        return ("Set a password of at least %d characters first — the current "
+                "one is too short to expose to your network."
+                % MIN_LAN_PASSWORD)
+    return ""
+
+
+def set_lan(on):
+    d = _load()
+    d["lan"] = bool(on)
+    return _save(d)
+
+
 def username():
     """The configured username, or the default when none was ever set."""
     u = (_load().get("username") or "").strip()

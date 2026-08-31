@@ -169,6 +169,25 @@ class SettingsMixin:
         web_auth.set_enabled(want_on)
         v["web_enabled"] = want_on
 
+        # LAN access is a second, stricter gate. Refusing silently would leave
+        # the toggle looking on while the server stayed on loopback.
+        want_lan = bool(v.get("web_lan")) and want_on
+        if want_lan:
+            why = web_auth.lan_refusal()
+            if why:
+                self._web_toast("error", "Network access not enabled", why)
+                want_lan = False
+        was_lan = web_auth.lan_allowed()
+        web_auth.set_lan(want_lan)
+        v["web_lan"] = want_lan
+        if want_lan != was_lan:
+            self._web_toast(
+                "info",
+                "Restart to apply",
+                "Network access turns on when HyperFetch restarts."
+                if want_lan else
+                "The web client goes back to this PC only after a restart.")
+
     def _web_toast(self, kind, title, msg):
         try:
             self._toasts.show(kind, title, msg)

@@ -347,6 +347,28 @@ button { font: inherit; cursor: pointer; color: inherit; }
 .btn-label { display: none; font-size: .85rem; font-weight: 600; }
 .act .danger:hover { color: var(--err); border-color: var(--err); background: transparent; }
 
+/* Files inside a finished multi-file torrent — the reason the web client
+   exists, so they are links the browser downloads, not buttons that fetch. */
+.files {
+  grid-column: 1 / -1;
+  display: grid; gap: 4px;
+  margin-top: 4px; padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+.file {
+  display: flex; align-items: center; gap: 10px;
+  min-height: 40px; padding: 6px 9px;
+  border-radius: 8px;
+  color: var(--muted); text-decoration: none;
+  font-size: .84rem;
+}
+.file:hover { background: var(--surface2); color: var(--text); }
+.file .ic { width: 16px; height: 16px; color: var(--down); }
+.file-name { flex: 1; min-width: 0;
+             overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.file-size { flex: 0 0 auto; font-size: .78rem; color: var(--faint); }
+.file-note { grid-column: 1 / -1; margin: 4px 0 0; font-size: .8rem; color: var(--muted); }
+
 .note { margin: 0; padding: 40px 20px; text-align: center; color: var(--muted); }
 .note.warn { color: var(--warn); }
 

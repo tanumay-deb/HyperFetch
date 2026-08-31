@@ -18,7 +18,8 @@ import sys
 import logging
 
 from datetime import timedelta
-from flask import Flask, request, jsonify, session, redirect, send_from_directory
+from flask import (Flask, request, jsonify, session, redirect,
+                   send_from_directory, send_file)
 from flask_cors import CORS
 
 import task as T
@@ -42,6 +43,64 @@ LOOPBACK_ADDRS = {"127.0.0.1", "::1", "::ffff:127.0.0.1"}
 # Only these are served from /ui. An allow-list rather than "whatever is in the
 # folder", so a stray file dropped in there never becomes a public URL.
 ALLOWED_UI_FILES = {"index.html", "style.css", "app.js"}
+
+
+# A torrent can hold thousands of files. The listing is for a person choosing
+# one on a phone, so it stops rather than building a list nobody will scroll.
+MAX_LISTED_FILES = 500
+
+
+def servable_files(t):
+    """The files a finished download is allowed to hand out, in order.
+
+    The root comes from the TASK (``save_path``), never from the request, so
+    there is no caller-supplied path to traverse with. Callers pick a file by
+    index into this list; a directory is walked once and every result is
+    re-checked to be inside the root, so a symlink planted in a torrent cannot
+    point the server at something else on disk.
+    """
+    root = getattr(t, "save_path", "") or ""
+    if not root:
+        return []
+    try:
+        real_root = os.path.realpath(root)
+    except OSError:
+        return []
+
+    def inside(p):
+        try:
+            rp = os.path.realpath(p)
+        except OSError:
+            return False
+        return rp == real_root or rp.startswith(real_root + os.sep)
+
+    if os.path.isfile(real_root):
+        return [{"path": real_root, "name": os.path.basename(real_root),
+                 "rel": os.path.basename(real_root),
+                 "size": os.path.getsize(real_root)}]
+
+    if not os.path.isdir(real_root):
+        return []
+
+    out = []
+    for base, dirs, names in os.walk(real_root):
+        dirs.sort()
+        for n in sorted(names):
+            if n.endswith((".hfdownload", ".aria2")):
+                continue                     # still being written
+            full = os.path.join(base, n)
+            if not inside(full):
+                continue                     # symlink out of the torrent
+            try:
+                size = os.path.getsize(full)
+            except OSError:
+                continue
+            out.append({"path": full, "name": n,
+                        "rel": os.path.relpath(full, real_root).replace("\\", "/"),
+                        "size": size})
+            if len(out) >= MAX_LISTED_FILES:
+                return out
+    return out
 
 
 def web_dir():
@@ -460,6 +519,58 @@ def create_app(queue, save_dir, pending=None, token=None):
         return t, (None if t else
                    (jsonify({"status": "error", "message": "no such download"}), 404))
 
+    # ------------------------------------------- web UI: take the file away
+    # The point of the whole web client: an iPhone has no torrent client, so
+    # the PC fetches it and the phone collects the finished file from here.
+    @app.route("/api/downloads/<task_id>/files", methods=["GET"])
+    def api_files(task_id):
+        deny = require_web_auth()
+        if deny:
+            return deny
+        t, missing = _task_or_404(task_id)
+        if missing:
+            return missing
+        files = servable_files(t)
+        return jsonify({
+            "ready": t.status == T.COMPLETED,
+            "truncated": len(files) >= MAX_LISTED_FILES,
+            # No absolute paths: the phone only ever needs a name and an index,
+            # and the layout of this PC's disk is not the browser's business.
+            "files": [{"index": i, "name": f["name"], "path": f["rel"],
+                       "size": f["size"]}
+                      for i, f in enumerate(files)],
+        })
+
+    @app.route("/api/downloads/<task_id>/file", methods=["GET"])
+    @app.route("/api/downloads/<task_id>/file/<int:index>", methods=["GET"])
+    def api_file(task_id, index=0):
+        deny = require_web_auth()
+        if deny:
+            return deny
+        t, missing = _task_or_404(task_id)
+        if missing:
+            return missing
+        if t.status != T.COMPLETED:
+            # Half a file looks like a whole one once it is on the phone.
+            return jsonify({"status": "error", "code": "not-ready",
+                            "message": "This download has not finished yet"}), 409
+
+        files = servable_files(t)
+        if not files:
+            return jsonify({"status": "error", "code": "gone",
+                            "message": "The file is no longer on the PC"}), 404
+        if index < 0 or index >= len(files):
+            return jsonify({"status": "error", "message": "no such file"}), 404
+
+        f = files[index]
+        # conditional=True is what makes this usable on a phone: Werkzeug then
+        # answers Range requests, so Safari can stream a video without pulling
+        # the whole thing, and a dropped 4 GB download resumes instead of
+        # starting over.
+        inline = request.args.get("inline") == "1"
+        return send_file(f["path"], as_attachment=not inline,
+                         download_name=f["name"], conditional=True)
+
     @app.route("/api/downloads/<task_id>/pause", methods=["POST"])
     def api_pause(task_id):
         deny = require_web_auth()
@@ -543,10 +654,30 @@ def create_app(queue, save_dir, pending=None, token=None):
     return app
 
 
+def bind_host():
+    """127.0.0.1 unless the user has explicitly opened this to their network.
+
+    Evaluated once per start, so turning LAN access on or off takes effect on
+    the next launch rather than silently changing what a running process is
+    already listening on.
+    """
+    try:
+        if web_auth.lan_allowed():
+            return "0.0.0.0"
+    except Exception:
+        log.exception("could not read the LAN setting — staying on loopback")
+    return "127.0.0.1"
+
+
 def run_server(queue, save_dir, port=PORT, pending=None, token=None):
     app = create_app(queue, save_dir, pending, token=token)
+    host = bind_host()
+    if host != "127.0.0.1":
+        # Worth a line in the log: it is the one moment this app stops being
+        # local-only, and the extension routes stay loopback-only regardless.
+        log.warning("web client is reachable from your network on port %s", port)
     # threaded so multiple browser hits don't block; reloader off (background thread)
-    app.run(host="127.0.0.1", port=port, threaded=True,
+    app.run(host=host, port=port, threaded=True,
             use_reloader=False, debug=False)
 
 

@@ -240,4 +240,5 @@ class SettingsDialogV2(PageBuilderMixin, QDialog):
             # with the existing password, because there is nothing to pre-fill
             # it from — only a hash is stored.
             "web_password": self.web_pass.text(),
+            "web_lan": self.web_lan.isChecked(),
         }

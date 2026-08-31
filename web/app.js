@@ -303,11 +303,73 @@ function keep(d) {
 }
 
 /* --------------------------------------------------------------- actions */
+/* Saving is a plain link the browser follows, never fetch(): fetch would pull
+   the whole file into memory before the phone saw a byte of it, and these are
+   the multi-gigabyte files the PC downloaded on the phone's behalf. The server
+   sends Content-Disposition: attachment, so Safari puts it in Files. */
+function saveHref(id, index) {
+  return "/api/downloads/" + encodeURIComponent(id) + "/file" +
+         (index === undefined ? "" : "/" + index);
+}
+
+function note(text) {
+  const p = document.createElement("p");
+  p.className = "file-note";
+  p.textContent = text;
+  return p;
+}
+
+function fileRow(id, f) {
+  const a = document.createElement("a");
+  a.className = "file";
+  a.href = saveHref(id, f.index);
+  a.setAttribute("download", f.name);
+  const nm = document.createElement("span");
+  nm.className = "file-name";
+  nm.textContent = f.path || f.name;
+  const sz = document.createElement("span");
+  sz.className = "file-size num";
+  sz.textContent = bytes(f.size);
+  a.append(icon("i-save"), nm, sz);
+  return a;
+}
+
+async function offerFiles(card, id) {
+  const panel = card.files;
+  if (!panel.hidden) { panel.hidden = true; return; }    // tapped again: close
+
+  const r = await api("/api/downloads/" + encodeURIComponent(id) + "/files");
+  const files = (r.body && r.body.files) || [];
+  if (!r.ok || !files.length) {
+    panel.replaceChildren(note((r.body && r.body.message) ||
+                               "The file is no longer on the PC."));
+    panel.hidden = false;
+    return;
+  }
+  /* One file is the common case, and a single tap should not turn into a tap,
+     a list, and a second tap. */
+  if (files.length === 1) {
+    window.location.href = saveHref(id, files[0].index);
+    return;
+  }
+  const rows = files.map((f) => fileRow(id, f));
+  if (r.body.truncated) {
+    rows.push(note("Only the first " + files.length + " files are listed."));
+  }
+  panel.replaceChildren(...rows);
+  panel.hidden = false;
+}
+
 $("list").addEventListener("click", async (e) => {
   const b = e.target.closest("button[data-act]");
   if (!b) return;
   const id = b.closest(".card").dataset.id;
   const act = b.dataset.act;
+  if (act === "save") {
+    b.disabled = true;
+    try { await offerFiles(cards.get(id), id); } finally { b.disabled = false; }
+    return;
+  }
   if (act === "delete" &&
       !confirm("Remove this download from the list? The file itself is kept.")) return;
   b.disabled = true;
@@ -384,8 +446,12 @@ function build(d) {
   const act = document.createElement("div");
   act.className = "act";
 
-  li.append(chip, head, track, sub, act);
-  return { li, chip, chipIcon, name, pct, track, fill, sub, act,
+  const files = document.createElement("div");
+  files.className = "files";
+  files.hidden = true;
+
+  li.append(chip, head, track, sub, act, files);
+  return { li, chip, chipIcon, name, pct, track, fill, sub, act, files,
            glyph: null, tint: null, stateName: null, bad: null, buttons: null };
 }
 
@@ -455,13 +521,17 @@ function update(c, d, bps) {
   const toggle = running ? "pause"
                : (d.status === "Paused" || d.status === "Error") ? "resume" : "";
   /* Only this row is rebuilt, and only when the state it depends on changes. */
-  if (c.buttons !== toggle) {
+  const key = toggle + (d.status === "Completed" ? "+save" : "");
+  if (c.buttons !== key) {
     const out = [];
     if (toggle === "pause") out.push(iconBtn("pause", "i-pause", "Pause"));
     if (toggle === "resume") out.push(iconBtn("resume", "i-play", "Resume"));
+    if (d.status === "Completed") out.push(iconBtn("save", "i-save", "Save to device"));
     out.push(iconBtn("delete", "i-trash", "Remove from list", "danger"));
     c.act.replaceChildren(...out);
-    c.buttons = toggle;
+    c.files.replaceChildren();
+    c.files.hidden = true;
+    c.buttons = key;
   }
 }
 
@@ -607,14 +677,27 @@ function drawGraph() {
   g.stroke();
 }
 
-function setStatus(downBps, stats) {
+function setStatus(downBps, stats, swarm) {
   $("downNow").textContent = speed(downBps);
   $("upNow").textContent = speed(stats.upSpeed || 0);
   $("downTotal").textContent = bytes(stats.downloadedTotal || 0);
   $("upTotal").textContent = bytes(stats.uploadedNow || 0);
   if (stats.version) $("version").textContent = "v" + stats.version;
 
-  history.push({ down: downBps, up: stats.upSpeed || 0 });
+  // The sidebar card, same two readouts as the desktop sidebar.
+  $("speedNow").textContent = speed(downBps);
+  if (swarm.torrents) {
+    /* Peers alone flatters: 49 connected peers next to 0 B/s is normal in a
+       swarm where nobody holds a complete copy, so the seed count goes beside
+       it — and the caption has to name the format or "104 / 5" is a riddle. */
+    $("connNow").textContent = swarm.peers + " / " + swarm.seeds;
+    $("connCap").textContent = "Peers / Seeds";
+  } else {
+    $("connNow").textContent = String(swarm.active);
+    $("connCap").textContent = "Downloading";
+  }
+
+  history.push(downBps);
   while (history.length > GRAPH_SAMPLES) history.shift();
   drawGraph();
 }
@@ -637,12 +720,21 @@ async function tick() {
 
   last = dl.body.downloads || [];
   let down = 0;
+  const swarm = { peers: 0, seeds: 0, torrents: 0, active: 0 };
   for (const d of last) {
     const bps = rateFor(d);
-    if (d.status === "Downloading") down += bps;
+    if (d.status === "Downloading") { down += bps; swarm.active++; }
+    /* Seeding torrents are left out of the swarm totals: their peers are
+       people taking from you, and counting them makes the number describe
+       something other than what is being fetched. */
+    if (d.isTorrent && !d.seeding && d.status !== "Completed") {
+      swarm.torrents++;
+      swarm.peers += d.peers;
+      swarm.seeds += d.seeds;
+    }
   }
   render(last);
-  setStatus(down, st.ok ? st.body : {});
+  setStatus(down, st.ok ? st.body : {}, swarm);
 }
 
 boot();

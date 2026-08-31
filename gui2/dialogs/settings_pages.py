@@ -269,6 +269,25 @@ class PageBuilderMixin:
                 out.append(e)
         return out
 
+    @staticmethod
+    def _lan_ip():
+        """This PC's address on the local network.
+
+        Opening a UDP socket towards a routable address makes the OS pick the
+        interface it would actually route through, which is the one the phone
+        can reach — gethostbyname often answers 127.0.0.1 or picks a virtual
+        adapter on a machine with Docker or a VPN installed. Nothing is sent.
+        """
+        import socket
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            s.connect(("10.255.255.255", 1))
+            return s.getsockname()[0]
+        except OSError:
+            return "127.0.0.1"
+        finally:
+            s.close()
+
     def _p_web(self, ex):
         """Web Client — the browser page this app serves to other devices.
 
@@ -320,6 +339,17 @@ class PageBuilderMixin:
         g2.addWidget(note)
         v.addWidget(f2)
 
+        # ---- reach it from other devices ----
+        f4, g4 = self._card()
+        self.web_lan = self._toggle(web_auth.lan_allowed())
+        self._row(g4, "Allow access from my network",
+                  "Let your phone and other devices on this network open the "
+                  "page. Needs a password of at least %d characters, and takes "
+                  "effect when HyperFetch restarts."
+                  % web_auth.MIN_LAN_PASSWORD,
+                  self.web_lan)
+        v.addWidget(f4)
+
         # ---- where it is ----
         f3, g3 = self._card()
         from api_server import PORT as _web_port
@@ -334,20 +364,32 @@ class PageBuilderMixin:
         row.addWidget(box, 1)
         row.addWidget(self._copy_button(lambda: url))
         row.addWidget(openb)
-        hint = QLabel("This PC only for now. Other devices on your network cannot "
-                      "reach it yet.")
-        hint.setWordWrap(True)
-        hint.setStyleSheet(
-            f"color:{COLORS['muted']};font-size:{fpx(11)};background:transparent;")
-        g3.addWidget(lab); g3.addLayout(row); g3.addWidget(hint)
+        g3.addWidget(lab); g3.addLayout(row)
+
+        # The address to type on the phone. Shown as soon as LAN access is on,
+        # because "it is enabled" without an address is not actionable.
+        lan_url = "http://%s:%d/ui/" % (self._lan_ip(), _web_port)
+        self.lan_row = QWidget()
+        lr = QVBoxLayout(self.lan_row)
+        lr.setContentsMargins(0, 8, 0, 0); lr.setSpacing(6)
+        lan_lab = QLabel("On your network")
+        lan_lab.setStyleSheet("font-weight:700;background:transparent;")
+        lrow = QHBoxLayout()
+        lan_box = QLineEdit(lan_url); lan_box.setReadOnly(True)
+        lrow.addWidget(lan_box, 1)
+        lrow.addWidget(self._copy_button(lambda: lan_url))
+        lr.addWidget(lan_lab); lr.addLayout(lrow)
+        g3.addWidget(self.lan_row)
         v.addWidget(f3)
 
         # Grey the credentials out while it is switched off, so the page cannot
         # look configurable when nothing it says would take effect.
         def _sync(on):
-            for w in (self.web_user, self.web_pass):
+            for w in (self.web_user, self.web_pass, self.web_lan):
                 w.setEnabled(bool(on))
+            self.lan_row.setVisible(bool(on) and self.web_lan.isChecked())
         self.web_enabled.toggled.connect(_sync)
+        self.web_lan.toggled.connect(lambda _=False: _sync(self.web_enabled.isChecked()))
         _sync(self.web_enabled.isChecked())
 
         v.addStretch()
