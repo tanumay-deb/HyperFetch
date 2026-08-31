@@ -15,11 +15,13 @@ Two modes:
 """
 import logging
 
-from flask import Flask, request, jsonify
+from datetime import timedelta
+from flask import Flask, request, jsonify, session
 from flask_cors import CORS
 
 import task as T
 import utils
+import web_auth
 
 PORT = 5000
 log = logging.getLogger("hyperfetch.server")
@@ -246,6 +248,81 @@ def create_app(queue, save_dir, pending=None, token=None):
         task = T.DownloadTask(target, utils.unique_path(save_dir, fn), filename=fn)
         queue.add_task(task)
         return jsonify({"status": "queued", "id": task.id})
+
+
+    # ---------------------------------------------------------------- web UI
+    # Its own password and signed session, never the pairing token: /pair hands
+    # that token to any local caller, it would sit in the page source, and it
+    # cannot be rotated without re-pairing the extension.
+    app.secret_key = web_auth.secret_key()
+    app.config.update(
+        SESSION_COOKIE_HTTPONLY=True,     # script in the page cannot read it
+        SESSION_COOKIE_SAMESITE="Lax",    # another site cannot POST as the user
+        PERMANENT_SESSION_LIFETIME=timedelta(days=30),
+    )
+    throttle = web_auth.LoginThrottle()
+
+    def web_authed():
+        """Signed in AND still on the password used to sign in.
+
+        This stamp check is what makes a password change sign other devices
+        out straight away: app.secret_key is read once at construction, so
+        rotating it alone leaves a live cookie valid until the next restart.
+        """
+        if not (session.get("web_ok") and web_auth.has_password()):
+            return False
+        return session.get("pw") == web_auth.password_stamp()
+
+    def require_web_auth():
+        """None when the caller may proceed, else a response to return.
+
+        Reachable from the LAN, so this is the only thing standing between the
+        network and the download queue.
+        """
+        if not web_auth.has_password():
+            return jsonify({"status": "error", "code": "no-password",
+                            "message": "Set a web password in Settings first"}), 403
+        if not web_authed():
+            return jsonify({"status": "error", "code": "auth",
+                            "message": "not signed in"}), 401
+        return None
+
+    @app.route("/api/session", methods=["GET"])
+    def api_session():
+        """What the page needs before rendering: is a password set, am I in?"""
+        return jsonify({"hasPassword": web_auth.has_password(),
+                        "authed": web_authed()})
+
+    @app.route("/api/login", methods=["POST"])
+    def api_login():
+        data = request.get_json(silent=True) or {}
+        addr = request.remote_addr or "?"
+        wait = throttle.locked_for(addr)
+        if wait > 0:
+            return jsonify({"status": "error", "code": "locked",
+                            "message": "Too many attempts. Try again in "
+                                       f"{int(wait) + 1}s.",
+                            "retryAfter": int(wait) + 1}), 429
+        if not web_auth.has_password():
+            return jsonify({"status": "error", "code": "no-password",
+                            "message": "Set a web password in Settings first"}), 403
+        if not web_auth.verify_password(data.get("password") or ""):
+            throttle.record_failure(addr)
+            log.warning("failed web login from %s", addr)
+            return jsonify({"status": "error", "code": "bad-password",
+                            "message": "Wrong password"}), 401
+        throttle.record_success(addr)
+        session.clear()                   # new session id on login
+        session["web_ok"] = True
+        session["pw"] = web_auth.password_stamp()
+        session.permanent = True
+        log.info("web login from %s", addr)
+        return jsonify({"status": "ok"})
+
+    @app.route("/api/logout", methods=["POST"])
+    def api_logout():
+        session.clear()
+        return jsonify({"status": "ok"})
 
     return app
 
