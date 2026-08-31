@@ -209,6 +209,7 @@ def public(u):
         "provider": u.get("provider", "local"),
         "status": u.get("status", STATUS_ACTIVE),
         "plan": u.get("plan", "unlimited"),
+        "quota": int(u.get("quota", 0) or _default_quota()),
         "created": float(u.get("created", 0) or 0),
     }
 
@@ -269,6 +270,9 @@ def create_user(username, email, password, code):
             # schema change.
             "status": STATUS_ACTIVE,
             "plan": "unlimited",
+            # Stored per account rather than read from a constant, so raising
+            # it for one person later is an edit and not a migration.
+            "quota": _default_quota(),
             "created": time.time(),
         }
         users.append(user)
@@ -339,6 +343,32 @@ def set_password(user_id, password):
                   "hash": base64.b64encode(_hash(password, salt)).decode()})
         d["users"] = users
         return _save(d)
+
+
+def _default_quota():
+    import site_limits
+    return site_limits.DEFAULT_QUOTA
+
+
+def set_quota(user_id, quota_bytes):
+    """Change one account's allowance. 0 restores the default."""
+    q = int(quota_bytes or 0)
+    if q < 0:
+        raise ValueError("a quota cannot be negative")
+    with _lock:
+        d = _load()
+        users = _users(d)
+        u = next((x for x in users if x.get("id") == user_id), None)
+        if not u:
+            return False
+        u["quota"] = q or _default_quota()
+        d["users"] = users
+        return _save(d)
+
+
+def quota_of(user_id):
+    u = get_user(user_id)
+    return int((u or {}).get("quota", 0) or _default_quota())
 
 
 def set_status(user_id, status):

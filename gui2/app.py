@@ -415,6 +415,19 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, QW
         self.sort.setMenu(menu)
         self._last_sort_idx = 0
         top.addWidget(self.sort)
+
+        # Downloads other people queued through the web client are hidden by
+        # default: this window is the machine owner's, and it should not fill
+        # up with somebody else's transfers. One click when you want to look.
+        self.web_toggle = QPushButton("Web")
+        self.web_toggle.setObjectName("pill")
+        self.web_toggle.setCheckable(True)
+        self.web_toggle.setCursor(Qt.PointingHandCursor)
+        self.web_toggle.setToolTip("Show downloads queued from the web client")
+        self.web_toggle.setChecked(bool(self._extras.get("show_web_downloads", False)))
+        self.web_toggle.toggled.connect(self._on_show_web)
+        self.web_toggle.setVisible(False)      # only once such a download exists
+        top.addWidget(self.web_toggle)
         
         self.del_btn = QPushButton("Delete")
         self.del_btn.setObjectName("delBtn")
@@ -462,6 +475,11 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, QW
             "font-size: 20px; font-weight: 700;")
         self._drag_overlay.hide()
 
+    def _on_show_web(self, on):
+        self._extras["show_web_downloads"] = bool(on)
+        self._save_settings()
+        self.refresh()
+
     def _on_sort_changed(self, key):
         """Toggle ascending/descending when the same sort is clicked again."""
         keys = ["Added", "Name", "Size", "Progress", "Speed"]
@@ -503,7 +521,19 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, QW
         return {t.id: i for i, t in enumerate(ordered, 1)}
 
     def _visible_tasks(self):
-        tasks = [t for t in self.queue.tasks if getattr(self, "_filter", "All") == "All" or 
+        # Owner first, so the count on every other filter reflects what is
+        # actually on screen rather than including hidden web downloads.
+        owned = [t for t in self.queue.tasks if not (getattr(t, "owner", "") or "")]
+        web = len(self.queue.tasks) - len(owned)
+        show_web = False
+        if hasattr(self, "web_toggle"):
+            # The button only appears once there is something behind it.
+            self.web_toggle.setVisible(web > 0)
+            self.web_toggle.setText("Web (%d)" % web if web else "Web")
+            show_web = self.web_toggle.isChecked()
+        source = self.queue.tasks if show_web else owned
+
+        tasks = [t for t in source if getattr(self, "_filter", "All") == "All" or 
                  (self._filter == "Active" and t.status in (T.DOWNLOADING, T.QUEUED, T.SCHEDULED)) or
                  (self._filter == "Paused" and t.status == T.PAUSED) or
                  (self._filter == "Completed" and t.status == T.COMPLETED) or

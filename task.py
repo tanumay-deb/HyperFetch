@@ -170,6 +170,8 @@ class DownloadTask:
         # accounts did. Empty is the safe default: a task whose owner cannot be
         # determined belongs to admin, never to whoever asked for it.
         self.owner = ""
+        # When this finished, for the site's 30-day retention. 0 until it does.
+        self.completed_at = 0.0
         # hash-check in progress (transient). A recheck reads the whole payload
         # off disk, so without this the UI shows nothing moving for minutes.
         self.verifying = False
@@ -207,6 +209,11 @@ class DownloadTask:
         changed = self._status != value
         self._status = value
         if changed:
+            # Stamped here rather than derived from the events timeline, which
+            # is capped and would forget the moment on a long-lived task. The
+            # site's retention clock reads this, so it has to survive restarts.
+            if value == COMPLETED and not self.completed_at:
+                self.completed_at = time.time()
             self.log_event(str(value))
 
     def log_event(self, text, level="INFO", source="System"):
@@ -303,6 +310,7 @@ class DownloadTask:
             "selected_files": self.selected_files,
             "is_scheduled": getattr(self, "is_scheduled", False),
             "owner": self.owner,
+            "completed_at": self.completed_at,
             # never write cookies/auth to disk; keep only safe headers (Referer/UA)
             "headers": utils.strip_sensitive(self.headers)
         }
@@ -338,6 +346,7 @@ class DownloadTask:
         # Missing on every task written before accounts existed, which is why
         # it defaults to "" rather than raising — those belong to admin.
         t.owner = d.get("owner", "") or ""
+        t.completed_at = float(d.get("completed_at", 0) or 0)
         t.sha256 = d.get("sha256", "")
         t.infohash = d.get("infohash", "")
         t.selected_files = d.get("selected_files", "")
