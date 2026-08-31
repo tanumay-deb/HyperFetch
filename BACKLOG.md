@@ -35,6 +35,26 @@ Simple running list. Newest first. Keep entries to one line.
 - earlier — ABDM-style UI overhaul, multi-queue + adaptive segments, crash reporter + update check, v1.2.0 release.
 
 ## Next (UX & polish — planned)
+- **Stats dashboard** — a screen showing lifetime totals: GB downloaded, GB
+  uploaded, share ratio, count and volume by category, busiest day, average
+  speed. [med]
+
+  Checked what the data would cost:
+  - **Downloaded GB, counts, by-category — free today.** `history.stats()`
+    already returns exactly that (its docstring even says "for the
+    dashboard"), and `history.json` has a row per completed download.
+  - **Uploaded GB — small engine change.** Only `tor_upload` is kept and that
+    is upload *speed*, not a total. aria2's tellStatus already returns
+    `uploadLength` (cumulative bytes); it just is not read. Needs a persisted
+    per-task counter so a restart does not reset it.
+  - **GB from peers vs GB from seeds — NOT available.** aria2 reports byte
+    totals for the download, and `getPeers` gives a per-peer *speed* snapshot,
+    but nothing attributes transferred bytes to seeds vs leechers. It could
+    only be estimated by sampling getPeers over time, which would be a guess
+    presented as a number — and getPeers is the call already gated to the
+    Connections tab because it is not free. Recommend dropping this one and
+    showing peers/seeds *counts* over time instead, which is honest.
+
 - **Download health score**: colour rows green/amber/red from seeds·peers·stall count·retries. [low — data already collected] Highest value per hour on the list: a live snapshot showed 49 peers / 1 seeder / 0.00 Mb/s, and nothing in the UI said why.
 - **Piece map**: block view of the torrent's bitfield (uTorrent-style). [low] `tellStatus` already returns the bitfield and `_bitfield_pct` already parses one — this is a paint widget. Answers "stuck or just slow?" at a glance.
 - **Webhook on complete**: POST to a user URL (Discord / Telegram / Home Assistant / scripts). [low]
