@@ -22,6 +22,7 @@ let sortAsc = false;               // and the same default: newest first
 let timer = null;
 let last = [];
 const rates = new Map();           // id -> {bytes, at, bps}
+const picked = new Set();          // selected download ids
 const history = [];                // rolling speed samples for the sidebar graph
 
 /* Category -> icon + colour. Same mapping as gui2/download_card.py, so a file
@@ -139,6 +140,8 @@ $("logout").addEventListener("click", async () => {
   await api("/api/logout", { method: "POST" });
   rates.clear();
   cards.clear();
+  picked.clear();
+  paintBulk();
   history.length = 0;
   $("list").replaceChildren();
   closeNav();
@@ -419,6 +422,14 @@ function build(d) {
   li.className = "card";
   li.dataset.id = d.id;
 
+  const pick = document.createElement("input");
+  pick.type = "checkbox";
+  pick.className = "pick";
+  pick.setAttribute("aria-label", "Select this download");
+
+  const sl = document.createElement("span");
+  sl.className = "sl num";
+
   const chip = document.createElement("div");
   chip.className = "chip-ic";
   const chipIcon = icon("i-folder");
@@ -450,9 +461,10 @@ function build(d) {
   files.className = "files";
   files.hidden = true;
 
-  li.append(chip, head, track, sub, act, files);
-  return { li, chip, chipIcon, name, pct, track, fill, sub, act, files,
-           glyph: null, tint: null, stateName: null, bad: null, buttons: null };
+  li.append(pick, sl, chip, head, track, sub, act, files);
+  return { li, pick, sl, chip, chipIcon, name, pct, track, fill, sub, act, files,
+           glyph: null, tint: null, stateName: null, bad: null, buttons: null,
+           serial: null };
 }
 
 function swarm(d) {
@@ -479,7 +491,16 @@ function subtitle(d, bps) {
   return bits.join(" · ");
 }
 
-function update(c, d, bps) {
+function update(c, d, bps, serial) {
+  /* Blank once finished: there is no queue position left to describe. The
+     column keeps its width, so filenames stay in one line down the list. */
+  const sl = d.status === "Completed" ? "" : "#" + serial;
+  if (c.serial !== sl) { c.sl.textContent = sl; c.serial = sl; }
+
+  const on = picked.has(d.id);
+  if (c.pick.checked !== on) c.pick.checked = on;
+  c.li.classList.toggle("picked", on);
+
   const name = d.name || "download";      // textContent only, never innerHTML
   if (c.name.textContent !== name) {
     c.name.textContent = name;
@@ -536,14 +557,86 @@ function update(c, d, bps) {
 }
 
 /* --------------------------------------------------------------- render */
+/* ------------------------------------------------------------ selection */
+/* Ticking a box is a click on the list too, so this listens for `change`
+   rather than competing with the action handler's click. */
+$("list").addEventListener("change", (e) => {
+  const box = e.target.closest(".pick");
+  if (!box) return;
+  const card = box.closest(".card");
+  if (box.checked) picked.add(card.dataset.id); else picked.delete(card.dataset.id);
+  card.classList.toggle("picked", box.checked);
+  paintBulk();
+});
+
+function paintBulk() {
+  const n = picked.size;
+  $("bulk").hidden = n === 0;
+  $("bulkCount").textContent = n + " selected";
+}
+
+$("bulk").addEventListener("click", async (e) => {
+  const b = e.target.closest("button[data-bulk]");
+  if (!b) return;
+  const act = b.dataset.bulk;
+  if (act === "clear") {
+    picked.clear();
+    paintBulk();
+    render(last);
+    return;
+  }
+  const ids = [...picked];
+  if (act === "delete" &&
+      !confirm("Remove " + ids.length + " download" +
+               (ids.length === 1 ? "" : "s") +
+               " from the list? The files themselves are kept.")) return;
+
+  const buttons = [...$("bulk").querySelectorAll("button")];
+  for (const el of buttons) el.disabled = true;
+  try {
+    /* One at a time on purpose: this drives a single queue in a desktop app,
+       and a hundred simultaneous requests is a burst it has no reason to
+       absorb. */
+    for (const id of ids) {
+      const p = "/api/downloads/" + encodeURIComponent(id);
+      await (act === "delete" ? api(p, { method: "DELETE" })
+                              : api(p + "/" + act, { method: "POST" }));
+    }
+  } finally {
+    for (const el of buttons) el.disabled = false;
+  }
+  if (act === "delete") picked.clear();
+  paintBulk();
+  tick();
+});
+
+/* id -> position, ranked by when each download was ADDED and computed over
+   EVERY task rather than the visible ones. A card's "#3" identifies it, so it
+   must not change when the list is sorted or filtered. */
+let serials = new Map();
+
+function renumber(downloads) {
+  const order = downloads.slice().sort(
+    (a, b) => (a.added || 0) - (b.added || 0) || (a.id < b.id ? -1 : 1));
+  serials = new Map(order.map((d, i) => [d.id, i + 1]));
+}
+
 function render(downloads) {
   const list = $("list");
+  renumber(downloads);
+
+  /* Drop anything selected that has since left the list, or "3 selected"
+     starts counting downloads that are no longer there. */
+  const alive = new Set(downloads.map((d) => d.id));
+  for (const id of [...picked]) if (!alive.has(id)) picked.delete(id);
+  paintBulk();
+
   const rows = sorted(downloads.filter(keep));
 
   const wanted = rows.map((d) => {
     let c = cards.get(d.id);
     if (!c) cards.set(d.id, (c = build(d)));
-    update(c, d, rates.get(d.id)?.bps || 0);
+    update(c, d, rates.get(d.id)?.bps || 0, serials.get(d.id) || 0);
     return c.li;
   });
 

@@ -216,7 +216,8 @@ button { font: inherit; cursor: pointer; color: inherit; }
 .stat-val { font-size: 1rem; font-weight: 800; color: var(--text); line-height: 1.25; }
 
 /* ------------------------------------------------------------------- main */
-.main { grid-area: main; display: flex; flex-direction: column; min-width: 0; overflow: hidden; }
+.main { grid-area: main; position: relative;
+        display: flex; flex-direction: column; min-width: 0; overflow: hidden; }
 
 .bar {
   display: flex; align-items: center; gap: 10px;
@@ -284,8 +285,12 @@ button { font: inherit; cursor: pointer; color: inherit; }
 .card {
   min-width: 0;
   display: grid;
-  grid-template-columns: 38px 1fr auto;
-  grid-template-areas: "chip head act" "chip bar act" "chip sub act";
+  grid-template-columns: 18px 26px 38px 1fr auto;
+  grid-template-areas:
+    "pick sl chip head act"
+    "pick sl chip bar  act"
+    "pick sl chip sub  act"
+    "files files files files files";
   column-gap: 12px; row-gap: 5px;
   align-items: center;
   padding: 11px 13px;
@@ -294,6 +299,30 @@ button { font: inherit; cursor: pointer; color: inherit; }
   border-radius: var(--r);
 }
 .card:hover { border-color: var(--raised); }
+.card.picked { border-color: var(--accent); background: var(--surface2); }
+
+/* Selection + position. Same two columns the desktop card leads with. */
+.pick {
+  grid-area: pick;
+  appearance: none; -webkit-appearance: none;
+  width: 18px; height: 18px; margin: 0;
+  border: 1px solid var(--border); border-radius: 4px;
+  background: var(--surface2);
+  cursor: pointer;
+}
+.pick:checked {
+  background: var(--accent); border-color: var(--accent);
+  /* the tick, drawn rather than fetched */
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='3.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M5 12.5l4.5 4.5L19 7'/%3E%3C/svg%3E");
+  background-size: 13px 13px; background-position: center; background-repeat: no-repeat;
+}
+/* Blank on a finished download — there is no queue position left to describe —
+   but the column keeps its width so filenames stay in one line down the list. */
+.sl {
+  grid-area: sl;
+  font-size: 11px; font-weight: 700; color: var(--faint);
+  font-variant-numeric: tabular-nums; text-align: right;
+}
 
 /* The colour IS the file type — same mapping as the desktop card. */
 .chip-ic {
@@ -350,7 +379,7 @@ button { font: inherit; cursor: pointer; color: inherit; }
 /* Files inside a finished multi-file torrent — the reason the web client
    exists, so they are links the browser downloads, not buttons that fetch. */
 .files {
-  grid-column: 1 / -1;
+  grid-area: files;
   display: grid; gap: 4px;
   margin-top: 4px; padding-top: 8px;
   border-top: 1px solid var(--border);
@@ -368,6 +397,24 @@ button { font: inherit; cursor: pointer; color: inherit; }
              overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .file-size { flex: 0 0 auto; font-size: .78rem; color: var(--faint); }
 .file-note { grid-column: 1 / -1; margin: 4px 0 0; font-size: .8rem; color: var(--muted); }
+
+/* Floats above the list rather than pushing it, so the rows you are choosing
+   from do not jump the moment you tick the first one. */
+.bulk {
+  position: absolute; left: 50%; bottom: 16px;
+  transform: translateX(-50%);
+  z-index: 15;
+  display: flex; align-items: center; gap: 8px;
+  max-width: calc(100% - 28px);
+  padding: 8px 10px 8px 14px;
+  background: var(--surface2);
+  border: 1px solid var(--border); border-radius: 12px;
+  box-shadow: 0 10px 30px rgb(0 0 0 / .5);
+}
+.bulk-count { font-size: .86rem; white-space: nowrap; }
+.bulk .icon-btn { gap: 7px; }
+.bulk .icon-btn .btn-label { display: inline; }
+.bulk .danger:hover { color: var(--err); border-color: var(--err); }
 
 .note { margin: 0; padding: 40px 20px; text-align: center; color: var(--muted); }
 .note.warn { color: var(--warn); }
@@ -418,8 +465,12 @@ button { font: inherit; cursor: pointer; color: inherit; }
   .filters { padding: 2px 14px 10px; }
   .list { padding: 2px 14px 20px; }
 
-  .card { grid-template-columns: 34px 1fr; grid-template-areas:
-          "chip head" "chip bar" "chip sub" "act act"; row-gap: 6px; }
+  .card { grid-template-columns: 18px 22px 34px 1fr; grid-template-areas:
+          "pick sl chip head"
+          "pick sl chip bar"
+          "pick sl chip sub"
+          "act  act act  act"
+          "files files files files"; row-gap: 6px; column-gap: 9px; }
   .chip-ic { width: 34px; height: 34px; }
   .act { margin-top: 3px; }
   .act .icon-btn { flex: 1; width: auto; min-height: 42px;
@@ -431,6 +482,9 @@ button { font: inherit; cursor: pointer; color: inherit; }
   .sub { white-space: normal; }
 
   .status { gap: 12px; padding: 0 14px; }
+  .bulk { left: 14px; right: 14px; transform: none; max-width: none;
+          justify-content: center; }
+  .bulk .icon-btn { flex: 1; }
   .tot:first-of-type { margin-left: auto; }
 }
 

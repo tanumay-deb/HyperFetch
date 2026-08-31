@@ -160,6 +160,28 @@
     </div>
 
     <ul id="list" class="list"></ul>
+
+    <!-- Bulk actions, the same idea as gui2/action_bar.py: it appears only
+         while something is selected, so the common actions are one tap away
+         instead of repeated per card. -->
+    <div id="bulk" class="bulk" hidden>
+      <span id="bulkCount" class="bulk-count num">0 selected</span>
+      <button class="icon-btn" data-bulk="pause" aria-label="Pause selected">
+        <svg class="ic" viewBox="0 0 24 24"><use href="#i-pause"/></svg>
+        <span class="btn-label">Pause</span>
+      </button>
+      <button class="icon-btn" data-bulk="resume" aria-label="Resume selected">
+        <svg class="ic" viewBox="0 0 24 24"><use href="#i-play"/></svg>
+        <span class="btn-label">Resume</span>
+      </button>
+      <button class="icon-btn danger" data-bulk="delete" aria-label="Remove selected">
+        <svg class="ic" viewBox="0 0 24 24"><use href="#i-trash"/></svg>
+        <span class="btn-label">Remove</span>
+      </button>
+      <button class="icon-btn" data-bulk="clear" aria-label="Clear selection">
+        <svg class="ic" viewBox="0 0 24 24"><use href="#i-x"/></svg>
+      </button>
+    </div>
     <p id="empty" class="note" hidden></p>
     <p id="offline" class="note warn" hidden>Can&rsquo;t reach HyperFetch. Retrying&hellip;</p>
   </main>
