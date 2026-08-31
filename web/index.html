@@ -14,7 +14,11 @@
 <section id="login" class="login" hidden>
   <form id="loginForm" class="login-card" autocomplete="on">
     <div class="brand"><span class="bolt">⚡</span><h1>HyperFetch</h1></div>
-    <p id="loginHint" class="hint">Enter your web password to continue.</p>
+    <p id="loginHint" class="hint">Sign in to continue.</p>
+    <label class="sr-only" for="user">Username</label>
+    <input id="user" type="text" name="username" placeholder="Username"
+           autocomplete="username" autocapitalize="none" autocorrect="off"
+           spellcheck="false" required>
     <label class="sr-only" for="pw">Password</label>
     <input id="pw" type="password" name="password" placeholder="Password"
            autocomplete="current-password" required>
@@ -23,13 +27,25 @@
   </form>
 </section>
 
-<!-- No password set yet -->
+<!-- Switched off in the desktop app -->
+<section id="disabled" class="login" hidden>
+  <div class="login-card">
+    <div class="brand"><span class="bolt">⚡</span><h1>HyperFetch</h1></div>
+    <p class="hint">
+      The web client is currently turned off. Open HyperFetch on your PC and
+      switch it on in <strong>Settings → Web Client</strong>, then reload this
+      page.
+    </p>
+  </div>
+</section>
+
+<!-- On, but no password set yet -->
 <section id="noPass" class="login" hidden>
   <div class="login-card">
     <div class="brand"><span class="bolt">⚡</span><h1>HyperFetch</h1></div>
     <p class="hint">
-      No web password is set yet. Open HyperFetch on your PC and set one in
-      <strong>Settings → Browser Integration</strong>, then reload this page.
+      No password is set yet. Open HyperFetch on your PC and set one in
+      <strong>Settings → Web Client</strong>, then reload this page.
     </p>
   </div>
 </section>

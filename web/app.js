@@ -10,7 +10,8 @@
 const $ = (id) => document.getElementById(id);
 const POLL_MS = 1500;
 
-const view = { login: $("login"), noPass: $("noPass"), app: $("app") };
+const view = { login: $("login"), disabled: $("disabled"),
+               noPass: $("noPass"), app: $("app") };
 let filter = "all";
 let timer = null;
 const rates = new Map();          // id -> {bytes, at, bps}
@@ -81,6 +82,9 @@ function show(which) {
 async function boot() {
   const s = await api("/api/session");
   if (!s.ok) { show("login"); return; }
+  /* Three distinct dead ends, and they need different advice: switched off,
+     switched on but never given a password, and simply signed out. */
+  if (!s.body.enabled) { show("disabled"); return; }
   if (!s.body.hasPassword) { show("noPass"); return; }
   if (s.body.authed) { start(); } else { show("login"); $("pw").focus(); }
 }
@@ -100,7 +104,8 @@ $("loginForm").addEventListener("submit", async (e) => {
   btn.disabled = true;
   const r = await api("/api/login", {
     method: "POST",
-    body: JSON.stringify({ password: $("pw").value }),
+    body: JSON.stringify({ username: $("user").value,
+                           password: $("pw").value }),
   });
   btn.disabled = false;
   if (r.ok) {
@@ -108,6 +113,7 @@ $("loginForm").addEventListener("submit", async (e) => {
     start();
     return;
   }
+  if (r.status === 403) { boot(); return; }   // turned off, or password cleared
   err.textContent = r.body.message || (r.status === 0
     ? "Can't reach HyperFetch — is it still running on your PC?"
     : "Could not sign in.");

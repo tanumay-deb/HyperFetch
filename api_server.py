@@ -283,7 +283,8 @@ def create_app(queue, save_dir, pending=None, token=None):
         out straight away: app.secret_key is read once at construction, so
         rotating it alone leaves a live cookie valid until the next restart.
         """
-        if not (session.get("web_ok") and web_auth.has_password()):
+        if not (session.get("web_ok") and web_auth.is_enabled()
+                and web_auth.has_password()):
             return False
         return session.get("pw") == web_auth.password_stamp()
 
@@ -293,6 +294,9 @@ def create_app(queue, save_dir, pending=None, token=None):
         Reachable from the LAN, so this is the only thing standing between the
         network and the download queue.
         """
+        if not web_auth.is_enabled():
+            return jsonify({"status": "error", "code": "disabled",
+                            "message": "The web client is turned off"}), 403
         if not web_auth.has_password():
             return jsonify({"status": "error", "code": "no-password",
                             "message": "Set a web password in Settings first"}), 403
@@ -303,8 +307,9 @@ def create_app(queue, save_dir, pending=None, token=None):
 
     @app.route("/api/session", methods=["GET"])
     def api_session():
-        """What the page needs before rendering: is a password set, am I in?"""
-        return jsonify({"hasPassword": web_auth.has_password(),
+        """What the page needs before rendering: is it on, is it set up, am I in?"""
+        return jsonify({"enabled": web_auth.is_enabled(),
+                        "hasPassword": web_auth.has_password(),
                         "authed": web_authed()})
 
     @app.route("/api/login", methods=["POST"])
@@ -317,14 +322,20 @@ def create_app(queue, save_dir, pending=None, token=None):
                             "message": "Too many attempts. Try again in "
                                        f"{int(wait) + 1}s.",
                             "retryAfter": int(wait) + 1}), 429
+        if not web_auth.is_enabled():
+            return jsonify({"status": "error", "code": "disabled",
+                            "message": "The web client is turned off"}), 403
         if not web_auth.has_password():
             return jsonify({"status": "error", "code": "no-password",
                             "message": "Set a web password in Settings first"}), 403
-        if not web_auth.verify_password(data.get("password") or ""):
+        if not web_auth.verify(data.get("username") or "",
+                               data.get("password") or ""):
             throttle.record_failure(addr)
             log.warning("failed web login from %s", addr)
-            return jsonify({"status": "error", "code": "bad-password",
-                            "message": "Wrong password"}), 401
+            # One message for both halves on purpose: saying WHICH was wrong
+            # tells an attacker when they have found a real username.
+            return jsonify({"status": "error", "code": "bad-login",
+                            "message": "Wrong username or password"}), 401
         throttle.record_success(addr)
         session.clear()                   # new session id on login
         session["web_ok"] = True

@@ -269,6 +269,90 @@ class PageBuilderMixin:
                 out.append(e)
         return out
 
+    def _p_web(self, ex):
+        """Web Client — the browser page this app serves to other devices.
+
+        Kept apart from Browser Integration on purpose: that page is about the
+        extension driving downloads INTO the app, this one is about the app
+        serving a UI OUT. They share nothing, not even a secret.
+        """
+        import web_auth
+
+        sa, v = self._page("Web Client",
+                           "Use HyperFetch from a browser or your phone")
+
+        f, g = self._card()
+        self.web_enabled = self._toggle(web_auth.is_enabled())
+        self._row(g, "Enable web client",
+                  "Serve the HyperFetch page. While this is off the page says so "
+                  "and no download can be read or controlled through it.",
+                  self.web_enabled)
+        v.addWidget(f)
+
+        # ---- sign in ----
+        f2, g2 = self._card()
+        self.web_user = QLineEdit(web_auth.username())
+        self.web_user.setPlaceholderText("admin")
+        self.web_user.setFixedWidth(220)
+        self._row(g2, "Username", "What you type on the sign-in page.",
+                  self.web_user)
+
+        self.web_pass = QLineEdit()
+        self.web_pass.setEchoMode(QLineEdit.Password)
+        self.web_pass.setFixedWidth(220)
+        has = web_auth.has_password()
+        self.web_pass.setPlaceholderText(
+            "leave blank to keep current" if has else "set a password")
+        self._row(g2, "Password",
+                  ("A password is set. Type a new one to change it."
+                   if has else
+                   "No password set yet — the page cannot be used until there is one."),
+                  self.web_pass)
+
+        note = QLabel(
+            "At least %d characters. A password under %d characters is fine while "
+            "the page answers only this PC, but will not be accepted once it is "
+            "opened to your network."
+            % (web_auth.MIN_PASSWORD, web_auth.MIN_LAN_PASSWORD))
+        note.setWordWrap(True)
+        note.setStyleSheet(
+            f"color:{COLORS['muted']};font-size:{fpx(11)};background:transparent;")
+        g2.addWidget(note)
+        v.addWidget(f2)
+
+        # ---- where it is ----
+        f3, g3 = self._card()
+        from api_server import PORT as _web_port
+        url = "http://127.0.0.1:%d/ui/" % _web_port
+        self._web_url = url
+        lab = QLabel("Address")
+        lab.setStyleSheet("font-weight:700;background:transparent;")
+        row = QHBoxLayout()
+        box = QLineEdit(url); box.setReadOnly(True)
+        openb = QPushButton("  Open"); openb.setIcon(themed_icon("open", "text"))
+        openb.clicked.connect(lambda: __import__("webbrowser").open(url))
+        row.addWidget(box, 1)
+        row.addWidget(self._copy_button(lambda: url))
+        row.addWidget(openb)
+        hint = QLabel("This PC only for now. Other devices on your network cannot "
+                      "reach it yet.")
+        hint.setWordWrap(True)
+        hint.setStyleSheet(
+            f"color:{COLORS['muted']};font-size:{fpx(11)};background:transparent;")
+        g3.addWidget(lab); g3.addLayout(row); g3.addWidget(hint)
+        v.addWidget(f3)
+
+        # Grey the credentials out while it is switched off, so the page cannot
+        # look configurable when nothing it says would take effect.
+        def _sync(on):
+            for w in (self.web_user, self.web_pass):
+                w.setEnabled(bool(on))
+        self.web_enabled.toggled.connect(_sync)
+        _sync(self.web_enabled.isChecked())
+
+        v.addStretch()
+        return sa
+
     def _p_appearance(self, theme, accent, ex):
         sa, v = self._page("Appearance", "Customize the look and feel")
         f, g = self._card()

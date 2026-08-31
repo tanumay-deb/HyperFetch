@@ -123,12 +123,58 @@ class SettingsMixin:
         self.scheduler_enabled = v["sched_en"]
         self.scheduler_start = v["sched_start"]
         self.scheduler_stop = v["sched_stop"]
+        self._apply_web_settings(v)      # must run BEFORE the line below
         self._extras.update(v)
         self._apply_network_settings()
         self._apply_throttle()           # throttle window may override the global limit
         self._apply_appearance()
         self._save_settings()
         self.refresh()
+
+    def _apply_web_settings(self, v):
+        """Web Client page -> web_auth.json.
+
+        Runs before `self._extras.update(v)` and REMOVES the password from `v`,
+        because everything left in that dict is written to settings.json in
+        plain text. The password belongs only in web_auth.json, hashed.
+
+        The credentials live in web_auth.json rather than settings.json for the
+        same reason: settings.json is read and rewritten constantly and has no
+        business holding a secret.
+        """
+        import web_auth
+        pw = v.pop("web_password", "") or ""
+        if "web_enabled" not in v:
+            return                       # dialog without the page (older caller)
+        user = (v.get("web_username") or "").strip() or web_auth.DEFAULT_USERNAME
+        v["web_username"] = user
+        want_on = bool(v.get("web_enabled"))
+
+        try:
+            if pw:
+                web_auth.set_password(pw, user=user)
+            elif user != web_auth.username():
+                web_auth.set_username(user)
+        except ValueError as e:
+            # Too short. Say so and leave the old password alone rather than
+            # switching the client on with credentials that were never stored.
+            self._web_toast("error", "Password not changed", str(e))
+            want_on = want_on and web_auth.has_password()
+
+        if want_on and not web_auth.has_password():
+            self._web_toast("error", "Web client not enabled",
+                            "Set a password for it first.")
+            want_on = False
+
+        web_auth.set_enabled(want_on)
+        v["web_enabled"] = want_on
+
+    def _web_toast(self, kind, title, msg):
+        try:
+            self._toasts.show(kind, title, msg)
+        except Exception:
+            import logging
+            logging.getLogger("hyperfetch.gui").warning("%s: %s", title, msg)
 
     def _apply_appearance(self):
         """Apply the Appearance font-size setting.

@@ -21,7 +21,8 @@ from gui.icons import themed_icon
 from gui2.brand import BrandLogo
 from gui2.dialogs.settings_pages import PageBuilderMixin
 
-_SECTIONS = ["General", "Downloads", "Network", "Browser", "Appearance", "Advanced", "About"]
+_SECTIONS = ["General", "Downloads", "Network", "Browser", "Web Client",
+             "Appearance", "Advanced", "About"]
 
 
 class SettingsDialogV2(PageBuilderMixin, QDialog):
@@ -51,7 +52,8 @@ class SettingsDialogV2(PageBuilderMixin, QDialog):
             f"QListWidget::item{{padding:6px 10px;border-radius:7px;color:{COLORS['muted']};font-weight:700;margin-bottom:1px;}}"
             f"QListWidget::item:selected{{background:{COLORS['accent']};color:white;}}")
             
-        icons = ["settings", "download", "link", "open", "program", "menu", "info"]
+        icons = ["settings", "download", "link", "open", "link",
+                 "program", "menu", "info"]
         for s, ic in zip(_SECTIONS, icons):
             item = QListWidgetItem(themed_icon(ic, "muted"), s)
             self.nav.addItem(item)
@@ -111,6 +113,7 @@ class SettingsDialogV2(PageBuilderMixin, QDialog):
         self.stack.addWidget(self._p_downloads(max_concurrent, segments, ex))
         self.stack.addWidget(self._p_network(ex))
         self.stack.addWidget(self._p_browser(ex))
+        self.stack.addWidget(self._p_web(ex))
         self.stack.addWidget(self._p_appearance(theme, accent, ex))
         self.stack.addWidget(self._p_advanced(verify_tls, sched_en, sched_start, sched_stop, ex))
         self.stack.addWidget(self._p_about())
@@ -231,4 +234,10 @@ class SettingsDialogV2(PageBuilderMixin, QDialog):
             "debug_log": self.debug_log.isChecked(),
             "browsers": {b: t.isChecked() for b, t in self.browsers.items()},
             "capture_exts": self._parse_exts(self.capture_exts.text()),
+            "web_enabled": self.web_enabled.isChecked(),
+            "web_username": self.web_user.text().strip(),
+            # Blank means "keep the current one". The field is never pre-filled
+            # with the existing password, because there is nothing to pre-fill
+            # it from — only a hash is stored.
+            "web_password": self.web_pass.text(),
         }

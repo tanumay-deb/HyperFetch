@@ -55,10 +55,27 @@ def test_an_unset_password_lets_nobody_in():
     assert web_auth.verify_password("anything") is False
 
 
-def test_a_short_password_is_refused():
+def test_a_password_below_the_floor_is_refused():
     with pytest.raises(ValueError):
-        web_auth.set_password("short")
+        web_auth.set_password("abc")
     assert web_auth.has_password() is False
+
+
+def test_a_short_password_is_allowed_but_marked_weak():
+    """Loopback-only, a short password is the user's own business — the person
+    typing it is already sitting at this PC."""
+    assert web_auth.set_password("short") is True
+    assert web_auth.has_password() is True
+    assert web_auth.is_weak() is True
+
+
+def test_lan_holds_a_higher_floor():
+    """The caller about to expose this to the network asks for the strict
+    threshold, and a password stored below it stays flagged."""
+    with pytest.raises(ValueError):
+        web_auth.set_password("short", for_lan=True)
+    assert web_auth.set_password("longenough", for_lan=True) is True
+    assert web_auth.is_weak() is False
 
 
 def _stored():

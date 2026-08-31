@@ -233,6 +233,12 @@ QLineEdit, QComboBox, QSpinBox, QTimeEdit, QDateTimeEdit {{
     padding: 9px 12px; selection-background-color: {c['accent']}; color: {c['text']};
 }}
 QLineEdit:focus, QComboBox:focus, QSpinBox:focus, QTimeEdit:focus, QDateTimeEdit:focus {{ border-color: {c['accent']}; }}
+/* Without this a disabled field looked exactly like a live one — the Web
+   Client page greys its credentials out while the client is switched off, and
+   nothing on screen said so. QPushButton already had its disabled state. */
+QLineEdit:disabled, QComboBox:disabled, QSpinBox:disabled, QTimeEdit:disabled, QDateTimeEdit:disabled {{
+    background: {c['surface']}; color: {c['faint']}; border-color: {c['surface2']};
+}}
 QComboBox::drop-down {{ border: none; width: 22px; }}
 QComboBox QAbstractItemView {{
     background: {c['surface2']}; border: 1px solid {c['border']};

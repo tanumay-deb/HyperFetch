@@ -86,3 +86,18 @@ def test_the_page_carries_no_secret_values(client, tmp_path):
 def test_the_ui_does_not_require_a_session(client):
     """A login form behind a login is not much use."""
     assert client.get("/ui/", environ_overrides=LAN).status_code == 200
+
+
+def test_the_page_carries_all_three_dead_ends(client):
+    """Off, on-but-unconfigured, and signed-out need different advice, so the
+    page has to ship a pane for each — the API only reports which one."""
+    body = client.get("/ui/", environ_overrides=LAN).get_data(as_text=True)
+    for pane in ('id="disabled"', 'id="noPass"', 'id="login"'):
+        assert pane in body, pane
+    assert "Settings → Web Client" in body or "Settings &rarr; Web Client" in body         or "Web Client" in body
+
+
+def test_the_login_form_asks_for_a_username(client):
+    body = client.get("/ui/", environ_overrides=LAN).get_data(as_text=True)
+    assert 'id="user"' in body
+    assert 'autocomplete="username"' in body

@@ -32,6 +32,16 @@ _DKLEN = 32
 MAX_ATTEMPTS = 5
 LOCKOUT = 300.0            # seconds locked out after MAX_ATTEMPTS failures
 
+# Two thresholds, because the risk is not the same in both modes. Bound to
+# 127.0.0.1 the only thing that can reach the page is someone already at this
+# PC, so a short password is the user's own business. Once it answers the LAN
+# it is the only thing between the network and the download queue, and the
+# LAN toggle refuses a password that was set below MIN_LAN_PASSWORD.
+MIN_PASSWORD = 4
+MIN_LAN_PASSWORD = 8
+
+DEFAULT_USERNAME = "admin"
+
 
 def _path():
     return os.path.join(utils.app_data_dir(), "web_auth.json")
@@ -84,11 +94,54 @@ def has_password():
     return bool(d.get("salt") and d.get("hash"))
 
 
-def set_password(password):
-    """Set (or change) the web password. Returns True if it was stored."""
+def is_enabled():
+    """True when the user has switched the web client on in Settings.
+
+    Separate from "a password exists" so the two failure messages can differ:
+    a user who never turned it on needs different advice from one who did.
+    """
+    return bool(_load().get("enabled"))
+
+
+def set_enabled(on):
+    d = _load()
+    d["enabled"] = bool(on)
+    return _save(d)
+
+
+def username():
+    """The configured username, or the default when none was ever set."""
+    u = (_load().get("username") or "").strip()
+    return u or DEFAULT_USERNAME
+
+
+def set_username(user):
+    """Change the username without touching the password."""
+    d = _load()
+    d["username"] = (user or "").strip() or DEFAULT_USERNAME
+    return _save(d)
+
+
+def is_weak():
+    """True when the stored password is too short for LAN exposure.
+
+    Recorded at set time because only a hash is kept — the length of the
+    password cannot be recovered later to check it.
+    """
+    return bool(_load().get("weak"))
+
+
+def set_password(password, *, user=None, for_lan=False):
+    """Set (or change) the web credentials. Returns True if stored.
+
+    `for_lan` applies the stricter threshold, for the caller that is about to
+    expose this to the network.
+    """
     password = password or ""
-    if len(password) < 8:
-        raise ValueError("the web password must be at least 8 characters")
+    floor = MIN_LAN_PASSWORD if for_lan else MIN_PASSWORD
+    if len(password) < floor:
+        raise ValueError(
+            "the web password must be at least %d characters" % floor)
     salt = secrets.token_bytes(16)
     d = _load()
     d.update({
@@ -96,8 +149,11 @@ def set_password(password):
         "n": _N, "r": _R, "p": _P,
         "salt": base64.b64encode(salt).decode(),
         "hash": base64.b64encode(_hash(password, salt)).decode(),
+        "weak": len(password) < MIN_LAN_PASSWORD,
         "set_at": time.time(),
     })
+    if user is not None:
+        d["username"] = (user or "").strip() or DEFAULT_USERNAME
     # Changing the password invalidates every existing session, which is the
     # only way "log everyone out" can work when sessions live in signed cookies.
     d["secret_key"] = base64.b64encode(secrets.token_bytes(32)).decode()
@@ -107,7 +163,7 @@ def set_password(password):
 def clear_password():
     """Remove the password (and with it, LAN access)."""
     d = _load()
-    for k in ("salt", "hash", "set_at"):
+    for k in ("salt", "hash", "set_at", "weak"):
         d.pop(k, None)
     d["secret_key"] = base64.b64encode(secrets.token_bytes(32)).decode()
     return _save(d)
@@ -133,6 +189,22 @@ def verify_password(password):
     except (ValueError, TypeError):
         return False
     return hmac.compare_digest(got, want)
+
+
+def verify(user, password):
+    """Constant-time check of both halves.
+
+    Both sides are always evaluated — no `and` short-circuit — so the time
+    taken does not tell an attacker whether it was the username that was
+    wrong. Username match is case-insensitive: it is an identifier the user
+    types on a phone keyboard, not a secret, and the password carries the
+    security.
+    """
+    want = username().casefold().encode("utf-8")
+    got = (user or "").strip().casefold().encode("utf-8")
+    user_ok = hmac.compare_digest(got, want)
+    pass_ok = verify_password(password)
+    return user_ok & pass_ok
 
 
 def password_stamp():
