@@ -110,6 +110,7 @@ button { font: inherit; cursor: pointer; }
 .ghost {
   min-height: 38px;
   padding: 7px 12px;
+  white-space: nowrap;         /* "Sign out" wrapped to two lines on a phone */
   border: 1px solid var(--border);
   border-radius: 9px;
   background: transparent;
@@ -193,10 +194,14 @@ button { font: inherit; cursor: pointer; }
   overflow: hidden;
 }
 .bar > i {
-  display: block; height: 100%;
-  border-radius: 999px;
+  display: block; height: 100%; width: 100%;
+  /* scaleX, not width: transform is composited, so easing a dozen bars at once
+     does not lay the page out again on every frame. The fill carries no radius
+     of its own — the parent's overflow:hidden already clips it to the pill, and
+     a radius here would be squashed by the scale. */
+  transform-origin: left center;
   background: var(--accent);
-  transition: width .45s ease;
+  transition: transform .45s ease;
 }
 .card[data-state="Completed"] .bar > i { background: var(--completed); }
 .card[data-state="Downloading"] .bar > i { background: var(--downloading); }
@@ -204,12 +209,16 @@ button { font: inherit; cursor: pointer; }
 .card[data-state="Error"] .bar > i { background: var(--error); }
 .card[data-state="Queued"] .bar > i { background: var(--queued); }
 
+/* Wraps by default: on a phone this line is "1.63 GB / 1.80 GB · 20.67 MB/s ·
+   34 peers · 6 seeds · 8s left", and clipping it drops the time remaining —
+   the part most worth reading. Desktop cards are wide enough to ellipse. */
 .sub {
   min-width: 0;
   color: var(--muted);
   font-size: .83rem;
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
+/* Higher specificity than the `.sub` nowrap added at >=720px, so a failure
+   keeps showing its whole message instead of losing the end of it. */
 .sub.bad { color: var(--error); white-space: normal; }
 
 .actions { display: flex; gap: 8px; }
@@ -227,6 +236,9 @@ button { font: inherit; cursor: pointer; }
   .list { grid-template-columns: repeat(auto-fill, minmax(330px, 1fr)); }
   .addbar, .filters, .list { padding-left: 24px; padding-right: 24px; }
   .topbar { padding-left: 24px; padding-right: 24px; }
+  /* Keeps the grid's rows even. `.sub.bad` is more specific, so a failure
+     still wraps its full message rather than losing the end of it. */
+  .sub { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 }
 
 @media (prefers-reduced-motion: reduce) {

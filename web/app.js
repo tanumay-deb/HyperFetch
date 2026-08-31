@@ -42,20 +42,32 @@ function rateFor(d) {
   const now = Date.now();
   const prev = rates.get(d.id);
   let bps = 0;
-  if (prev && now > prev.at) {
+  /* Gate on the status HERE, in what gets stored. Returning 0 while storing
+     the live rate did nothing, because the callers read the stored value —
+     so a paused download kept advertising the speed it had when it stopped. */
+  if (d.status === "Downloading" && prev && now > prev.at) {
     const inst = (d.doneBytes - prev.bytes) * 1000 / (now - prev.at);
     bps = prev.bps ? prev.bps * 0.7 + Math.max(0, inst) * 0.3 : Math.max(0, inst);
   }
   rates.set(d.id, { bytes: d.doneBytes, at: now, bps });
-  return d.status === "Downloading" ? bps : 0;
+  return bps;
 }
 
 /* ------------------------------------------------------------ networking */
 async function api(path, opts) {
-  const r = await fetch(path, Object.assign({
-    headers: { "Content-Type": "application/json" },
-    credentials: "same-origin",
-  }, opts || {}));
+  let r;
+  try {
+    r = await fetch(path, Object.assign({
+      headers: { "Content-Type": "application/json" },
+      credentials: "same-origin",
+    }, opts || {}));
+  } catch (e) {
+    /* An unreachable server is exactly what the offline banner is for, and
+       fetch reports it by REJECTING rather than by returning a failed
+       response — so without this the poll threw on the way to showing it and
+       the banner could never appear. status 0 means "never got an answer". */
+    return { ok: false, status: 0, body: {} };
+  }
   let body = null;
   try { body = await r.json(); } catch (e) { /* empty body is fine */ }
   return { ok: r.ok, status: r.status, body: body || {} };
@@ -96,7 +108,9 @@ $("loginForm").addEventListener("submit", async (e) => {
     start();
     return;
   }
-  err.textContent = r.body.message || "Could not sign in.";
+  err.textContent = r.body.message || (r.status === 0
+    ? "Can't reach HyperFetch — is it still running on your PC?"
+    : "Could not sign in.");
   err.hidden = false;
 });
 
@@ -104,6 +118,8 @@ $("logout").addEventListener("click", async () => {
   clearInterval(timer);
   await api("/api/logout", { method: "POST" });
   rates.clear();
+  cards.clear();
+  $("list").replaceChildren();   // don't leave the old list sitting behind the form
   show("login");
 });
 
@@ -119,7 +135,9 @@ $("addForm").addEventListener("submit", async (e) => {
     body: JSON.stringify({ url }),
   });
   if (r.ok) { input.value = ""; tick(); return; }
-  err.textContent = r.body.message || "That link was not accepted.";
+  err.textContent = r.body.message || (r.status === 0
+    ? "Lost contact with HyperFetch — is it still running?"
+    : "That link was not accepted.");
   err.hidden = false;
 });
 
@@ -148,14 +166,20 @@ $("list").addEventListener("click", async (e) => {
   if (!b) return;
   const id = b.closest(".card").dataset.id;
   const act = b.dataset.act;
-  b.disabled = true;
   if (act === "delete") {
     // Removes it from the list only — the server deliberately never deletes
     // the file itself, so this cannot destroy anything.
-    if (!confirm("Remove this download from the list?")) { b.disabled = false; return; }
-    await api("/api/downloads/" + encodeURIComponent(id), { method: "DELETE" });
-  } else {
-    await api("/api/downloads/" + encodeURIComponent(id) + "/" + act, { method: "POST" });
+    if (!confirm("Remove this download from the list?")) return;
+  }
+  b.disabled = true;
+  try {
+    await (act === "delete"
+      ? api("/api/downloads/" + encodeURIComponent(id), { method: "DELETE" })
+      : api("/api/downloads/" + encodeURIComponent(id) + "/" + act, { method: "POST" }));
+  } finally {
+    /* Cards are reused now, so this button survives the next poll — a request
+       that fails would otherwise leave it disabled for good. */
+    b.disabled = false;
   }
   tick();
 });
@@ -188,57 +212,127 @@ function subtitle(d, bps) {
   return bits.join("  ·  ");
 }
 
-function card(d, bps) {
+/* Cards are built once and then updated in place, keyed by download id.
+ *
+ * Rebuilding the whole list each poll read more simply, but it silently killed
+ * the progress-bar transition: a CSS transition never runs on an element's
+ * first style, and a fresh element every 1.5s is nothing but first styles. It
+ * also made a phone repaint every card on every tick to change a percentage. */
+const cards = new Map();      // id -> {li, els..., last-written values}
+
+function build(d) {
   const li = document.createElement("li");
   li.className = "card";
   li.dataset.id = d.id;
-  li.dataset.state = d.status;
 
   const r1 = document.createElement("div");
   r1.className = "row1";
-  const nm = document.createElement("span");
-  nm.className = "name";
-  nm.textContent = d.name || "download";       // textContent: never innerHTML
-  nm.title = d.name || "";
-  const pc = document.createElement("span");
-  pc.className = "pct";
-  pc.textContent = d.percent.toFixed(0) + "%";
-  r1.append(nm, pc);
+  const name = document.createElement("span");
+  name.className = "name";
+  const pct = document.createElement("span");
+  pct.className = "pct";
+  r1.append(name, pct);
 
   const bar = document.createElement("div");
   bar.className = "bar";
+  // setAttribute, not the .role/.aria* IDL properties — those are recent, and
+  // this page's whole point is working on whatever phone is to hand.
+  bar.setAttribute("role", "progressbar");
+  bar.setAttribute("aria-valuemin", "0");
+  bar.setAttribute("aria-valuemax", "100");
   const fill = document.createElement("i");
-  fill.style.width = Math.max(0, Math.min(100, d.percent)) + "%";
   bar.append(fill);
 
   const sub = document.createElement("div");
-  sub.className = "sub" + (d.status === "Error" ? " bad" : "");
-  sub.textContent = subtitle(d, bps);
+  sub.className = "sub";
 
-  const acts = document.createElement("div");
-  acts.className = "actions";
-  const running = d.status === "Downloading" || d.status === "Queued";
-  if (running || d.status === "Paused" || d.status === "Error") {
+  const actions = document.createElement("div");
+  actions.className = "actions";
+
+  li.append(r1, bar, sub, actions);
+  return { li, name, pct, bar, fill, sub, actions, state: null, bad: null, act: null };
+}
+
+/* Which buttons a card shows depends on its state, so that row is the one part
+   that is rebuilt — but only when the state actually changes, not every tick. */
+function buttons(toggle) {
+  const out = [];
+  if (toggle) {
     const b = document.createElement("button");
     b.className = "ghost";
-    b.dataset.act = running ? "pause" : "resume";
-    b.textContent = running ? "Pause" : "Resume";
-    acts.append(b);
+    b.dataset.act = toggle;
+    b.textContent = toggle === "pause" ? "Pause" : "Resume";
+    out.push(b);
   }
   const del = document.createElement("button");
   del.className = "ghost danger";
   del.dataset.act = "delete";
   del.textContent = "Remove";
-  acts.append(del);
+  out.push(del);
+  return out;
+}
 
-  li.append(r1, bar, sub, acts);
-  return li;
+function update(c, d, bps) {
+  const name = d.name || "download";           // textContent: never innerHTML
+  if (c.name.textContent !== name) {
+    c.name.textContent = name;
+    c.name.title = name;
+  }
+
+  const pct = Math.max(0, Math.min(100, d.percent));
+  const label = pct.toFixed(0) + "%";
+  if (c.pct.textContent !== label) {
+    c.pct.textContent = label;
+    c.bar.setAttribute("aria-valuenow", String(Math.round(pct)));
+  }
+  c.fill.style.transform = "scaleX(" + pct / 100 + ")";
+
+  if (c.state !== d.status) {
+    c.li.dataset.state = d.status;
+    c.state = d.status;
+  }
+
+  const text = subtitle(d, bps);
+  if (c.sub.textContent !== text) c.sub.textContent = text;
+  const bad = d.status === "Error";
+  if (c.bad !== bad) {
+    c.sub.classList.toggle("bad", bad);
+    c.bad = bad;
+  }
+
+  const running = d.status === "Downloading" || d.status === "Queued";
+  const act = running ? "pause"
+            : (d.status === "Paused" || d.status === "Error") ? "resume" : "";
+  if (c.act !== act) {
+    c.actions.replaceChildren(...buttons(act));
+    c.act = act;
+  }
 }
 
 function render(downloads) {
   const list = $("list");
   const rows = downloads.filter(keep);
-  list.replaceChildren(...rows.map((d) => card(d, rates.get(d.id)?.bps || 0)));
+
+  const wanted = rows.map((d) => {
+    let c = cards.get(d.id);
+    if (!c) cards.set(d.id, (c = build(d)));
+    update(c, d, rates.get(d.id)?.bps || 0);
+    return c.li;
+  });
+
+  const live = new Set(rows.map((d) => d.id));
+  for (const [id, c] of cards) {
+    if (!live.has(id)) { c.li.remove(); cards.delete(id); }
+  }
+
+  /* Re-inserting a node restarts its transitions, so only touch the order when
+     it genuinely changed — which is rare, the server's order is stable. */
+  let ordered = list.children.length === wanted.length;
+  for (let i = 0; ordered && i < wanted.length; i++) {
+    ordered = list.children[i] === wanted[i];
+  }
+  if (!ordered) list.replaceChildren(...wanted);
+
   $("empty").hidden = rows.length > 0;
 
   let active = 0, total = 0;
