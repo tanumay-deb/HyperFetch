@@ -21,6 +21,7 @@ from flask_cors import CORS
 
 import task as T
 import utils
+import torrent as _torrent
 import web_auth
 
 PORT = 5000
@@ -322,6 +323,138 @@ def create_app(queue, save_dir, pending=None, token=None):
     @app.route("/api/logout", methods=["POST"])
     def api_logout():
         session.clear()
+        return jsonify({"status": "ok"})
+
+
+    # ------------------------------------------------------- web UI: data
+    def task_json(t):
+        """One download, as the web UI sees it.
+
+        An explicit allow-list, never the task's own dict: tasks carry cookies
+        and auth headers in memory, and a "serialise everything" helper would
+        put them on the network the first time a field was added.
+
+        No speed or ETA here — the page derives those from successive samples of
+        `downloaded`, rather than duplicating the desktop's speed tracker.
+        """
+        total = int(getattr(t, "total_size", 0) or 0)
+        done = int(getattr(t, "downloaded", 0) or 0)
+        return {
+            "id": t.id,
+            "name": t.filename or "",
+            "status": t.status,
+            "queue": getattr(t, "queue_name", "") or "",
+            "totalBytes": total,
+            "doneBytes": done,
+            "percent": round(done * 100.0 / total, 2) if total else 0.0,
+            "added": float(getattr(t, "added", 0) or 0),
+            "error": getattr(t, "error", "") or "",
+            "isTorrent": _torrent.is_torrent_task(t.url, t.filename),
+            "peers": int(getattr(t, "tor_conns", 0) or 0),
+            "seeds": int(getattr(t, "tor_seeds", 0) or 0),
+            "seeding": bool(getattr(t, "seeding", False)),
+            "verifying": bool(getattr(t, "verifying", False)),
+            "verifiedPercent": int(getattr(t, "verified_pct", 0) or 0),
+            "fetchingMeta": bool(getattr(t, "meta_fetching", False)),
+            "metaFailed": bool(getattr(t, "meta_failed", False)),
+        }
+
+    @app.route("/api/downloads", methods=["GET"])
+    def api_downloads():
+        deny = require_web_auth()
+        if deny:
+            return deny
+        return jsonify({"downloads": [task_json(t) for t in list(queue.tasks)]})
+
+    @app.route("/api/stats", methods=["GET"])
+    def api_stats():
+        deny = require_web_auth()
+        if deny:
+            return deny
+        counts = {}
+        down = up = 0
+        for t in list(queue.tasks):
+            counts[t.status] = counts.get(t.status, 0) + 1
+            down += int(getattr(t, "downloaded", 0) or 0)
+        try:
+            import history
+            hist = history.stats()
+        except Exception:
+            hist = {}
+        return jsonify({"byStatus": counts,
+                        "activeBytes": down,
+                        "history": hist})
+
+    # ---------------------------------------------------- web UI: control
+    @app.route("/api/downloads", methods=["POST"])
+    def api_add():
+        deny = require_web_auth()
+        if deny:
+            return deny
+        data = request.get_json(silent=True) or {}
+        url = (data.get("url") or "").strip()
+        # same allow-list as the extension endpoint: no file://, no chrome://,
+        # no javascript:. This one is reachable from the network, so it matters
+        # more here, not less.
+        if not url.lower().startswith(("http://", "https://", "magnet:")):
+            return jsonify({"status": "error", "message": "invalid url"}), 400
+        if pending is not None:
+            pending.append({"url": url, "filename": "", "headers": {}})
+            return jsonify({"status": "queued"})
+        fn = utils.filename_from_url(url) or "download"
+        path = utils.unique_path(utils.get_category_dir(save_dir, fn), fn)
+        task = T.DownloadTask(url, path, filename=fn)
+        queue.add_task(task)
+        return jsonify({"status": "queued", "id": task.id})
+
+    def _task_or_404(task_id):
+        t = queue.get_task(task_id)
+        return t, (None if t else
+                   (jsonify({"status": "error", "message": "no such download"}), 404))
+
+    @app.route("/api/downloads/<task_id>/pause", methods=["POST"])
+    def api_pause(task_id):
+        deny = require_web_auth()
+        if deny:
+            return deny
+        t, missing = _task_or_404(task_id)
+        if missing:
+            return missing
+        queue.pause_task(t)
+        return jsonify({"status": "ok"})
+
+    @app.route("/api/downloads/<task_id>/resume", methods=["POST"])
+    def api_resume(task_id):
+        deny = require_web_auth()
+        if deny:
+            return deny
+        t, missing = _task_or_404(task_id)
+        if missing:
+            return missing
+        queue.resume_task(t)
+        return jsonify({"status": "ok"})
+
+    @app.route("/api/downloads/<task_id>", methods=["DELETE"])
+    def api_remove(task_id):
+        """Remove from the list. Deliberately does NOT delete from disk.
+
+        Erasing a user's files from a network-reachable endpoint is a different
+        risk class from pausing one, and deserves its own design rather than a
+        flag bolted onto this. Engine leftovers (the .aria2 control file and our
+        saved metadata) are cleaned up, since they are ours, not the user's.
+        """
+        deny = require_web_auth()
+        if deny:
+            return deny
+        t, missing = _task_or_404(task_id)
+        if missing:
+            return missing
+        queue.remove_task(t)
+        try:
+            if _torrent.is_torrent_task(t.url, t.filename):
+                _torrent.cleanup_artifacts(t)
+        except Exception:
+            pass
         return jsonify({"status": "ok"})
 
     return app
