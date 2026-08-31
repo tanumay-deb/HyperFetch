@@ -399,3 +399,49 @@ def test_removing_cannot_reach_outside_the_owner_s_folder(env):
     t.save_path = outside          # as if the record had been tampered with
     c.delete("/api/downloads/%s" % t.id, environ_overrides=TUNNEL)
     assert os.path.isfile(outside), "a file outside the user's folder was deleted"
+
+
+# ---- the built front end ----------------------------------------------------
+def test_the_built_bundle_is_served_when_it_exists(env, tmp_path, monkeypatch):
+    """A build that never ran the front-end step still works — it serves a
+    holding page rather than failing — so the presence of the bundle is what
+    switches between them."""
+    import site_server
+    built = tmp_path / "site"
+    (built / "assets").mkdir(parents=True)
+    (built / "index.html").write_text("<!doctype html><title>real</title>",
+                                      encoding="utf-8")
+    (built / "assets" / "index-abc.js").write_text("/*bundle*/", encoding="utf-8")
+    monkeypatch.setattr(site_server, "site_dir", lambda: str(built))
+
+    c, _, _ = env
+    page = _get(c, "/")
+    assert page.status_code == 200
+    assert b"real" in page.data
+    assert b"not been built" not in page.data
+    assert _get(c, "/assets/index-abc.js").data == b"/*bundle*/"
+
+
+def test_the_assets_route_cannot_walk_out_of_the_folder(env, tmp_path, monkeypatch):
+    import site_server
+    built = tmp_path / "site"
+    (built / "assets").mkdir(parents=True)
+    (built / "assets" / "ok.js").write_text("x", encoding="utf-8")
+    secret = tmp_path / "secret.txt"
+    secret.write_text("nope", encoding="utf-8")
+    monkeypatch.setattr(site_server, "site_dir", lambda: str(built))
+
+    c, _, _ = env
+    for name in ("../secret.txt", "..%2fsecret.txt", "../../secret.txt"):
+        r = _get(c, "/assets/" + name)
+        assert r.status_code in (404, 400, 308), name
+        assert b"nope" not in r.data, name
+
+
+def test_the_holding_page_is_shown_when_nothing_was_built(env, tmp_path, monkeypatch):
+    import site_server
+    monkeypatch.setattr(site_server, "site_dir", lambda: str(tmp_path / "absent"))
+    c, _, _ = env
+    r = _get(c, "/")
+    assert r.status_code == 200
+    assert b"not been built yet" in r.data

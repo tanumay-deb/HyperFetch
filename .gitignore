@@ -20,6 +20,9 @@ dist/
 node_modules/
 chrome_ext/test/out.txt
 package-lock.json
+# ...except the site's, so a release build can use `npm ci` and get the
+# exact versions that were tested rather than whatever resolves today.
+!site-src/package-lock.json
 
 # Download manager runtime files
 *.hfdownload
@@ -37,3 +40,6 @@ Thumbs.db
 # Agent guidance files (kept local, not tracked)
 CLAUDE.md
 AGENTS.md
+
+# Built users site (produced by build.ps1 / npm run build)
+site/

@@ -63,10 +63,35 @@ jobs:
           npm install
           npm test
 
+  site:
+    name: users site (react + vite)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      # Type errors and a broken bundle are the two ways this breaks the app
+      # silently, so both run before anything is packaged.
+      - name: Install
+        working-directory: site-src
+        run: npm install --no-audit --no-fund
+      - name: Type-check
+        working-directory: site-src
+        run: npx tsc -b --noEmit
+      - name: Build
+        working-directory: site-src
+        run: npm run build
+      - name: The bundle actually exists
+        run: |
+          test -f site/index.html
+          test -d site/assets
+          echo "site bundle: $(du -sh site | cut -f1)"
+
   package:
     name: build Windows app
     runs-on: windows-latest
-    needs: test
+    needs: [test, site]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

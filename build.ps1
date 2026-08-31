@@ -78,6 +78,31 @@ if (Test-Path $ffExe) {
     }
 }
 
+Write-Host "==> Building the users site (React + Vite)" -ForegroundColor Cyan
+$siteSrc = Join-Path $PSScriptRoot "site-src"
+if (Test-Path (Join-Path $siteSrc "package.json")) {
+    if (-not (Get-Command npm -ErrorAction SilentlyContinue)) {
+        # Not fatal: site_server serves a holding page when the bundle is
+        # absent, so a machine without Node still produces a working build --
+        # just one where the users site says it has not been built.
+        Write-Host "    npm not found - skipping. The users site will show a holding page." -ForegroundColor Yellow
+    } else {
+        Push-Location $siteSrc
+        try {
+            # `npm ci` when there is a lockfile, so a release build uses the
+            # exact versions that were tested rather than whatever resolves today.
+            if (Test-Path "package-lock.json") { npm ci --no-audit --no-fund }
+            else { npm install --no-audit --no-fund }
+            if ($LASTEXITCODE -ne 0) { throw "npm install failed" }
+            npm run build
+            if ($LASTEXITCODE -ne 0) { throw "the users site failed to build" }
+        } finally { Pop-Location }
+        Write-Host "    site -> $(Join-Path $PSScriptRoot 'site')" -ForegroundColor Green
+    }
+} else {
+    Write-Host "    no site-src - skipping" -ForegroundColor DarkGray
+}
+
 Write-Host "==> Cleaning previous build" -ForegroundColor Cyan
 Remove-Item -Recurse -Force build, dist -ErrorAction SilentlyContinue
 

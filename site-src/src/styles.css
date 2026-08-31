@@ -1,0 +1,342 @@
+/* HyperFetch users site.
+ *
+ * Same palette and category colours as the desktop app (gui2/palette.py,
+ * gui2/download_card.py) so the two read as one product. System fonts only:
+ * a phone opening this may be on mobile data, and a webfont is a round trip
+ * before anything renders.
+ */
+
+:root {
+  --bg: #0b0e14;
+  --surface: #141722;
+  --surface2: #1c202d;
+  --raised: #222739;
+  --border: #2a2f40;
+  --text: #f1f5f9;
+  --muted: #94a3b8;
+  --faint: #64748b;
+
+  --accent: #7c3aed;
+  --accent2: #8b5cf6;
+
+  --down: #34d399;
+  --up: #a78bfa;
+  --warn: #fbbf24;
+  --err: #f87171;
+  --info: #38bdf8;
+
+  --ui: system-ui, -apple-system, "Segoe UI Variable Text", "Segoe UI", Roboto,
+        "Helvetica Neue", Arial, sans-serif;
+}
+
+* { box-sizing: border-box; }
+
+html, body, #root { height: 100%; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--ui);
+  font-size: 15px;
+  line-height: 1.5;
+  -webkit-text-size-adjust: 100%;
+  overflow-x: hidden;
+}
+
+/* Numbers are read at a glance and tick constantly, so they are tabular and
+   tightened rather than left to jitter. */
+.num {
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
+  font-weight: 700;
+}
+
+.micro {
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+
+button, input { font: inherit; }
+button { cursor: pointer; color: inherit; }
+:focus-visible { outline: 2px solid var(--accent2); outline-offset: 2px; }
+
+.primary {
+  min-height: 46px;
+  padding: 11px 20px;
+  border: 0;
+  border-radius: 11px;
+  background: linear-gradient(135deg, var(--accent), var(--accent2));
+  color: #fff;
+  font-weight: 650;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+.primary:disabled { opacity: 0.5; cursor: default; }
+.primary:not(:disabled):active { transform: translateY(1px); }
+
+.ghost {
+  min-height: 40px;
+  padding: 8px 14px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: transparent;
+  color: var(--muted);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+}
+.ghost:hover { background: var(--surface2); color: var(--text); }
+.ghost.danger:hover { color: var(--err); border-color: var(--err); background: transparent; }
+
+input[type="text"], input[type="email"], input[type="password"], input[type="url"] {
+  width: 100%;
+  min-height: 46px;
+  padding: 11px 14px;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 11px;
+  color: var(--text);
+}
+input::placeholder { color: var(--faint); }
+input:focus-visible {
+  outline: none;
+  border-color: var(--accent2);
+  box-shadow: 0 0 0 3px rgb(124 58 237 / 0.3);
+}
+
+.err { margin: 0; color: var(--err); font-size: 0.87rem; }
+.ok { margin: 0; color: var(--down); font-size: 0.87rem; }
+
+.mark {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  background: linear-gradient(135deg, var(--accent), var(--accent2));
+  font-size: 17px;
+  flex: 0 0 auto;
+}
+
+/* ============================================================== landing */
+.landing {
+  min-height: 100dvh;
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+}
+.landing header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 18px 22px;
+  padding-top: max(18px, env(safe-area-inset-top));
+}
+.wordmark { font-size: 1.05rem; font-weight: 800; letter-spacing: -0.02em; }
+
+.hero {
+  display: grid;
+  place-items: center;
+  padding: 24px 22px 40px;
+}
+.hero-inner { width: 100%; max-width: 420px; display: grid; gap: 22px; }
+.hero h1 {
+  margin: 0;
+  font-size: clamp(1.9rem, 7vw, 2.5rem);
+  font-weight: 800;
+  letter-spacing: -0.03em;
+  line-height: 1.08;
+  text-wrap: balance;
+}
+.hero p { margin: 0; color: var(--muted); font-size: 1.02rem; }
+
+/* Three lines that say what the thing does, in the order it happens. The
+   numbers are real sequence, not decoration. */
+.steps { display: grid; gap: 12px; margin: 0; padding: 0; list-style: none; }
+.step { display: flex; align-items: baseline; gap: 12px; }
+.step b {
+  font-variant-numeric: tabular-nums;
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: var(--accent2);
+  flex: 0 0 auto;
+}
+.step span { color: var(--muted); font-size: 0.94rem; }
+
+.landing footer {
+  padding: 18px 22px;
+  padding-bottom: max(18px, env(safe-area-inset-bottom));
+  color: var(--faint);
+  font-size: 0.8rem;
+}
+
+/* ================================================================= auth */
+.auth { min-height: 100dvh; display: grid; place-items: center; padding: 24px; }
+.card {
+  width: 100%;
+  max-width: 380px;
+  display: grid;
+  gap: 13px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  padding: 28px 24px;
+}
+.card h2 { margin: 4px 0 0; font-size: 1.15rem; font-weight: 750; letter-spacing: -0.01em; }
+.card .hint { margin: 0; color: var(--muted); font-size: 0.9rem; }
+.card label { display: grid; gap: 5px; }
+.switcher {
+  margin: 2px 0 0;
+  color: var(--muted);
+  font-size: 0.88rem;
+  text-align: center;
+}
+.switcher button {
+  background: none;
+  border: 0;
+  padding: 0;
+  color: var(--accent2);
+  font-weight: 650;
+}
+
+/* ================================================================== app */
+.app { min-height: 100dvh; display: flex; flex-direction: column; }
+.bar {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 18px;
+  padding-top: max(14px, env(safe-area-inset-top));
+  background: color-mix(in srgb, var(--bg) 90%, transparent);
+  backdrop-filter: blur(10px);
+  border-bottom: 1px solid var(--border);
+}
+.bar .who { margin-left: auto; color: var(--muted); font-size: 0.86rem; }
+
+.pad { padding: 16px 18px 0; display: grid; gap: 12px; }
+.addbar { display: flex; gap: 8px; }
+.addbar input { flex: 1; min-width: 0; }
+
+/* Quota reads as a gauge rather than a sentence — it is the number that
+   decides whether the next download happens at all. */
+.quota { display: grid; gap: 6px; }
+.quota-head { display: flex; align-items: baseline; gap: 8px; }
+.quota-head .num { font-size: 0.86rem; }
+.quota-head .right { margin-left: auto; color: var(--muted); font-size: 0.8rem; }
+.gauge { height: 6px; border-radius: 999px; background: var(--surface2); overflow: hidden; }
+.gauge > i {
+  display: block;
+  height: 100%;
+  width: 100%;
+  transform-origin: left center;
+  background: var(--down);
+  transition: transform 0.45s ease;
+}
+.gauge.warn > i { background: var(--warn); }
+.gauge.full > i { background: var(--err); }
+
+.list { list-style: none; margin: 0; padding: 14px 18px 28px; display: grid; gap: 10px; }
+
+.dl {
+  display: grid;
+  grid-template-columns: 38px 1fr;
+  grid-template-areas: "chip head" "chip bar" "chip sub" "act act" "files files";
+  column-gap: 12px;
+  row-gap: 6px;
+  align-items: center;
+  min-width: 0;
+  padding: 12px 13px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 13px;
+}
+.dl:hover { border-color: var(--raised); }
+
+.chip-ic {
+  grid-area: chip;
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  border-radius: 10px;
+  background: var(--tint, #b5b5b5);
+  color: #10141c;
+  font-size: 17px;
+  font-weight: 700;
+}
+
+.head { grid-area: head; display: flex; align-items: baseline; gap: 10px; min-width: 0; }
+.name {
+  flex: 1;
+  /* A flex item will not shrink below its content without this, so one long
+     filename widens the card and pushes the buttons off screen. */
+  min-width: 0;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pct { color: var(--muted); font-size: 0.84rem; }
+
+.bar-track { grid-area: bar; height: 5px; border-radius: 999px; background: var(--surface2); overflow: hidden; }
+.bar-track > i {
+  display: block;
+  height: 100%;
+  width: 100%;
+  /* scaleX rather than width: transform is composited, so a dozen bars easing
+     at once does not lay the page out again on every frame. */
+  transform-origin: left center;
+  background: var(--accent);
+  transition: transform 0.45s ease;
+}
+.dl[data-state="Downloading"] .bar-track > i { background: var(--down); }
+.dl[data-state="Completed"] .bar-track > i { background: var(--info); }
+.dl[data-state="Paused"] .bar-track > i { background: var(--warn); }
+.dl[data-state="Error"] .bar-track > i { background: var(--err); }
+.dl[data-state="Queued"] .bar-track > i { background: var(--muted); }
+
+.sub { grid-area: sub; min-width: 0; font-size: 0.8rem; color: var(--muted); font-variant-numeric: tabular-nums; }
+.sub.bad { color: var(--err); }
+.expiry { color: var(--faint); }
+
+.act { grid-area: act; display: flex; gap: 8px; margin-top: 2px; }
+.act .ghost { flex: 1; }
+
+.files { grid-area: files; display: grid; gap: 4px; margin-top: 4px; padding-top: 8px; border-top: 1px solid var(--border); }
+.file {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 42px;
+  padding: 7px 9px;
+  border-radius: 9px;
+  color: var(--muted);
+  text-decoration: none;
+  font-size: 0.85rem;
+}
+.file:hover { background: var(--surface2); color: var(--text); }
+.file-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.file-size { flex: 0 0 auto; font-size: 0.78rem; color: var(--faint); }
+
+.note { margin: 0; padding: 40px 18px; text-align: center; color: var(--muted); }
+.note.warn { color: var(--warn); }
+
+@media (min-width: 760px) {
+  .list { grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); align-content: start; }
+  .dl { grid-template-areas: "chip head" "chip bar" "chip sub" "act act" "files files"; }
+  .pad, .list, .bar { padding-left: 26px; padding-right: 26px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .bar-track > i, .gauge > i { transition: none; }
+}
