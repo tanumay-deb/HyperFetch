@@ -31,6 +31,18 @@ log = logging.getLogger("hyperfetch.server")
 TRUSTED_EXT_IDS = {"finojjembpabfbincabngboedegokdlm"}      # Chrome Web Store
 
 
+LOOPBACK_ADDRS = {"127.0.0.1", "::1", "::ffff:127.0.0.1"}
+
+
+def is_loopback(remote_addr):
+    """True when the request came from this machine.
+
+    Read from the socket, never from a header: X-Forwarded-For and friends are
+    attacker-controlled and would defeat the whole point.
+    """
+    return (remote_addr or "") in LOOPBACK_ADDRS
+
+
 def create_app(queue, save_dir, pending=None, token=None):
     app = Flask(__name__)
     # Only browser-extension origins may call cross-origin. Websites use http(s)
@@ -65,6 +77,11 @@ def create_app(queue, save_dir, pending=None, token=None):
         extensions get a different Origin (403 + no CORS header) and website JS is
         blocked by the browser. A local process could read the token file anyway,
         so serving it here to localhost adds no new exposure."""
+        # Loopback only. The bind address used to guarantee this; once the
+        # server can listen on the LAN for the web UI, it has to be checked.
+        if not is_loopback(request.remote_addr):
+            return jsonify({"status": "error",
+                            "message": "local requests only"}), 403
         origin = request.headers.get("Origin", "")
         allowed = any(origin == scheme + eid
                       for scheme in ("chrome-extension://", "moz-extension://")
@@ -109,6 +126,11 @@ def create_app(queue, save_dir, pending=None, token=None):
         """Parse an HLS master's quality variants for the extension's picker.
         The app has the original capture's cookies/referer/UA and no CORS, so
         it reads referer/auth-gated manifests the extension's own fetch can't."""
+        # Loopback only. The bind address used to guarantee this; once the
+        # server can listen on the LAN for the web UI, it has to be checked.
+        if not is_loopback(request.remote_addr):
+            return jsonify({"status": "error",
+                            "message": "local requests only"}), 403
         data = request.get_json(silent=True) or {}
         if not _authorized(data):
             return jsonify({"status": "error", "message": "unauthorized"}), 401
@@ -131,6 +153,11 @@ def create_app(queue, save_dir, pending=None, token=None):
 
     @app.route("/download", methods=["POST"])
     def download():
+        # Loopback only. The bind address used to guarantee this; once the
+        # server can listen on the LAN for the web UI, it has to be checked.
+        if not is_loopback(request.remote_addr):
+            return jsonify({"status": "error",
+                            "message": "local requests only"}), 403
         data = request.get_json(silent=True) or {}
         if not _authorized(data):
             return jsonify({"status": "error", "message": "unauthorized"}), 401
@@ -182,6 +209,11 @@ def create_app(queue, save_dir, pending=None, token=None):
         window + tray icon. Token-gated + localhost; not in the CORS allow-list,
         so a browser can't reach it. Headless mode answers "no-gui" — the new
         launch then proceeds to open a real window."""
+        # Loopback only. The bind address used to guarantee this; once the
+        # server can listen on the LAN for the web UI, it has to be checked.
+        if not is_loopback(request.remote_addr):
+            return jsonify({"status": "error",
+                            "message": "local requests only"}), 403
         data = request.get_json(silent=True) or {}
         if not _authorized(data):
             return jsonify({"status": "error", "message": "unauthorized"}), 401
@@ -196,6 +228,11 @@ def create_app(queue, save_dir, pending=None, token=None):
         .torrent file or magnet: link, POSTs it here so the already-running app
         adds it (instead of spawning a second window). Token-gated + localhost;
         not in the CORS allow-list, so a browser can't reach it."""
+        # Loopback only. The bind address used to guarantee this; once the
+        # server can listen on the LAN for the web UI, it has to be checked.
+        if not is_loopback(request.remote_addr):
+            return jsonify({"status": "error",
+                            "message": "local requests only"}), 403
         data = request.get_json(silent=True) or {}
         if not _authorized(data):
             return jsonify({"status": "error", "message": "unauthorized"}), 401
