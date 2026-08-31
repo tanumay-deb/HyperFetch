@@ -198,7 +198,22 @@ button { font: inherit; cursor: pointer; color: inherit; }
   font-variant-numeric: tabular-nums;
   color: var(--faint);
 }
-.side-foot { margin-top: auto; padding-top: 8px; }
+.side-foot { margin-top: auto; padding-top: 8px; display: grid; gap: 8px; }
+
+/* The desktop sidebar's stats card, same shape: graph on top, speed at the
+   left, swarm at the right. */
+.stats {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 11px;
+  padding: 10px 12px;
+  display: grid; gap: 8px;
+}
+.graph { width: 100%; height: 54px; display: block; }
+.stats-row { display: flex; align-items: flex-end; gap: 10px; }
+.stat { display: grid; gap: 0; min-width: 0; }
+.stat.right { margin-left: auto; text-align: right; }
+.stat-val { font-size: 1rem; font-weight: 800; color: var(--text); line-height: 1.25; }
 
 /* ------------------------------------------------------------------- main */
 .main { grid-area: main; display: flex; flex-direction: column; min-width: 0; overflow: hidden; }
@@ -225,7 +240,8 @@ button { font: inherit; cursor: pointer; color: inherit; }
 .find input:focus-visible { box-shadow: none; }
 .find:focus-within { border-color: var(--accent2); }
 
-.chips { display: flex; gap: 7px; padding: 2px 20px 10px;
+.filters { display: flex; align-items: center; gap: 10px; padding: 2px 20px 10px; }
+.chips { display: flex; gap: 7px; min-width: 0;
          overflow-x: auto; scrollbar-width: none; }
 .chips::-webkit-scrollbar { display: none; }
 .chip {
@@ -236,6 +252,26 @@ button { font: inherit; cursor: pointer; color: inherit; }
 }
 .chip:hover { background: var(--surface2); }
 .chip.is-on { background: var(--surface2); border-color: var(--accent); color: var(--text); }
+
+.sortwrap { position: relative; margin-left: auto; flex: 0 0 auto; }
+.chip.sort { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.menu {
+  position: absolute; right: 0; top: calc(100% + 6px); z-index: 20;
+  margin: 0; padding: 5px; list-style: none;
+  min-width: 150px;
+  background: var(--surface);
+  border: 1px solid var(--border); border-radius: 10px;
+  box-shadow: 0 12px 30px rgb(0 0 0 / .45);
+}
+.menu button {
+  display: flex; align-items: center; gap: 8px;
+  width: 100%; min-height: 34px; padding: 6px 10px;
+  border: 0; border-radius: 7px; background: transparent;
+  color: var(--muted); font-size: .88rem; font-weight: 600; text-align: left;
+}
+.menu button:hover { background: var(--surface2); color: var(--text); }
+.menu button.is-on { color: var(--text); }
+.menu .dir { margin-left: auto; color: var(--accent2); font-size: .8rem; }
 
 /* ------------------------------------------------------------------ list */
 .list {
@@ -334,7 +370,7 @@ button { font: inherit; cursor: pointer; color: inherit; }
 .tot { display: flex; flex-direction: column; line-height: 1.15; }
 .tot .num { font-size: .84rem; color: var(--text); }
 .ver { font-size: 11px; font-weight: 700; color: var(--faint);
-       font-variant-numeric: tabular-nums; }
+       font-variant-numeric: tabular-nums; letter-spacing: .02em; }
 
 /* =============================================================== narrow */
 .only-narrow { display: none; }
@@ -357,7 +393,7 @@ button { font: inherit; cursor: pointer; color: inherit; }
 
   .bar { padding: 12px 14px 8px; }
   .find { display: none; }        /* the drawer's categories do this job here */
-  .chips { padding: 2px 14px 10px; }
+  .filters { padding: 2px 14px 10px; }
   .list { padding: 2px 14px 20px; }
 
   .card { grid-template-columns: 34px 1fr; grid-template-areas:
@@ -373,14 +409,12 @@ button { font: inherit; cursor: pointer; color: inherit; }
   .sub { white-space: normal; }
 
   .status { gap: 12px; padding: 0 14px; }
-  .graph { width: 64px; }
   .tot:first-of-type { margin-left: auto; }
 }
 
 @media (max-width: 560px) {
-  .tot, .ver { display: none; }    /* speeds survive; totals are desk reading */
-  .graph { width: 84px; }
-  .status { gap: 14px; }
+  .tot { display: none; }          /* speeds survive; totals are desk reading */
+  .status { gap: 12px; }
   .rate.up { margin-left: auto; }
 }
 

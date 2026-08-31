@@ -102,6 +102,22 @@
     <nav id="nav" class="nav" aria-label="Filter downloads"></nav>
 
     <div class="side-foot">
+      <!-- Same stats card as the desktop sidebar: the graph, then speed on the
+           left and the swarm on the right. -->
+      <div class="stats">
+        <canvas id="graph" class="graph" width="216" height="54" aria-hidden="true"></canvas>
+        <div class="stats-row">
+          <div class="stat">
+            <span id="speedNow" class="stat-val num">0 B/s</span>
+            <span class="micro">Current Speed</span>
+          </div>
+          <div class="stat right">
+            <span id="connNow" class="stat-val num">0</span>
+            <span id="connCap" class="micro">Connections</span>
+          </div>
+        </div>
+      </div>
+
       <button id="logout" class="nav-row">
         <svg class="ic" viewBox="0 0 24 24"><use href="#i-x"/></svg>
         <span>Sign out</span>
@@ -125,22 +141,29 @@
       </div>
     </header>
 
-    <nav id="chips" class="chips" aria-label="Filter by state">
-      <button class="chip is-on" data-state="all">All</button>
-      <button class="chip" data-state="active">Active</button>
-      <button class="chip" data-state="paused">Paused</button>
-      <button class="chip" data-state="done">Completed</button>
-      <button class="chip" data-state="failed">Failed</button>
-    </nav>
+    <div class="filters">
+      <nav id="chips" class="chips" aria-label="Filter by state">
+        <button class="chip is-on" data-state="all">All</button>
+        <button class="chip" data-state="active">Active</button>
+        <button class="chip" data-state="paused">Paused</button>
+        <button class="chip" data-state="done">Completed</button>
+        <button class="chip" data-state="failed">Failed</button>
+      </nav>
+      <div class="sortwrap">
+        <button id="sortBtn" class="chip sort" aria-haspopup="true" aria-expanded="false">
+          Sort: Added (&#9660;)
+        </button>
+        <ul id="sortMenu" class="menu" role="menu" hidden></ul>
+      </div>
+    </div>
 
     <ul id="list" class="list"></ul>
     <p id="empty" class="note" hidden></p>
     <p id="offline" class="note warn" hidden>Can&rsquo;t reach HyperFetch. Retrying&hellip;</p>
   </main>
 
-  <!-- The signature: what a download accelerator is actually for, drawn live. -->
   <footer class="status">
-    <canvas id="graph" class="graph" width="240" height="34" aria-hidden="true"></canvas>
+    <span id="version" class="ver"></span>
 
     <div class="rate down">
       <svg class="ic" viewBox="0 0 24 24"><use href="#i-down"/></svg>
@@ -161,7 +184,6 @@
       <span class="micro">Uploaded</span>
       <span id="upTotal" class="num">&mdash;</span>
     </div>
-    <span id="version" class="ver"></span>
   </footer>
 </div>
 

@@ -9,7 +9,7 @@
 
 const $ = (id) => document.getElementById(id);
 const POLL_MS = 1500;
-const GRAPH_SAMPLES = 60;
+const GRAPH_SAMPLES = 64;      // same rolling window as gui2.speed_gauge
 
 const view = { login: $("login"), disabled: $("disabled"),
                noPass: $("noPass"), app: $("app") };
@@ -17,10 +17,12 @@ const view = { login: $("login"), disabled: $("disabled"),
 let state = "all";                 // status chip
 let cat = "All";                   // sidebar category
 let query = "";
+let sortKey = "Added";             // same five keys as the desktop toolbar
+let sortAsc = false;               // and the same default: newest first
 let timer = null;
 let last = [];
 const rates = new Map();           // id -> {bytes, at, bps}
-const history = [];                // [{down, up}] for the status graph
+const history = [];                // rolling speed samples for the sidebar graph
 
 /* Category -> icon + colour. Same mapping as gui2/download_card.py, so a file
    is the same colour in both places. */
@@ -209,6 +211,80 @@ $("chips").addEventListener("click", (e) => {
   render(last);
 });
 
+/* ------------------------------------------------------------------ sort */
+/* The same five keys as the desktop toolbar, and the same behaviour: picking
+   the key you are already on flips the direction. */
+const SORTS = {
+  Added:    (d) => d.added,
+  Name:     (d) => (d.name || "").toLowerCase(),
+  Size:     (d) => d.totalBytes,
+  Progress: (d) => d.percent,
+  Speed:    (d) => rates.get(d.id)?.bps || 0,
+};
+
+function buildSortMenu() {
+  $("sortMenu").replaceChildren(...Object.keys(SORTS).map((key) => {
+    const li = document.createElement("li");
+    const b = document.createElement("button");
+    b.type = "button";
+    b.dataset.sort = key;
+    b.className = key === sortKey ? "is-on" : "";
+    const name = document.createElement("span");
+    name.textContent = key;
+    b.append(name);
+    if (key === sortKey) {
+      const dir = document.createElement("span");
+      dir.className = "dir";
+      dir.textContent = sortAsc ? "▲" : "▼";
+      b.append(dir);
+    }
+    li.append(b);
+    return li;
+  }));
+  $("sortBtn").textContent =
+    `Sort: ${sortKey} (${sortAsc ? "▲" : "▼"})`;
+}
+
+function toggleSortMenu(open) {
+  const m = $("sortMenu");
+  const show = open === undefined ? m.hidden : open;
+  m.hidden = !show;
+  $("sortBtn").setAttribute("aria-expanded", String(show));
+}
+
+$("sortBtn").addEventListener("click", (e) => {
+  e.stopPropagation();
+  buildSortMenu();
+  toggleSortMenu();
+});
+
+$("sortMenu").addEventListener("click", (e) => {
+  const b = e.target.closest("button[data-sort]");
+  if (!b) return;
+  const key = b.dataset.sort;
+  if (key === sortKey) sortAsc = !sortAsc;      // same key again flips it
+  else { sortKey = key; sortAsc = false; }
+  buildSortMenu();
+  toggleSortMenu(false);
+  render(last);
+});
+
+document.addEventListener("click", () => toggleSortMenu(false));
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") toggleSortMenu(false);
+});
+
+function sorted(rows) {
+  const pick = SORTS[sortKey] || SORTS.Added;
+  /* Copy first: the array is the poll's own list, and sorting it in place
+     would reorder what the next diff compares against. */
+  return rows.slice().sort((a, b) => {
+    const x = pick(a), y = pick(b);
+    const c = x < y ? -1 : x > y ? 1 : 0;
+    return sortAsc ? c : -c;
+  });
+}
+
 $("search").addEventListener("input", (e) => {
   query = e.target.value.trim().toLowerCase();
   render(last);
@@ -392,7 +468,7 @@ function update(c, d, bps) {
 /* --------------------------------------------------------------- render */
 function render(downloads) {
   const list = $("list");
-  const rows = downloads.filter(keep);
+  const rows = sorted(downloads.filter(keep));
 
   const wanted = rows.map((d) => {
     let c = cards.get(d.id);
@@ -436,10 +512,56 @@ function render(downloads) {
 }
 
 /* -------------------------------------------------- status strip + graph */
+/* ------------------------------------------- sidebar graph + status strip */
+/* A direct port of gui2/speed_gauge.py SpeedGraph, down to the numbers: two
+   faint gridlines at thirds, a 5-wide centred moving average, a Catmull-Rom
+   spline through the points, the area under it filled with the accent at
+   alpha 40/255, and a 2px accent stroke on top. Same window (64 samples) and
+   the same rolling-max scale, so the web graph and the desktop one describe
+   the same download the same way. */
+function movingAvg(values, k) {
+  const n = values.length;
+  if (k <= 1 || n < 2) return values.slice();
+  const half = k >> 1;
+  const out = [];
+  for (let i = 0; i < n; i++) {
+    const lo = Math.max(0, i - half), hi = Math.min(n, i + half + 1);
+    let sum = 0;
+    for (let j = lo; j < hi; j++) sum += values[j];
+    out.push(sum / (hi - lo));
+  }
+  return out;
+}
+
+/* Catmull-Rom through the points, emitted as cubic Beziers — the same
+   conversion gui2/graphing.py smooth_path does. */
+function splinePath(g, pts) {
+  g.moveTo(pts[0].x, pts[0].y);
+  const n = pts.length;
+  if (n < 3) {
+    for (let i = 1; i < n; i++) g.lineTo(pts[i].x, pts[i].y);
+    return;
+  }
+  for (let i = 0; i < n - 1; i++) {
+    const p0 = pts[i > 0 ? i - 1 : 0];
+    const p1 = pts[i];
+    const p2 = pts[i + 1];
+    const p3 = pts[i + 2 < n ? i + 2 : n - 1];
+    g.bezierCurveTo(p1.x + (p2.x - p0.x) / 6, p1.y + (p2.y - p0.y) / 6,
+                    p2.x - (p3.x - p1.x) / 6, p2.y - (p3.y - p1.y) / 6,
+                    p2.x, p2.y);
+  }
+}
+
+function css(name) {
+  return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+}
+
 function drawGraph() {
   const cv = $("graph");
+  if (!cv.clientWidth) return;                 // in the closed drawer
   const dpr = window.devicePixelRatio || 1;
-  const w = cv.clientWidth || 120, h = cv.clientHeight || 34;
+  const w = cv.clientWidth, h = cv.clientHeight || 54;
   if (cv.width !== Math.round(w * dpr) || cv.height !== Math.round(h * dpr)) {
     cv.width = Math.round(w * dpr);
     cv.height = Math.round(h * dpr);
@@ -447,41 +569,41 @@ function drawGraph() {
   const g = cv.getContext("2d");
   g.setTransform(dpr, 0, 0, dpr, 0, 0);
   g.clearRect(0, 0, w, h);
-  if (history.length < 2) return;
 
-  // Both channels share one scale, or a trickle of upload would look like a
-  // torrent of it next to a saturated download.
-  const peak = Math.max(1, ...history.map((s) => Math.max(s.down, s.up)));
-  const step = w / (GRAPH_SAMPLES - 1);
-  const x0 = w - (history.length - 1) * step;
-  const y = (v) => h - 1 - (v / peak) * (h - 3);
+  g.strokeStyle = css("--border");
+  g.lineWidth = 1;
+  for (let i = 1; i < 3; i++) {
+    const y = Math.round(h * i / 3) + 0.5;     // +0.5 keeps a 1px line crisp
+    g.beginPath(); g.moveTo(0, y); g.lineTo(w, y); g.stroke();
+  }
 
-  // Down: filled area. It is the number you came to look at.
+  const n = history.length;
+  if (n < 2) return;
+  const peak = Math.max(1, ...history);
+  const vals = movingAvg(history, 5);
+  const pts = vals.map((v, i) => ({
+    x: w * i / (n - 1),
+    y: h - (v / peak) * (h - 6) - 3,
+  }));
+
+  const accent = css("--accent");
   g.beginPath();
-  g.moveTo(x0, h);
-  history.forEach((s, i) => g.lineTo(x0 + i * step, y(s.down)));
-  g.lineTo(x0 + (history.length - 1) * step, h);
+  splinePath(g, pts);
+  g.save();
+  g.lineTo(pts[n - 1].x, h);
+  g.lineTo(pts[0].x, h);
   g.closePath();
-  const grad = g.createLinearGradient(0, 0, 0, h);
-  grad.addColorStop(0, "rgba(52, 211, 153, .40)");
-  grad.addColorStop(1, "rgba(52, 211, 153, .02)");
-  g.fillStyle = grad;
+  g.fillStyle = accent;
+  g.globalAlpha = 40 / 255;                    // the QColor alpha, exactly
   g.fill();
+  g.restore();
 
   g.beginPath();
-  history.forEach((s, i) => (i ? g.lineTo(x0 + i * step, y(s.down))
-                              : g.moveTo(x0, y(s.down))));
-  g.strokeStyle = "#34d399";
-  g.lineWidth = 1.5;
+  splinePath(g, pts);
+  g.strokeStyle = accent;
+  g.lineWidth = 2;
+  g.lineCap = "round";
   g.lineJoin = "round";
-  g.stroke();
-
-  // Up: a line only, so it reads as the secondary channel.
-  g.beginPath();
-  history.forEach((s, i) => (i ? g.lineTo(x0 + i * step, y(s.up))
-                              : g.moveTo(x0, y(s.up))));
-  g.strokeStyle = "#a78bfa";
-  g.lineWidth = 1.5;
   g.stroke();
 }
 
