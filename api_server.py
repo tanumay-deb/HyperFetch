@@ -13,10 +13,12 @@ Two modes:
   shows the file-info dialog before anything is queued.
 - Headless mode (``python api_server.py``): tasks are queued immediately.
 """
+import os
+import sys
 import logging
 
 from datetime import timedelta
-from flask import Flask, request, jsonify, session
+from flask import Flask, request, jsonify, session, redirect, send_from_directory
 from flask_cors import CORS
 
 import task as T
@@ -35,6 +37,17 @@ TRUSTED_EXT_IDS = {"finojjembpabfbincabngboedegokdlm"}      # Chrome Web Store
 
 
 LOOPBACK_ADDRS = {"127.0.0.1", "::1", "::ffff:127.0.0.1"}
+
+
+# Only these are served from /ui. An allow-list rather than "whatever is in the
+# folder", so a stray file dropped in there never becomes a public URL.
+ALLOWED_UI_FILES = {"index.html", "style.css", "app.js"}
+
+
+def web_dir():
+    """The web UI folder, in a dev checkout and in the frozen build alike."""
+    base = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
+    return os.path.join(base, "web")
 
 
 def is_loopback(remote_addr):
@@ -456,6 +469,28 @@ def create_app(queue, save_dir, pending=None, token=None):
         except Exception:
             pass
         return jsonify({"status": "ok"})
+
+
+    # ------------------------------------------------------- web UI: files
+    # Deliberately NOT loopback-gated: this is the page itself, and it is meant
+    # to open on a phone. It ships no data — everything it shows comes from the
+    # session-gated /api routes above, so an unauthenticated visitor gets a
+    # login form and nothing else.
+    @app.route("/", methods=["GET"])
+    def ui_root():
+        return redirect("/ui/")
+
+    @app.route("/ui/", methods=["GET"])
+    def ui_index():
+        return send_from_directory(web_dir(), "index.html")
+
+    @app.route("/ui/<path:name>", methods=["GET"])
+    def ui_asset(name):
+        """send_from_directory refuses to escape the folder, so a crafted name
+        cannot walk up into the filesystem."""
+        if name not in ALLOWED_UI_FILES:
+            return ("", 404)
+        return send_from_directory(web_dir(), name)
 
     return app
 

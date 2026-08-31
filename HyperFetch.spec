@@ -27,6 +27,10 @@ hidden = (
 # there first. Absent -> the build still works, torrents just report
 # "aria2c not found" until the binary ships.
 extra_datas = []
+# The web UI's files. Lazy-loaded from disk at request time, so PyInstaller
+# cannot infer them — without this the frozen build serves a 404 for /ui.
+if os.path.isdir('web'):
+    extra_datas.append(('web', 'web'))
 if os.path.isfile(os.path.join('bin', 'aria2c.exe')):
     extra_datas.append(('bin/aria2c.exe', 'bin'))
 elif os.path.isfile(os.path.join('bin', 'aria2c')):

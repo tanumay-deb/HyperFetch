@@ -1,0 +1,234 @@
+/* HyperFetch web UI — same palette as the desktop app (gui2/palette.py).
+   Phone first: this is mainly opened from a phone on the LAN, so touch targets
+   are 44px+ and the layout is single-column until there is room for more. */
+
+:root {
+  --bg: #0b0e14;
+  --surface: #141722;
+  --surface2: #1c202d;
+  --border: #2a2f40;
+  --hover: #1e2333;
+  --text: #f1f5f9;
+  --muted: #94a3b8;
+  --accent: #7c3aed;
+  --accent2: #8b5cf6;
+
+  --downloading: #34d399;
+  --completed: #38bdf8;
+  --paused: #fbbf24;
+  --queued: #94a3b8;
+  --error: #f87171;
+
+  --radius: 12px;
+  --gap: 12px;
+}
+
+* { box-sizing: border-box; }
+
+/* Any `display` rule beats the hidden attribute's own display:none, and both
+   the login and the no-password panes set display:grid — so without this they
+   render on top of each other whatever the attribute says. */
+[hidden] { display: none !important; }
+
+html, body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: system-ui, -apple-system, "Segoe UI Variable Display", "Segoe UI",
+               Roboto, "Helvetica Neue", Arial, sans-serif;
+  font-size: 15px;
+  line-height: 1.45;
+  -webkit-text-size-adjust: 100%;
+}
+
+body { padding-bottom: env(safe-area-inset-bottom); overflow-x: hidden; }
+
+h1 { font-size: 1.05rem; font-weight: 700; margin: 0; letter-spacing: .2px; }
+
+.sr-only {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+}
+
+/* ---------------------------------------------------------------- brand */
+.brand { display: flex; align-items: center; gap: 9px; }
+.bolt {
+  display: grid; place-items: center;
+  width: 30px; height: 30px; border-radius: 9px;
+  background: linear-gradient(135deg, var(--accent), var(--accent2));
+  font-size: 15px;
+}
+
+/* ---------------------------------------------------------------- login */
+.login {
+  min-height: 100dvh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+}
+.login-card {
+  width: 100%; max-width: 360px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 26px 22px;
+  display: grid; gap: 14px;
+}
+.hint { color: var(--muted); font-size: .9rem; margin: 0; }
+
+input[type="password"], input[type="url"] {
+  width: 100%;
+  min-height: 46px;
+  padding: 11px 13px;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  color: var(--text);
+  font: inherit;
+}
+input:focus-visible {
+  outline: none;
+  border-color: var(--accent2);
+  box-shadow: 0 0 0 3px rgb(124 58 237 / .28);
+}
+input::placeholder { color: var(--muted); }
+
+button { font: inherit; cursor: pointer; }
+
+.primary {
+  min-height: 46px;
+  padding: 11px 20px;
+  border: 0;
+  border-radius: 10px;
+  background: linear-gradient(135deg, var(--accent), var(--accent2));
+  color: #fff;
+  font-weight: 650;
+}
+.primary:disabled { opacity: .55; cursor: default; }
+.primary:not(:disabled):active { transform: translateY(1px); }
+
+.ghost {
+  min-height: 38px;
+  padding: 7px 12px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: transparent;
+  color: var(--muted);
+}
+.ghost:active { background: var(--hover); }
+
+.error { color: var(--error); font-size: .87rem; margin: 0; }
+.error.inline { padding: 0 16px 8px; }
+
+/* ---------------------------------------------------------------- shell */
+.topbar {
+  position: sticky; top: 0; z-index: 5;
+  display: flex; align-items: center; gap: 10px;
+  padding: 12px 16px calc(12px + env(safe-area-inset-top));
+  padding-top: max(12px, env(safe-area-inset-top));
+  background: color-mix(in srgb, var(--bg) 88%, transparent);
+  backdrop-filter: blur(10px);
+  border-bottom: 1px solid var(--border);
+}
+.spacer { flex: 1; }
+.totals { color: var(--muted); font-size: .82rem; text-align: right; white-space: nowrap; }
+
+.addbar {
+  display: flex; gap: 8px;
+  padding: 14px 16px 6px;
+}
+.addbar input { flex: 1; }
+
+.filters {
+  display: flex; gap: 8px;
+  padding: 8px 16px 4px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.filters::-webkit-scrollbar { display: none; }
+.chip {
+  flex: 0 0 auto;
+  min-height: 36px;
+  padding: 6px 15px;
+  border: 1px solid transparent;
+  border-radius: 18px;
+  background: transparent;
+  color: var(--muted);
+  font-weight: 600; font-size: .87rem;
+}
+.chip.is-on {
+  background: var(--surface2);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+/* ---------------------------------------------------------------- list */
+.list { list-style: none; margin: 0; padding: 10px 16px 28px; display: grid; gap: 10px; }
+
+.card {
+  min-width: 0;             /* same reason, for the grid track */
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 13px 14px;
+  display: grid;
+  gap: 9px;
+}
+
+.row1 { display: flex; align-items: baseline; gap: 10px; min-width: 0; }
+.name {
+  flex: 1;
+  /* Without this a flex item will not shrink below its content, so one long
+     filename widens the whole card and pushes the buttons off screen. */
+  min-width: 0;
+  font-weight: 650;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.pct { color: var(--muted); font-variant-numeric: tabular-nums; font-size: .88rem; }
+
+.bar {
+  height: 6px;
+  border-radius: 999px;
+  background: var(--surface2);
+  overflow: hidden;
+}
+.bar > i {
+  display: block; height: 100%;
+  border-radius: 999px;
+  background: var(--accent);
+  transition: width .45s ease;
+}
+.card[data-state="Completed"] .bar > i { background: var(--completed); }
+.card[data-state="Downloading"] .bar > i { background: var(--downloading); }
+.card[data-state="Paused"] .bar > i { background: var(--paused); }
+.card[data-state="Error"] .bar > i { background: var(--error); }
+.card[data-state="Queued"] .bar > i { background: var(--queued); }
+
+.sub {
+  min-width: 0;
+  color: var(--muted);
+  font-size: .83rem;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.sub.bad { color: var(--error); white-space: normal; }
+
+.actions { display: flex; gap: 8px; }
+.actions .ghost { flex: 1; }
+.actions .danger { color: var(--error); border-color: color-mix(in srgb, var(--error) 40%, var(--border)); }
+
+.empty, .offline {
+  text-align: center; color: var(--muted);
+  padding: 34px 16px; margin: 0;
+}
+.offline { color: var(--paused); }
+
+/* Roomier layout once there is width for it (tablet / desktop browser). */
+@media (min-width: 720px) {
+  .list { grid-template-columns: repeat(auto-fill, minmax(330px, 1fr)); }
+  .addbar, .filters, .list { padding-left: 24px; padding-right: 24px; }
+  .topbar { padding-left: 24px; padding-right: 24px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .bar > i { transition: none; }
+}

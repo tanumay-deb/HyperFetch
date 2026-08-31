@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="dark">
+<meta name="theme-color" content="#0b0e14">
+<title>HyperFetch</title>
+<link rel="stylesheet" href="/ui/style.css">
+</head>
+<body>
+
+<!-- Sign in -->
+<section id="login" class="login" hidden>
+  <form id="loginForm" class="login-card" autocomplete="on">
+    <div class="brand"><span class="bolt">⚡</span><h1>HyperFetch</h1></div>
+    <p id="loginHint" class="hint">Enter your web password to continue.</p>
+    <label class="sr-only" for="pw">Password</label>
+    <input id="pw" type="password" name="password" placeholder="Password"
+           autocomplete="current-password" required>
+    <button id="loginBtn" type="submit" class="primary">Sign in</button>
+    <p id="loginError" class="error" role="alert" hidden></p>
+  </form>
+</section>
+
+<!-- No password set yet -->
+<section id="noPass" class="login" hidden>
+  <div class="login-card">
+    <div class="brand"><span class="bolt">⚡</span><h1>HyperFetch</h1></div>
+    <p class="hint">
+      No web password is set yet. Open HyperFetch on your PC and set one in
+      <strong>Settings → Browser Integration</strong>, then reload this page.
+    </p>
+  </div>
+</section>
+
+<!-- Main -->
+<main id="app" hidden>
+  <header class="topbar">
+    <div class="brand"><span class="bolt">⚡</span><h1>HyperFetch</h1></div>
+    <div class="spacer"></div>
+    <div id="totals" class="totals" aria-live="polite"></div>
+    <button id="logout" class="ghost" title="Sign out">Sign out</button>
+  </header>
+
+  <form id="addForm" class="addbar">
+    <input id="addUrl" type="url" inputmode="url" spellcheck="false"
+           placeholder="Paste a link or magnet…" aria-label="Link to download">
+    <button type="submit" class="primary">Add</button>
+  </form>
+  <p id="addError" class="error inline" role="alert" hidden></p>
+
+  <nav class="filters" id="filters">
+    <button class="chip is-on" data-filter="all">All</button>
+    <button class="chip" data-filter="active">Active</button>
+    <button class="chip" data-filter="paused">Paused</button>
+    <button class="chip" data-filter="done">Completed</button>
+    <button class="chip" data-filter="failed">Failed</button>
+  </nav>
+
+  <ul id="list" class="list"></ul>
+
+  <p id="empty" class="empty" hidden>Nothing here yet.</p>
+  <p id="offline" class="offline" hidden>Lost contact with HyperFetch — retrying…</p>
+</main>
+
+<script src="/ui/app.js"></script>
+</body>
+</html>
