@@ -148,69 +148,56 @@ def test_format_error_does_not_blame_ffmpeg_when_ffmpeg_exists(tmp_path, fake_yt
     assert "ffmpeg" not in t.error.lower(), t.error
 
 
-# ---- naming the missing JS runtime instead of blaming the site ----
-class _NoJsYDL(_FakeYDL):
-    """yt-dlp with no JS runtime available: it warns, then fails the way
-    YouTube actually fails — a bare 403 that looks like a refusal."""
+# ---- a YouTube 403 points at the stale bundle, not at the network ----
+class _403YDL(_FakeYDL):
+    """How YouTube fails when the bundled yt-dlp has aged out: the signing of
+    the media URLs changed and the download 403s."""
 
     def extract_info(self, url, download=True):
-        self.opts["logger"].warning(
-            "[youtube] No supported JavaScript runtime could be found. Only deno "
-            "is enabled by default; to use another runtime add --js-runtimes "
-            "RUNTIME[:PATH]. YouTube extraction without a JS runtime has been "
-            "deprecated, and some formats may be missing.")
         raise RuntimeError("ERROR: unable to download video data: "
                            "HTTP Error 403: Forbidden")
 
 
 @pytest.fixture
-def no_js_ytdlp(monkeypatch):
+def stale_ytdlp(monkeypatch):
     attempts = []
     mod = types.ModuleType("yt_dlp")
-    mod.YoutubeDL = lambda opts: _NoJsYDL(opts, attempts, lambda h: False)
+    mod.YoutubeDL = lambda opts: _403YDL(opts, attempts, lambda h: False)
     monkeypatch.setitem(sys.modules, "yt_dlp", mod)
     return attempts
 
 
-def test_a_403_after_the_js_runtime_warning_names_the_runtime(tmp_path, no_js_ytdlp):
-    """What the user saw was "unable to download video data: HTTP Error 403",
-    which reads as YouTube refusing them. The cause was a missing dependency,
-    and it was sitting in the log one line above."""
+def test_a_youtube_403_blames_the_bundled_version(tmp_path, stale_ytdlp):
+    """Measured: the URL that 403'd on a three-month-old yt-dlp downloaded on a
+    current one, with and without a JS runtime. So a 403 here is an age
+    problem, and the user cannot fix it — the version ships inside the build.
+    """
     t = _task(tmp_path, {})
     yt_dl.YtDlpDownloader(t).run()
 
     assert t.status == T.ERROR
-    assert "JavaScript runtime" in t.error, t.error
-    assert "Deno" in t.error, t.error
+    assert "403" in t.error
+    assert "yt-dlp" in t.error and "stale" in t.error, t.error
+    assert "JavaScript" not in t.error, "the JS runtime was a red herring"
 
 
-def test_the_failure_also_reaches_the_drawer(tmp_path, no_js_ytdlp):
-    """Setting error records it; this is the path a user follows to find out
-    what went wrong."""
+def test_the_message_names_the_version_it_is_running(tmp_path, stale_ytdlp):
+    """"Out of date" is not actionable without saying which one."""
     t = _task(tmp_path, {})
     yt_dl.YtDlpDownloader(t).run()
-    assert any(e["level"] == "ERROR" and "JavaScript runtime" in e["message"]
-               for e in t.events), t.events
+    assert yt_dl._ytdlp_version() in t.error, t.error
 
 
-def test_an_unrelated_failure_is_not_blamed_on_the_runtime(tmp_path, fake_ytdlp):
-    """The warning is emitted on every YouTube extraction now, successful ones
-    included — so it must not become the explanation for everything."""
-    attempts, state = fake_ytdlp
-
-    class _WarnsThenFailsOtherwise(_FakeYDL):
-        def extract_info(self, url, download=True):
-            self.opts["logger"].warning(
-                "[youtube] No supported JavaScript runtime could be found.")
-            raise RuntimeError("ERROR: [youtube] abc: Private video. "
-                               "Sign in if you've been granted access")
-
-    mod = types.ModuleType("yt_dlp")
-    mod.YoutubeDL = lambda opts: _WarnsThenFailsOtherwise(opts, attempts, lambda h: False)
-    sys.modules["yt_dlp"] = mod
-
-    t = _task(tmp_path, {})
+def test_a_403_from_somewhere_else_is_not_blamed_on_yt_dlp(tmp_path, stale_ytdlp):
+    """Plenty of sites answer 403 for their own reasons."""
+    t = T.DownloadTask("https://example.test/video", str(tmp_path / "v.mkv"),
+                       filename="v.mkv")
     yt_dl.YtDlpDownloader(t).run()
     assert t.status == T.ERROR
-    assert "JavaScript runtime" not in t.error, t.error
-    assert "Private video" in t.error
+    assert "stale" not in t.error, t.error
+
+
+def test_the_failure_reaches_the_drawer(tmp_path, stale_ytdlp):
+    t = _task(tmp_path, {})
+    yt_dl.YtDlpDownloader(t).run()
+    assert any(e["level"] == "ERROR" and "403" in e["message"] for e in t.events)

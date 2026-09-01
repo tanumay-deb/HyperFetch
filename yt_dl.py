@@ -66,6 +66,17 @@ class _Abort(Exception):
     pass
 
 
+def _ytdlp_version():
+    """The bundled yt-dlp's version, for error messages. It is frozen into the
+    build, so naming it is the difference between "something is broken" and
+    "this build has aged out"."""
+    try:
+        import yt_dlp
+        return yt_dlp.version.__version__
+    except Exception:
+        return "unknown version"
+
+
 class YtDlpDownloader:
     def __init__(self, dtask: "T.DownloadTask"):
         self.t = dtask
@@ -111,25 +122,10 @@ class YtDlpDownloader:
         # route yt-dlp's own messages (deprecation notices, ERROR echoes) into our
         # debug log instead of stdout/stderr, so they don't spam the app console
         class _YtLog:
-            # YouTube extraction now wants a JS runtime and says so in a
-            # warning. Worth remembering, because the failure it causes further
-            # down arrives as a bare "HTTP Error 403: Forbidden" that reads
-            # like the site refusing us rather than a missing dependency.
-            saw_no_js_runtime = False
-
-            def _note(self, m):
-                if "javascript runtime" in str(m).lower():
-                    self.saw_no_js_runtime = True
-
             def debug(self, m): pass
             def info(self, m): pass
-            def warning(self, m):
-                self._note(m)
-                log.debug("yt-dlp: %s", m)
-
-            def error(self, m):
-                self._note(m)
-                log.debug("yt-dlp: %s", m)
+            def warning(self, m): log.debug("yt-dlp: %s", m)
+            def error(self, m): log.debug("yt-dlp: %s", m)
 
         ytlog = _YtLog()
 
@@ -247,26 +243,22 @@ class YtDlpDownloader:
             import re as _re
             msg = _re.sub(r"\x1b\[[0-9;]*m", "", str(e)).strip()    # strip ANSI colour codes
             low = msg.lower()
-            # Checked first, because when it applies it is the cause and the
-            # others are symptoms — no runtime means no usable format URLs, and
-            # what surfaces is a 403 or "requested format is not available"
-            # that would otherwise be blamed on ffmpeg or on the video itself.
-            # Gated on a failure it actually explains: the warning is emitted
-            # on every YouTube extraction now, successful ones included.
-            if ytlog.saw_no_js_runtime and (
-                    "403" in low or "unable to download video data" in low
-                    or "requested format is not available" in low
-                    or "nsig" in low or "player" in low):
-                # Careful with the wording: "no runtime on this machine" is
-                # often false. yt-dlp looks only for Deno unless told
-                # otherwise, so a machine with Node or Bun installed still
-                # lands here, and telling that user they have none sends them
-                # to install something they already have.
+            # A 403 on the media URLs almost always means this build's yt-dlp
+            # has aged out. YouTube changes how it signs those URLs every few
+            # weeks and an older copy simply stops working. The version is
+            # frozen into the build, so the user cannot update it themselves
+            # and the message has to say that rather than blame the network.
+            #
+            # Measured rather than assumed: the URL that failed here on a
+            # three-month-old yt-dlp downloaded fine on a current one — with a
+            # JavaScript runtime present and without. The "no JS runtime"
+            # warning yt-dlp prints alongside this is a red herring for it.
+            if ("403" in low or "unable to download video data" in low) and                     "youtu" in (self.t.url or "").lower():
                 self.t.error = (
-                    "YouTube needs a JavaScript runtime to work out its video "
-                    "URLs, and yt-dlp only looks for Deno. Install Deno and "
-                    "put it on PATH, then try again. (Without one YouTube "
-                    "answers 403, which is what yt-dlp reported.)")
+                    "YouTube refused the download (403). That usually means "
+                    "HyperFetch's bundled yt-dlp (%s) has gone stale — YouTube "
+                    "changes how it signs video links every few weeks. A newer "
+                    "HyperFetch build is the fix." % _ytdlp_version())
             elif ffdir is None and ("requested format is not available" in low
                                     or "ffmpeg" in low or "merging" in low):
                 self.t.error = ("This video has no combined audio+video stream — it needs "
