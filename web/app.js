@@ -344,8 +344,14 @@ async function offerFiles(card, id) {
   const r = await api("/api/downloads/" + encodeURIComponent(id) + "/files");
   const files = (r.body && r.body.files) || [];
   if (!r.ok || !files.length) {
-    panel.replaceChildren(note((r.body && r.body.message) ||
-                               "The file is no longer on the PC."));
+    /* Say where it looked. A magnet's save_path is a placeholder until the
+       download finishes, so "not here" usually means the record points
+       somewhere the file never was — and without the path there is no way to
+       tell that from a file you deleted yourself. */
+    const where = (r.body && r.body.lookedIn) || "";
+    panel.replaceChildren(note(
+      where ? "Nothing found at " + where
+            : ((r.body && r.body.message) || "The file is no longer on the PC.")));
     panel.hidden = false;
     return;
   }

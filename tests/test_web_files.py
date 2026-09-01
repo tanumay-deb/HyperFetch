@@ -274,3 +274,80 @@ def test_the_walk_drops_anything_that_resolves_outside_the_root(tmp_path, monkey
     t = T.DownloadTask("https://e.test/x", str(d), filename="torrent")
     names = [f["name"] for f in servable_files(t)]
     assert names == ["real.bin"], "a path outside the root was served"
+
+
+# ---- when the record points at the wrong place -----------------------------
+def test_a_torrent_whose_save_path_was_never_corrected_still_works(tmp_path):
+    """The reported bug. A magnet has no name until its metadata arrives, so
+    the task is created with a placeholder like `magnet_.bin` and only
+    corrected when it finishes — and torrent._resolve_save_path leaves it alone
+    when it cannot work out the top-level entry. The download then sits on disk
+    under its real name while the page insists the file is gone."""
+    dl = tmp_path / "HF"
+    real = dl / "The Odyssey (2026) [1080p]"
+    (real / "Subs").mkdir(parents=True)
+    (real / "movie.mp4").write_bytes(b"v" * 2048)
+    (real / "Subs" / "English.srt").write_bytes(b"s")
+
+    t = T.DownloadTask("magnet:?xt=urn:btih:" + "a" * 40,
+                       str(dl / "magnet_.bin"),          # never existed
+                       filename="The Odyssey (2026) [1080p]")
+    t.status = T.COMPLETED
+
+    names = sorted(f["name"] for f in servable_files(t))
+    assert names == ["English.srt", "movie.mp4"]
+
+
+def test_the_fallback_only_uses_the_task_s_own_name(tmp_path):
+    """It must not become a search for whatever looks close. A neighbour with a
+    different name is not this download."""
+    dl = tmp_path / "HF"
+    dl.mkdir()
+    (dl / "somebody-elses-film.mkv").write_bytes(b"x")
+
+    t = T.DownloadTask("magnet:?xt=urn:btih:" + "a" * 40,
+                       str(dl / "magnet_.bin"), filename="my-film.mkv")
+    t.status = T.COMPLETED
+    assert servable_files(t) == []
+
+
+def test_the_fallback_cannot_climb_out_of_the_folder(tmp_path):
+    """filename comes from a magnet's `dn`, which is attacker-supplied."""
+    outside = tmp_path / "secret.txt"
+    outside.write_bytes(b"nope")
+    dl = tmp_path / "HF"
+    dl.mkdir()
+
+    t = T.DownloadTask("magnet:?xt=urn:btih:" + "a" * 40,
+                       str(dl / "magnet_.bin"), filename="../secret.txt")
+    t.status = T.COMPLETED
+    assert servable_files(t) == []
+    assert outside.exists()
+
+
+def test_a_good_save_path_is_used_unchanged(tmp_path):
+    """The fallback is for a broken record only — it must never second-guess a
+    save_path that is right."""
+    dl = tmp_path / "HF"
+    dl.mkdir()
+    good = dl / "actual.mkv"
+    good.write_bytes(b"real")
+    decoy = dl / "decoy.mkv"
+    decoy.write_bytes(b"wrong")
+
+    t = T.DownloadTask("https://e.test/x", str(good), filename="decoy.mkv")
+    t.status = T.COMPLETED
+    files = servable_files(t)
+    assert [f["name"] for f in files] == ["actual.mkv"]
+
+
+def test_the_error_says_where_it_looked(env):
+    """"The file is no longer on the PC" with no path is undiagnosable — and it
+    is usually not even true."""
+    c, q, dl = env
+    t = _task(q, dl / "vanished.mkv")
+    r = _get(c, f"/api/downloads/{t.id}/file")
+    assert r.status_code == 404
+    body = r.get_json()
+    assert "vanished.mkv" in body["message"]
+    assert body["lookedIn"].endswith("vanished.mkv")

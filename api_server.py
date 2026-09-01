@@ -50,6 +50,44 @@ ALLOWED_UI_FILES = {"index.html", "style.css", "app.js"}
 MAX_LISTED_FILES = 500
 
 
+def _resolve_root(t):
+    """Where this download's files actually are.
+
+    Normally ``save_path``. But a magnet has no name until its metadata
+    arrives, so a torrent task is created with a placeholder like
+    ``magnet_.bin`` and only corrected once it finishes — and
+    ``torrent._resolve_save_path`` leaves it alone when it cannot work out the
+    top-level entry. The record then points at a file that never existed while
+    the download sits on disk under its real name, and the page says the file
+    is gone.
+
+    So when save_path is missing, look for the task's own ``filename`` beside
+    it. Both halves come from the task, never from a request, and the result
+    still has to sit inside the folder save_path named — this recovers a broken
+    record without becoming a search for whatever looks close.
+    """
+    root = getattr(t, "save_path", "") or ""
+    if not root or os.path.exists(root):
+        return root
+
+    parent = os.path.dirname(root)
+    name = (getattr(t, "filename", "") or "").strip()
+    if not parent or not name or not os.path.isdir(parent):
+        return root                      # nothing better to offer
+
+    candidate = os.path.join(parent, name)
+    if not os.path.exists(candidate):
+        return root
+    try:
+        real_parent = os.path.realpath(parent)
+        if not os.path.realpath(candidate).startswith(real_parent + os.sep):
+            return root                  # a filename that climbed out
+    except OSError:
+        return root
+    log.info("save_path for %r does not exist; using %s", name, candidate)
+    return candidate
+
+
 def servable_files(t):
     """The files a finished download is allowed to hand out, in order.
 
@@ -59,7 +97,7 @@ def servable_files(t):
     re-checked to be inside the root, so a symlink planted in a torrent cannot
     point the server at something else on disk.
     """
-    root = getattr(t, "save_path", "") or ""
+    root = _resolve_root(t)
     if not root:
         return []
     try:
@@ -427,6 +465,8 @@ def create_app(queue, save_dir, pending=None, token=None):
             "name": t.filename or "",
             "status": t.status,
             "queue": getattr(t, "queue_name", "") or "",
+            "url": t.url or "",
+            "speedLimit": int(getattr(t, "speed_limit", 0) or 0),
             "totalBytes": total,
             "doneBytes": done,
             "percent": round(done * 100.0 / total, 2) if total else 0.0,
@@ -519,6 +559,87 @@ def create_app(queue, save_dir, pending=None, token=None):
         return t, (None if t else
                    (jsonify({"status": "error", "message": "no such download"}), 404))
 
+    @app.route("/api/downloads/<task_id>/force", methods=["POST"])
+    def api_force(task_id):
+        deny = require_web_auth()
+        if deny:
+            return deny
+        t, missing = _task_or_404(task_id)
+        if missing:
+            return missing
+        queue.force_start(t)
+        return jsonify({"status": "ok"})
+
+    @app.route("/api/downloads/<task_id>/limit", methods=["POST"])
+    def api_limit(task_id):
+        deny = require_web_auth()
+        if deny:
+            return deny
+        t, missing = _task_or_404(task_id)
+        if missing:
+            return missing
+        try:
+            bps = max(0, int((request.get_json(silent=True) or {}).get("bps", 0)))
+        except (TypeError, ValueError):
+            return jsonify({"status": "error", "message": "bad limit"}), 400
+        t.speed_limit = bps
+        try:
+            t._limiter.set_limit(bps)
+        except Exception:
+            pass                     # a task not yet running has no limiter
+        return jsonify({"status": "ok", "bps": bps})
+
+    @app.route("/api/downloads/<task_id>/move", methods=["POST"])
+    def api_move(task_id):
+        deny = require_web_auth()
+        if deny:
+            return deny
+        t, missing = _task_or_404(task_id)
+        if missing:
+            return missing
+        where = (request.get_json(silent=True) or {}).get("where", "")
+        if where not in ("top", "up", "down", "bottom"):
+            return jsonify({"status": "error", "message": "bad direction"}), 400
+        queue.move(t, where)
+        return jsonify({"status": "ok"})
+
+    @app.route("/api/downloads/<task_id>/rename", methods=["POST"])
+    def api_rename(task_id):
+        """Rename the display name, and the file too once it is finished.
+
+        Same rule as the desktop: an in-flight task only retargets save_path,
+        because its bytes live in an id-keyed .hfdownload temp and finalize
+        simply lands on the new name.
+        """
+        deny = require_web_auth()
+        if deny:
+            return deny
+        t, missing = _task_or_404(task_id)
+        if missing:
+            return missing
+        raw = ((request.get_json(silent=True) or {}).get("name") or "").strip()
+        new = utils.safe_filename(raw)
+        if not new:
+            return jsonify({"status": "error",
+                            "message": "That is not a usable file name."}), 400
+        if new == t.filename:
+            return jsonify({"status": "ok", "name": new})
+
+        d = os.path.dirname(t.save_path) or "."
+        if t.status == T.COMPLETED and os.path.exists(t.save_path):
+            dest = utils.unique_path(d, new)
+            try:
+                os.rename(t.save_path, dest)
+            except OSError as e:
+                return jsonify({"status": "error",
+                                "message": "Could not rename: %s" % e}), 409
+            t.save_path = dest
+        else:
+            t.save_path = utils.unique_path(d, new)
+        t.filename = os.path.basename(t.save_path)
+        t.log_event("Renamed")
+        return jsonify({"status": "ok", "name": t.filename})
+
     # ------------------------------------------- web UI: take the file away
     # The point of the whole web client: an iPhone has no torrent client, so
     # the PC fetches it and the phone collects the finished file from here.
@@ -534,6 +655,13 @@ def create_app(queue, save_dir, pending=None, token=None):
         return jsonify({
             "ready": t.status == T.COMPLETED,
             "truncated": len(files) >= MAX_LISTED_FILES,
+            # Where it looked, when it found nothing. This is the owner's own
+            # machine and their own control page, so the path is theirs to see —
+            # and "the file is no longer here" without it is undiagnosable. A
+            # magnet's save_path is a placeholder until the download finishes
+            # and _resolve_save_path corrects it, so the usual answer is that
+            # the record points somewhere the file never was.
+            "lookedIn": (getattr(t, "save_path", "") or "") if not files else "",
             # No absolute paths: the phone only ever needs a name and an index,
             # and the layout of this PC's disk is not the browser's business.
             "files": [{"index": i, "name": f["name"], "path": f["rel"],
@@ -557,8 +685,10 @@ def create_app(queue, save_dir, pending=None, token=None):
 
         files = servable_files(t)
         if not files:
+            where = getattr(t, "save_path", "") or "(nowhere recorded)"
             return jsonify({"status": "error", "code": "gone",
-                            "message": "The file is no longer on the PC"}), 404
+                            "message": "Nothing found at %s" % where,
+                            "lookedIn": where}), 404
         if index < 0 or index >= len(files):
             return jsonify({"status": "error", "message": "no such file"}), 404
 
