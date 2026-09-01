@@ -315,23 +315,43 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, QW
         import logging
         _log = logging.getLogger("hyperfetch.gui")
 
+        # Written by the serve thread below when it gives up, read by
+        # refresh() on the GUI thread — declared before the thread starts so
+        # there is nothing to race with.
+        self._server_error = ""
+        self._server_error_shown = False
+
         def serve():
             deadline = time.time() + 20
             attempt = 0
+            last = None
             while time.time() < deadline:
                 attempt += 1
                 try:
                     run_server(self.queue, self.save_dir, PORT,
                                pending=self.pending, token=self.pair_token)
                     return                      # only returns if it stops serving
-                except OSError as e:
+                # SystemExit as well as OSError: werkzeug catches the bind error
+                # itself and calls sys.exit(1), and SystemExit derives from
+                # BaseException, not Exception — so `except OSError` never saw
+                # the one failure this loop exists to ride out, and the thread
+                # died on the first attempt without retrying or logging.
+                except (OSError, SystemExit) as e:
+                    last = e
                     if attempt == 1:
                         _log.warning("port %s busy (%s) — retrying while the "
                                      "previous instance releases it", PORT, e)
                     time.sleep(1.0)
-            _log.error("local server could not start on port %s — the browser "
-                       "extension will not be able to reach this window, so "
-                       "auto-pairing will not work", PORT)
+            _log.error("local server could not start on port %s (%s) — the "
+                       "browser extension and Browser Access cannot reach this "
+                       "window", PORT, last)
+            # Picked up by refresh() on the GUI thread; showing a toast from
+            # here would be touching widgets from the wrong thread. Until this
+            # existed the failure was silent — the window looked healthy and
+            # only the phone knew anything was wrong.
+            self._server_error = (
+                "Another program is using port %s, so the browser extension "
+                "and Browser Access cannot reach HyperFetch." % PORT)
         threading.Thread(target=serve, daemon=True).start()
 
 
@@ -561,6 +581,11 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, QW
     # ------------------------------------------------------------- refresh loop
     def refresh(self):
         self._drain_pending()
+        if (self._server_error and not self._server_error_shown
+                and hasattr(self, "_toasts")):
+            self._server_error_shown = True
+            self._toasts.show("error", "Local server not running",
+                              self._server_error, secs=12)
         now = time.time()
         conns = 0
         seeds = 0
