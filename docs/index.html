@@ -53,15 +53,11 @@
   nav a:hover { color: var(--text); text-decoration: none; }
 
   /* ------------------------------------------------------------ hero */
-  /* A single quiet tint behind the hero only, sized to the content rather
-     than the viewport, so it grounds the panel instead of glowing behind the
-     whole page. */
-  header { padding: 76px 0 30px; position: relative; }
-  header::before {
-    content: ""; position: absolute; z-index: -1;
-    left: 0; right: 0; top: -60px; height: 560px;
-    background: radial-gradient(70% 75% at 28% 32%, #1b1733 0%, transparent 72%);
-  }
+  /* No background wash. The gradient identity is already carried by the logo,
+     the headline, the buttons, the segment fills and the bullet marks — a glow
+     behind all of it was the one decorative use, and dropping it gives the
+     segment bar the contrast it wants. */
+  header { padding: 76px 0 30px; }
   h1 {
     font-family: var(--display); font-weight: 800;
     font-size: clamp(2.3rem, 6.2vw, 4.1rem); line-height: 1.03;
