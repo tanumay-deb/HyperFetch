@@ -445,3 +445,54 @@ def test_the_holding_page_is_shown_when_nothing_was_built(env, tmp_path, monkeyp
     r = _get(c, "/")
     assert r.status_code == 200
     assert b"not been built yet" in r.data
+
+
+# ---- the audit trail --------------------------------------------------------
+def test_the_things_worth_a_record_are_recorded(env):
+    """Once credentials are handed out this log is the only account of what an
+    account actually did."""
+    import site_audit
+    c, q, dl = env
+    _login(c)
+    _post(c, "/api/downloads", json={"url": "magnet:?xt=urn:btih:" + "a" * 40})
+    t = _task(q, "tanumay", dl, "film.mkv", body=b"0123456789")
+    _get(c, "/api/downloads/%s/file" % t.id)
+    c.delete("/api/downloads/%s" % t.id, environ_overrides=TUNNEL)
+
+    actions = [r["action"] for r in site_audit.tail()]
+    for expected in ("signin", "add", "download", "remove"):
+        assert expected in actions, expected
+    assert all(r["user"] == "tanumay" for r in site_audit.tail())
+
+
+def test_a_failed_sign_in_is_recorded_with_the_name_that_was_tried(env):
+    """The record of an attempt, not proof a name exists — and the only place
+    a wrong username is written down at all."""
+    import site_audit
+    c, _, _ = env
+    _account("tanumay")
+    _post(c, "/api/login", json={"username": "Nobody", "password": "wrong123456"})
+    row = site_audit.tail()[0]
+    assert row["action"] == "signin-failed"
+    assert row["user"] == "nobody"
+
+
+def test_a_file_is_recorded_before_it_is_sent(env):
+    """The response streams, so recording afterwards would mean recording when
+    the transfer finished — and a cancelled one would leave no trace."""
+    import site_audit
+    c, q, dl = env
+    _login(c)
+    t = _task(q, "tanumay", dl, "film.mkv", body=b"x" * 100)
+    _get(c, "/api/downloads/%s/file" % t.id)
+    row = next(r for r in site_audit.tail() if r["action"] == "download")
+    assert row["detail"]["name"] == "film.mkv"
+    assert row["detail"]["size"] == 100
+
+
+def test_nothing_another_account_did_is_attributed_to_you(env):
+    import site_audit
+    c, q, dl = env
+    _login(c, "tanumay")
+    _post(c, "/api/downloads", json={"url": "https://e.test/mine.bin"})
+    assert [r["user"] for r in site_audit.tail(user="someone")] == []

@@ -361,6 +361,22 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, QW
 
         threading.Thread(target=serve_site, daemon=True).start()
 
+        # Retention. Nothing else calls it, so without this a 30-day window is
+        # a promise the app never keeps. Once shortly after startup — a machine
+        # that is only on for an hour a day still needs it to happen — and then
+        # daily while it runs.
+        def _sweep():
+            try:
+                import site_limits
+                site_limits.sweep(self.queue, self.save_dir)
+            except Exception:
+                _log.exception("retention sweep failed")
+
+        self._retention = QTimer(self)
+        self._retention.timeout.connect(_sweep)
+        self._retention.start(24 * 60 * 60 * 1000)
+        QTimer.singleShot(30_000, _sweep)
+
     # ------------------------------------------------------------- UI
     def _build_ui(self):
         self.setStyleSheet(palette.qss())

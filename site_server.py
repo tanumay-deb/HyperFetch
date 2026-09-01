@@ -24,6 +24,7 @@ from datetime import timedelta
 from flask import (Flask, request, jsonify, session, send_file,
                    send_from_directory)
 
+import site_audit
 import site_auth
 import site_limits
 import task as T
@@ -223,6 +224,8 @@ def create_site_app(queue, save_dir):
                 return jsonify({"status": "error", "message": msg}), 400
             log.info("signup refused from %s: %s", addr, msg)
             return generic
+        site_audit.record("signup", (d.get("username") or "").strip().casefold(),
+                          addr=addr)
         return generic
 
     @app.route("/api/login", methods=["POST"])
@@ -249,6 +252,10 @@ def create_site_app(queue, save_dir):
             by_addr.record_failure(addr)
             by_user.record_failure(key)
             log.warning("failed site login from %s", addr)
+            # The name that was tried, not a name that exists: this is the
+            # record of an attempt, and it is the only place a wrong username
+            # is written down at all.
+            site_audit.record("signin-failed", key, addr=addr)
             return jsonify({"status": "error", "code": "bad-login",
                             "message": "Wrong username or password."}), 401
 
@@ -259,6 +266,7 @@ def create_site_app(queue, save_dir):
         session["st"] = site_auth.stamp(u["id"])
         session.permanent = True
         log.info("site login: %s", u["username"])
+        site_audit.record("signin", u["username"], addr=addr)
         return jsonify({"status": "ok", "user": {"username": u["username"],
                                                  "quota": u["quota"]}})
 
@@ -321,6 +329,9 @@ def create_site_app(queue, save_dir):
         start = site_limits.active_count(mine(u), u["username"]) < \
             site_limits.MAX_ACTIVE_PER_USER
         queue.add_task(t, start=start)
+        site_audit.record("add", u["username"],
+                          {"name": fn, "url": url[:200], "started": start},
+                          addr=caller())
         return jsonify({"status": "queued", "id": t.id, "started": start})
 
     @app.route("/api/downloads/<task_id>/pause", methods=["POST"])
@@ -361,6 +372,8 @@ def create_site_app(queue, save_dir):
         # other way to reach it, so leaving it behind would create storage
         # nobody can see and nobody can reclaim.
         removed = _delete_files(t, save_dir, u["username"])
+        site_audit.record("remove", u["username"],
+                          {"name": t.filename, "files": removed}, addr=caller())
         return jsonify({"status": "ok", "filesRemoved": removed})
 
     # ---------------------------------------------------------------- files
@@ -410,6 +423,11 @@ def create_site_app(queue, save_dir):
                       u["username"], f["path"])
             return jsonify({"status": "error", "message": "no such file"}), 404
 
+        # Recorded before the send rather than after: the response streams, so
+        # "after" would mean when the transfer finished, and a cancelled one
+        # would leave no trace of having been started.
+        site_audit.record("download", u["username"],
+                          {"name": f["name"], "size": f["size"]}, addr=caller())
         inline = request.args.get("inline") == "1"
         # conditional=True is what makes this usable on a phone: Werkzeug
         # answers Range requests, so Safari streams a video instead of pulling

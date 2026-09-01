@@ -166,3 +166,38 @@ def days_left(t, now=None, days=RETENTION_DAYS):
     if not done:
         return None
     return max(0, int((done + days * 86400 - now) // 86400))
+
+
+def sweep(queue, save_dir, now=None, days=RETENTION_DAYS):
+    """Delete site downloads past the retention window. Returns what went.
+
+    Files first, then the task, so a crash between the two leaves a record
+    pointing at nothing — which the UI already handles as "no longer here" —
+    rather than a file nobody can reach through any record.
+
+    Every path is checked to be inside the owner's folder before anything is
+    removed. Retention is the one thing here that deletes on a timer with
+    nobody watching, so it gets the same containment check as a request.
+    """
+    import site_audit
+    from site_server import _delete_files
+
+    removed = []
+    for t in expired(list(queue.tasks), now=now, days=days):
+        owner = getattr(t, "owner", "") or ""
+        try:
+            gone = _delete_files(t, save_dir, owner)
+        except Exception:
+            log.exception("could not clear %s for %s", t.filename, owner)
+            continue
+        try:
+            queue.remove_task(t)
+        except Exception:
+            log.exception("could not drop %s from the queue", t.filename)
+            continue
+        removed.append((owner, t.filename, gone))
+        site_audit.record("expire", owner,
+                          {"name": t.filename, "files": gone, "days": days})
+    if removed:
+        log.info("retention removed %d download(s)", len(removed))
+    return removed
