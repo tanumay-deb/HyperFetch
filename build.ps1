@@ -162,9 +162,17 @@ if ($Sign) {
 
 if ($Installer) {
     Write-Host "==> Building the Inno Setup installer" -ForegroundColor Cyan
+    # Only the machine-wide location was checked, but winget installs Inno
+    # Setup per-user by default, so a working install still read as missing.
     $iscc = (Get-Command iscc.exe -ErrorAction SilentlyContinue).Source
-    if (-not $iscc) { $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" }
-    if (-not (Test-Path $iscc)) { throw "Inno Setup (iscc.exe) not found" }
+    if (-not $iscc) {
+        $iscc = @(
+            "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe",
+            "$env:ProgramFiles\Inno Setup 6\ISCC.exe",
+            "$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe"
+        ) | Where-Object { Test-Path $_ } | Select-Object -First 1
+    }
+    if (-not $iscc) { throw "Inno Setup (iscc.exe) not found - winget install JRSoftware.InnoSetup" }
     $isccArgs = @()
     if ($Version) { $isccArgs += "/DAppVersion=$Version" }
     & $iscc @isccArgs "installer.iss"

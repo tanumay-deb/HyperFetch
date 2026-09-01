@@ -3,8 +3,18 @@
 
 #define AppName "HyperFetch"
 ; Overridable from the command line: iscc /DAppVersion=2.0.0 installer.iss
+; Where the PyInstaller output lives, and where the installer is written.
+; Both overridable, because the build refuses to run inside a synced folder and
+; therefore produces its dist somewhere else entirely:
+;   iscc /DSourceDir=<full path to dist\HyperFetch> installer.iss
+#ifndef SourceDir
+  #define SourceDir "dist\HyperFetch"
+#endif
+#ifndef OutDir
+  #define OutDir "dist\installer"
+#endif
 #ifndef AppVersion
-  #define AppVersion "2.4.0"
+  #define AppVersion "2.5.0"
 #endif
 #define AppPublisher "HyperFetch"
 #define AppExe "HyperFetch.exe"
@@ -17,7 +27,7 @@ AppPublisher={#AppPublisher}
 DefaultDirName={autopf}\{#AppName}
 DefaultGroupName={#AppName}
 UninstallDisplayIcon={app}\{#AppExe}
-OutputDir=dist\installer
+OutputDir={#OutDir}
 OutputBaseFilename=HyperFetch-{#AppVersion}-setup
 SetupIconFile=assets\icon.ico
 Compression=lzma2
@@ -58,7 +68,7 @@ Root: HKA; Subkey: "Software\Classes\magnet\shell\open\command"; ValueType: stri
 
 [Files]
 ; the whole PyInstaller onedir tree
-Source: "dist\HyperFetch\*"; DestDir: "{app}"; Flags: recursesubdirs createallsubdirs ignoreversion
+Source: "{#SourceDir}\*"; DestDir: "{app}"; Flags: recursesubdirs createallsubdirs ignoreversion
 
 [Icons]
 Name: "{group}\{#AppName}"; Filename: "{app}\{#AppExe}"
