@@ -123,8 +123,18 @@ function sendToApp(url, filename, referrer, done, extra) {
           // which means it IS there and refused us). Hold the download instead
           // of dropping it: a click that vanished because the app happened to
           // be closed is the most annoying way to lose one.
-          holdPending({ url, filename: filename || "", referrer: referrer || "",
-                        extra: extra || {} });
+          //
+          // A capture is the exception. onCreated only cancels the browser's
+          // download once the app has accepted it, so when the app is closed
+          // the browser keeps the file and there is nothing to rescue. Holding
+          // it meant the next launch replayed the queue and the app fetched a
+          // second copy of something already sitting in the Downloads folder.
+          // Only an explicit request — right-click, the video badge, grab
+          // links — has no fallback and is worth keeping.
+          if (!(extra && extra.auto)) {
+            holdPending({ url, filename: filename || "", referrer: referrer || "",
+                          extra: extra || {} });
+          }
           done(false, 0, {});
         });
     });
