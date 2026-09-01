@@ -229,6 +229,8 @@ def create_app(queue, save_dir, pending=None, token=None):
         resp.headers["Access-Control-Allow-Private-Network"] = "true"
         return resp
 
+    _rejected_seen = set()
+
     def _authorized(data):
         expected = app.config.get("HYPERFETCH_TOKEN")
         if not expected:
@@ -236,7 +238,26 @@ def create_app(queue, save_dir, pending=None, token=None):
         presented = request.headers.get("X-HyperFetch-Token") or (data or {}).get("token")
         # constant-time compare
         import hmac
-        return bool(presented) and hmac.compare_digest(str(presented), str(expected))
+        ok = bool(presented) and hmac.compare_digest(str(presented), str(expected))
+        if not ok:
+            # A refusal used to be completely silent, so an extension holding a
+            # stale token looked identical to an extension that was never
+            # installed: nothing in the log either way, and the user is left
+            # with a menu entry that does nothing. Never log the tokens
+            # themselves — enough to tell "wrong one" from "sent none", which
+            # is the distinction that says whether pairing or reachability is
+            # the problem. Once per origin, since a retry loop must not be able
+            # to fill the log.
+            origin = request.headers.get("Origin", "") or "(no origin)"
+            if origin not in _rejected_seen:
+                _rejected_seen.add(origin)
+                log.warning(
+                    "refused a download from %s: %s. If this is the browser "
+                    "extension, its saved token no longer matches this app — "
+                    "re-pair it from Settings.",
+                    origin,
+                    "wrong token" if presented else "no token presented")
+        return ok
 
     @app.route("/ping", methods=["GET"])
     def ping():

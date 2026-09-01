@@ -392,3 +392,61 @@ def test_restart_is_not_blocked_by_its_predecessors_mutex(monkeypatch):
                             lambda **k: (started.__setitem__("n", 1), 0)[1])})())
     assert main.main() == 0
     assert started["n"] == 1                                # replacement DID start
+
+
+# ---- a refused download must not be silent ----
+def test_a_wrong_token_is_logged_without_revealing_it(tmp_path, caplog):
+    """A refusal used to leave no trace, so an extension holding a stale token
+    looked exactly like no extension at all — the menu entry did nothing and
+    the log said nothing."""
+    import logging as _logging
+    app = create_app(_FakeQueue(), str(tmp_path), pending=None, token="the-real-token")
+    app.config["TESTING"] = True
+    c = app.test_client()
+
+    caplog.set_level(_logging.WARNING, logger="hyperfetch.server")
+    r = c.post("/download", json={"url": "https://x/a.zip", "token": "stale-token"},
+               headers={"Origin": "chrome-extension://someid"})
+    assert r.status_code == 401
+    assert "wrong token" in caplog.text
+    assert "chrome-extension://someid" in caplog.text
+    # the secrets themselves never reach the log
+    assert "the-real-token" not in caplog.text
+    assert "stale-token" not in caplog.text
+
+
+def test_no_token_reads_differently_from_a_wrong_one(tmp_path, caplog):
+    """Which of the two it is decides where to look: pairing, or whether the
+    extension reached the app at all."""
+    import logging as _logging
+    app = create_app(_FakeQueue(), str(tmp_path), pending=None, token="the-real-token")
+    app.config["TESTING"] = True
+    caplog.set_level(_logging.WARNING, logger="hyperfetch.server")
+    r = app.test_client().post("/download", json={"url": "https://x/a.zip"},
+                               headers={"Origin": "chrome-extension://other"})
+    assert r.status_code == 401
+    assert "no token presented" in caplog.text
+
+
+def test_a_retrying_extension_cannot_fill_the_log(tmp_path, caplog):
+    import logging as _logging
+    app = create_app(_FakeQueue(), str(tmp_path), pending=None, token="the-real-token")
+    app.config["TESTING"] = True
+    c = app.test_client()
+    caplog.set_level(_logging.WARNING, logger="hyperfetch.server")
+    for _ in range(20):
+        c.post("/download", json={"url": "https://x/a.zip", "token": "bad"},
+               headers={"Origin": "chrome-extension://loop"})
+    assert caplog.text.count("refused a download") == 1
+
+
+def test_the_right_token_logs_nothing(tmp_path, caplog):
+    import logging as _logging
+    app = create_app(_FakeQueue(), str(tmp_path), pending=None, token="the-real-token")
+    app.config["TESTING"] = True
+    caplog.set_level(_logging.WARNING, logger="hyperfetch.server")
+    r = app.test_client().post("/download",
+                               json={"url": "https://x/a.zip", "token": "the-real-token"},
+                               headers={"Origin": "chrome-extension://ok"})
+    assert r.status_code == 200
+    assert "refused" not in caplog.text
