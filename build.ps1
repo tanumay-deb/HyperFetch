@@ -16,8 +16,8 @@ param(
     [switch]$Sign,
     [string]$CertPath,
     [string]$CertPass,
-    [string]$Version          # override the installer version (e.g. from a CI tag,
-    [switch]$Server)
+    [string]$Version,        # override the installer version (e.g. from a CI tag)
+    [switch]$Server           # build HyperFetchServer instead of the desktop app
 )
 
 $ErrorActionPreference = "Stop"
@@ -111,6 +111,19 @@ if (Test-Path (Join-Path $siteSrc "package.json")) {
     }
 } else {
     Write-Host "    no site-src - skipping" -ForegroundColor DarkGray
+}
+
+# Building inside a synced folder does not work: OneDrive opens the freshly
+# written exe to upload it, and the next build cannot delete it — "Access is
+# denied" on HyperFetch.exe, from a process that is not the app. It also uploads
+# a few hundred MB of artifact that is gitignored anyway.
+if ($PSScriptRoot -like "*\OneDrive\*" -and -not $env:HYPERFETCH_ALLOW_SYNCED_BUILD) {
+    Write-Host "==> This repo is inside OneDrive" -ForegroundColor Yellow
+    Write-Host "    Building here fails once OneDrive locks the exe. Use:" -ForegroundColor Yellow
+    Write-Host "      python -m PyInstaller --noconfirm --clean --distpath C:\dev\hf-build\dist --workpath C:\dev\hf-build\work HyperFetch.spec" -ForegroundColor DarkGray
+    Write-Host "    or exclude dist\ and build\ from sync, then set" -ForegroundColor Yellow
+    Write-Host "      `$env:HYPERFETCH_ALLOW_SYNCED_BUILD = 1" -ForegroundColor DarkGray
+    throw "refusing to build inside a synced folder"
 }
 
 Write-Host "==> Cleaning previous build" -ForegroundColor Cyan
