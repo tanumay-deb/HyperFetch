@@ -160,3 +160,43 @@ def test_the_port_is_not_flasks_default():
     """5000 is Flask's default and a crowded one; the whole reason for moving."""
     from api_server import PORT
     assert PORT != 5000
+
+
+# ---- a failure in the 500ms tick must not vanish ----
+def _named_func(name):
+    src = io.open(os.path.join(ROOT, "gui2", "app.py"), encoding="utf-8").read()
+    for node in ast.walk(ast.parse(src)):
+        if isinstance(node, ast.FunctionDef) and node.name == name:
+            return node
+    raise AssertionError("gui2.app no longer defines %s()" % name)
+
+
+def test_the_timer_goes_through_the_guarded_tick():
+    """Wiring the timer straight to refresh() puts every exception in it on a
+    stderr a frozen windowed build does not have. The whole tail of refresh —
+    the completion check that writes history included — then stops running
+    with nothing to show for it."""
+    src = io.open(os.path.join(ROOT, "gui2", "app.py"), encoding="utf-8").read()
+    assert "self.timer.timeout.connect(self._tick)" in src
+    assert "self.timer.timeout.connect(self.refresh)" not in src, (
+        "the 500ms timer is wired straight to refresh() again")
+
+
+def test_the_tick_logs_what_it_caught():
+    body = ast.unparse(_named_func("_tick"))
+    assert "self.refresh()" in body
+    handlers = [n for n in ast.walk(_named_func("_tick"))
+                if isinstance(n, ast.ExceptHandler)]
+    assert handlers, "_tick does not catch anything"
+    assert "exception" in body or "error" in body, (
+        "_tick swallows the failure without logging it, which is the bug it "
+        "exists to prevent")
+
+
+def test_the_completion_check_is_the_last_thing_refresh_does():
+    """It is last, so anything that throws above it silently costs the user
+    their history. Pinned so the ordering is a decision, not an accident."""
+    stmts = _named_func("refresh").body
+    last = ast.unparse(stmts[-1])
+    assert "_check_completions" in last, (
+        "refresh() no longer ends with _check_completions(); it is now %r" % last)

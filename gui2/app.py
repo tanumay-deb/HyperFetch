@@ -113,8 +113,9 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, QW
         self._start_server()
         self._restore_window()
 
+        self._tick_errors = set()   # distinct refresh failures already logged
         self.timer = QTimer(self)
-        self.timer.timeout.connect(self.refresh)
+        self.timer.timeout.connect(self._tick)
         self.timer.start(500)
 
         self._sched_timer = QTimer(self)
@@ -579,6 +580,32 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, QW
         return tasks
 
     # ------------------------------------------------------------- refresh loop
+    def _tick(self):
+        """Run refresh() and make a failure in it audible.
+
+        PySide6 prints an exception raised inside a slot to stderr and carries
+        on with the next timeout. A frozen windowed build has no stderr, and
+        the crash handler does not see slot exceptions either — so a throw in
+        here left no trace anywhere while the timer kept firing. Everything
+        after the throw simply stopped happening, `_check_completions` (and so
+        the history record for every finished download) among it, and the parts
+        that run earlier kept updating so the window still looked alive.
+
+        Logged once per distinct failure: at 500ms a repeating throw would
+        otherwise write two lines a second for as long as the app is open.
+        """
+        try:
+            self.refresh()
+        except Exception as e:
+            import logging
+            key = "%s:%s" % (type(e).__name__, e)
+            if key not in self._tick_errors:
+                self._tick_errors.add(key)
+                logging.getLogger("hyperfetch.gui").exception(
+                    "the 500ms refresh raised — everything after the failure "
+                    "in it is being skipped, including the completion check "
+                    "that writes history")
+
     def refresh(self):
         self._drain_pending()
         if (self._server_error and not self._server_error_shown
