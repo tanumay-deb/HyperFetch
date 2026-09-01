@@ -191,3 +191,72 @@ def test_reset_progress(tmp_path, monkeypatch):
     assert not t.pause_requested and not t.cancel_requested
     assert not tmp.exists()
     assert t.events[-1]["message"] == "Restarted"
+
+
+# ---- a failure has to reach the drawer's Logs tab ----
+def _t(**kw):
+    return T.DownloadTask("https://example.test/v.mp4", "C:/dl/v.mp4",
+                          filename="v.mp4", **kw)
+
+
+def test_setting_an_error_records_it_on_the_timeline():
+    """Only torrent.py ever called log_event, so an HTTP/HLS/yt-dlp failure
+    left the Logs tab empty — the one place the user looks to find out what
+    went wrong."""
+    t = _t()
+    t.error = "yt-dlp: Requested format is not available"
+    assert len(t.events) == 1
+    ev = t.events[-1]
+    assert ev["level"] == "ERROR"
+    assert ev["message"] == "yt-dlp: Requested format is not available"
+    assert t.error == "yt-dlp: Requested format is not available"
+
+
+def test_constructing_a_task_is_not_an_event():
+    assert _t(error="carried over from disk").events == []
+
+
+def test_restoring_does_not_relog_a_saved_failure():
+    """from_dict runs on every launch. Going through the property there would
+    add a fresh copy of the same error each time the app started."""
+    t = _t()
+    t.error = "Connection lost — Resume to retry"
+    d = t.to_dict()
+    back = T.DownloadTask.from_dict(d)
+    assert len(back.events) == len(d["events"]) == 1
+    assert back.error == "Connection lost — Resume to retry"
+
+
+def test_clearing_the_error_is_not_an_event():
+    """Every engine assigns "" at the start of a run."""
+    t = _t()
+    t.error = ""
+    assert t.events == []
+    t.error = "boom"
+    t.error = ""
+    assert len(t.events) == 1 and t.error == ""
+
+
+def test_the_same_failure_repeated_is_recorded_once():
+    """A segment loop sets the same message once per segment; the timeline
+    should read as one failure, not eight."""
+    t = _t()
+    for _ in range(8):
+        t.error = "Connection lost — Resume to retry"
+    assert len(t.events) == 1
+
+
+def test_a_different_failure_after_one_is_recorded_too():
+    t = _t()
+    t.error = "HTTP 403 — the server refused the download"
+    t.error = "Connection lost — Resume to retry"
+    assert [e["message"] for e in t.events] == [
+        "HTTP 403 — the server refused the download",
+        "Connection lost — Resume to retry"]
+
+
+def test_the_timeline_stays_capped():
+    t = _t()
+    for i in range(T.DownloadTask.EVENTS_MAX + 50):
+        t.error = "failure number %d" % i
+    assert len(t.events) == T.DownloadTask.EVENTS_MAX

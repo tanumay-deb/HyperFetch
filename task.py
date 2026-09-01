@@ -109,7 +109,10 @@ class DownloadTask:
         # real transition; "Added" is derived from `added` by the GUI.
         self.events = []
         self._status = status
-        self.error = error
+        # straight to the backing field: constructing a task is not an error
+        # happening, and from_dict comes through here on every restore — going
+        # via the property would re-log every saved failure at each launch.
+        self._error = error or ""
         # computed SHA-256 of the finished file (set by hash verification /
         # Force Recheck); "" until known
         self.sha256 = ""
@@ -222,6 +225,30 @@ class DownloadTask:
         self.events.append({"time": time.time(), "level": level, "source": source, "message": str(text)})
         if len(self.events) > self.EVENTS_MAX:
             del self.events[:-self.EVENTS_MAX]
+
+    @property
+    def error(self):
+        return self._error
+
+    @error.setter
+    def error(self, msg):
+        """Setting the error IS recording it.
+
+        The engines assign this from about a dozen places each, and only
+        torrent.py ever called log_event — so an HTTP, HLS or yt-dlp failure
+        set a message the card could show but left the drawer's Logs tab
+        completely empty, which is the one place a user looks to find out what
+        went wrong. Doing it here covers every engine, including any added
+        later, without each one having to remember.
+
+        Only a new, non-empty message is recorded: clearing the error at the
+        start of a run is not an event, and a segment loop that sets the same
+        failure once per segment should appear once, not eight times.
+        """
+        msg = msg or ""
+        if msg and msg != self._error:
+            self.log_event(msg, level="ERROR", source="Engine")
+        self._error = msg
 
     def reset_progress(self):
         """Wipe all download progress so the task restarts from byte 0
