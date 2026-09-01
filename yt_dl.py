@@ -111,16 +111,33 @@ class YtDlpDownloader:
         # route yt-dlp's own messages (deprecation notices, ERROR echoes) into our
         # debug log instead of stdout/stderr, so they don't spam the app console
         class _YtLog:
+            # YouTube extraction now wants a JS runtime and says so in a
+            # warning. Worth remembering, because the failure it causes further
+            # down arrives as a bare "HTTP Error 403: Forbidden" that reads
+            # like the site refusing us rather than a missing dependency.
+            saw_no_js_runtime = False
+
+            def _note(self, m):
+                if "javascript runtime" in str(m).lower():
+                    self.saw_no_js_runtime = True
+
             def debug(self, m): pass
             def info(self, m): pass
-            def warning(self, m): log.debug("yt-dlp: %s", m)
-            def error(self, m): log.debug("yt-dlp: %s", m)
+            def warning(self, m):
+                self._note(m)
+                log.debug("yt-dlp: %s", m)
+
+            def error(self, m):
+                self._note(m)
+                log.debug("yt-dlp: %s", m)
+
+        ytlog = _YtLog()
 
         opts = {
             "outtmpl": os.path.join(out_dir, "%(title)s.%(ext)s"),
             "noplaylist": True,
             "progress_hooks": [hook],
-            "logger": _YtLog(),
+            "logger": ytlog,
             "quiet": True, "no_warnings": True, "noprogress": True,
             "concurrent_fragment_downloads": 4,
             "retries": 5, "fragment_retries": 5,
@@ -230,8 +247,23 @@ class YtDlpDownloader:
             import re as _re
             msg = _re.sub(r"\x1b\[[0-9;]*m", "", str(e)).strip()    # strip ANSI colour codes
             low = msg.lower()
-            if ffdir is None and ("requested format is not available" in low
-                                  or "ffmpeg" in low or "merging" in low):
+            # Checked first, because when it applies it is the cause and the
+            # others are symptoms — no runtime means no usable format URLs, and
+            # what surfaces is a 403 or "requested format is not available"
+            # that would otherwise be blamed on ffmpeg or on the video itself.
+            # Gated on a failure it actually explains: the warning is emitted
+            # on every YouTube extraction now, successful ones included.
+            if ytlog.saw_no_js_runtime and (
+                    "403" in low or "unable to download video data" in low
+                    or "requested format is not available" in low
+                    or "nsig" in low or "player" in low):
+                self.t.error = (
+                    "YouTube needs a JavaScript runtime to work out its video "
+                    "URLs, and this machine has none — install Deno and put it "
+                    "on PATH, then try again. (The site answers 403 without "
+                    "one, which is what yt-dlp reported.)")
+            elif ffdir is None and ("requested format is not available" in low
+                                    or "ffmpeg" in low or "merging" in low):
                 self.t.error = ("This video has no combined audio+video stream — it needs "
                                 "ffmpeg to merge them (bundled in the app installer; on a "
                                 "source run, put ffmpeg on your PATH).")
