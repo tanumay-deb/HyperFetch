@@ -118,16 +118,23 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, QW
         self.timer.timeout.connect(self._tick)
         self.timer.start(500)
 
+        # Kept on self: a closure connected to a signal is not always strongly
+        # referenced by PySide6, and one collected early would disable the very
+        # timer this wrapping exists to protect — silently, which is the whole
+        # problem being fixed.
+        self._sched_slot = self._guarded(self._check_scheduler)
+        self._autosave_slot = self._guarded(self._autosave_tick)
+
         self._sched_timer = QTimer(self)
-        self._sched_timer.timeout.connect(self._check_scheduler)
+        self._sched_timer.timeout.connect(self._sched_slot)
         self._sched_timer.start(60000)
-        QTimer.singleShot(1000, self._check_scheduler)
+        QTimer.singleShot(1000, self._sched_slot)
 
         # autosave: periodic state flush while anything is active, so a crash /
         # force-kill never loses more than ~30s of progress (segment counters
         # drive resume; a stale save re-downloads the gap otherwise)
         self._autosave = QTimer(self)
-        self._autosave.timeout.connect(self._autosave_tick)
+        self._autosave.timeout.connect(self._autosave_slot)
         self._autosave.start(30000)
         self.refresh()
 
@@ -580,6 +587,36 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, QW
         return tasks
 
     # ------------------------------------------------------------- refresh loop
+    def _guarded(self, fn):
+        """Wrap a timer slot so a failure inside it cannot vanish.
+
+        Every one of these is driven by a QTimer, and PySide6 prints an
+        exception raised in a slot to stderr before carrying on with the next
+        timeout. A frozen windowed build has no stderr and the crash handler
+        does not see slot exceptions, so the slot simply stops doing its job
+        with nothing anywhere to say so.
+
+        That is not a theoretical worry here. `_autosave_tick` is what writes
+        downloads.json; if it throws, the file silently stops tracking the
+        queue, the app keeps running normally, and the next launch restores
+        whatever was last written successfully — which reads, to the person
+        using it, as old downloads coming back from the dead.
+        """
+        import logging
+
+        def run():
+            try:
+                fn()
+            except Exception as e:
+                key = "%s:%s:%s" % (getattr(fn, "__name__", "?"), type(e).__name__, e)
+                if key not in self._tick_errors:
+                    self._tick_errors.add(key)
+                    logging.getLogger("hyperfetch.gui").exception(
+                        "the %s timer raised — it has stopped doing its work, "
+                        "and for the autosave that means downloads.json is no "
+                        "longer being written", getattr(fn, "__name__", "?"))
+        return run
+
     def _tick(self):
         """Run refresh() and make a failure in it audible.
 

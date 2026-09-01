@@ -200,3 +200,37 @@ def test_the_completion_check_is_the_last_thing_refresh_does():
     last = ast.unparse(stmts[-1])
     assert "_check_completions" in last, (
         "refresh() no longer ends with _check_completions(); it is now %r" % last)
+
+
+# ---- every timer slot, not just refresh ----
+def test_the_autosave_and_scheduler_are_wrapped_too():
+    """The autosave is what writes downloads.json. Wired straight to the timer,
+    an exception in it stops the file tracking the queue — silently, because a
+    frozen windowed build has nowhere for a slot exception to go. The next
+    launch then restores the last state that saved successfully, which looks
+    from the outside like deleted downloads coming back."""
+    src = io.open(os.path.join(ROOT, "gui2", "app.py"), encoding="utf-8").read()
+    for bad in ("timeout.connect(self._autosave_tick)",
+                "timeout.connect(self._check_scheduler)"):
+        assert bad not in src, "a timer is wired straight to its slot again: " + bad
+    assert "self._autosave.timeout.connect(self._autosave_slot)" in src
+    assert "self._sched_timer.timeout.connect(self._sched_slot)" in src
+
+
+def test_the_guarded_slots_are_held_on_the_instance():
+    """PySide6 does not reliably keep a strong reference to a closure connected
+    to a signal. One collected early would disable the timer this wrapping
+    exists to protect."""
+    src = io.open(os.path.join(ROOT, "gui2", "app.py"), encoding="utf-8").read()
+    assert "self._sched_slot = self._guarded(" in src
+    assert "self._autosave_slot = self._guarded(" in src
+
+
+def test_the_guard_logs_and_does_not_swallow_silently():
+    body = ast.unparse(_named_func("_guarded"))
+    assert "exception" in body, "_guarded does not log what it caught"
+    handlers = [n for n in ast.walk(_named_func("_guarded"))
+                if isinstance(n, ast.ExceptHandler)]
+    assert handlers, "_guarded catches nothing"
+    assert "BaseException" not in body, (
+        "catching BaseException would swallow KeyboardInterrupt and SystemExit")
