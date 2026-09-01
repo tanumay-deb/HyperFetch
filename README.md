@@ -59,6 +59,72 @@ python api_server.py    # headless: queue downloads with no window
 
 </details>
 
+## Users site
+
+An optional second web app on port 5001, for people who are not at this
+machine — the case it was built for is an iPhone, which has no torrent client:
+paste a magnet on the phone, this machine fetches it, then save the finished
+file to the phone.
+
+It is off until you turn it on, and it is a different door from everything
+else. The control page on 5000 answers your LAN and drives every download; this
+one answers only its own accounts and only their own downloads. They share the
+queue and nothing else — separate ports, separate credential stores, separate
+cookie-signing keys.
+
+### Turning it on
+
+1. **Settings -> Users Site**, switch it on.
+2. Create an account, or share the **invite code** with whoever needs one. The
+   code is what stops strangers signing up; give it an expiry if you are
+   sharing it around.
+3. On this machine the site is at `http://127.0.0.1:5001/`.
+
+### Reaching it from outside
+
+The site is bound to `127.0.0.1` and never opens a port on your router. To
+reach it from anywhere, put a tunnel in front of it:
+
+```
+tailscale funnel 5001
+```
+
+That gives an HTTPS address like `https://<machine>.<tailnet>.ts.net`, which
+also works behind carrier-grade NAT where port forwarding cannot. Settings
+shows the address once the funnel is up.
+
+HyperFetch never starts the tunnel for you. Publishing this machine to the
+internet should be a command you type on purpose.
+
+### What an account can and cannot do
+
+An account holder can queue downloads, watch them, and take the finished files.
+They see only their own, in their own folder under your download directory.
+They cannot reach the control page, the browser-extension routes, or anybody
+else's downloads.
+
+Worth deciding deliberately rather than discovering: **every account queues
+torrents over your connection, from your IP address.** Quotas cap disk, not
+exposure.
+
+### Limits
+
+| | Default | Changed in |
+|---|---|---|
+| Disk per account | 2 GB | Settings, per account |
+| Active downloads per account | 3 | `site_limits.MAX_ACTIVE_PER_USER` |
+| Kept for | 30 days after finishing | `site_limits.RETENTION_DAYS` |
+| Refuse everything below | 20 GB free | `site_limits.MIN_FREE` |
+
+Retention only ever removes downloads owned by a site account. Yours are never
+touched. The free-space floor applies to everybody, including you, because a
+full disk breaks the desktop app too.
+
+`site_audit.jsonl` in the app-data folder records sign-ins, additions,
+deletions and every file handed over. Note that behind a tunnel every visitor
+arrives as `127.0.0.1` — the tunnel runs here — so the account name is the only
+identifier in it that means anything.
+
 ## How it works
 
 | Part | Role |

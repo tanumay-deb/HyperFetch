@@ -430,15 +430,59 @@ class PageBuilderMixin:
         row.addWidget(box, 1)
         row.addWidget(self._copy_button(lambda: local))
         row.addWidget(openb)
-        hint = QLabel(
-            "This PC only. To reach it from anywhere, point a tunnel at this "
-            "port — for example  tailscale funnel %d  — which gives "
-            "you an HTTPS address without opening anything on your router."
-            % _site_port)
-        hint.setWordWrap(True)
-        hint.setStyleSheet(
-            f"color:{COLORS['muted']};font-size:{fpx(11)};background:transparent;")
-        g2.addWidget(lab); g2.addLayout(row); g2.addWidget(hint)
+        g2.addWidget(lab); g2.addLayout(row)
+
+        # ---- reachable from outside? ----
+        # Read only. Turning a funnel on publishes this machine to the
+        # internet, and that should be a command typed on purpose rather than
+        # a side effect of opening a settings page.
+        import site_tunnel
+        tun, note = site_tunnel.summary(_site_port)
+
+        sep = QFrame(); sep.setFixedHeight(1)
+        sep.setStyleSheet(f"background:{COLORS['border']};")
+        g2.addWidget(sep)
+
+        away = QLabel("From anywhere")
+        away.setStyleSheet("font-weight:700;background:transparent;")
+        g2.addWidget(away)
+
+        if tun["url"]:
+            arow = QHBoxLayout()
+            abox = QLineEdit(tun["url"]); abox.setReadOnly(True)
+            arow.addWidget(abox, 1)
+            arow.addWidget(self._copy_button(lambda u=tun["url"]: u))
+            g2.addLayout(arow)
+
+        state = QLabel(note)
+        state.setWordWrap(True)
+        tone = COLORS["success"] if tun["funnel_on"] else COLORS["muted"]
+        state.setStyleSheet(
+            f"color:{tone};font-size:{fpx(11)};background:transparent;")
+        g2.addWidget(state)
+
+        if tun["installed"] and tun["signed_in"] and not tun["funnel_on"]:
+            crow = QHBoxLayout()
+            cbox = QLineEdit(tun["command"]); cbox.setReadOnly(True)
+            crow.addWidget(cbox, 1)
+            crow.addWidget(self._copy_button(lambda c=tun["command"]: c))
+            g2.addLayout(crow)
+
+        if not tun["installed"]:
+            get = QPushButton("  Get Tailscale")
+            get.setIcon(themed_icon("open", "text"))
+            get.clicked.connect(
+                lambda: __import__("webbrowser").open("https://tailscale.com/download"))
+            g2.addWidget(get, 0, Qt.AlignLeft)
+
+        why = QLabel(
+            "A tunnel gives the page an HTTPS address without opening a port "
+            "on your router, which also means it works behind carrier-grade "
+            "NAT where port forwarding cannot.")
+        why.setWordWrap(True)
+        why.setStyleSheet(
+            f"color:{COLORS['faint']};font-size:{fpx(11)};background:transparent;")
+        g2.addWidget(why)
         v.addWidget(f2)
 
         # ---- invite code ----
