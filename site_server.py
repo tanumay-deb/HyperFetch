@@ -122,6 +122,12 @@ def create_site_app(queue, save_dir):
         if not t:
             return None
         if (getattr(t, "owner", "") or "") != user["username"]:
+            # Recorded, because this is somebody reaching for a download that
+            # is not theirs. A 404 alone leaves no trace of the attempt, and
+            # the pattern is the only thing that would tell you an account is
+            # being probed rather than mistyped.
+            site_audit.record("denied", user["username"],
+                              {"id": task_id[:12]}, addr=caller())
             return None
         return t
 

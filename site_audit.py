@@ -35,6 +35,7 @@ ACTIONS = {
     "remove",         # a download and its files were deleted by its owner
     "download",       # a file was handed over
     "expire",         # retention removed something
+    "denied",         # reached for a download belonging to somebody else
 }
 
 _lock = threading.Lock()

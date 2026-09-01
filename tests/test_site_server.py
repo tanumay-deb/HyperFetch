@@ -496,3 +496,27 @@ def test_nothing_another_account_did_is_attributed_to_you(env):
     _login(c, "tanumay")
     _post(c, "/api/downloads", json={"url": "https://e.test/mine.bin"})
     assert [r["user"] for r in site_audit.tail(user="someone")] == []
+
+
+def test_reaching_for_another_account_s_download_is_recorded(env):
+    """A 404 alone leaves no trace. The pattern is the only thing that would
+    tell you an account is being probed rather than mistyping."""
+    import site_audit
+    c, q, dl = env
+    _login(c, "tanumay")
+    theirs = _task(q, "someone", dl, "theirs.mkv")
+    _get(c, "/api/downloads/%s/file" % theirs.id)
+
+    row = site_audit.tail()[0]
+    assert row["action"] == "denied"
+    assert row["user"] == "tanumay", "the attempt is attributed to who made it"
+    assert theirs.id[:12] in row["detail"]["id"]
+
+
+def test_a_download_that_simply_does_not_exist_is_not_recorded_as_denied(env):
+    """A stale id from a bookmark is a mistake, not a probe."""
+    import site_audit
+    c, _, _ = env
+    _login(c)
+    _get(c, "/api/downloads/deadbeefdeadbeef/file")
+    assert [r for r in site_audit.tail() if r["action"] == "denied"] == []
