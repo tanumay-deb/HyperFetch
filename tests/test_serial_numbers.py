@@ -76,9 +76,12 @@ def _app(tmp_path, monkeypatch):
     from gui2.app import DownloadAppV2
     stub = types.SimpleNamespace(
         _state_path=str(tmp_path / "downloads.json"),
-        queue=types.SimpleNamespace(tasks=[], add_task=lambda t, start=True: None),
+        queue=None,
     )
-    stub.queue.add_task = lambda t, start=True: stub.queue.tasks.append(t)
+    # A real queue: restore() lives in QueueManager now, and a stub would
+    # be a second copy of its contract.
+    from queue_manager import QueueManager
+    stub.queue = QueueManager()
     return stub, DownloadAppV2
 
 

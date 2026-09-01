@@ -39,20 +39,13 @@ def _load(app_cls, tmp_path, monkeypatch, rows, bak=None):
     app = app_cls.__new__(app_cls)                 # no GUI construction
     app._state_path = str(tmp_path / "downloads.json")
 
-    loaded = []
-
-    class _Q:
-        tasks = loaded
-
-        def add_task(self, t, start=False):
-            loaded.append(t)
-
-        def force_start(self, t):
-            pass
-
-    app.queue = _Q()
+    # A real QueueManager rather than a fake: restore() lives there now, and a
+    # stub would just be a second copy of its contract that could drift. What
+    # is under test here is the loader's retry-and-backup logic, not the queue.
+    from queue_manager import QueueManager
+    app.queue = QueueManager()
     app._load_state()
-    return loaded
+    return list(app.queue.tasks)
 
 
 def test_deleting_everything_survives_a_restart(tmp_path, monkeypatch):
@@ -80,19 +73,10 @@ def test_corrupt_file_still_recovers_from_the_backup(tmp_path, monkeypatch):
 
     app = DownloadAppV2.__new__(DownloadAppV2)
     app._state_path = str(tmp_path / "downloads.json")
-    loaded = []
-
-    class _Q:
-        tasks = loaded
-
-        def add_task(self, t, start=False):
-            loaded.append(t)
-
-        def force_start(self, t):
-            pass
-
-    app.queue = _Q()
+    from queue_manager import QueueManager
+    app.queue = QueueManager()
     app._load_state()
+    loaded = list(app.queue.tasks)
     assert len(loaded) == 1, "a genuinely corrupt file must still use the .bak"
 
 
@@ -100,19 +84,10 @@ def test_missing_file_is_a_fresh_install_not_a_failure(tmp_path, monkeypatch):
     monkeypatch.setattr(utils, "app_data_dir", lambda: str(tmp_path))
     app = DownloadAppV2.__new__(DownloadAppV2)
     app._state_path = str(tmp_path / "downloads.json")
-    loaded = []
-
-    class _Q:
-        tasks = loaded
-
-        def add_task(self, t, start=False):
-            loaded.append(t)
-
-        def force_start(self, t):
-            pass
-
-    app.queue = _Q()
+    from queue_manager import QueueManager
+    app.queue = QueueManager()
     app._load_state()
+    loaded = list(app.queue.tasks)
     assert loaded == []
     assert not getattr(app, "_state_load_failed", False), \
         "a first run must not disable saving for the session"

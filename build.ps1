@@ -16,7 +16,8 @@ param(
     [switch]$Sign,
     [string]$CertPath,
     [string]$CertPass,
-    [string]$Version          # override the installer version (e.g. from a CI tag)
+    [string]$Version          # override the installer version (e.g. from a CI tag,
+    [switch]$Server)
 )
 
 $ErrorActionPreference = "Stop"
@@ -88,6 +89,12 @@ if (Test-Path (Join-Path $siteSrc "package.json")) {
         Write-Host "    npm not found - skipping. The users site will show a holding page." -ForegroundColor Yellow
     } else {
         Push-Location $siteSrc
+        # npm writes warnings to stderr as a matter of course, and PowerShell
+        # turns a native command's stderr into error records. Without this a
+        # routine "npm warn" aborts the whole build. Exit codes are what we
+        # actually check, below.
+        $prevEap = $ErrorActionPreference
+        $ErrorActionPreference = 'Continue'
         try {
             # `npm ci` when there is a lockfile, so a release build uses the
             # exact versions that were tested rather than whatever resolves today.
@@ -96,7 +103,10 @@ if (Test-Path (Join-Path $siteSrc "package.json")) {
             if ($LASTEXITCODE -ne 0) { throw "npm install failed" }
             npm run build
             if ($LASTEXITCODE -ne 0) { throw "the users site failed to build" }
-        } finally { Pop-Location }
+        } finally {
+            $ErrorActionPreference = $prevEap
+            Pop-Location
+        }
         Write-Host "    site -> $(Join-Path $PSScriptRoot 'site')" -ForegroundColor Green
     }
 } else {
@@ -107,13 +117,20 @@ Write-Host "==> Cleaning previous build" -ForegroundColor Cyan
 Remove-Item -Recurse -Force build, dist -ErrorAction SilentlyContinue
 
 Write-Host "==> Building with PyInstaller" -ForegroundColor Cyan
-python -m PyInstaller --noconfirm --clean HyperFetch.spec
+$spec = if ($Server) { "HyperFetchServer.spec" } else { "HyperFetch.spec" }
+Write-Host "    spec: $spec" -ForegroundColor DarkGray
+python -m PyInstaller --noconfirm --clean $spec
 if ($LASTEXITCODE -ne 0) { throw "PyInstaller build failed" }
 
 $exe = "dist\HyperFetch\HyperFetch.exe"
 
 Write-Host "==> Smoke-testing the frozen binary" -ForegroundColor Cyan
-& $exe --selftest
+if ($Server) {
+    & "dist\HyperFetchServer\HyperFetchServer.exe" --check
+    if ($LASTEXITCODE -ne 0) { throw "the server build does not start" }
+} else {
+    & $exe --selftest
+}
 if ($LASTEXITCODE -ne 0) { throw "selftest failed" }
 
 function Invoke-Sign($target) {

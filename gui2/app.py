@@ -225,16 +225,9 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, QW
                                "on disk) — saving is disabled this session so the "
                                "file is not overwritten", path,
                                (os.path.getsize(path) if os.path.exists(path) else -1))
-        skipped = 0
-        for d in rows:
-            try:
-                task = T.DownloadTask.from_dict(d)
-                self.queue.add_task(task, start=False)
-                if getattr(task, '_auto_resume', False):
-                    self.queue.force_start(task)
-            except (KeyError, TypeError, ValueError):
-                skipped += 1
-                continue
+        # Restore lives in QueueManager so a headless server does the same
+        # thing. The window only reports what happened.
+        _restored, skipped = self.queue.restore(rows)
         # One line that says where the list came from and how much of it
         # survived. Without it, "the app opened with an empty list" and "the
         # user has no downloads" look identical — which is exactly what made a
@@ -361,21 +354,10 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, QW
 
         threading.Thread(target=serve_site, daemon=True).start()
 
-        # Retention. Nothing else calls it, so without this a 30-day window is
-        # a promise the app never keeps. Once shortly after startup — a machine
-        # that is only on for an hour a day still needs it to happen — and then
-        # daily while it runs.
-        def _sweep():
-            try:
-                import site_limits
-                site_limits.sweep(self.queue, self.save_dir)
-            except Exception:
-                _log.exception("retention sweep failed")
-
-        self._retention = QTimer(self)
-        self._retention.timeout.connect(_sweep)
-        self._retention.start(24 * 60 * 60 * 1000)
-        QTimer.singleShot(30_000, _sweep)
+        # Retention runs on the queue's own thread rather than a QTimer: a
+        # QTimer only ticks while a Qt event loop is running, which made
+        # retention a promise only the desktop app could keep.
+        self.queue.start_housekeeping(self.save_dir)
 
     # ------------------------------------------------------------- UI
     def _build_ui(self):
