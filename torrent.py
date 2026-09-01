@@ -827,6 +827,21 @@ class MetadataPrefetcher:
 
 
 
+def _within(folder, name):
+    """True when `folder/name` stays inside `folder`.
+
+    The name reaches us from a magnet's `dn`, which is remote input, so it is
+    not allowed to walk out of the download folder with `..` or an absolute
+    path of its own.
+    """
+    try:
+        root = os.path.realpath(folder)
+        target = os.path.realpath(os.path.join(folder, name))
+    except OSError:
+        return False
+    return target == root or target.startswith(root + os.sep)
+
+
 class TorrentDownloader:
     def __init__(self, dtask: "T.DownloadTask"):
         self.t = dtask
@@ -1489,6 +1504,22 @@ class TorrentDownloader:
             self.t.save_path = os.path.join(out_dir, top)
             self.t.filename = top
             return
+
+        # The name we already hold, if it is really there. A magnet has no name
+        # until its metadata arrives, so the task starts life with a placeholder
+        # save_path like magnet_.bin and is corrected here; when aria2 gives us
+        # no FILE: line the mtime guess below is all that was left, and if that
+        # misses too the record keeps pointing at the placeholder forever. But
+        # by this point filename has usually been set from the magnet's `dn`,
+        # which is exactly the folder aria2 created. Checking it costs one
+        # stat and settles the common case.
+        name = (self.t.filename or "").strip()
+        if name and _within(out_dir, name):
+            guess = os.path.join(out_dir, name)
+            if os.path.exists(guess):
+                self.t.save_path = guess
+                return
+
         started = getattr(self, "_started", 0)
         newest = None
         try:

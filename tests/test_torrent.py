@@ -265,3 +265,75 @@ def test_a_single_file_torrent_still_resolves(tmp_path):
     out = str(tmp_path)
     top = torrent.TorrentDownloader._top_entry(os.path.join(out, "Movie.mkv"), out)
     assert top == "Movie.mkv"
+
+
+# ---- where a finished torrent's files actually are ----
+def _dl(tmp_path, filename, save_path=None):
+    """A torrent task shaped the way a magnet leaves one: the name is known
+    from `dn`, but save_path is still the placeholder made before any metadata
+    arrived."""
+    t = T.DownloadTask("magnet:?xt=urn:btih:abc&dn=x",
+                       save_path or str(tmp_path / "magnet_.bin"),
+                       filename=filename)
+    d = torrent.TorrentDownloader.__new__(torrent.TorrentDownloader)
+    d.t = t
+    d._started = 0
+    return d, t
+
+
+def test_the_finished_folder_is_found_from_the_name_we_already_have(tmp_path):
+    """The Odyssey case: aria2 gave no FILE: line, so save_path stayed at the
+    placeholder even though the folder was sitting right there under the name
+    the magnet's dn had already given us."""
+    name = "The Odyssey (2026) [1080p] [WEBRip] [5.1] [YTS.GG - YTS.BZ]"
+    got = tmp_path / name
+    got.mkdir()
+    (got / "movie.mkv").write_bytes(b"x")
+
+    d, t = _dl(tmp_path, name)
+    d._resolve_save_path(str(tmp_path), "")
+
+    assert t.save_path == str(got)
+    assert os.path.isdir(t.save_path)
+
+
+def test_the_file_line_still_wins_when_aria2_gives_one(tmp_path):
+    (tmp_path / "from-aria2").mkdir()
+    (tmp_path / "from-dn").mkdir()
+    d, t = _dl(tmp_path, "from-dn")
+    d._resolve_save_path(str(tmp_path), "from-aria2")
+    assert t.save_path == str(tmp_path / "from-aria2")
+    assert t.filename == "from-aria2"
+
+
+def test_a_name_that_is_not_on_disk_does_not_become_the_save_path(tmp_path):
+    d, t = _dl(tmp_path, "never-downloaded")
+    d._resolve_save_path(str(tmp_path), "")
+    assert not t.save_path.endswith("never-downloaded")
+
+
+def test_the_name_cannot_walk_out_of_the_download_folder(tmp_path):
+    """`dn` is remote input. A name of `../x` must not point save_path at
+    something outside the folder the user chose."""
+    outside = tmp_path.parent / "outside-target"
+    outside.mkdir(exist_ok=True)
+    inner = tmp_path / "dl"
+    inner.mkdir()
+
+    d, t = _dl(inner, os.path.join("..", "outside-target"))
+    d._resolve_save_path(str(inner), "")
+
+    assert os.path.realpath(t.save_path) != os.path.realpath(str(outside))
+
+
+@pytest.mark.parametrize("name", ["", "   ", None])
+def test_a_missing_name_falls_through_to_the_mtime_guess(tmp_path, name):
+    # Its own folder: tmp_path also holds whatever the app-data fixture put
+    # there, and the guess is "newest entry", not "the one this test made".
+    out = tmp_path / "out"
+    out.mkdir()
+    real = out / "picked-by-mtime"
+    real.mkdir()
+    d, t = _dl(tmp_path, name)
+    d._resolve_save_path(str(out), "")
+    assert t.save_path == str(real)
