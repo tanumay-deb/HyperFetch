@@ -1,9 +1,9 @@
 // Hand downloads to the local app (main.py / api_server.py) on explicit user
 // action only — the right-click menu and the in-page video badges. Browser
 // downloads are NOT auto-intercepted.
-const APP = "http://127.0.0.1:5000/download";
-const PROBE = "http://127.0.0.1:5000/probe";
-const PAIR = "http://127.0.0.1:5000/pair";
+const APP = "http://127.0.0.1:21456/download";
+const PROBE = "http://127.0.0.1:21456/probe";
+const PAIR = "http://127.0.0.1:21456/pair";
 
 const ignoreErr = () => void chrome.runtime.lastError;
 

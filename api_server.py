@@ -27,7 +27,21 @@ import utils
 import torrent as _torrent
 import web_auth
 
-PORT = 5000
+# The loopback port the extension and the browser page both reach the app on.
+#
+# It was 5000, which is a bad neighbourhood: Flask's own default, and the
+# default for plenty of other local services besides. On this developer's
+# machine another program had taken 127.0.0.1:5000 outright, and because the
+# server thread died silently the app looked healthy while the extension and
+# the phone could reach nothing.
+#
+# 21456 was picked to stay out of the way: below 32768, so it is outside both
+# the Windows and Linux ephemeral ranges and the OS will never hand it to some
+# other program's client socket; outside every Windows reserved range; and not
+# registered to a known service, in particular none of the media/torrent stack
+# this app sits next to. It has to match the extension, which hardcodes it in
+# manifest.json's host permissions and so cannot discover it at runtime.
+PORT = 21456
 log = logging.getLogger("hyperfetch.server")
 
 # Extension ids trusted to auto-pair (read the token via /pair). Only the

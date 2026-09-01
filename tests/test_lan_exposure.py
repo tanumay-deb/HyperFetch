@@ -9,7 +9,7 @@ trustworthy from a browser and freely settable by anything else. The trusted
 extension id is public — it is the Chrome Web Store URL, printed in Settings
 and the Welcome dialog — so on a LAN,
 
-    curl -H "Origin: chrome-extension://<public id>" http://<pc>:5000/pair
+    curl -H "Origin: chrome-extension://<public id>" http://<pc>:21456/pair
 
 would have handed over the pairing token, and that token unlocks /download,
 /focus and /open.

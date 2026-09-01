@@ -1,4 +1,4 @@
-const APP = "http://127.0.0.1:5000";
+const APP = "http://127.0.0.1:21456";
 const statusEl = document.getElementById("status");
 const enabledEl = document.getElementById("enabled");
 const msgEl = document.getElementById("msg");
@@ -93,7 +93,7 @@ enabledEl.addEventListener("change", () => {
 
 // show the real extension version (read from the manifest, never hardcoded)
 const verEl = document.getElementById("ver");
-if (verEl) verEl.textContent = `bridge 127.0.0.1:5000 · v${chrome.runtime.getManifest().version}`;
+if (verEl) verEl.textContent = `bridge 127.0.0.1:21456 · v${chrome.runtime.getManifest().version}`;
 
 saveTokenBtn.addEventListener("click", () => {
   const tok = tokenEl.value.trim();

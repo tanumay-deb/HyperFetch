@@ -84,7 +84,7 @@ Simple running list. Newest first. Keep entries to one line.
 - Mini always-on-top window + global hotkeys (e.g. add-from-clipboard). [med]
 - Bandwidth profiler that suggests a connection count. [med] Weak evidence it helps: measured bottlenecks so far were swarm health and disk allocation, not connection count.
 - ZIP/RAR content peek + selective extract. [med-high]
-- LAN queue from a phone (`http://pc-ip:5000`, mDNS). [med] Only with real auth: the Flask server binds `127.0.0.1` deliberately, and that is one of three security gates alongside the CORS lock and the pairing token.
+- LAN queue from a phone (`http://pc-ip:21456`, mDNS). [med] Only with real auth: the Flask server binds `127.0.0.1` deliberately, and that is one of three security gates alongside the CORS lock and the pairing token.
 - Python plugin hooks (`on_download_complete`, `on_queue_add`). [high] Note it means executing arbitrary user code in-process.
 
 ## Bugs

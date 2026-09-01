@@ -25,10 +25,11 @@ def _post_running(path, payload):
     decoded JSON reply, or None if nothing answered / the reply wasn't ours."""
     try:
         import json, urllib.request, utils
+        from api_server import PORT          # not hardcoded: the two must agree
         tok = utils.get_or_create_token()
         payload = {**payload, "token": tok}
         req = urllib.request.Request(
-            f"http://127.0.0.1:5000{path}",
+            f"http://127.0.0.1:{PORT}{path}",
             data=json.dumps(payload).encode(),
             headers={"Content-Type": "application/json", "X-HyperFetch-Token": tok})
         with urllib.request.urlopen(req, timeout=2) as r:
@@ -118,10 +119,11 @@ def _wait_for_exit(timeout=15.0):
     away), or `timeout` passes. Returns True if it went. Used by the restart
     path so the replacement does not race its own predecessor."""
     import time, urllib.request
+    from api_server import PORT              # not hardcoded: the two must agree
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         try:
-            with urllib.request.urlopen("http://127.0.0.1:5000/ping", timeout=1):
+            with urllib.request.urlopen(f"http://127.0.0.1:{PORT}/ping", timeout=1):
                 pass
         except Exception:
             return True                      # nothing answering -> it is gone

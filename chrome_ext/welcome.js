@@ -5,7 +5,7 @@ const textEl = document.getElementById("statusText");
 const cta = document.getElementById("cta");
 
 function check() {
-  fetch("http://127.0.0.1:5000/ping")
+  fetch("http://127.0.0.1:21456/ping")
     .then((r) => (r.ok ? r.json() : null))
     .then((j) => {
       if (j && j.status === "ok") {

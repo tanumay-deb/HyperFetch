@@ -306,7 +306,7 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, QW
         """Bring up the localhost server the extension talks to.
 
         Retries the bind rather than giving up on the first failure. Relaunching
-        shortly after a close leaves port 5000 held for a few seconds by the
+        shortly after a close leaves the port held for a few seconds by the
         outgoing process's sockets, and a single attempt would lose the race —
         the app then ran with no server at all, so /pair was unreachable and
         auto-pairing silently never happened. That is the "sometimes the
