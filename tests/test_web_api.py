@@ -89,6 +89,10 @@ def _login(c, user="admin"):
     ("post", "/api/downloads"),
     ("post", "/api/downloads/task-1/pause"),
     ("post", "/api/downloads/task-1/resume"),
+    ("post", "/api/downloads/task-1/force"),
+    ("post", "/api/downloads/task-1/limit"),
+    ("post", "/api/downloads/task-1/move"),
+    ("post", "/api/downloads/task-1/rename"),
     ("delete", "/api/downloads/task-1"),
 ])
 def test_every_route_refuses_an_anonymous_caller(env, method, path):

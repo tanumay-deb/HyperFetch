@@ -416,6 +416,39 @@ button { font: inherit; cursor: pointer; color: inherit; }
 .bulk .icon-btn .btn-label { display: inline; }
 .bulk .danger:hover { color: var(--err); border-color: var(--err); }
 
+/* The per-card menu. Positioned in script rather than anchored to the card,
+   because it is opened three ways — right-click, the ... button, and a long
+   press on a phone, which has no right-click at all. */
+.card-menu {
+  /* `right: 0` comes from .menu, where the sort menu hangs off its button.
+     Here the position is set from script, so leaving it would stretch the box
+     from that left edge all the way to the window's — and openCardMenu would
+     then measure that stretched width when deciding which way to flip. */
+  position: fixed; right: auto;
+  min-width: 210px;
+  max-width: min(300px, calc(100vw - 16px));
+  max-height: 70vh;
+  overflow-y: auto;
+  padding: 5px;
+}
+.card-menu button {
+  display: flex; align-items: center; gap: 10px;
+  width: 100%; min-height: 40px; padding: 8px 11px;
+  border: 0; border-radius: 8px; background: transparent;
+  color: var(--muted); font-size: .9rem; font-weight: 600; text-align: left;
+  white-space: nowrap;
+}
+.card-menu button:hover { background: var(--surface2); color: var(--text); }
+.card-menu button .ic { width: 16px; height: 16px; }
+.card-menu button.danger:hover { color: var(--err); }
+.card-menu hr { border: 0; border-top: 1px solid var(--border); margin: 5px 2px; }
+.card-menu .head {
+  display: block; padding: 7px 11px 4px;
+  font-size: 9.5px; font-weight: 700; letter-spacing: .09em;
+  text-transform: uppercase; color: var(--faint);
+}
+.card-menu .tick { margin-left: auto; color: var(--accent2); }
+
 .note { margin: 0; padding: 40px 20px; text-align: center; color: var(--muted); }
 .note.warn { color: var(--warn); }
 

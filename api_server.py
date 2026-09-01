@@ -618,10 +618,13 @@ def create_app(queue, save_dir, pending=None, token=None):
         if missing:
             return missing
         raw = ((request.get_json(silent=True) or {}).get("name") or "").strip()
-        new = utils.safe_filename(raw)
-        if not new:
+        # Ask before sanitising, not after: safe_filename never returns empty,
+        # it falls back to "download". Checking its output would let a name of
+        # spaces through and quietly rename the file to that.
+        if not raw:
             return jsonify({"status": "error",
                             "message": "That is not a usable file name."}), 400
+        new = utils.safe_filename(raw)
         if new == t.filename:
             return jsonify({"status": "ok", "name": new})
 

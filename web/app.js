@@ -374,6 +374,10 @@ $("list").addEventListener("click", async (e) => {
   if (!b) return;
   const id = b.closest(".card").dataset.id;
   const act = b.dataset.act;
+  if (act === "more") {
+    openCardMenu(id, b.getBoundingClientRect());
+    return;
+  }
   if (act === "save") {
     b.disabled = true;
     try { await offerFiles(cards.get(id), id); } finally { b.disabled = false; }
@@ -555,12 +559,211 @@ function update(c, d, bps, serial) {
     if (toggle === "resume") out.push(iconBtn("resume", "i-play", "Resume"));
     if (d.status === "Completed") out.push(iconBtn("save", "i-save", "Save to device"));
     out.push(iconBtn("delete", "i-trash", "Remove from list", "danger"));
+    // A phone has no right-click, so the same menu needs a button of its own.
+    out.push(iconBtn("more", "i-more", "More actions"));
     c.act.replaceChildren(...out);
     c.files.replaceChildren();
     c.files.hidden = true;
     c.buttons = key;
   }
 }
+
+/* ------------------------------------------------------------ card menu */
+/* The desktop window's right-click menu, for the browser. Opened three ways,
+   because right-click does not exist on a phone: the ... button, a long press,
+   and an actual right-click on a desktop browser. */
+const SPEEDS = [
+  ["Unlimited", 0],
+  ["100 Kb/s", Math.floor(100 * 1000 / 8)],
+  ["500 Kb/s", Math.floor(500 * 1000 / 8)],
+  ["1 Mb/s", Math.floor(1000 * 1000 / 8)],
+  ["5 Mb/s", Math.floor(5 * 1000 * 1000 / 8)],
+];
+
+function menuItem(label, glyph, run, extra) {
+  const b = document.createElement("button");
+  b.type = "button";
+  b.className = extra || "";
+  b.append(icon(glyph));
+  const t = document.createElement("span");
+  t.textContent = label;
+  b.append(t);
+  b.addEventListener("click", () => { closeCardMenu(); run(); });
+  return b;
+}
+
+function menuHead(text) {
+  const s = document.createElement("span");
+  s.className = "head";
+  s.textContent = text;
+  return s;
+}
+
+function buildCardMenu(d) {
+  const out = [];
+  const id = d.id;
+  const act = (path, body) => api("/api/downloads/" + encodeURIComponent(id) + path,
+                                  { method: "POST", body: JSON.stringify(body || {}) })
+                                .then(tick);
+
+  if (d.status === "Downloading" || d.status === "Queued") {
+    out.push(menuItem("Pause", "i-pause", () => act("/pause")));
+  }
+  if (d.status === "Paused" || d.status === "Error" || d.status === "Scheduled") {
+    out.push(menuItem("Resume", "i-play", () => act("/resume")));
+  }
+  if (["Queued", "Paused", "Error", "Scheduled"].includes(d.status)) {
+    out.push(menuItem("Force download", "i-down", () => act("/force")));
+  }
+  if (d.status === "Completed") {
+    out.push(menuItem("Save to device", "i-save",
+                      () => offerFiles(cards.get(id), id)));
+  }
+
+  if (d.status === "Queued") {
+    out.push(document.createElement("hr"));
+    for (const [label, glyph, where] of [
+      ["Move to top", "i-up", "top"], ["Move up", "i-up", "up"],
+      ["Move down", "i-down", "down"], ["Move to bottom", "i-down", "bottom"],
+    ]) out.push(menuItem(label, glyph, () => act("/move", { where })));
+  }
+
+  if (d.status !== "Completed") {
+    out.push(document.createElement("hr"));
+    out.push(menuHead("Speed limit"));
+    for (const [label, bps] of SPEEDS) {
+      const item = menuItem(label, "i-speed", () => act("/limit", { bps }));
+      if ((d.speedLimit || 0) === bps) {
+        const tick_ = document.createElement("span");
+        tick_.className = "tick";
+        tick_.textContent = "✓";
+        item.append(tick_);
+      }
+      out.push(item);
+    }
+  }
+
+  out.push(document.createElement("hr"));
+  out.push(menuItem("Rename…", "i-pencil", () => renameDownload(d)));
+  if (d.url) {
+    out.push(menuItem("Copy link", "i-link", () => copyText(d.url)));
+  }
+  out.push(menuItem("Remove from list", "i-trash", () => {
+    if (confirm("Remove this download from the list? The file itself is kept.")) {
+      api("/api/downloads/" + encodeURIComponent(id), { method: "DELETE" }).then(tick);
+    }
+  }, "danger"));
+  return out;
+}
+
+async function renameDownload(d) {
+  const name = prompt("New file name:", d.name);
+  if (name === null) return;
+  const r = await api("/api/downloads/" + encodeURIComponent(d.id) + "/rename",
+                      { method: "POST", body: JSON.stringify({ name }) });
+  if (!r.ok) alert(r.body.message || "Could not rename that.");
+  tick();
+}
+
+async function copyText(text) {
+  try {
+    await navigator.clipboard.writeText(text);
+  } catch {
+    /* clipboard access needs a secure context, and plain http on a LAN is not
+       one — so fall back to something the user can copy by hand rather than
+       failing silently. */
+    prompt("Copy this link:", text);
+  }
+}
+
+function openCardMenu(id, rect) {
+  const d = last.find((x) => x.id === id);
+  if (!d) return;
+  const m = $("cardMenu");
+  m.replaceChildren(...buildCardMenu(d));
+  m.hidden = false;
+
+  // Placed after it is measurable, and flipped when it would fall off screen.
+  const w = m.offsetWidth, h = m.offsetHeight;
+  let x = rect.left, y = rect.bottom + 6;
+  if (x + w > window.innerWidth - 8) x = window.innerWidth - w - 8;
+  if (y + h > window.innerHeight - 8) y = Math.max(8, rect.top - h - 6);
+  m.style.left = Math.max(8, x) + "px";
+  m.style.top = y + "px";
+}
+
+function closeCardMenu() {
+  $("cardMenu").hidden = true;
+}
+
+$("list").addEventListener("contextmenu", (e) => {
+  const card = e.target.closest(".card");
+  if (!card) return;
+  e.preventDefault();
+  openCardMenu(card.dataset.id, {
+    left: e.clientX, bottom: e.clientY, top: e.clientY,
+  });
+});
+
+/* Long press, for touch. 500ms, cancelled by any movement so a scroll that
+   starts on a card does not open a menu instead. */
+let pressTimer = null;
+let pressAt = null;
+$("list").addEventListener("touchstart", (e) => {
+  const card = e.target.closest(".card");
+  if (!card || e.target.closest("button, a, input")) return;
+  const t = e.touches[0];
+  pressAt = { x: t.clientX, y: t.clientY };
+  pressTimer = window.setTimeout(() => {
+    pressTimer = null;
+    openCardMenu(card.dataset.id,
+                 { left: pressAt.x, bottom: pressAt.y, top: pressAt.y });
+    armClickSwallow();
+  }, 500);
+}, { passive: true });
+
+/* Lifting the finger ends the press with a touchend, and the browser then
+   synthesises a click from that tap. That click lands outside the menu, so
+   without this the close-on-outside-click handler below would fire and the
+   menu would disappear the instant the finger came up — which is the whole
+   interaction on a phone. The listener is passive (so the list still scrolls
+   at full speed), which rules out preventDefault; swallowing the one click is
+   what is left. It is also released on a timer, because a browser that
+   suppresses the synthetic click would otherwise leave this armed and eat the
+   user's next tap. */
+let swallowNextClick = false;
+function armClickSwallow() {
+  swallowNextClick = true;
+  window.setTimeout(() => { swallowNextClick = false; }, 700);
+}
+
+function cancelPress(e) {
+  if (pressTimer === null) return;
+  if (e && e.touches && e.touches[0] && pressAt) {
+    const t = e.touches[0];
+    if (Math.abs(t.clientX - pressAt.x) < 10 && Math.abs(t.clientY - pressAt.y) < 10) {
+      return;                       // still a press, not a scroll
+    }
+  }
+  window.clearTimeout(pressTimer);
+  pressTimer = null;
+}
+$("list").addEventListener("touchmove", cancelPress, { passive: true });
+$("list").addEventListener("touchend", cancelPress, { passive: true });
+$("list").addEventListener("touchcancel", cancelPress, { passive: true });
+
+document.addEventListener("click", (e) => {
+  if (swallowNextClick) {
+    swallowNextClick = false;
+    return;
+  }
+  if (!e.target.closest("#cardMenu") && !e.target.closest('[data-act="more"]')) {
+    closeCardMenu();
+  }
+});
+document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeCardMenu(); });
+window.addEventListener("resize", closeCardMenu);
+$("list").addEventListener("scroll", closeCardMenu, { passive: true });
 
 /* --------------------------------------------------------------- render */
 /* ------------------------------------------------------------ selection */
