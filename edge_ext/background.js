@@ -1,17 +1,54 @@
 // Hand downloads to the local app (main.py / api_server.py) on explicit user
 // action only — the right-click menu and the in-page video badges. Browser
 // downloads are NOT auto-intercepted.
-const APP = "http://127.0.0.1:21456/download";
-const PROBE = "http://127.0.0.1:21456/probe";
-const PAIR = "http://127.0.0.1:21456/pair";
+// The app listened on 5000 until it moved to 21456 - 5000 is Flask's default
+// and collides with too much else. Chrome updates extensions within hours while
+// the desktop app is updated by hand, so both are in the wild for a while: try
+// the new port, fall back to the old, remember which answered. Without this,
+// publishing the move would break every existing user until they happened to
+// update the app, with their clicks piling silently into the offline queue.
+const PORTS = [21456, 5000];
+const LEGACY_PORT = 5000;
+const BASE_KEY = "appBase";
+let cachedBase = null;            // per service-worker life; storage outlives it
 
 const ignoreErr = () => void chrome.runtime.lastError;
+
+const origins = () => PORTS.map((p) => `http://127.0.0.1:${p}`);
+
+/** Origin of a HyperFetch that answers, preferring the remembered one.
+ *  Resolves to the preferred origin even when nothing answers, so callers fail
+ *  exactly as they did before and the offline queue still holds the download. */
+function appBase() {
+  if (cachedBase) return Promise.resolve(cachedBase);
+  return new Promise((resolve) => {
+    chrome.storage.local.get({ [BASE_KEY]: "" }, (v) => {
+      ignoreErr();
+      const remembered = v && v[BASE_KEY];
+      const order = remembered
+        ? [remembered].concat(origins().filter((o) => o !== remembered))
+        : origins();
+      const tryAt = (i) => {
+        if (i >= order.length) return resolve(order[0]);
+        fetch(`${order[i]}/ping`)
+          .then((r) => {
+            if (!r.ok) throw new Error("not ok");
+            cachedBase = order[i];
+            chrome.storage.local.set({ [BASE_KEY]: cachedBase }, ignoreErr);
+            resolve(cachedBase);
+          })
+          .catch(() => tryAt(i + 1));
+      };
+      tryAt(0);
+    });
+  });
+}
 
 // Auto-pairing: pull the token straight from the app instead of asking the user
 // to copy/paste it. The app only answers /pair for THIS extension's id (locked
 // via CORS there), so other extensions and websites can't read the token.
 function fetchPairToken() {
-  return fetch(PAIR)
+  return appBase().then((b) => fetch(`${b}/pair`))
     .then((r) => (r.ok ? r.json() : null))
     .then((j) => {
       const t = (j && j.token) || "";
@@ -90,7 +127,7 @@ function sendToApp(url, filename, referrer, done, extra) {
     chrome.cookies.getAll({ url }, (cookies) => {
       ignoreErr();
       const cookieStr = (cookies || []).map((c) => `${c.name}=${c.value}`).join("; ");
-      const post = (tok) => fetch(APP, {
+      const post = (tok) => appBase().then((b) => fetch(`${b}/download`, {
         method: "POST",
         headers: { "Content-Type": "application/json", "X-HyperFetch-Token": tok },
         body: JSON.stringify(Object.assign({
@@ -101,7 +138,7 @@ function sendToApp(url, filename, referrer, done, extra) {
           userAgent: navigator.userAgent,
           token: tok
         }, extra || {}))
-      });
+      }));
       post(token)
         .then((r) => {
           // stale token (e.g. the app was reinstalled -> new token): drop it,
@@ -119,6 +156,12 @@ function sendToApp(url, filename, referrer, done, extra) {
             () => done(r.ok, r.status, {}));
         })
         .catch(() => {
+          // The remembered port may simply be the wrong one now — updating the
+          // desktop app moves it, and a worker that resolved before the update
+          // would otherwise keep talking to the dead one for its whole life.
+          // Dropping it costs one extra probe and makes the next call re-look.
+          cachedBase = null;
+          chrome.storage.local.remove(BASE_KEY, ignoreErr);
           // status 0 = the app is not listening at all (as opposed to a 401,
           // which means it IS there and refused us). Hold the download instead
           // of dropping it: a click that vanished because the app happened to
@@ -261,7 +304,7 @@ chrome.contextMenus.onClicked.addListener((info, tab) => {
 // messages and downloads, so this retries often enough without an alarms
 // permission — which would mean a new permission prompt for every user.
 function retryPendingIfAppIsUp() {
-  fetch(`${APP.replace("/download", "")}/ping`)
+  appBase().then((b) => fetch(`${b}/ping`))
     .then((r) => { if (r.ok) flushPending(); })
     .catch(() => {});
 }
@@ -390,12 +433,12 @@ function probeViaApp(url, referer) {
       chrome.cookies.getAll({ url }, (cookies) => {
         ignoreErr();
         const cookieStr = (cookies || []).map((c) => `${c.name}=${c.value}`).join("; ");
-        fetch(PROBE, {
+        appBase().then((b) => fetch(`${b}/probe`, {
           method: "POST",
           headers: { "Content-Type": "application/json", "X-HyperFetch-Token": token },
           body: JSON.stringify({ url, cookies: cookieStr, referrer: referer || "",
                                  userAgent: navigator.userAgent, token })
-        })
+        }))
           .then((r) => (r.ok ? r.json() : null))
           .then((j) => resolve(j && Array.isArray(j.variants) ? j.variants : (j ? [] : null)))
           .catch(() => resolve(null));   // app offline -> fall back

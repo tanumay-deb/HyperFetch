@@ -111,8 +111,14 @@ function loadBackgroundWithFakes({ fetchImpl, sent, probeImpl }) {
     },
     URL,
     fetch: (u, opts) => {
-      if (u === PING_URL) return Promise.reject(new Error('app offline'));
-      return u === PROBE_URL ? probe(u, opts) : fetchImpl(u, opts);
+      // Any /ping on either supported port. The worker now resolves which
+      // port the app is on before every call, so a single hardcoded URL no
+      // longer covers them and the pings would land in the fetch count these
+      // tests exist to measure.
+      if (/^http:\/\/127\.0\.0\.1:(21456|5000)\/ping$/.test(u)) {
+        return Promise.reject(new Error('app offline'));
+      }
+      return /\/probe$/.test(u) ? probe(u, opts) : fetchImpl(u, opts);
     },
     navigator: { userAgent: 'test' },
     console,

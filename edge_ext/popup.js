@@ -1,4 +1,21 @@
-const APP = "http://127.0.0.1:21456";
+// Same two ports the worker tries, for the same reason: a user on an older
+// desktop app is still on 5000, and the popup has to talk to whichever answers
+// rather than reporting "app not running" at someone whose app is running.
+const PORTS = [21456, 5000];
+const LEGACY_PORT = 5000;
+let APP = `http://127.0.0.1:${PORTS[0]}`;
+
+/** First origin that answers /ping, or the preferred one if none does. */
+function resolveApp() {
+  const order = PORTS.map((p) => `http://127.0.0.1:${p}`);
+  const tryAt = (i) => {
+    if (i >= order.length) return Promise.resolve(order[0]);
+    return fetch(`${order[i]}/ping`)
+      .then((r) => (r.ok ? order[i] : Promise.reject(new Error("not ok"))))
+      .catch(() => tryAt(i + 1));
+  };
+  return tryAt(0).then((base) => { APP = base; return base; });
+}
 const statusEl = document.getElementById("status");
 const enabledEl = document.getElementById("enabled");
 const msgEl = document.getElementById("msg");
@@ -55,7 +72,8 @@ function refreshQueued() {
   });
 }
 
-fetch(`${APP}/ping`)
+resolveApp()
+  .then((base) => fetch(`${base}/ping`))
   .then((r) => r.json().then((j) => ({ ok: r.ok, j })))
   .then(({ ok, j }) => {
     setStatus(ok);
@@ -93,7 +111,18 @@ enabledEl.addEventListener("change", () => {
 
 // show the real extension version (read from the manifest, never hardcoded)
 const verEl = document.getElementById("ver");
-if (verEl) verEl.textContent = `bridge 127.0.0.1:21456 · v${chrome.runtime.getManifest().version}`;
+if (verEl) {
+  // Names the port actually in use, and says so when it is the old one: the
+  // extension keeps working there, but only the newer app has the fixes.
+  const port = Number(new URL(APP).port);
+  verEl.textContent = `bridge ${new URL(APP).host} · v${chrome.runtime.getManifest().version}`;
+  if (port === LEGACY_PORT) {
+    verEl.textContent += " — update HyperFetch";
+    verEl.style.color = "#fbbf24";
+    verEl.title = "This HyperFetch is an older version. Update it from the app "
+                + "to move off port 5000, which other programs often take.";
+  }
+}
 
 saveTokenBtn.addEventListener("click", () => {
   const tok = tokenEl.value.trim();

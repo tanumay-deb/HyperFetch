@@ -15,7 +15,7 @@ const assert = require('assert');
 const BG = fs.readFileSync(path.join(__dirname, '..', 'background.js'), 'utf8');
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
-function makeEnv({ online = true } = {}) {
+function makeEnv({ online = true, port = 21456 } = {}) {
   const state = {
     stored: { token: 'tok', enabled: true },
     posts: [],           // download POSTs that reached the "app"
@@ -25,6 +25,8 @@ function makeEnv({ online = true } = {}) {
     createdHandler: null,
     cancelled: [],       // download ids the extension took away from Chrome
     erased: [],
+    port,                // which port the fake app listens on
+    pinged: [],          // ports the worker tried, in order
   };
   const ctx = {
     console,
@@ -33,11 +35,25 @@ function makeEnv({ online = true } = {}) {
     navigator: { userAgent: 'test' },
     fetch: (url, init) => {
       if (!state.online) return Promise.reject(new Error('offline'));
-      if (/\/ping$/.test(url)) return Promise.resolve({ ok: true, status: 200 });
+      if (/\/ping$/.test(url)) {
+        // state.port decides which port this fake app answers on, so the
+        // worker's new-port-then-old-port resolution can actually be tested.
+        const p = Number(new URL(url).port);
+        state.pinged.push(p);
+        return p === state.port
+          ? Promise.resolve({ ok: true, status: 200 })
+          : Promise.reject(new Error('nothing on that port'));
+      }
       if (/\/pair$/.test(url)) {
         return Promise.resolve({
           ok: true, status: 200, json: () => Promise.resolve({ token: 'tok' }),
         });
+      }
+      // Gate every request on the port too, not just /ping: an app that is not
+      // listening does not answer /download either, and without this "no app
+      // anywhere" would still look like a successful send.
+      if (Number(new URL(url).port) !== state.port) {
+        return Promise.reject(new Error('nothing on that port'));
       }
       state.posts.push(JSON.parse(init.body));
       return Promise.resolve({
@@ -289,6 +305,43 @@ const held = (state) => state.stored.pending || [];
     assert.deepStrictEqual(state.posts.map((p) => p.url), ['https://x/taken.bin'],
       'the capture never reached the app');
     console.log('  ok  an online capture still reaches the app');
+  }
+
+  // ---- the port move must not strand users on an older app ---------------
+  // Chrome updates extensions within hours; the desktop app is updated by hand.
+  // If the extension only spoke to the new port, publishing it would break
+  // every existing user until they happened to update, with each click landing
+  // silently in the offline queue.
+  {
+    const { ctx, state } = makeEnv({ port: 5000 });   // user on an older app
+    await wait(10);
+    ctx.sendToApp('https://x/a.zip', 'a.zip', '', () => {});
+    await wait(60);
+    assert.deepStrictEqual(state.posts.map((p) => p.url), ['https://x/a.zip'],
+      'the download never reached an app still listening on the old port');
+    assert.strictEqual(held(state).length, 0, 'it was queued instead of sent');
+    console.log('  ok  an app on the old port is still reached');
+  }
+
+  {
+    const { ctx, state } = makeEnv({ port: 21456 });
+    await wait(10);
+    ctx.sendToApp('https://x/b.zip', 'b.zip', '', () => {});
+    await wait(60);
+    assert.deepStrictEqual(state.posts.map((p) => p.url), ['https://x/b.zip']);
+    assert.strictEqual(state.pinged[0], 21456,
+      'the new port must be tried first, or every new install pays for the old');
+    console.log('  ok  the new port is tried first');
+  }
+
+  {
+    const { ctx, state } = makeEnv({ port: 0 });      // nothing listening
+    await wait(10);
+    ctx.sendToApp('https://x/c.zip', 'c.zip', '', () => {});
+    await wait(80);
+    assert.strictEqual(held(state).length, 1,
+      'with no app at all the download must still be held, not dropped');
+    console.log('  ok  no app on either port still holds the download');
   }
 
   console.log('offline-queue: all passed');

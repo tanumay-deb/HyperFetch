@@ -5,7 +5,14 @@ const textEl = document.getElementById("statusText");
 const cta = document.getElementById("cta");
 
 function check() {
-  fetch("http://127.0.0.1:21456/ping")
+  // Both ports, same reason as the worker: an older app answers on 5000.
+  const tryPing = (ports) =>
+    ports.length === 0
+      ? Promise.reject(new Error("no app"))
+      : fetch(`http://127.0.0.1:${ports[0]}/ping`)
+          .then((r) => (r.ok ? r : Promise.reject(new Error("not ok"))))
+          .catch(() => tryPing(ports.slice(1)));
+  tryPing([21456, 5000])
     .then((r) => (r.ok ? r.json() : null))
     .then((j) => {
       if (j && j.status === "ok") {
