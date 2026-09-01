@@ -7,6 +7,19 @@ Qt, no display, and about a third less disk.
     python server.py                 run it
     python server.py --check         start, prove everything came up, exit 0
 
+    python server.py users           list the accounts
+    python server.py users add NAME  create one (asks for the password)
+    python server.py users passwd NAME
+    python server.py users disable NAME  /  enable NAME  /  remove NAME
+    python server.py invite          show the code
+    python server.py invite --new [--days N]
+    python server.py site on | off
+
+There is no settings window here, so account management is the command line.
+The desktop app deliberately does not offer it: a download manager is not a
+hosting service, and mixing the two is how somebody publishes a machine they
+did not mean to.
+
 What it does NOT do, deliberately:
 
 - It never starts a tunnel. Publishing a machine to the internet should be a
@@ -85,7 +98,119 @@ def _state_saver(queue, every=30.0):
     threading.Thread(target=loop, name="hyperfetch-state", daemon=True).start()
 
 
+def _admin(argv):
+    """The `users`, `invite` and `site` subcommands. Returns an exit code.
+
+    Kept out of main()'s startup path: these run against the store and exit,
+    without building a queue or binding anything.
+    """
+    import getpass
+    import site_auth
+    import site_limits
+
+    cmd = argv[0]
+    rest = argv[1:]
+
+    if cmd == "site":
+        if rest and rest[0] in ("on", "off"):
+            site_auth.set_enabled(rest[0] == "on")
+        print("users site: %s" % ("on" if site_auth.is_enabled() else "off"))
+        if site_auth.is_enabled() and not site_auth.list_users():
+            print("  no accounts yet — `server.py users add NAME`")
+        return 0
+
+    if cmd == "invite":
+        if "--new" in rest:
+            site_auth.rotate_invite_code()
+        if "--days" in rest:
+            days = float(rest[rest.index("--days") + 1])
+            site_auth.set_invite_expiry(time.time() + days * 86400 if days else 0)
+        print("invite code: %s" % site_auth.invite_code())
+        exp = site_auth.invite_expiry()
+        if exp:
+            left = (exp - time.time()) / 86400.0
+            print("  %s" % ("expired" if left <= 0 else "expires in %.1f days" % left))
+        else:
+            print("  never expires")
+        return 0
+
+    if cmd != "users":
+        print("unknown command: %s" % cmd, file=sys.stderr)
+        return 2
+
+    action = rest[0] if rest else "list"
+    name = rest[1] if len(rest) > 1 else ""
+
+    if action == "list":
+        users = site_auth.list_users()
+        if not users:
+            print("no accounts")
+            return 0
+        _s, save_dir = _load_settings()
+        for u in users:
+            used = site_limits.usage_bytes(save_dir, u["username"])
+            print("%-20s %-9s %8s of %-8s %s"
+                  % (u["username"], u["status"],
+                     site_limits.human(used), site_limits.human(u["quota"]),
+                     u["email"] or ""))
+        return 0
+
+    if action not in ("list", "add", "passwd", "disable", "enable", "remove"):
+        print("unknown: users %s" % action, file=sys.stderr)
+        return 2
+    if not name:
+        print("which account?", file=sys.stderr)
+        return 2
+
+    if action == "add":
+        # Prompted rather than passed as an argument: a password on the command
+        # line ends up in shell history and in the process list.
+        pw = getpass.getpass("password for %s: " % name)
+        if pw != getpass.getpass("again: "):
+            print("they did not match", file=sys.stderr)
+            return 1
+        try:
+            u = site_auth.create_user_as_admin(name, "", pw)
+        except ValueError as e:
+            print(str(e), file=sys.stderr)
+            return 1
+        print("created %s" % u["username"])
+        return 0
+
+    u = site_auth.find_user(name)
+    if not u:
+        print("no account called %s" % name, file=sys.stderr)
+        return 1
+
+    if action == "passwd":
+        pw = getpass.getpass("new password for %s: " % u["username"])
+        try:
+            site_auth.set_password(u["id"], pw)
+        except ValueError as e:
+            print(str(e), file=sys.stderr)
+            return 1
+        print("changed — %s is signed out everywhere" % u["username"])
+        return 0
+    if action in ("disable", "enable"):
+        site_auth.set_status(u["id"], site_auth.STATUS_DISABLED
+                             if action == "disable" else site_auth.STATUS_ACTIVE)
+        print("%s is now %s" % (u["username"], action + "d"))
+        return 0
+    if action == "remove":
+        site_auth.delete_user(u["id"])
+        # Said out loud because it is the opposite of what a delete usually
+        # means, and the files are the expensive part.
+        print("removed %s — their downloads are still on disk" % u["username"])
+        return 0
+    return 2                        # unreachable: the verb was checked above
+
+
 def main(argv=None):
+    argv = list(sys.argv[1:] if argv is None else argv)
+    if argv and argv[0] in ("users", "invite", "site"):
+        utils.setup_logging()
+        return _admin(argv)
+
     ap = argparse.ArgumentParser(description="HyperFetch Server")
     ap.add_argument("--check", action="store_true",
                     help="start everything, report, and exit 0")

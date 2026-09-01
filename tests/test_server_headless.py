@@ -187,3 +187,97 @@ def test_a_missing_download_folder_falls_back_rather_than_crashing(tmp_path):
                     {"save_dir": r"Z:\gone\missing"})
     _settings, save_dir = server._load_settings()
     assert os.path.isdir(save_dir)
+
+
+# ---- account management, which has nowhere else to live --------------------
+def test_the_desktop_no_longer_offers_the_users_site():
+    """A download manager is not a hosting service. Mixing the two is how
+    somebody publishes a machine they did not mean to."""
+    import inspect
+    from gui2.dialogs import settings, settings_pages
+    assert "Users Site" not in settings._SECTIONS
+    assert not hasattr(settings_pages.PageBuilderMixin, "_p_users")
+    src = inspect.getsource(settings_pages)
+    assert "site_auth" not in src, "the desktop settings still reach the site store"
+
+
+def test_the_desktop_does_not_start_the_site():
+    import inspect
+    from gui2 import app
+    src = inspect.getsource(app)
+    assert "run_site_server" not in src
+    assert "site_server" not in src
+
+
+def test_the_renamed_section_is_there():
+    from gui2.dialogs import settings
+    assert "Browser Access" in settings._SECTIONS
+    assert len(settings._SECTIONS) == 8
+
+
+def test_accounts_can_be_managed_from_the_command_line(capsys):
+    """The panel is gone, so this is the only way. If it broke, a server would
+    be unmanageable."""
+    import server
+    import site_auth
+
+    assert server.main(["users"]) == 0
+    assert "no accounts" in capsys.readouterr().out
+
+    site_auth.create_user_as_admin("tanumay", "t@e.test", "correct horse battery")
+    assert server.main(["users"]) == 0
+    out = capsys.readouterr().out
+    assert "tanumay" in out and "active" in out
+
+    assert server.main(["users", "disable", "tanumay"]) == 0
+    assert site_auth.find_user("tanumay")["status"] == site_auth.STATUS_DISABLED
+    assert server.main(["users", "enable", "tanumay"]) == 0
+    assert site_auth.find_user("tanumay")["status"] == site_auth.STATUS_ACTIVE
+
+
+def test_removing_an_account_says_the_files_stay(capsys):
+    """The opposite of what a delete usually means, and the files are the
+    expensive part."""
+    import server
+    import site_auth
+    site_auth.create_user_as_admin("tanumay", "", "correct horse battery")
+    assert server.main(["users", "remove", "tanumay"]) == 0
+    assert "still on disk" in capsys.readouterr().out
+    assert site_auth.find_user("tanumay") is None
+
+
+def test_the_site_switch_and_invite_code_are_reachable(capsys):
+    import server
+    import site_auth
+    assert server.main(["site", "on"]) == 0
+    assert site_auth.is_enabled() is True
+    assert "no accounts yet" in capsys.readouterr().out
+
+    assert server.main(["invite"]) == 0
+    first = capsys.readouterr().out
+    assert site_auth.invite_code() in first
+    assert "never expires" in first
+
+    assert server.main(["invite", "--new", "--days", "7"]) == 0
+    assert "expires in" in capsys.readouterr().out
+
+    assert server.main(["site", "off"]) == 0
+    assert site_auth.is_enabled() is False
+
+
+def test_a_password_is_never_taken_as_an_argument():
+    """It would end up in shell history and in the process list."""
+    import inspect
+    import server
+    src = inspect.getsource(server._admin)
+    assert "getpass" in src
+    for flag in ("--password", "-p "):
+        assert flag not in src, flag
+
+
+def test_an_unknown_command_is_refused_rather_than_starting_a_server(capsys):
+    import server
+    # The verb is checked before the name, so a typo says what is actually
+    # wrong rather than complaining about an account nobody meant to name.
+    assert server.main(["users", "frobnicate", "x"]) == 2
+    assert "frobnicate" in capsys.readouterr().err

@@ -334,25 +334,6 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, QW
                        "auto-pairing will not work", PORT)
         threading.Thread(target=serve, daemon=True).start()
 
-        def serve_site():
-            """The public users site, on its own port.
-
-            Started even when the site is switched off: the app answers 503
-            with a maintenance page, which is what makes "server busy" possible
-            instead of a connection error. Loopback only — a tunnel is what
-            publishes it.
-            """
-            try:
-                from site_server import run_site_server, PORT as SITE_PORT
-            except ImportError:
-                return                      # site not present in this build
-            try:
-                run_site_server(self.queue, self.save_dir, SITE_PORT)
-            except OSError as e:
-                _log.warning("users site could not start on port %s (%s)",
-                             SITE_PORT, e)
-
-        threading.Thread(target=serve_site, daemon=True).start()
 
         # Retention runs on the queue's own thread rather than a QTimer: a
         # QTimer only ticks while a Qt event loop is running, which made

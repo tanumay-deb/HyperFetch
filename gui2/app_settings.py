@@ -124,7 +124,6 @@ class SettingsMixin:
         self.scheduler_start = v["sched_start"]
         self.scheduler_stop = v["sched_stop"]
         self._apply_web_settings(v)      # must run BEFORE the line below
-        self._apply_site_settings(v)
         self._extras.update(v)
         self._apply_network_settings()
         self._apply_throttle()           # throttle window may override the global limit
@@ -188,32 +187,6 @@ class SettingsMixin:
                 "Network access turns on when HyperFetch restarts."
                 if want_lan else
                 "The web client goes back to this PC only after a restart.")
-
-    def _apply_site_settings(self, v):
-        """Users Site page -> site_auth.json.
-
-        The accounts and the invite code are written by the panel as you touch
-        them, because a reset password that only takes effect on Save would be
-        a nasty surprise. Only the switch and the code's expiry come through
-        the values dict.
-        """
-        if "site_enabled" not in v:
-            return                       # dialog without the page
-        import site_auth
-        import time
-        site_auth.set_enabled(bool(v.get("site_enabled")))
-
-        days = int(v.get("invite_expiry_days", 0) or 0)
-        was = site_auth.invite_expiry()
-        if not days:
-            if was:
-                site_auth.set_invite_expiry(0)
-        else:
-            # Only restamped when the choice changes, so opening Settings and
-            # pressing Save does not quietly extend a code every time.
-            left_days = max(0.0, (was - time.time()) / 86400.0) if was else None
-            if left_days is None or abs(left_days - days) > 0.5:
-                site_auth.set_invite_expiry(time.time() + days * 86400)
 
     def _web_toast(self, kind, title, msg):
         try:

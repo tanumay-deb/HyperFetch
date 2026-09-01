@@ -74,11 +74,22 @@ cookie-signing keys.
 
 ### Turning it on
 
-1. **Settings -> Users Site**, switch it on.
-2. Create an account, or share the **invite code** with whoever needs one. The
-   code is what stops strangers signing up; give it an expiry if you are
-   sharing it around.
-3. On this machine the site is at `http://127.0.0.1:5001/`.
+The users site ships in **HyperFetch Server**, not in the desktop app. A
+download manager is not a hosting service, and keeping them apart is how you
+avoid publishing a machine you did not mean to.
+
+```
+HyperFetchServer site on
+HyperFetchServer users add alice        # prompts for the password
+HyperFetchServer invite --new --days 7  # a code to hand out
+HyperFetchServer                        # run it
+```
+
+`HyperFetchServer users` lists the accounts with what each is using.
+`users passwd`, `users disable`, `users enable` and `users remove` do what they
+say — `remove` deletes the login and leaves the files.
+
+On the machine itself the site is at `http://127.0.0.1:5001/`.
 
 ### Reaching it from outside
 
