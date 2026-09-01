@@ -190,8 +190,20 @@ def get_or_create_token(retries=6, delay=0.2):
                 tok = f.read().strip()
             if tok:
                 return tok
+            get_logger("utils").warning(
+                "pair_token at %s is empty — minting a new one, so the browser "
+                "extension will have to pair again", path)
             break                          # exists but empty -> mint below
         except FileNotFoundError:
+            # Only silent case worth keeping quiet is a genuine first run, and
+            # that is exactly what this distinguishes. Minting when the file was
+            # there a moment ago unpairs the extension, and used to do it with
+            # nothing written anywhere to say it had happened.
+            if os.path.isdir(os.path.dirname(path)):
+                get_logger("utils").warning(
+                    "pair_token is missing from an existing %s — minting a new "
+                    "one; the browser extension will have to pair again",
+                    os.path.dirname(path))
             break                          # genuinely absent -> mint below
         except OSError as e:
             if attempt == retries - 1:
@@ -210,6 +222,19 @@ def get_or_create_token(retries=6, delay=0.2):
             f.write(tok)
         try:
             os.chmod(path, 0o600)
+        except OSError:
+            pass
+        # Read it back. A write that reports success but leaves different bytes
+        # on disk is the difference between "the extension pairs once" and "the
+        # extension is unpaired again at every launch", and without this check
+        # the process happily carries on with a token nothing else can see.
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                if f.read().strip() != tok:
+                    get_logger("utils").error(
+                        "pair_token was written but %s does not contain it — "
+                        "this token dies with the process and the extension "
+                        "will need to pair again on every launch", path)
         except OSError:
             pass
     except OSError as e:

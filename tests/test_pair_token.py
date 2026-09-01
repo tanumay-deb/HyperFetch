@@ -5,6 +5,8 @@ it stored, the app answers 401, and the user is told to pair by hand. A brief
 lock on the file — an antivirus scan right after an installer replaces the app —
 used to be enough to cause exactly that.
 """
+import builtins
+import logging
 import os
 
 import pytest
@@ -88,3 +90,60 @@ def test_the_token_is_stable_across_calls(appdata):
     first = utils.get_or_create_token()
     assert utils.get_or_create_token() == first
     assert utils.get_or_create_token() == first
+
+
+# ---- an unexplained re-mint has to leave a trace ----
+def test_a_vanished_token_in_an_existing_dir_is_logged(tmp_path, monkeypatch, caplog):
+    """A first run mints in silence, which is right. Minting because the file
+    disappeared from a folder that already exists is a different thing: the
+    extension is now unpaired and nothing said so."""
+    monkeypatch.setattr(utils, "app_data_dir", lambda: str(tmp_path))
+    caplog.set_level(logging.WARNING, logger="hyperfetch.utils")
+    tok = utils.get_or_create_token()
+    assert tok
+    assert "pair" in caplog.text.lower(), caplog.text
+
+
+def test_an_empty_token_file_says_why_it_minted(tmp_path, monkeypatch, caplog):
+    monkeypatch.setattr(utils, "app_data_dir", lambda: str(tmp_path))
+    (tmp_path / "pair_token").write_text("   ", encoding="utf-8")
+    caplog.set_level(logging.WARNING, logger="hyperfetch.utils")
+    assert utils.get_or_create_token()
+    assert "empty" in caplog.text.lower(), caplog.text
+
+
+def test_a_token_that_does_not_survive_the_write_is_reported(tmp_path, monkeypatch, caplog):
+    """The failure that actually bit: the process holds a token, the file holds
+    a different one, and the extension 401s on every request with nothing
+    logged anywhere to explain it."""
+    monkeypatch.setattr(utils, "app_data_dir", lambda: str(tmp_path))
+    path = tmp_path / "pair_token"
+
+    real_open = builtins.open
+
+    def fake_open(p, mode="r", *a, **kw):
+        f = real_open(p, mode, *a, **kw)
+        if str(p) == str(path) and "w" in mode:
+            class _Liar:
+                def write(self, _): pass          # accepts, stores nothing
+                def __enter__(self): return self
+                def __exit__(self, *e): f.close(); return False
+            return _Liar()
+        return f
+
+    monkeypatch.setattr(builtins, "open", fake_open)
+    caplog.set_level(logging.ERROR, logger="hyperfetch.utils")
+    tok = utils.get_or_create_token()
+    monkeypatch.undo()
+
+    assert tok
+    assert "dies with the process" in caplog.text, caplog.text
+
+
+def test_an_existing_token_is_returned_without_any_noise(tmp_path, monkeypatch, caplog):
+    """The normal path must stay quiet, or the warnings above mean nothing."""
+    monkeypatch.setattr(utils, "app_data_dir", lambda: str(tmp_path))
+    (tmp_path / "pair_token").write_text("theRealToken", encoding="utf-8")
+    caplog.set_level(logging.WARNING, logger="hyperfetch.utils")
+    assert utils.get_or_create_token() == "theRealToken"
+    assert caplog.text == ""
