@@ -257,11 +257,16 @@ class YtDlpDownloader:
                     "403" in low or "unable to download video data" in low
                     or "requested format is not available" in low
                     or "nsig" in low or "player" in low):
+                # Careful with the wording: "no runtime on this machine" is
+                # often false. yt-dlp looks only for Deno unless told
+                # otherwise, so a machine with Node or Bun installed still
+                # lands here, and telling that user they have none sends them
+                # to install something they already have.
                 self.t.error = (
                     "YouTube needs a JavaScript runtime to work out its video "
-                    "URLs, and this machine has none — install Deno and put it "
-                    "on PATH, then try again. (The site answers 403 without "
-                    "one, which is what yt-dlp reported.)")
+                    "URLs, and yt-dlp only looks for Deno. Install Deno and "
+                    "put it on PATH, then try again. (Without one YouTube "
+                    "answers 403, which is what yt-dlp reported.)")
             elif ffdir is None and ("requested format is not available" in low
                                     or "ffmpeg" in low or "merging" in low):
                 self.t.error = ("This video has no combined audio+video stream — it needs "
