@@ -23,7 +23,11 @@ const tokenEl = document.getElementById("token");
 const saveTokenBtn = document.getElementById("saveToken");
 const pairStateEl = document.getElementById("pairState");
 
-let needsToken = false;
+// null = we have not reached the app and do not know. Starting at false meant
+// the failure path rendered "not required", so a popup that had just said "app
+// not running" also claimed pairing was fine. Two contradictory statements,
+// one of them invented.
+let needsToken = null;
 
 function setStatus(ok) {
   statusEl.innerHTML =
@@ -33,7 +37,13 @@ function setStatus(ok) {
 function refreshPairState() {
   chrome.storage.local.get({ token: "" }, (v) => {
     const have = !!v.token;
-    if (!needsToken) {
+    if (needsToken === null) {
+      // Say what is true: the app has not answered, so this is unknown. A
+      // saved token is still worth showing, because it is why the user is
+      // looking.
+      pairStateEl.textContent = have ? "saved — app unreachable" : "unknown";
+      pairStateEl.className = "muted";
+    } else if (!needsToken) {
       pairStateEl.textContent = "not required";
       pairStateEl.className = "muted";
     } else if (have) {
@@ -73,7 +83,7 @@ function refreshQueued() {
 }
 
 resolveApp()
-  .then((base) => fetch(`${base}/ping`))
+  .then((base) => { showBridge(); return fetch(`${base}/ping`); })
   .then((r) => r.json().then((j) => ({ ok: r.ok, j })))
   .then(({ ok, j }) => {
     setStatus(ok);
@@ -97,7 +107,7 @@ resolveApp()
       chrome.storage.local.set({ badgeCorner: j.badgeCorner });
     }
   })
-  .catch(() => { setStatus(false); refreshPairState(); refreshQueued(); });
+  .catch(() => { showBridge(); setStatus(false); refreshPairState(); refreshQueued(); });
 
 chrome.storage.local.get({ enabled: true, token: "" }, (v) => {
   enabledEl.checked = v.enabled;
@@ -109,20 +119,28 @@ enabledEl.addEventListener("change", () => {
 });
 
 
-// show the real extension version (read from the manifest, never hardcoded)
+// Shows the real extension version (read from the manifest, never hardcoded)
+// and the port actually in use.
+//
+// This has to run after resolveApp(), not at module scope: APP still holds the
+// preferred port until the probe comes back, so reading it here printed 21456
+// no matter which port answered — and the "update HyperFetch" prompt, the only
+// thing that moves anyone off the old port, never appeared at all.
 const verEl = document.getElementById("ver");
-if (verEl) {
-  // Names the port actually in use, and says so when it is the old one: the
-  // extension keeps working there, but only the newer app has the fixes.
-  const port = Number(new URL(APP).port);
-  verEl.textContent = `bridge ${new URL(APP).host} · v${chrome.runtime.getManifest().version}`;
-  if (port === LEGACY_PORT) {
+
+function showBridge() {
+  if (!verEl) return;
+  const version = chrome.runtime.getManifest().version;
+  verEl.textContent = `bridge ${new URL(APP).host} · v${version}`;
+  if (Number(new URL(APP).port) === LEGACY_PORT) {
     verEl.textContent += " — update HyperFetch";
     verEl.style.color = "#fbbf24";
     verEl.title = "This HyperFetch is an older version. Update it from the app "
                 + "to move off port 5000, which other programs often take.";
   }
 }
+
+showBridge();   // something sensible while the probe is in flight
 
 saveTokenBtn.addEventListener("click", () => {
   const tok = tokenEl.value.trim();
