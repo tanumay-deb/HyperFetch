@@ -16,8 +16,7 @@ param(
     [switch]$Sign,
     [string]$CertPath,
     [string]$CertPass,
-    [string]$Version,        # override the installer version (e.g. from a CI tag)
-    [switch]$Server           # build HyperFetchServer instead of the desktop app
+    [string]$Version         # override the installer version (e.g. from a CI tag)
 )
 
 $ErrorActionPreference = "Stop"
@@ -79,40 +78,6 @@ if (Test-Path $ffExe) {
     }
 }
 
-Write-Host "==> Building the users site (React + Vite)" -ForegroundColor Cyan
-$siteSrc = Join-Path $PSScriptRoot "site-src"
-if (Test-Path (Join-Path $siteSrc "package.json")) {
-    if (-not (Get-Command npm -ErrorAction SilentlyContinue)) {
-        # Not fatal: site_server serves a holding page when the bundle is
-        # absent, so a machine without Node still produces a working build --
-        # just one where the users site says it has not been built.
-        Write-Host "    npm not found - skipping. The users site will show a holding page." -ForegroundColor Yellow
-    } else {
-        Push-Location $siteSrc
-        # npm writes warnings to stderr as a matter of course, and PowerShell
-        # turns a native command's stderr into error records. Without this a
-        # routine "npm warn" aborts the whole build. Exit codes are what we
-        # actually check, below.
-        $prevEap = $ErrorActionPreference
-        $ErrorActionPreference = 'Continue'
-        try {
-            # `npm ci` when there is a lockfile, so a release build uses the
-            # exact versions that were tested rather than whatever resolves today.
-            if (Test-Path "package-lock.json") { npm ci --no-audit --no-fund }
-            else { npm install --no-audit --no-fund }
-            if ($LASTEXITCODE -ne 0) { throw "npm install failed" }
-            npm run build
-            if ($LASTEXITCODE -ne 0) { throw "the users site failed to build" }
-        } finally {
-            $ErrorActionPreference = $prevEap
-            Pop-Location
-        }
-        Write-Host "    site -> $(Join-Path $PSScriptRoot 'site')" -ForegroundColor Green
-    }
-} else {
-    Write-Host "    no site-src - skipping" -ForegroundColor DarkGray
-}
-
 # Building inside a synced folder does not work: OneDrive opens the freshly
 # written exe to upload it, and the next build cannot delete it — "Access is
 # denied" on HyperFetch.exe, from a process that is not the app. It also uploads
@@ -130,20 +95,13 @@ Write-Host "==> Cleaning previous build" -ForegroundColor Cyan
 Remove-Item -Recurse -Force build, dist -ErrorAction SilentlyContinue
 
 Write-Host "==> Building with PyInstaller" -ForegroundColor Cyan
-$spec = if ($Server) { "HyperFetchServer.spec" } else { "HyperFetch.spec" }
-Write-Host "    spec: $spec" -ForegroundColor DarkGray
-python -m PyInstaller --noconfirm --clean $spec
+python -m PyInstaller --noconfirm --clean "HyperFetch.spec"
 if ($LASTEXITCODE -ne 0) { throw "PyInstaller build failed" }
 
 $exe = "dist\HyperFetch\HyperFetch.exe"
 
 Write-Host "==> Smoke-testing the frozen binary" -ForegroundColor Cyan
-if ($Server) {
-    & "dist\HyperFetchServer\HyperFetchServer.exe" --check
-    if ($LASTEXITCODE -ne 0) { throw "the server build does not start" }
-} else {
-    & $exe --selftest
-}
+& $exe --selftest
 if ($LASTEXITCODE -ne 0) { throw "selftest failed" }
 
 function Invoke-Sign($target) {

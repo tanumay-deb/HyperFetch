@@ -63,76 +63,10 @@ jobs:
           npm install
           npm test
 
-  site:
-    name: users site (react + vite)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "20"
-      # Type errors and a broken bundle are the two ways this breaks the app
-      # silently, so both run before anything is packaged.
-      - name: Install
-        working-directory: site-src
-        run: npm install --no-audit --no-fund
-      - name: Type-check
-        working-directory: site-src
-        run: npx tsc -b --noEmit
-      - name: Build
-        working-directory: site-src
-        run: npm run build
-      - name: The bundle actually exists
-        run: |
-          test -f site/index.html
-          test -d site/assets
-          echo "site bundle: $(du -sh site | cut -f1)"
-
-  server:
-    name: build server (no Qt)
-    runs-on: windows-latest
-    needs: [test, site]
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "20"
-      - name: Install
-        run: |
-          pip install -r requirements.txt pyinstaller
-      - name: Build the users site
-        working-directory: site-src
-        run: |
-          npm install --no-audit --no-fund
-          npm run build
-      - name: Build the server
-        run: python -m PyInstaller --noconfirm --clean HyperFetchServer.spec
-      # The point of this build is that Qt is not in it. If PySide6 ever comes
-      # back the exe still builds and then fails at runtime, which is the worst
-      # way to find out.
-      - name: No Qt in the artifact
-        shell: bash
-        run: |
-          if ls dist/HyperFetchServer/_internal | grep -iE '^(pyside6|shiboken6)'; then
-            echo "Qt was bundled into the server build"; exit 1
-          fi
-          du -sh dist/HyperFetchServer
-      - name: It starts
-        run: |
-          .\dist\HyperFetchServer\HyperFetchServer.exe --check
-          if ($LASTEXITCODE -ne 0) { throw "the server build does not start" }
-      - uses: actions/upload-artifact@v4
-        with:
-          name: HyperFetchServer-windows
-          path: dist/HyperFetchServer
-
   package:
     name: build Windows app
     runs-on: windows-latest
-    needs: [test, site]
+    needs: [test]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

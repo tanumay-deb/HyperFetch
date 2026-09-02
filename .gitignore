@@ -14,7 +14,6 @@ dist/
 *.spec
 # ...but keep the hand-maintained PyInstaller specs (canonical build descriptors)
 !HyperFetch.spec
-!HyperFetchServer.spec
 !api_server.spec
 
 # Node / extension tests
@@ -23,7 +22,6 @@ chrome_ext/test/out.txt
 package-lock.json
 # ...except the site's, so a release build can use `npm ci` and get the
 # exact versions that were tested rather than whatever resolves today.
-!site-src/package-lock.json
 
 # Download manager runtime files
 *.hfdownload
@@ -48,3 +46,14 @@ site/
 # Server build output
 dist-server/
 build-server/
+
+# Build sidecars, fetched by build.ps1 rather than committed. ffmpeg alone is
+# 145 MB; a stray `git add -A` putting it in history is not recoverable without
+# a rewrite, so it is ignored rather than merely untracked.
+bin/ffmpeg.exe
+bin/aria2c.exe
+
+# Local test material, not part of the project.
+Sintel/
+filerow_lines.txt
+
