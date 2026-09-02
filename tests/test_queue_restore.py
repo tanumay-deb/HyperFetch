@@ -158,7 +158,10 @@ def test_housekeeping_without_a_sweeper_starts_no_thread(tmp_path):
     t = q.start_housekeeping(str(tmp_path), interval=0.05, delay=0.01)
     assert t is None, "a retention thread was started with nothing to sweep"
     time.sleep(0.15)
-    assert retention_threads() == before, "a retention thread started anyway"
+    # Subset, not equality: a retention thread belonging to another test may
+    # finish during this one, and that is not this test's business. The claim
+    # is only that no new one appeared.
+    assert not (retention_threads() - before), "a retention thread started anyway"
 
 
 def test_the_desktop_window_does_not_start_retention():
