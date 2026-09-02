@@ -90,6 +90,7 @@ def test_retention_runs_without_a_qt_event_loop(tmp_path, monkeypatch):
         time.sleep(0.02)
     assert calls, "the sweep never ran"
     assert calls[0] == str(tmp_path)
+    q.shutdown()                      # or it sweeps every 50ms for the rest of the run
 
 
 def test_a_failing_sweep_does_not_kill_the_thread(tmp_path, monkeypatch):
@@ -106,6 +107,7 @@ def test_a_failing_sweep_does_not_kill_the_thread(tmp_path, monkeypatch):
     while len(calls) < 2 and time.time() < deadline:
         time.sleep(0.02)
     assert len(calls) >= 2, "the thread died on the first failure"
+    q.shutdown()
 
 
 def test_the_first_sweep_does_not_wait_a_whole_day(tmp_path, monkeypatch):
@@ -144,12 +146,19 @@ def test_the_renamed_section_is_there():
 def test_housekeeping_without_a_sweeper_starts_no_thread(tmp_path):
     """The desktop has no site accounts and nothing to retain. It used to start
     a thread anyway, which woke every 24 hours to sweep nothing."""
-    before = threading.active_count()
+    # By name, not by count: the tests above leave their own retention threads
+    # running on a 50ms interval, so a count is really measuring the rest of
+    # the suite. What this needs to know is that no retention thread appeared.
+    def retention_threads():
+        return {t.ident for t in threading.enumerate()
+                if t.name == "hyperfetch-retention"}
+
+    before = retention_threads()
     q = QueueManager()
     t = q.start_housekeeping(str(tmp_path), interval=0.05, delay=0.01)
     assert t is None, "a retention thread was started with nothing to sweep"
     time.sleep(0.15)
-    assert threading.active_count() <= before + 1, "a thread was started anyway"
+    assert retention_threads() == before, "a retention thread started anyway"
 
 
 def test_the_desktop_window_does_not_start_retention():
