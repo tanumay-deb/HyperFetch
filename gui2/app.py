@@ -363,10 +363,10 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, QW
         threading.Thread(target=serve, daemon=True).start()
 
 
-        # Retention runs on the queue's own thread rather than a QTimer: a
-        # QTimer only ticks while a Qt event loop is running, which made
-        # retention a promise only the desktop app could keep.
-        self.queue.start_housekeeping(self.save_dir)
+        # No retention here. It exists for the users site's storage quotas,
+        # which a desktop install does not have — this used to start a thread
+        # that woke every 24 hours to sweep accounts that never existed, and
+        # the import behind it dragged the whole users site into the build.
 
     # ------------------------------------------------------------- UI
     def _build_ui(self):

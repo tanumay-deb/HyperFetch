@@ -84,14 +84,29 @@ class QueueManager:
         log.info("restored %d download(s), %d skipped", restored, skipped)
         return restored, skipped
 
-    def start_housekeeping(self, save_dir, interval=24 * 60 * 60, delay=30):
-        """Run the retention sweep on a plain thread, forever.
+    def start_housekeeping(self, save_dir, interval=24 * 60 * 60, delay=30,
+                           sweep=None):
+        """Run `sweep(self, save_dir)` on a plain thread, forever.
 
         A QTimer only ticks while a Qt event loop is running, so retention was
         a promise only the desktop app could keep. `delay` matters as much as
         `interval`: a machine that is only on for an hour a day would otherwise
         never reach the first sweep.
+
+        The sweeper is passed in rather than imported here, which is what keeps
+        the users site out of the desktop. This used to do `import site_limits`
+        inside the loop; PyInstaller follows a nested import perfectly well, so
+        the desktop build shipped the whole users site — accounts, quotas,
+        audit — while its spec said nothing about them and its test only read
+        the spec.
+
+        Returns None without starting anything when there is no sweeper, which
+        is the desktop case: no site accounts, nothing to retain, and no reason
+        to wake a thread every 24 hours to discover that.
         """
+        if sweep is None:
+            return None
+
         def loop():
             first = True
             while not self._stop:
@@ -100,8 +115,7 @@ class QueueManager:
                     return
                 first = False
                 try:
-                    import site_limits
-                    site_limits.sweep(self, save_dir)
+                    sweep(self, save_dir)
                 except Exception:
                     log.exception("retention sweep failed")
 

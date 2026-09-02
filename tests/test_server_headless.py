@@ -7,6 +7,7 @@ nothing ever expiring, silently. These tests are mostly about that.
 """
 import os
 import sys
+import threading
 import time
 
 import pytest
@@ -82,12 +83,9 @@ def test_retention_runs_without_a_qt_event_loop(tmp_path, monkeypatch):
     """A QTimer only ticks while Qt is running, which made retention a promise
     only the desktop app could keep."""
     calls = []
-    import site_limits
-    monkeypatch.setattr(site_limits, "sweep",
-                        lambda q, d, **kw: calls.append(d) or [])
-
     q = QueueManager()
-    q.start_housekeeping(str(tmp_path), interval=0.05, delay=0.01)
+    q.start_housekeeping(str(tmp_path), interval=0.05, delay=0.01,
+                         sweep=lambda qq, d, **kw: calls.append(d) or [])
     deadline = time.time() + 3
     while not calls and time.time() < deadline:
         time.sleep(0.02)
@@ -98,15 +96,13 @@ def test_retention_runs_without_a_qt_event_loop(tmp_path, monkeypatch):
 def test_a_failing_sweep_does_not_kill_the_thread(tmp_path, monkeypatch):
     """Retention runs forever unattended; one bad night must not stop it."""
     calls = []
-    import site_limits
 
-    def boom(q, d, **kw):
+    def boom(qq, d, **kw):
         calls.append(d)
         raise RuntimeError("disk on fire")
-    monkeypatch.setattr(site_limits, "sweep", boom)
 
     q = QueueManager()
-    q.start_housekeeping(str(tmp_path), interval=0.05, delay=0.01)
+    q.start_housekeeping(str(tmp_path), interval=0.05, delay=0.01, sweep=boom)
     deadline = time.time() + 3
     while len(calls) < 2 and time.time() < deadline:
         time.sleep(0.02)
@@ -281,3 +277,56 @@ def test_an_unknown_command_is_refused_rather_than_starting_a_server(capsys):
     # wrong rather than complaining about an account nobody meant to name.
     assert server.main(["users", "frobnicate", "x"]) == 2
     assert "frobnicate" in capsys.readouterr().err
+
+
+# ---- the seam between the free app and the paid server ---------------------
+# These exist so the users-site can be lifted out into its own repository. The
+# desktop must not reach it, and until now it did: queue_manager imported
+# site_limits inside the retention loop, PyInstaller followed that import, and
+# the shipped desktop binary carried the whole users-site with it.
+def test_the_queue_does_not_reach_into_the_users_site():
+    """The one edge that coupled the two halves. An import anywhere in here —
+    including inside a function, which is how the last one hid — puts the site
+    modules back in the desktop build."""
+    import ast, io as _io, os as _os
+    root = _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))
+    src = _io.open(_os.path.join(root, "queue_manager.py"), encoding="utf-8").read()
+    found = []
+    for node in ast.walk(ast.parse(src)):
+        if isinstance(node, ast.Import):
+            found += [a.name for a in node.names if a.name.startswith("site_")]
+        elif isinstance(node, ast.ImportFrom):
+            if node.module and node.module.startswith("site_"):
+                found.append(node.module)
+    assert not found, "queue_manager imports %s — the desktop build will ship it" % found
+
+
+def test_housekeeping_without_a_sweeper_starts_no_thread(tmp_path):
+    """The desktop has no site accounts and nothing to retain. It used to start
+    a thread anyway, which woke every 24 hours to sweep nothing."""
+    before = threading.active_count()
+    q = QueueManager()
+    t = q.start_housekeeping(str(tmp_path), interval=0.05, delay=0.01)
+    assert t is None, "a retention thread was started with nothing to sweep"
+    time.sleep(0.15)
+    assert threading.active_count() <= before + 1, "a thread was started anyway"
+
+
+def test_the_desktop_window_does_not_start_retention():
+    """Retention belongs to the server build. The desktop calling it is what
+    dragged site_limits into the frozen desktop app."""
+    import io as _io, os as _os
+    root = _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))
+    src = _io.open(_os.path.join(root, "gui2", "app.py"), encoding="utf-8").read()
+    assert "start_housekeeping" not in src, (
+        "gui2/app.py still starts the retention sweep")
+
+
+def test_the_server_passes_its_own_sweeper():
+    """The server is the half that has accounts to sweep, so it supplies the
+    function rather than the queue reaching for it."""
+    import io as _io, os as _os
+    root = _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))
+    src = _io.open(_os.path.join(root, "server.py"), encoding="utf-8").read()
+    assert "sweep=" in src and "site_limits" in src, (
+        "server.py no longer hands its sweeper to start_housekeeping")

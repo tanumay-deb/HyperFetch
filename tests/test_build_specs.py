@@ -45,13 +45,69 @@ def test_the_desktop_bundles_what_it_serves():
     assert "ffmpeg" in src, "yt-dlp merges need it for 1080p and DASH"
 
 
-def test_the_desktop_does_not_ship_the_users_site():
-    """It has no way to serve it any more, and shipping the bundle would
-    suggest otherwise."""
+# The users site is the paid half. These two tests are the difference between
+# believing the desktop excludes it and knowing.
+SITE_MODULES = ("site_server", "site_auth", "site_limits", "site_audit",
+                "site_tunnel")
+
+
+def test_the_desktop_spec_does_not_name_the_users_site():
+    """Necessary, and — on its own — nowhere near sufficient. This assertion
+    passed for the whole time the shipped binary contained the users site,
+    because PyInstaller does not need the spec's permission: it follows
+    imports, and one `import site_limits` nested inside a function in
+    queue_manager was enough. See the build test below, which is the one that
+    would have caught it."""
     src = _read(DESKTOP)
     assert "('site', 'site')" not in src
-    for mod in ("site_server", "site_auth", "site_limits", "site_audit"):
+    for mod in SITE_MODULES:
         assert mod not in src, mod
+
+
+def test_nothing_in_the_desktop_graph_imports_the_users_site():
+    """What the spec test above cannot see: the actual import graph.
+
+    PyInstaller bundles what it can reach. So the guarantee has to be that the
+    desktop's modules never reach the site at all — including from inside a
+    function body, which is exactly where the import that broke this hid.
+    """
+    import ast as _ast
+
+    seen, stack, edges = set(), ["main"], []
+    while stack:
+        mod = stack.pop()
+        if mod in seen:
+            continue
+        seen.add(mod)
+        path = os.path.join(ROOT, mod + ".py")
+        paths = [path] if os.path.exists(path) else []
+        pkg = os.path.join(ROOT, mod)
+        if os.path.isdir(pkg):
+            for r, _d, fs in os.walk(pkg):
+                if "__pycache__" in r:
+                    continue
+                paths += [os.path.join(r, f) for f in fs if f.endswith(".py")]
+        for p in paths:
+            try:
+                tree = _ast.parse(io.open(p, encoding="utf-8").read())
+            except (OSError, SyntaxError):
+                continue
+            for node in _ast.walk(tree):
+                names = []
+                if isinstance(node, _ast.Import):
+                    names = [a.name.split(".")[0] for a in node.names]
+                elif isinstance(node, _ast.ImportFrom) and node.module and not node.level:
+                    names = [node.module.split(".")[0]]
+                for n in names:
+                    if n in SITE_MODULES:
+                        edges.append("%s -> %s" % (os.path.relpath(p, ROOT), n))
+                    elif (os.path.exists(os.path.join(ROOT, n + ".py"))
+                          or os.path.isdir(os.path.join(ROOT, n))):
+                        stack.append(n)
+
+    assert not edges, (
+        "the desktop reaches the users site, so PyInstaller will bundle it: "
+        + "; ".join(edges))
 
 
 def test_the_server_ships_the_site_and_its_modules():

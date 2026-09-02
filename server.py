@@ -75,7 +75,11 @@ def build(save_dir=None, settings=None):
     restored, skipped = q.restore(utils.load_json(state, []))
     log.info("restored %d download(s), %d skipped", restored, skipped)
 
-    q.start_housekeeping(save_dir)
+    # The server is the half with accounts, so it supplies the sweeper. The
+    # queue no longer reaches for site_limits itself — that import is what put
+    # the users site inside the desktop build.
+    import site_limits
+    q.start_housekeeping(save_dir, sweep=site_limits.sweep)
     return q, save_dir
 
 
