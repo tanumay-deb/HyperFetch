@@ -1425,11 +1425,29 @@ class TorrentDownloader:
                         continue
                 archive_metadata(self.t, out_dir)
                 if not top and self.t.downloaded == 0:
-                    # never reached the payload and never saw a peer: a cold
-                    # swarm, not a broken torrent — stay resumable
+                    # never reached the payload and never saw a peer. Usually a
+                    # cold swarm — but only say so when aria2 had nothing to
+                    # say, because it often did. "Errors occurred while binding
+                    # port" reads as a dead torrent under the old wording, and
+                    # sends somebody hunting for seeders when the real problem
+                    # is a listen port this machine will not let anything bind.
                     self.t.status = T.PAUSED
-                    self.t.error = ("No peers found yet — the swarm may be offline "
-                                    "or still waking up. Resume to try again.")
+                    low = (msg or "").lower()
+                    if "binding port" in low or "bind" in low and "port" in low:
+                        self.t.error = (
+                            "Could not open the BitTorrent port (%d). Another "
+                            "program may hold it, or Windows may have reserved "
+                            "it — check `netsh int ipv4 show excludedportrange "
+                            "protocol=tcp` and set a different port."
+                            % listen_port())
+                    elif msg:
+                        self.t.error = (explain_failure(msg, self.t.save_path)
+                                        or "No peers yet — %s. Resume to try "
+                                           "again." % msg)
+                    else:
+                        self.t.error = ("No peers found yet — the swarm may be "
+                                        "offline or still waking up. Resume to "
+                                        "try again.")
                 else:
                     self.t.status = T.ERROR
                     if msg:
