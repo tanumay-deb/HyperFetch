@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>HyperFetch — Privacy Policy</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 48px 20px 90px;
+    background: radial-gradient(900px 600px at 30% 0%, #1d1738 0%, #12141c 55%, #0e1016 100%);
+    background-attachment: fixed;
+    color: #e6ebf3; font-family: 'Segoe UI', system-ui, sans-serif;
+    font-size: 15px; line-height: 1.65;
+  }
+  .wrap { max-width: 760px; margin: 0 auto; }
+  header { display: flex; align-items: center; gap: 14px; margin-bottom: 6px; }
+  .bolt {
+    width: 46px; height: 46px; border-radius: 13px; display: inline-flex;
+    align-items: center; justify-content: center; font-size: 24px; color: #fff;
+    background: linear-gradient(135deg, #6366f1, #8b5cf6); flex: 0 0 auto;
+  }
+  h1 { font-size: 27px; margin: 0; letter-spacing: -.02em; }
+  .sub { color: #7c889e; font-size: 13px; margin: 0 0 34px 60px; }
+  h2 {
+    font-size: 17px; margin: 36px 0 12px; padding-top: 22px;
+    border-top: 1px solid #262b38; letter-spacing: -.01em;
+  }
+  h2:first-of-type { border-top: 0; padding-top: 0; }
+  p { color: #aab4c8; margin: 0 0 13px; }
+  strong { color: #e6ebf3; font-weight: 600; }
+  ul { color: #aab4c8; padding-left: 20px; margin: 0 0 13px; }
+  li { margin-bottom: 8px; }
+  code {
+    font-family: ui-monospace, 'Cascadia Mono', Consolas, monospace;
+    font-size: .89em; background: #1c2029; border: 1px solid #2a2f3b;
+    border-radius: 5px; padding: 1px 6px; color: #c9d3e6;
+  }
+  .lede {
+    background: #191c25; border: 1px solid #2f3446; border-left: 3px solid #8b5cf6;
+    border-radius: 12px; padding: 18px 22px; margin: 0 0 30px;
+  }
+  .lede p { margin: 0; color: #cfd8e8; }
+  .box {
+    background: #171a22; border: 1px solid #262b38; border-radius: 12px;
+    padding: 16px 20px; margin: 0 0 13px;
+  }
+  .box p:last-child, .box ul:last-child { margin-bottom: 0; }
+  a { color: #9277ff; text-decoration: none; font-weight: 600; }
+  a:hover { text-decoration: underline; }
+  footer {
+    margin-top: 44px; padding-top: 22px; border-top: 1px solid #262b38;
+    color: #5b6678; font-size: 13px;
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <span class="bolt">⚡</span>
+    <h1>HyperFetch Privacy Policy</h1>
+  </header>
+  <p class="sub">Browser extension for Chrome and Edge · Last updated 3 September 2026</p>
+
+  <div class="lede">
+    <p><strong>HyperFetch does not collect, transmit, or store your personal
+    data on any server we control.</strong> The extension talks to one place
+    and one place only: the HyperFetch application running on your own
+    computer, at <code>127.0.0.1</code>. There is no HyperFetch account, no
+    analytics, no telemetry, and no remote service that receives anything
+    about you or what you download.</p>
+  </div>
+
+  <h2>What the extension handles, and why</h2>
+
+  <p>To hand a download to the desktop application, the extension passes it
+  the same information your browser would have used to fetch the file itself.
+  Without these, a download that requires a login would arrive as an error
+  page instead of the file you asked for.</p>
+
+  <div class="box">
+    <ul>
+      <li><strong>The download URL</strong> — the address of the file you
+      chose to download, and the address of the page you were on, so the
+      application can send a correct <code>Referer</code> to servers that
+      require one.</li>
+
+      <li><strong>Cookies for that specific address</strong> — read with
+      Chrome's <code>cookies</code> permission, scoped to the URL being
+      downloaded and nothing else. This is what lets a file behind a login
+      download successfully. Cookies for sites you are not downloading from
+      are never read.</li>
+
+      <li><strong>Your browser's user-agent string</strong> — so the
+      application identifies itself to the server the same way your browser
+      did.</li>
+
+      <li><strong>Page content, only to spot media</strong> — a content
+      script runs on pages to detect video streams and show the
+      "Download with HyperFetch" badge. It reads the page to find media
+      links. It does not read, store, or transmit anything else, and it sends
+      nothing anywhere until you click.</li>
+    </ul>
+  </div>
+
+  <p>All of it is sent to <code>http://127.0.0.1:21456</code> — a loopback
+  address, meaning your own machine. Loopback traffic never reaches your
+  network, your router, or the internet.</p>
+
+  <h2>What is stored, and where</h2>
+
+  <p>The extension keeps a small amount of state in Chrome's local extension
+  storage on your device:</p>
+
+  <div class="box">
+    <ul>
+      <li>A <strong>pairing token</strong> — a random value shared with your
+      local application so that website JavaScript cannot send downloads to
+      it.</li>
+      <li>The <strong>local address</strong> the application was found on.</li>
+      <li>Your <strong>toggle settings</strong> from the popup.</li>
+      <li>A short <strong>queue of pending downloads</strong>, held only while
+      the application is closed, and cleared once they are delivered.</li>
+    </ul>
+  </div>
+
+  <p>This never leaves your device. Uninstalling the extension removes it.
+  Cookies passed to the application are used for the transfer and are not
+  written to disk by it.</p>
+
+  <h2>What we never do</h2>
+
+  <div class="box">
+    <ul>
+      <li>We do not <strong>sell or transfer</strong> your data to third
+      parties.</li>
+      <li>We do not use your data for any purpose <strong>unrelated to the
+      single function</strong> of the extension: sending a download to your
+      own computer.</li>
+      <li>We do not use your data to determine <strong>creditworthiness</strong>
+      or for lending purposes.</li>
+      <li>We do not run <strong>analytics, tracking, advertising, or
+      fingerprinting</strong> of any kind.</li>
+      <li>We do not operate a server that receives your browsing history,
+      your downloads, or anything else about you.</li>
+    </ul>
+  </div>
+
+  <h2>Why the permissions are what they are</h2>
+
+  <div class="box">
+    <ul>
+      <li><code>cookies</code> — to download files that require you to be
+      signed in.</li>
+      <li><code>downloads</code> — to cancel a browser download once the
+      application has accepted it, so the file is not fetched twice. Only
+      when you switch that option on.</li>
+      <li><code>webRequest</code> — to notice video stream manifests
+      (<code>.m3u8</code>) that a browser cannot save on its own.</li>
+      <li><code>contextMenus</code> — the right-click "Download with
+      HyperFetch" item.</li>
+      <li><code>storage</code> — the local settings described above.</li>
+      <li><code>&lt;all_urls&gt;</code> — because a download can start from any
+      site. The permission is broad; what is done with it is not.</li>
+    </ul>
+  </div>
+
+  <h2>Children</h2>
+
+  <p>HyperFetch is a general-purpose download tool and is not directed at
+  children under 13. We do not knowingly collect information from anyone,
+  of any age, because we do not collect information at all.</p>
+
+  <h2>Changes to this policy</h2>
+
+  <p>If this policy changes, the revised version will be published at this
+  address with an updated date. Material changes to what the extension does
+  with your data will also appear in the extension's store listing.</p>
+
+  <h2>Contact</h2>
+
+  <p>Questions about this policy, or about what the extension does, can be
+  raised at
+  <a href="https://github.com/tanumay-deb/HyperFetch/issues">github.com/tanumay-deb/HyperFetch/issues</a>.</p>
+
+  <footer>
+    HyperFetch · <a href="https://tanumay-deb.github.io/HyperFetch/">Home</a>
+  </footer>
+
+</div>
+</body>
+</html>
