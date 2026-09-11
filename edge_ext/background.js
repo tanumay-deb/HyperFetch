@@ -1,6 +1,7 @@
-// Hand downloads to the local app (main.py / api_server.py) on explicit user
-// action only — the right-click menu and the in-page video badges. Browser
-// downloads are NOT auto-intercepted.
+// Hand downloads to the local app (main.py / api_server.py). Three ways in: the
+// right-click menu, the in-page video badges (content.js), and — while the
+// popup toggle is on — downloads the browser starts itself, for the file types
+// listed in the app under Settings -> Browser -> Auto Capture Links.
 // The app listened on 5000 until it moved to 21456 - 5000 is Flask's default
 // and collides with too much else. Chrome updates extensions within hours while
 // the desktop app is updated by hand, so both are in the wild for a while: try
@@ -88,12 +89,23 @@ chrome.storage.onChanged.addListener((ch) => {
 // which is also when they are actually valid.
 const PENDING_KEY = "pending";
 const PENDING_MAX = 50;              // a bounded buffer, not a download history
+// Held for an hour, then dropped. Most real downloads sit behind a link that
+// expires — a signed CDN URL, a session token — so replaying an old one does not
+// fetch the file. It fetches the server's "link expired" page, which the app
+// then saves under the file's name: a 431-byte "jwt:expired" page as an .exe, a
+// 55-byte "You have timed out" as a .zip. An hour covers "the app was closed
+// when I clicked" without replaying yesterday.
+const PENDING_TTL_MS = 60 * 60 * 1000;
+const fresh = (p) => Date.now() - (p.at || 0) < PENDING_TTL_MS;
 let flushing = false;
 
 function holdPending(item) {
   chrome.storage.local.get({ [PENDING_KEY]: [] }, (v) => {
-    const list = (v[PENDING_KEY] || []).filter((p) => p.url !== item.url);
-    list.push({ ...item, at: Date.now() });
+    const list = (v[PENDING_KEY] || [])
+      .filter((p) => p.url !== item.url && fresh(p));
+    // A replay that failed keeps the age it already had. Re-stamping it would
+    // let an expired link live for as long as the app kept blinking.
+    list.push({ ...item, at: item.at || Date.now() });
     // keep the NEWEST on overflow: an old queued click is the one the user has
     // most likely forgotten about
     chrome.storage.local.set(
@@ -105,13 +117,14 @@ function flushPending() {
   if (flushing) return;              // one drain at a time, or a replay that
   flushing = true;                   // fails re-queues into its own retry
   chrome.storage.local.get({ [PENDING_KEY]: [] }, (v) => {
-    const list = v[PENDING_KEY] || [];
-    if (!list.length) { flushing = false; return; }
+    const stored = v[PENDING_KEY] || [];
+    if (!stored.length) { flushing = false; return; }
+    const list = stored.filter(fresh);   // expired ones are dropped unsent
     // clear FIRST: each replay goes back through sendToApp, which re-holds it
     // if the app has gone away again mid-drain
     chrome.storage.local.set({ [PENDING_KEY]: [] }, () => {
       list.forEach((p) => sendToApp(p.url, p.filename, p.referrer,
-                                    () => {}, p.extra));
+                                    () => {}, { ...p.extra, heldAt: p.at }));
       flushing = false;
     });
   });
@@ -123,6 +136,8 @@ function flushPending() {
 // woken service worker never sends an empty one) so only this paired extension
 // can queue.
 function sendToApp(url, filename, referrer, done, extra) {
+  // noHold and heldAt steer the offline queue below; the app never sees them.
+  const { noHold, heldAt, ...wire } = extra || {};
   getToken().then((token) => {
     chrome.cookies.getAll({ url }, (cookies) => {
       ignoreErr();
@@ -137,7 +152,7 @@ function sendToApp(url, filename, referrer, done, extra) {
           referrer: referrer || "",
           userAgent: navigator.userAgent,
           token: tok
-        }, extra || {}))
+        }, wire))
       }));
       post(token)
         .then((r) => {
@@ -167,16 +182,19 @@ function sendToApp(url, filename, referrer, done, extra) {
           // of dropping it: a click that vanished because the app happened to
           // be closed is the most annoying way to lose one.
           //
-          // A capture is the exception. onCreated only cancels the browser's
-          // download once the app has accepted it, so when the app is closed
-          // the browser keeps the file and there is nothing to rescue. Holding
-          // it meant the next launch replayed the queue and the app fetched a
-          // second copy of something already sitting in the Downloads folder.
-          // Only an explicit request — right-click, the video badge, grab
-          // links — has no fallback and is worth keeping.
-          if (!(extra && extra.auto)) {
+          // Two exceptions, both because the browser ends up with the file
+          // anyway — and holding it too meant the next launch replayed the
+          // queue and the app fetched a second copy of something already in
+          // the Downloads folder:
+          //   - a capture (auto): the browser's own download was only paused
+          //     while we asked, and carries on as soon as we let go of it;
+          //   - a send whose page falls back to the browser (noHold): content.js
+          //     opens the file itself when this fails.
+          // Only an explicit request with no fallback — right-click, grab links,
+          // a video stream the browser cannot save — is worth keeping.
+          if (!wire.auto && !noHold) {
             holdPending({ url, filename: filename || "", referrer: referrer || "",
-                          extra: extra || {} });
+                          extra: wire, at: heldAt });
           }
           done(false, 0, {});
         });
@@ -184,11 +202,9 @@ function sendToApp(url, filename, referrer, done, extra) {
   });
 }
 
-// Manual capture only — nothing is auto-intercepted. A download reaches the app
-// in exactly two ways, both explicit user actions: the right-click
-// "Download with HyperFetch" menu item (below) and the in-page video badges
-// (content.js). Browser-initiated downloads are left entirely to the browser,
-// so re-requested or already-downloaded files never trigger a surprise dialog.
+// The right-click menu. One of three ways a download reaches the app; the other
+// two are the in-page video badges (content.js) and the browser-download
+// capture further down.
 chrome.runtime.onInstalled.addListener((details) => {
   // first install (not updates): open the bundled welcome/onboarding page —
   // it live-checks for the desktop app and walks through the 3 steps
@@ -320,39 +336,82 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
   if (msg && msg.type === "PENDING_COUNT") {
     chrome.storage.local.get({ [PENDING_KEY]: [] },
-      (v) => sendResponse({ count: (v[PENDING_KEY] || []).length }));
+      (v) => sendResponse({ count: (v[PENDING_KEY] || []).filter(fresh).length }));
     return true;
   }
   if (msg && msg.type === "DOWNLOAD_URL") {
     const ref = sender && sender.tab ? sender.tab.url : "";
+    // hold:false is the page saying it will open the file in the browser itself
+    // if this fails. Holding it as well is how one click became two copies: the
+    // browser's straight away, and the app's when the queue replayed.
     sendToApp(msg.url, msg.filename, ref,
-      (ok, status) => sendResponse({ ok, unpaired: status === 401 }));
+      (ok, status) => sendResponse({ ok, unpaired: status === 401 }),
+      msg.hold === false ? { noHold: true } : undefined);
     return true; // keep the message channel open for the async response
   }
 });
 
-// Capture browser-initiated downloads (clicking a Download button/link) and
-// route them to the app instead of Chrome. Respects the on/off toggle. The
-// Chrome download is cancelled ONLY after the app accepts it, so when the app
-// is offline/unpaired the browser download just proceeds normally — no capture
-// loop and no lost file. Already-downloaded files don't re-fire onCreated, so
-// this never resurrects the old "surprise dialog for old files" problem.
-if (chrome.downloads && chrome.downloads.onCreated) {
-  chrome.downloads.onCreated.addListener((item) => {
-    if (!captureEnabled) return;
-    const url = item.finalUrl || item.url || "";
-    if (!/^https?:\/\//i.test(url)) return;      // skip blob:/data:/extension URLs
-    const name = (item.filename || "").split(/[\\/]/).pop()
-              || url.split("?")[0].split("/").pop() || "";
-    // auto=true lets the app apply the Settings allowlist; it replies status
-    // "ignored" for file types not on the list, so we leave the browser download
-    // alone. Only cancel the browser's copy once the app has actually queued it.
-    sendToApp(url, name, "", (ok, status, body) => {
-      if (ok && body && body.status === "queued") chrome.downloads.cancel(item.id, () => {
-        ignoreErr();
-        chrome.downloads.erase({ id: item.id }, ignoreErr);
+// Capture browser-initiated downloads (clicking a Download button or link) and
+// route them to the app instead of Chrome, for the file types the app lists.
+//
+// onDeterminingFilename, not onCreated. onCreated fires before Chrome has named
+// the file, so the only thing to judge its type by was the URL — and most real
+// downloads end on a redirect with no extension in it: a GitHub release
+// (release-assets.githubusercontent.com/.../86bf6e94-...), a signed CDN link, a
+// FileDownload?token=. The app saw no extension, answered "ignored", and Chrome
+// named the file setup.exe a moment later. By this event Chrome has read the
+// name from the server's headers, so the type the app judges is the real one.
+//
+// It also closes a race. Chrome holds the download here until suggest() is
+// called, so nothing is saved while the app decides. onCreated ran alongside
+// the transfer, and a small fast file could finish in Chrome before the cancel
+// arrived — one copy in Chrome, another in the app.
+//
+// Every path must call suggest() exactly once, and soon, because the download
+// waits for it. A closed app fails at once (nothing is listening), and
+// HANDOFF_WAIT_MS caps a slow one — after which the file just stays with Chrome.
+const HANDOFF_WAIT_MS = 1500;
+
+if (chrome.downloads && chrome.downloads.onDeterminingFilename) {
+  chrome.downloads.onDeterminingFilename.addListener((item, suggest) => {
+    let released = false;
+    let timer = null;
+    const release = () => {
+      if (released) return;
+      released = true;
+      clearTimeout(timer);
+      try { suggest(); } catch (e) { /* the download is already gone */ }
+    };
+    try {
+      const url = item.finalUrl || item.url || "";
+      if (!/^https?:\/\//i.test(url)) { release(); return; }  // blob:, data:, file:
+      const name = (item.filename || "").split(/[\\/]/).pop()
+                || url.split("?")[0].split("/").pop() || "";
+      timer = setTimeout(release, HANDOFF_WAIT_MS);
+      // The toggle is read fresh: this event is what wakes the worker, and the
+      // cached global may not have been hydrated yet.
+      chrome.storage.local.get({ enabled: true }, ({ enabled }) => {
+        if (!enabled) { release(); return; }
+        // auto=true lets the app apply its file-type list; it answers "ignored"
+        // for anything not on it, and the download goes back to Chrome.
+        sendToApp(url, name, item.referrer || "", (ok, status, body) => {
+          if (ok && body && body.status === "queued") {
+            // Cancel before letting go. Releasing first would let Chrome start
+            // saving the file we are about to take away from it.
+            chrome.downloads.cancel(item.id, () => {
+              ignoreErr();
+              chrome.downloads.erase({ id: item.id }, ignoreErr);
+              release();
+            });
+          } else {
+            release();
+          }
+        }, { auto: true });
       });
-    }, { auto: true });
+    } catch (e) {
+      release();
+    }
+    return true;                     // suggest() comes later, asynchronously
   });
 }
 

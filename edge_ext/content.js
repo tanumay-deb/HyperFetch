@@ -1,7 +1,7 @@
-// Manual capture only: a file reaches the app when the user clicks an in-page
-// video badge (below) or the right-click "Download with HyperFetch" menu
-// (background.js). Normal link clicks are left to the browser — nothing is
-// auto-intercepted, so already-downloaded files never re-trigger a dialog.
+// The page side of the extension: the in-page video badges, the grab-links
+// panel, and magnet/.torrent clicks. Ordinary link clicks are left alone here —
+// capturing the downloads the browser starts is background.js's job, because
+// only the worker sees them, and only once Chrome has named the file.
 
 let captureEnabled = true;
 // media-sniffer panel globals (declared before the storage callbacks below,
@@ -47,19 +47,26 @@ function applyBadgeCorner() {
 
 function sendToApp(url, suggestedName = null, opts = {}) {
   const filename = suggestedName || url.split("/").pop().split("?")[0];
+  // If the app is offline, exactly one of two things happens — never both:
+  //   - the worker holds the download and the app fetches it when it is back, or
+  //   - this page opens the file in the browser, and nothing is held.
+  // Both at once is how one click became two copies: the browser's straight
+  // away, and the app's when the queue replayed on the next launch.
+  // A batch (quiet), an explicit noNavigate, and a video stream manifest never
+  // fall back to the browser — opening an .m3u8 saves the playlist text, not
+  // the video — so those are the ones held.
+  const manifest = /\.(m3u8|mpd)(?:[?#]|$)/i.test(url);
+  const fallBack = !opts.quiet && !opts.noNavigate && !manifest;
   // route via the background worker so the browser's cookies for this URL
   // are attached (needed for Google Drive and other login-gated downloads)
-  chrome.runtime.sendMessage({ type: "DOWNLOAD_URL", url, filename }, (res) => {
+  chrome.runtime.sendMessage({ type: "DOWNLOAD_URL", url, filename, hold: !fallBack }, (res) => {
     if (res && res.unpaired) {
       showToast("Pair the extension first — open its popup and paste the app token");
       return;
     }
     if (chrome.runtime.lastError || !res || !res.ok) {
-      // Offline. The worker has already HELD this download and will replay it
-      // when the app comes back, so navigating would download it twice — and
-      // for a batch send it would also throw the user off the page entirely.
       if (opts.quiet) return;
-      if (opts.noNavigate) {
+      if (!fallBack) {
         showToast("App offline — queued until HyperFetch is running");
         return;
       }

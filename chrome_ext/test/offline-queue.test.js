@@ -15,14 +15,17 @@ const assert = require('assert');
 const BG = fs.readFileSync(path.join(__dirname, '..', 'background.js'), 'utf8');
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
-function makeEnv({ online = true, port = 21456 } = {}) {
+function makeEnv({ online = true, port = 21456, reply = 'ok', delayMs = 0 } = {}) {
   const state = {
     stored: { token: 'tok', enabled: true },
     posts: [],           // download POSTs that reached the "app"
     online,
     menuHandler: null,
     msgHandler: null,
-    createdHandler: null,
+    filenameHandler: null,
+    order: [],           // 'cancel' / 'suggest', in the order they happened
+    reply,               // what the fake app answers a download with
+    delayMs,             // how long the fake app takes to answer one
     cancelled: [],       // download ids the extension took away from Chrome
     erased: [],
     port,                // which port the fake app listens on
@@ -56,9 +59,12 @@ function makeEnv({ online = true, port = 21456 } = {}) {
         return Promise.reject(new Error('nothing on that port'));
       }
       state.posts.push(JSON.parse(init.body));
-      return Promise.resolve({
-        ok: true, status: 200, json: () => Promise.resolve({ status: 'ok' }),
-      });
+      const answer = {
+        ok: true, status: 200, json: () => Promise.resolve({ status: state.reply }),
+      };
+      return state.delayMs
+        ? new Promise((r) => setTimeout(() => r(answer), state.delayMs))
+        : Promise.resolve(answer);
     },
     chrome: {
       runtime: {
@@ -91,10 +97,10 @@ function makeEnv({ online = true, port = 21456 } = {}) {
       },
       tabs: { create: () => {}, sendMessage: () => {} },
       downloads: {
-        // A real enough downloads API that the onCreated capture listener
-        // actually registers; without onCreated background.js skips it.
-        onCreated: { addListener: (cb) => { state.createdHandler = cb; } },
-        cancel: (id, cb) => { state.cancelled.push(id); cb && cb(); },
+        // A real enough downloads API that the capture listener registers;
+        // without onDeterminingFilename background.js skips it.
+        onDeterminingFilename: { addListener: (cb) => { state.filenameHandler = cb; } },
+        cancel: (id, cb) => { state.cancelled.push(id); state.order.push('cancel'); cb && cb(); },
         erase: (q, cb) => { state.erased.push(q.id); cb && cb(); },
       },
       webRequest: {
@@ -110,6 +116,19 @@ function makeEnv({ online = true, port = 21456 } = {}) {
 }
 
 const held = (state) => state.stored.pending || [];
+const HOUR = 60 * 60 * 1000;
+
+// Fire the browser-download capture the way Chrome does. Chrome waits for
+// suggest() before it saves anything, so every call is recorded: it has to
+// happen exactly once, whatever the app did.
+function capture(state, item) {
+  const calls = [];
+  const ret = state.filenameHandler(item, (...args) => {
+    calls.push(args);
+    state.order.push('suggest');
+  });
+  return { ret, calls };
+}
 
 (async () => {
   // ---- offline: the download is kept, not dropped --------------------------
@@ -246,7 +265,7 @@ const held = (state) => state.stored.pending || [];
   }
 
   // ---- a capture the browser already handled is NOT replayed --------------
-  // The bug this guards: with the app closed, onCreated fired, the POST
+  // The bug this guards: with the app closed, the capture fired, the POST
   // failed, and the item went into the queue anyway. Because the POST failed
   // the extension never cancelled Chrome's download, so Chrome kept the file —
   // and the next time the app started, the queue drained and the app fetched a
@@ -254,12 +273,16 @@ const held = (state) => state.stored.pending || [];
   {
     const { ctx, state } = makeEnv({ online: false });
     await wait(10);
-    assert.ok(state.createdHandler, 'the capture listener never registered');
+    assert.ok(state.filenameHandler, 'the capture listener never registered');
 
-    state.createdHandler({ id: 7, url: 'https://x/movie.mkv',
-                           filename: 'C:\Users\me\Downloads\movie.mkv' });
+    const { ret, calls } = capture(state, { id: 7, url: 'https://x/movie.mkv',
+                                            filename: 'C:\Users\me\Downloads\movie.mkv' });
+    assert.strictEqual(ret, true,
+      'the listener must return true, or Chrome ignores a suggest() that comes later');
     await wait(40);
 
+    assert.strictEqual(calls.length, 1,
+      'a closed app left the download waiting instead of handing it back to Chrome');
     assert.strictEqual(held(state).length, 0,
       'an auto-capture was queued for replay — the app will download a second ' +
       'copy of the file Chrome already has');
@@ -272,7 +295,7 @@ const held = (state) => state.stored.pending || [];
     await wait(50);
     assert.deepStrictEqual(state.posts, [],
       'the capture was replayed to the app on the next launch');
-    console.log('  ok  an offline capture is not replayed when the app returns');
+    console.log('  ok  an offline capture goes back to Chrome and is not replayed');
   }
 
   // ---- but an explicit request still is ------------------------------------
@@ -295,16 +318,195 @@ const held = (state) => state.stored.pending || [];
     console.log('  ok  an explicit download is still held and replayed');
   }
 
-  // ---- online, the capture is taken off Chrome as before -------------------
+  // ---- online, a queued capture is taken off Chrome, then let go -----------
   {
-    const { ctx, state } = makeEnv({ online: true });
+    const { state } = makeEnv({ online: true, reply: 'queued' });
     await wait(10);
-    state.createdHandler({ id: 9, url: 'https://x/taken.bin',
-                           filename: 'taken.bin' });
+    const { calls } = capture(state, { id: 9, url: 'https://x/taken.bin',
+                                       filename: 'taken.bin' });
     await wait(40);
     assert.deepStrictEqual(state.posts.map((p) => p.url), ['https://x/taken.bin'],
       'the capture never reached the app');
-    console.log('  ok  an online capture still reaches the app');
+    assert.deepStrictEqual(state.cancelled, [9], "Chrome's copy was not cancelled");
+    assert.deepStrictEqual(state.erased, [9], 'the cancelled entry was left in the list');
+    assert.strictEqual(calls.length, 1, 'suggest() must be called exactly once');
+    assert.deepStrictEqual(state.order, ['cancel', 'suggest'],
+      'released before cancelling — Chrome would start saving the file first');
+    console.log('  ok  a queued capture is cancelled in Chrome, then released');
+  }
+
+  // ---- a type the app does not take goes straight back to Chrome -----------
+  {
+    const { state } = makeEnv({ online: true, reply: 'ignored' });
+    await wait(10);
+    const { calls } = capture(state, { id: 10, url: 'https://x/page.html',
+                                       filename: 'page.html' });
+    await wait(40);
+    assert.strictEqual(state.posts.length, 1, 'the app was not asked');
+    assert.deepStrictEqual(state.cancelled, [], 'cancelled a download the app refused');
+    assert.strictEqual(calls.length, 1, 'the refused download was never released');
+    console.log('  ok  an ignored capture is left with Chrome');
+  }
+
+  // ---- the file is judged by the name Chrome resolved, not by the URL ------
+  // The reported bug. A GitHub release redirects to a signed URL with no
+  // extension in it, so judged by the URL a listed .exe was "not on the list".
+  {
+    const { state } = makeEnv({ online: true, reply: 'queued' });
+    await wait(10);
+    const signed = 'https://release-assets.githubusercontent.com/' +
+                   'github-production-release-asset/173333385/86bf6e94-f851?sig=abc';
+    capture(state, {
+      id: 11,
+      url: 'https://github.com/o/r/releases/download/v1.9.27/Salad-1.9.27.exe',
+      finalUrl: signed,
+      filename: 'Salad-1.9.27.exe',
+      referrer: 'https://github.com/o/r/releases',
+    });
+    await wait(40);
+    const sent = state.posts[0];
+    assert.ok(sent, 'nothing reached the app');
+    assert.strictEqual(sent.filename, 'Salad-1.9.27.exe',
+      "the app was given the URL's last segment instead of the real filename");
+    assert.strictEqual(sent.url, signed, 'the final URL is the one to fetch');
+    assert.strictEqual(sent.auto, true, 'a capture must let the app apply its list');
+    assert.strictEqual(sent.referrer, 'https://github.com/o/r/releases',
+      'the page the download came from was not passed on');
+    console.log('  ok  a capture is judged by the filename Chrome resolved');
+  }
+
+  // ---- a slow app never holds a download for long --------------------------
+  {
+    const cap = vm.runInContext('HANDOFF_WAIT_MS', makeEnv().ctx);
+    const { state } = makeEnv({ online: true, reply: 'queued', delayMs: cap + 250 });
+    await wait(10);
+    const { calls } = capture(state, { id: 12, url: 'https://x/slow.zip',
+                                       filename: 'slow.zip' });
+    await wait(100);
+    assert.strictEqual(calls.length, 0, 'released before the app had a chance to answer');
+    await wait(cap);
+    assert.strictEqual(calls.length, 1,
+      `the download was still waiting after ${cap} ms — a hung app stalls every download`);
+    // The app does take it in the end: Chrome's copy still has to go, and
+    // suggest() must not be called a second time.
+    await wait(400);
+    assert.deepStrictEqual(state.cancelled, [12],
+      'a late "queued" left the file in Chrome as well');
+    assert.strictEqual(calls.length, 1, 'suggest() was called twice');
+    console.log('  ok  a slow app is capped, and a late answer still takes the file');
+  }
+
+  // ---- with capture switched off, the app is not asked ---------------------
+  {
+    const { state } = makeEnv({ online: true });
+    state.stored.enabled = false;
+    await wait(10);
+    const { calls } = capture(state, { id: 13, url: 'https://x/a.zip', filename: 'a.zip' });
+    await wait(30);
+    assert.deepStrictEqual(state.posts, [], 'asked the app with capture turned off');
+    assert.strictEqual(calls.length, 1, 'the download was not handed back');
+    console.log('  ok  capture off hands every download straight back');
+  }
+
+  // ---- a blob: download is not the app's to fetch --------------------------
+  {
+    const { state } = makeEnv({ online: true });
+    await wait(10);
+    const { calls } = capture(state, { id: 14, url: 'blob:https://x/5f3c', filename: 'x.bin' });
+    assert.strictEqual(calls.length, 1, 'a blob: download was made to wait');
+    await wait(20);
+    assert.deepStrictEqual(state.posts, []);
+    console.log('  ok  a blob: download is released without asking the app');
+  }
+
+  // ---- an expired hold is dropped, not replayed ----------------------------
+  // Replaying an old signed link fetches the "link expired" page, and the app
+  // saves that under the file's name.
+  {
+    const { ctx, state } = makeEnv({ online: false });
+    await wait(10);
+    ctx.sendToApp('https://x/old.exe', 'old.exe', '', () => {});
+    await wait(30);
+    state.stored.pending[0].at = Date.now() - 2 * HOUR;
+    state.online = true;
+    ctx.flushPending();
+    await wait(50);
+    assert.deepStrictEqual(state.posts, [], 'an expired download was replayed');
+    assert.strictEqual(held(state).length, 0, 'the expired download was left in storage');
+    console.log('  ok  a download held for over an hour is dropped unsent');
+  }
+
+  // ---- the popup's count leaves out expired holds --------------------------
+  {
+    const { state } = makeEnv({ online: false });
+    await wait(10);
+    state.stored.pending = [
+      { url: 'https://x/stale.zip', filename: 'stale.zip', at: Date.now() - 2 * HOUR },
+      { url: 'https://x/live.zip', filename: 'live.zip', at: Date.now() },
+    ];
+    let reply = null;
+    state.msgHandler({ type: 'PENDING_COUNT' }, {}, (r) => { reply = r; });
+    await wait(20);
+    assert.strictEqual(reply && reply.count, 1, 'counted a download that will never be sent');
+    console.log('  ok  PENDING_COUNT leaves out expired holds');
+  }
+
+  // ---- a failed replay keeps its age ---------------------------------------
+  // Otherwise every blip of the app re-stamps it, and an expired link lives on.
+  {
+    const { ctx, state } = makeEnv({ online: false });
+    await wait(10);
+    const then = Date.now() - 50 * 60 * 1000;          // fifty minutes ago
+    state.stored.pending = [{ url: 'https://x/a.zip', filename: 'a.zip',
+                              referrer: '', extra: {}, at: then }];
+    ctx.flushPending();                                 // still offline
+    await wait(50);
+    assert.strictEqual(held(state).length, 1, 'the failed replay was dropped');
+    assert.strictEqual(held(state)[0].at, then,
+      'a failed replay was re-stamped as new, so it would never expire');
+    console.log('  ok  a failed replay keeps the age it had');
+  }
+
+  // ---- a page that falls back to the browser is not also held --------------
+  // The overlay's offline path opens the file in the browser. Holding it as
+  // well meant a second copy from the app on the next launch.
+  {
+    const { state } = makeEnv({ online: false });
+    await wait(10);
+    state.msgHandler({ type: 'DOWNLOAD_URL', url: 'https://x/clip.mp4',
+                       filename: 'clip.mp4', hold: false },
+                     { tab: { url: 'https://x/watch' } }, () => {});
+    await wait(40);
+    assert.strictEqual(held(state).length, 0,
+      'held a download the page was already opening in the browser');
+
+    state.msgHandler({ type: 'DOWNLOAD_URL', url: 'https://x/stream.m3u8',
+                       filename: 'stream.m3u8', hold: true },
+                     { tab: { url: 'https://x/watch' } }, () => {});
+    await wait(40);
+    assert.deepStrictEqual(Array.from(held(state), (p) => p.url), ['https://x/stream.m3u8'],
+      'a download the browser cannot fall back on was dropped');
+    console.log('  ok  only a send with no browser fallback is held');
+  }
+
+  // ---- the queue's own bookkeeping never reaches the app -------------------
+  {
+    const { ctx, state } = makeEnv({ online: false });
+    await wait(10);
+    ctx.sendToApp('https://x/a.zip', 'a.zip', '', () => {});
+    await wait(30);
+    state.online = true;
+    ctx.flushPending();
+    state.msgHandler({ type: 'DOWNLOAD_URL', url: 'https://x/b.mp4',
+                       filename: 'b.mp4', hold: false }, { tab: { url: 'https://x/' } },
+                     () => {});
+    await wait(60);
+    assert.strictEqual(state.posts.length, 2);
+    for (const p of state.posts) {
+      assert.ok(!('heldAt' in p) && !('noHold' in p),
+        "sent the offline queue's private fields to the app");
+    }
+    console.log('  ok  queue bookkeeping is not sent to the app');
   }
 
   // ---- the port move must not strand users on an older app ---------------
