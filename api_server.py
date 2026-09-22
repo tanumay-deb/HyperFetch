@@ -44,11 +44,18 @@ import web_auth
 PORT = 21456
 log = logging.getLogger("hyperfetch.server")
 
-# Extension ids trusted to auto-pair (read the token via /pair). Only the
-# published listings belong here — the Chrome Web Store id (and the Edge Add-ons
-# id once published). Unpacked/dev loads get a random id and fall back to the
-# manual copy-paste in the popup.
-TRUSTED_EXT_IDS = {"finojjembpabfbincabngboedegokdlm"}      # Chrome Web Store
+# Extension ids trusted to auto-pair (read the token via /pair). One per store:
+# each store gives the same package its own id, so an Edge install is a
+# different extension as far as this check goes, and a store left out here
+# leaves every one of its users unable to pair. Unpacked/dev loads get a random
+# id and fall back to the manual copy-paste in the popup.
+#
+# Every id listed can read the pairing token, so only published listings belong
+# here. tests/test_api_server.py pins the set.
+TRUSTED_EXT_IDS = {
+    "finojjembpabfbincabngboedegokdlm",   # Chrome Web Store
+    "ebgbghogfnompbkhihmaohhdehkdkcjj",   # Microsoft Edge Add-ons
+}
 
 
 LOOPBACK_ADDRS = {"127.0.0.1", "::1", "::ffff:127.0.0.1"}

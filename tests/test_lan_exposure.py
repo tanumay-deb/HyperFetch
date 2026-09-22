@@ -22,7 +22,9 @@ from api_server import create_app, TRUSTED_EXT_IDS, is_loopback
 
 
 LAN = "192.168.1.50"
-GOOD_ORIGIN = "chrome-extension://" + next(iter(TRUSTED_EXT_IDS))
+# Any listed id will do. min() rather than next(iter()) so the choice does not
+# change from run to run now that there is more than one.
+GOOD_ORIGIN = "chrome-extension://" + min(TRUSTED_EXT_IDS)
 
 
 @pytest.fixture

@@ -135,10 +135,39 @@ def test_probe_requires_token(tmp_path):
     assert c.post("/probe", json={"url": "https://x/m.m3u8"}).status_code == 401
 
 
-# ---- auto-pair: /pair serves the token only to the trusted extension id ----
+# ---- auto-pair: /pair serves the token only to the published listings ----
 import api_server
 
-_OFFICIAL = "chrome-extension://" + next(iter(api_server.TRUSTED_EXT_IDS))
+# One id per store. Each store gives the same package its own id, so a listing
+# missing from TRUSTED_EXT_IDS leaves every user of that store unable to pair.
+STORE_IDS = {
+    "chrome": "finojjembpabfbincabngboedegokdlm",   # Chrome Web Store
+    "edge": "ebgbghogfnompbkhihmaohhdehkdkcjj",     # Microsoft Edge Add-ons
+}
+_OFFICIAL = "chrome-extension://" + STORE_IDS["chrome"]
+
+
+def test_only_the_published_listings_are_trusted():
+    """Every trusted id can read the pairing token, and the token unlocks
+    /download. The set must be exactly the store listings: anything added to it
+    is being handed the token."""
+    assert api_server.TRUSTED_EXT_IDS == set(STORE_IDS.values())
+
+
+@pytest.mark.parametrize("store", sorted(STORE_IDS))
+def test_pair_serves_token_to_every_store_listing(tmp_path, store):
+    """Edge sends its requests as chrome-extension://<its own id>. Until that id
+    was listed, the Edge extension found the app but could never pair, so
+    nothing sent from Edge ever reached it."""
+    origin = "chrome-extension://" + STORE_IDS[store]
+    c = create_app(_FakeQueue(), str(tmp_path), pending=None, token="SECRET").test_client()
+    r = c.get("/pair", headers={"Origin": origin})
+    assert r.status_code == 200
+    assert r.get_json()["token"] == "SECRET"
+    assert r.headers.get("Access-Control-Allow-Origin") == origin
+    pre = c.open("/pair", method="OPTIONS", headers={"Origin": origin})
+    assert pre.status_code == 200
+    assert pre.headers.get("Access-Control-Allow-Origin") == origin
 
 
 def test_pair_serves_token_to_official_extension(tmp_path):
