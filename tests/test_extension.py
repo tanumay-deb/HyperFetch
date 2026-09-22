@@ -32,12 +32,21 @@ def test_icons_exist():
 def test_capture_is_toggle_gated():
     """Capture routes browser downloads (Download buttons) and magnet/.torrent
     clicks to the app, but is gated by the on/off toggle; the right-click menu
-    stays. Already-downloaded files don't re-fire onCreated, so the old
-    surprise-dialog problem doesn't return."""
+    stays. The browser-download capture runs on onDeterminingFilename, once
+    Chrome has named the file, so its type is judged by the real name rather
+    than by a redirect URL. Like onCreated before it, it does not fire for files
+    already downloaded, so the old surprise-dialog problem stays gone.
+
+    chrome_ext/test/offline-queue.test.js drives the listener itself; this only
+    checks it is wired up."""
     bg = _read("background.js")
     ct = _read("content.js")
-    assert "chrome.downloads.onCreated" in bg                # browser-download capture
-    assert "captureEnabled" in bg                            # ...gated by the toggle
+    listener = "chrome.downloads.onDeterminingFilename.addListener"
+    assert listener in bg                                    # browser-download capture
+    start = bg.index(listener)
+    capture = bg[start:bg.index("\n}\n", start)]
+    assert "enabled" in capture                              # ...gated by the toggle
+    assert "suggest()" in capture                            # ...and always released
     assert 'document.addEventListener("click"' in ct         # magnet/.torrent click capture
     assert "magnet:" in ct
     assert "chrome.contextMenus.create" in bg                # manual menu still registered

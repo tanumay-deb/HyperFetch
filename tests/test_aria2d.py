@@ -208,14 +208,23 @@ def test_rpc_follows_magnet_metadata_to_the_payload(tmp_path, monkeypatch):
     assert "[METADATA]" not in t.filename
 
 
-def test_rpc_cold_swarm_stays_resumable(tmp_path, monkeypatch):
+@pytest.mark.parametrize("aria2_says, expect", [
+    # aria2 gave no reason: the cold-swarm wording
+    ("", "No peers found yet"),
+    # aria2 gave one: it is passed on rather than guessed over
+    ("no peers", "no peers. Resume to try again"),
+    # a port this machine will not bind is not a dead swarm
+    ("Errors occurred while binding port", "Could not open the BitTorrent port"),
+])
+def test_rpc_cold_swarm_stays_resumable(tmp_path, monkeypatch, aria2_says, expect):
     """Same rule as the subprocess engine: never saw a peer or a payload means
-    a cold swarm, not a failure."""
+    a cold swarm, not a failure, so it pauses whatever aria2 said. What the
+    message says depends on whether aria2 gave a reason."""
     states = [{"status": "error", "completedLength": "0", "totalLength": "0",
-               "errorMessage": "no peers", "files": [{"path": "[METADATA]x"}]}]
+               "errorMessage": aria2_says, "files": [{"path": "[METADATA]x"}]}]
     t, _ = _drive(tmp_path, monkeypatch, states)
     assert t.status == T.PAUSED
-    assert "No peers found yet" in t.error
+    assert expect in t.error
 
 
 def test_rpc_real_failure_errors(tmp_path, monkeypatch):
