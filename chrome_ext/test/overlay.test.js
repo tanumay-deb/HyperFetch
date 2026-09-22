@@ -33,6 +33,7 @@ function makeEnv({ openShadow = false } = {}) {
       onChanged: { addListener: () => {} },
     },
     runtime: {
+      id: 'hyperfetch-test',
       onMessage: { addListener: (cb) => { state.msgListener = cb; } },
       sendMessage: (m, cb) => { state.sent = m; cb && cb({ ok: true }); },
       lastError: null,

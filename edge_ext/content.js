@@ -45,7 +45,21 @@ function applyBadgeCorner() {
   w.style.right = h === "right" ? "20px" : "auto";
 }
 
+// After an update, the page script in tabs that were already open keeps
+// running, but it has lost its link to the extension: Chrome does not re-inject
+// into open tabs, and every chrome.* call from the old script throws "Extension
+// context invalidated". Only reloading the page fixes that, so the page says so
+// instead of a click doing nothing at all.
+const UPDATED_MSG = "HyperFetch was updated — reload this page to use it";
+function extensionGone() {
+  try { return !(chrome.runtime && chrome.runtime.id); } catch (e) { return true; }
+}
+
 function sendToApp(url, suggestedName = null, opts = {}) {
+  if (extensionGone()) {
+    if (!opts.quiet) showToast(UPDATED_MSG);
+    return;
+  }
   const filename = suggestedName || url.split("/").pop().split("?")[0];
   // If the app is offline, exactly one of two things happens — never both:
   //   - the worker holds the download and the app fetches it when it is back, or
@@ -59,23 +73,28 @@ function sendToApp(url, suggestedName = null, opts = {}) {
   const fallBack = !opts.quiet && !opts.noNavigate && !manifest;
   // route via the background worker so the browser's cookies for this URL
   // are attached (needed for Google Drive and other login-gated downloads)
-  chrome.runtime.sendMessage({ type: "DOWNLOAD_URL", url, filename, hold: !fallBack }, (res) => {
-    if (res && res.unpaired) {
-      showToast("Pair the extension first — open its popup and paste the app token");
-      return;
-    }
-    if (chrome.runtime.lastError || !res || !res.ok) {
-      if (opts.quiet) return;
-      if (!fallBack) {
-        showToast("App offline — queued until HyperFetch is running");
+  try {
+    chrome.runtime.sendMessage({ type: "DOWNLOAD_URL", url, filename, hold: !fallBack }, (res) => {
+      if (res && res.unpaired) {
+        showToast("Pair the extension first — open its popup and paste the app token");
         return;
       }
-      showToast("App offline — downloading in browser");
-      window.location.href = url;
-    } else if (!opts.quiet) {
-      showToast("Sent to Download Manager");
-    }
-  });
+      if (chrome.runtime.lastError || !res || !res.ok) {
+        if (opts.quiet) return;
+        if (!fallBack) {
+          showToast("App offline — queued until HyperFetch is running");
+          return;
+        }
+        showToast("App offline — downloading in browser");
+        window.location.href = url;
+      } else if (!opts.quiet) {
+        showToast("Sent to Download Manager");
+      }
+    });
+  } catch (e) {
+    // The extension went away between the check above and this call.
+    if (!opts.quiet) showToast(UPDATED_MSG);
+  }
 }
 
 // Capture clicks on magnet: / .torrent links so they go to HyperFetch only,
@@ -83,7 +102,10 @@ function sendToApp(url, suggestedName = null, opts = {}) {
 // click fits the manual-capture model; preventDefault stops the navigation that
 // would otherwise hand the magnet to the system handler.
 document.addEventListener("click", (e) => {
-  if (!captureEnabled) return;
+  // Once the extension has updated under this page nothing here can reach it,
+  // so the click is left to the browser, which can still hand a magnet to
+  // whatever the system has registered for it.
+  if (!captureEnabled || extensionGone()) return;
   const a = e.target && e.target.closest && e.target.closest("a[href]");
   if (!a) return;
   const href = a.href || "";
@@ -308,6 +330,8 @@ function showGrabPanel(items) {
   box.querySelector("#send").onclick = () => {
     const picked = boxes().filter((b) => b.checked).map((b) => items[+b.dataset.i]);
     close();
+    // A panel opened before an update outlives the extension it came from.
+    if (extensionGone()) { showToast(UPDATED_MSG); return; }
     // quiet: one toast for the batch, not twenty — and never a navigation
     picked.forEach((it) => sendToApp(it.url, it.name, { quiet: true }));
     showToast(`Sent ${picked.length} link${picked.length === 1 ? "" : "s"} to HyperFetch`);
@@ -502,7 +526,7 @@ function updatePanel() {
         const cx = r.left + r.width / 2, cy = r.top + r.height / 2;
         badgeCorner = (cy < window.innerHeight / 2 ? "top" : "bottom") + "-" +
                       (cx < window.innerWidth / 2 ? "left" : "right");
-        chrome.storage.local.set({ badgeCorner });
+        try { chrome.storage.local.set({ badgeCorner }); } catch (e) { /* updated under this page */ }
         applyBadgeCorner();
       };
       window.addEventListener("pointermove", move, true);

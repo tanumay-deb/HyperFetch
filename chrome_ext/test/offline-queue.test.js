@@ -1,5 +1,6 @@
 /**
- * Behavior tests for the offline download queue in background.js.
+ * Behavior tests for background.js: the offline download queue, the capture of
+ * downloads the browser starts, and applying an update.
  *
  * When the app is not running a download is held in chrome.storage.local and
  * replayed once the app answers again, so a click is never lost just because
@@ -15,7 +16,8 @@ const assert = require('assert');
 const BG = fs.readFileSync(path.join(__dirname, '..', 'background.js'), 'utf8');
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
-function makeEnv({ online = true, port = 21456, reply = 'ok', delayMs = 0 } = {}) {
+function makeEnv({ online = true, port = 21456, reply = 'ok', delayMs = 0,
+                   hang = false, patchSource = null } = {}) {
   const state = {
     stored: { token: 'tok', enabled: true },
     posts: [],           // download POSTs that reached the "app"
@@ -26,6 +28,9 @@ function makeEnv({ online = true, port = 21456, reply = 'ok', delayMs = 0 } = {}
     order: [],           // 'cancel' / 'suggest', in the order they happened
     reply,               // what the fake app answers a download with
     delayMs,             // how long the fake app takes to answer one
+    hang,                // the fake app takes a download and never answers
+    updateHandler: null, // background.js's onUpdateAvailable listener
+    reloads: 0,          // chrome.runtime.reload() calls
     cancelled: [],       // download ids the extension took away from Chrome
     erased: [],
     port,                // which port the fake app listens on
@@ -59,6 +64,7 @@ function makeEnv({ online = true, port = 21456, reply = 'ok', delayMs = 0 } = {}
         return Promise.reject(new Error('nothing on that port'));
       }
       state.posts.push(JSON.parse(init.body));
+      if (state.hang) return new Promise(() => {});
       const answer = {
         ok: true, status: 200, json: () => Promise.resolve({ status: state.reply }),
       };
@@ -74,6 +80,8 @@ function makeEnv({ online = true, port = 21456, reply = 'ok', delayMs = 0 } = {}
         onMessage: { addListener: (cb) => { state.msgHandler = cb; } },
         getURL: (p) => p,
         setUninstallURL: () => {},
+        onUpdateAvailable: { addListener: (cb) => { state.updateHandler = cb; } },
+        reload: () => { state.reloads++; state.order.push('reload'); },
       },
       storage: {
         local: {
@@ -111,7 +119,7 @@ function makeEnv({ online = true, port = 21456, reply = 'ok', delayMs = 0 } = {}
   };
   ctx.self = ctx;
   vm.createContext(ctx);
-  vm.runInContext(BG, ctx, { filename: 'background.js' });
+  vm.runInContext(patchSource ? patchSource(BG) : BG, ctx, { filename: 'background.js' });
   return { ctx, state };
 }
 
@@ -544,6 +552,105 @@ function capture(state, item) {
     assert.strictEqual(held(state).length, 1,
       'with no app at all the download must still be held, not dropped');
     console.log('  ok  no app on either port still holds the download');
+  }
+
+  // ---- applying an update ---------------------------------------------------
+  // Chrome only switches to a downloaded update when this worker stops, and the
+  // media sniffer keeps waking it, so the extension reloads onto an update
+  // itself — but only between handoffs.
+  {
+    const { state } = makeEnv({ online: true });
+    await wait(10);
+    assert.ok(state.updateHandler, 'no onUpdateAvailable listener was registered');
+    state.updateHandler({ version: '9.9.9' });
+    assert.strictEqual(state.reloads, 1, 'an idle worker did not reload onto the update');
+    console.log('  ok  an update is applied at once when nothing is in flight');
+  }
+
+  {
+    const { state } = makeEnv({ online: true, reply: 'queued', delayMs: 300 });
+    await wait(10);
+    const { calls } = capture(state, { id: 21, url: 'https://x/a.zip', filename: 'a.zip' });
+    state.updateHandler({ version: '9.9.9' });
+    await wait(100);
+    assert.strictEqual(state.reloads, 0, 'reloaded while a download was being handed over');
+    await wait(400);
+    assert.strictEqual(calls.length, 1, 'the download was not released exactly once');
+    assert.deepStrictEqual(state.cancelled, [21], "Chrome's copy was not cancelled");
+    assert.strictEqual(state.reloads, 1, 'the update was never applied after the handoff');
+    assert.deepStrictEqual(state.order, ['cancel', 'suggest', 'reload'],
+      'reloaded before the handoff had finished');
+    console.log('  ok  an update waits for a capture to finish, then applies');
+  }
+
+  {
+    const { ctx, state } = makeEnv({ online: true, delayMs: 200 });
+    await wait(10);
+    let reloadsWhenDone = null;
+    ctx.sendToApp('https://x/asked.zip', 'asked.zip', '', () => {
+      reloadsWhenDone = state.reloads;
+    });
+    state.updateHandler({ version: '9.9.9' });
+    await wait(80);
+    assert.strictEqual(state.reloads, 0, 'reloaded in the middle of an explicit send');
+    await wait(300);
+    assert.strictEqual(reloadsWhenDone, 0, 'the send was cut off by the reload');
+    assert.strictEqual(state.reloads, 1, 'the update was never applied after the send');
+    console.log('  ok  an update waits for an explicit send to finish');
+  }
+
+  {
+    const { ctx, state } = makeEnv({ online: false });
+    await wait(10);
+    ctx.sendToApp('https://x/later.zip', 'later.zip', '', () => {});
+    state.updateHandler({ version: '9.9.9' });
+    assert.strictEqual(state.reloads, 0);
+    await wait(60);
+    assert.strictEqual(state.reloads, 1, 'a failed send kept the update from applying');
+    assert.strictEqual(held(state).length, 1,
+      'the click was not held before the reload, so it would be lost');
+    console.log('  ok  a failed send is held first, then the update applies');
+  }
+
+  {
+    const { ctx, state } = makeEnv({ online: true });
+    await wait(10);
+    for (let i = 0; i < 3; i++) ctx.sendToApp(`https://x/${i}.zip`, `${i}.zip`, '', () => {});
+    capture(state, { id: 30, url: 'https://x/c.zip', filename: 'c.zip' });
+    await wait(60);
+    assert.strictEqual(state.reloads, 0, 'reloaded with no update waiting');
+    console.log('  ok  finishing work never reloads without an update');
+  }
+
+  {
+    assert.strictEqual(vm.runInContext('UPDATE_WAIT_MS', makeEnv().ctx), 60 * 1000,
+      'the backstop is meant to be a minute');
+    const { ctx, state } = makeEnv({
+      online: true, hang: true,
+      patchSource: (src) => {
+        const from = 'const UPDATE_WAIT_MS = 60 * 1000;';
+        assert.ok(src.includes(from), 'UPDATE_WAIT_MS changed shape - update this test');
+        return src.replace(from, 'const UPDATE_WAIT_MS = 150;');
+      },
+    });
+    await wait(10);
+    ctx.sendToApp('https://x/stuck.zip', 'stuck.zip', '', () => {});
+    state.updateHandler({ version: '9.9.9' });
+    await wait(60);
+    assert.strictEqual(state.reloads, 0, 'did not wait for the handoff at all');
+    await wait(200);
+    assert.strictEqual(state.reloads, 1, 'a wedged handoff held the update back for good');
+    console.log('  ok  a handoff that never ends cannot hold an update back');
+  }
+
+  {
+    const { state } = makeEnv({ online: true });
+    await wait(10);
+    state.updateHandler({ version: '9.9.8' });
+    state.updateHandler({ version: '9.9.9' });
+    await wait(20);
+    assert.strictEqual(state.reloads, 1, 'reloaded more than once');
+    console.log('  ok  repeated update events reload once');
   }
 
   console.log('offline-queue: all passed');

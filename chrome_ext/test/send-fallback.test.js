@@ -17,7 +17,7 @@ const assert = require('assert');
 const CONTENT = fs.readFileSync(path.join(__dirname, '..', 'content.js'), 'utf8');
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
-function makeEnv({ appOnline = false } = {}) {
+function makeEnv({ appOnline = false, gone = false, throwOnSend = false } = {}) {
   // jsdom does not implement navigation. It reports the attempt on the virtual
   // console instead, and that report is how these tests see the fallback fire.
   const virtualConsole = new VirtualConsole();
@@ -39,8 +39,12 @@ function makeEnv({ appOnline = false } = {}) {
       onChanged: { addListener: () => {} },
     },
     runtime: {
+      // A live page script always has an id. After an update the old script's
+      // chrome.runtime.id is gone, which is how content.js can tell.
+      id: gone ? undefined : 'hyperfetch-test',
       onMessage: { addListener: () => {} },
       sendMessage: (m, cb) => {
+        if (throwOnSend) throw new Error('Extension context invalidated.');
         if (m && m.type === 'DOWNLOAD_URL') state.sent.push(m);
         cb && cb({ ok: state.appOnline });
       },
@@ -54,7 +58,7 @@ function makeEnv({ appOnline = false } = {}) {
   const send = (...args) => vm.runInContext('sendToApp', ctx)(...args);
   const toasts = () => Array.from(win.document.body.querySelectorAll('div'))
     .map((d) => d.textContent)
-    .filter((t) => /offline|Sent to|Pair the extension/.test(t));
+    .filter((t) => /offline|Sent to|Pair the extension|reload this page/.test(t));
   return { win, state, send, toasts };
 }
 
@@ -128,6 +132,41 @@ async function test(name, fn) {
     await wait(20);
     assert.strictEqual(state.navigations, 0, 'navigated although the app took it');
     assert.ok(toasts().some((t) => /Sent to Download Manager/.test(t)));
+  });
+
+  await test('after an update, a send from an already-open page says to reload it', async () => {
+    const { state, send, toasts } = makeEnv({ appOnline: true, gone: true });
+    send('https://cdn.x/clip.mp4', 'clip.mp4');   // must not throw
+    await wait(20);
+    assert.strictEqual(state.sent.length, 0, 'sent through an extension that is gone');
+    assert.strictEqual(state.navigations, 0, 'navigated instead of saying what happened');
+    assert.ok(toasts().some((t) => /reload this page/.test(t)),
+      'a click on an out-of-date page did nothing at all');
+  });
+
+  await test('an extension that goes away mid-call is reported the same way', async () => {
+    const { state, send, toasts } = makeEnv({ appOnline: true, throwOnSend: true });
+    send('https://cdn.x/clip.mp4', 'clip.mp4');   // sendMessage throws; it must not escape
+    await wait(20);
+    assert.strictEqual(state.navigations, 0);
+    assert.ok(toasts().some((t) => /reload this page/.test(t)));
+  });
+
+  await test('after an update, a magnet click is left to the browser', async () => {
+    const click = ({ win }) => {
+      const a = win.document.createElement('a');
+      a.href = 'magnet:?xt=urn:btih:abc';
+      win.document.body.appendChild(a);
+      // false when a listener called preventDefault()
+      return a.dispatchEvent(new win.MouseEvent('click', { bubbles: true, cancelable: true }));
+    };
+    const live = makeEnv({ appOnline: true });
+    const gone = makeEnv({ appOnline: true, gone: true });
+    assert.strictEqual(click(live), false, 'a live page no longer takes magnet clicks');
+    assert.strictEqual(click(gone), true,
+      'an out-of-date page swallowed a magnet it can no longer deliver');
+    await wait(20);
+    assert.strictEqual(gone.state.sent.length, 0);
   });
 
   console.log(`\n${passed} passed` + (process.exitCode ? ' (with failures)' : ''));

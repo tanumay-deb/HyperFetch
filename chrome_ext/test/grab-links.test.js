@@ -56,6 +56,7 @@ function makeEnv() {
       onChanged: { addListener: () => {} },
     },
     runtime: {
+      id: 'hyperfetch-test',
       onMessage: { addListener: (cb) => { state.msgListener = cb; } },
       sendMessage: (m, cb) => {
         if (m && m.type === 'DOWNLOAD_URL') state.sent.push(m);
@@ -197,6 +198,22 @@ async function grab(state, scope) {
     await wait(10);
     assert.strictEqual(host(win), null, 'Escape did not close the panel');
     console.log('  ok  Escape closes the panel');
+  }
+
+  // ---- a panel that outlived an update -------------------------------------
+  // Opened, then the extension updated under the page: nothing it sends can
+  // arrive, so it says to reload rather than claiming it sent them.
+  {
+    const { win, state } = makeEnv();
+    await grab(state, 'all');
+    delete win.chrome.runtime.id;
+    panel(win).getElementById('send').click();
+    await wait(20);
+    assert.strictEqual(state.sent.length, 0, 'sent through an extension that is gone');
+    const said = win.document.body.textContent;
+    assert.ok(/reload this page/.test(said), 'did not say to reload the page');
+    assert.ok(!/Sent \d+ link/.test(said), 'claimed to have sent the links');
+    console.log('  ok  a batch after an update asks for a page reload');
   }
 
   console.log('grab-links: all passed');

@@ -37,6 +37,7 @@ function makeEnv() {
       onChanged: { addListener: () => {} },
     },
     runtime: {
+      id: 'hyperfetch-test',
       onMessage: { addListener: (cb) => { state.msgListener = cb; } },
       sendMessage: (m, cb) => cb && cb({ ok: true }),
       lastError: null,

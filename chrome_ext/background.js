@@ -80,6 +80,51 @@ chrome.storage.onChanged.addListener((ch) => {
 });
 
 // ---------------------------------------------------------------------------
+// Applying updates. The store delivers a new version on its own, but Chrome only
+// switches to it "the next time the background page gets unloaded" — for this
+// extension, when this worker stops. The media sniffer below listens to every
+// response on every page, so while anybody is browsing the worker hardly ever
+// stops, and a downloaded update can wait for days: a laptop stayed on 1.5 for
+// three, until the extension was removed and added again.
+//
+// So once an update is ready, reload onto it as soon as nothing is being handed
+// over. A reload mid-handoff could lose an explicit click, or leave a file
+// downloading in both Chrome and the app. Held downloads, the pairing token and
+// the settings all live in storage, so they come through a reload untouched.
+//
+// UPDATE_WAIT_MS is the backstop: a handoff still unfinished after a minute is a
+// wedged app, and it must not hold every future update back with it. If this
+// worker stops before either fires, Chrome applies the update itself.
+const UPDATE_WAIT_MS = 60 * 1000;
+let busy = 0;                        // handoffs in flight
+let updateReady = false;
+let reloading = false;
+let updateTimer = null;
+
+function beginWork() { busy++; }
+function endWork() {
+  busy = Math.max(0, busy - 1);
+  applyUpdateIfIdle();
+}
+function reloadOntoUpdate() {
+  if (reloading) return;
+  reloading = true;
+  clearTimeout(updateTimer);
+  chrome.runtime.reload();
+}
+function applyUpdateIfIdle() {
+  if (updateReady && busy === 0) reloadOntoUpdate();
+}
+if (chrome.runtime.onUpdateAvailable) {
+  chrome.runtime.onUpdateAvailable.addListener(() => {
+    if (updateReady) return;
+    updateReady = true;
+    updateTimer = setTimeout(reloadOntoUpdate, UPDATE_WAIT_MS);
+    applyUpdateIfIdle();
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Offline queue. When the app is not running, a download is held here instead
 // of being lost, and replayed the next time we know the app is up.
 //
@@ -138,6 +183,18 @@ function flushPending() {
 function sendToApp(url, filename, referrer, done, extra) {
   // noHold and heldAt steer the offline queue below; the app never sees them.
   const { noHold, heldAt, ...wire } = extra || {};
+  // Work in flight until done() has run, so an update is not applied halfway
+  // through a handoff. finish() runs done() once only: it is reached from both
+  // the success and the failure path. A done() that throws is logged, not
+  // rethrown — rethrown, it would land in the .catch below and hold a download
+  // the app had already taken, to be fetched a second time on replay.
+  beginWork();
+  let finished = false;
+  const finish = (...args) => {
+    if (finished) return;
+    finished = true;
+    try { done(...args); } catch (e) { console.error(e); } finally { endWork(); }
+  };
   getToken().then((token) => {
     chrome.cookies.getAll({ url }, (cookies) => {
       ignoreErr();
@@ -167,8 +224,8 @@ function sendToApp(url, filename, referrer, done, extra) {
         .then((r) => {
           if (r.ok) flushPending();      // app is up — drain anything held
           return r.json().then(
-            (j) => done(r.ok, r.status, j),
-            () => done(r.ok, r.status, {}));
+            (j) => finish(r.ok, r.status, j),
+            () => finish(r.ok, r.status, {}));
         })
         .catch(() => {
           // The remembered port may simply be the wrong one now — updating the
@@ -196,7 +253,7 @@ function sendToApp(url, filename, referrer, done, extra) {
             holdPending({ url, filename: filename || "", referrer: referrer || "",
                           extra: wire, at: heldAt });
           }
-          done(false, 0, {});
+          finish(false, 0, {});
         });
     });
   });
@@ -382,16 +439,23 @@ if (chrome.downloads && chrome.downloads.onDeterminingFilename) {
       clearTimeout(timer);
       try { suggest(); } catch (e) { /* the download is already gone */ }
     };
+    // Work in flight until the whole handoff is over: the download released
+    // and, if the app took it, Chrome's copy cancelled and cleared. That can
+    // outlast release() — an app answering after HANDOFF_WAIT_MS still takes
+    // the file — and an update applied in between would leave it in both places.
+    beginWork();
+    let over = false;
+    const settle = () => { if (!over) { over = true; endWork(); } };
     try {
       const url = item.finalUrl || item.url || "";
-      if (!/^https?:\/\//i.test(url)) { release(); return; }  // blob:, data:, file:
+      if (!/^https?:\/\//i.test(url)) { release(); settle(); return; }  // blob:, data:, file:
       const name = (item.filename || "").split(/[\\/]/).pop()
                 || url.split("?")[0].split("/").pop() || "";
       timer = setTimeout(release, HANDOFF_WAIT_MS);
       // The toggle is read fresh: this event is what wakes the worker, and the
       // cached global may not have been hydrated yet.
       chrome.storage.local.get({ enabled: true }, ({ enabled }) => {
-        if (!enabled) { release(); return; }
+        if (!enabled) { release(); settle(); return; }
         // auto=true lets the app apply its file-type list; it answers "ignored"
         // for anything not on it, and the download goes back to Chrome.
         sendToApp(url, name, item.referrer || "", (ok, status, body) => {
@@ -400,16 +464,18 @@ if (chrome.downloads && chrome.downloads.onDeterminingFilename) {
             // saving the file we are about to take away from it.
             chrome.downloads.cancel(item.id, () => {
               ignoreErr();
-              chrome.downloads.erase({ id: item.id }, ignoreErr);
               release();
+              chrome.downloads.erase({ id: item.id }, () => { ignoreErr(); settle(); });
             });
           } else {
             release();
+            settle();
           }
         }, { auto: true });
       });
     } catch (e) {
       release();
+      settle();
     }
     return true;                     // suggest() comes later, asynchronously
   });
