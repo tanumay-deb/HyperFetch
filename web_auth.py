@@ -65,9 +65,7 @@ def _save(d):
     p = _path()
     tmp = p + ".tmp"
     try:
-        with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(d, f, indent=2)
-        os.replace(tmp, p)
+        utils.write_durably(p, json.dumps(d, indent=2))
         try:
             os.chmod(p, 0o600)
         except OSError:

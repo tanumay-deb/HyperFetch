@@ -211,6 +211,36 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, QW
                 return [], False         # wrong shape -> not "no downloads"
             return data, True
 
+        def _set_aside(p):
+            """Rename a list that opens but does not parse — and a .bak that is
+            no better — out of the way, so the app can save again. Returns the
+            new name, or None when the file cannot even be opened: locked or
+            denied is not garbage, and then nothing is moved.
+
+            Refusing to save was right for one launch. For every launch after
+            it, it lost everything downloaded since: after a power cut zeroed
+            the list and its backup on 8 September, the app came up empty and
+            saved nothing for two weeks. The original is kept, not deleted.
+            """
+            try:
+                with open(p, "rb") as f:
+                    f.read(1)
+            except OSError:
+                return None
+            stamp = _time.strftime("%Y%m%d-%H%M%S")
+            kept = "%s.corrupt-%s" % (p, stamp)
+            try:
+                os.replace(p, kept)
+            except OSError:
+                return None
+            bak = p + ".bak"
+            if os.path.exists(bak) and not _read(bak)[1]:
+                try:
+                    os.replace(bak, "%s.corrupt-%s" % (bak, stamp))
+                except OSError:
+                    pass
+            return kept
+
         rows, ok = _read(path)
         if not ok:
             for _ in range(5):
@@ -228,14 +258,21 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, QW
                     _log.warning("recovered %d download(s) from %s.bak after the "
                                  "main list could not be read", len(rows), path)
                 else:
-                    # Never overwrite what we could not read. Without this guard
-                    # a single failed read becomes permanent data loss the moment
-                    # anything triggers a save.
-                    self._state_load_failed = True
-                    _log.error("could not read the download list at %s (%d bytes "
-                               "on disk) — saving is disabled this session so the "
-                               "file is not overwritten", path,
-                               (os.path.getsize(path) if os.path.exists(path) else -1))
+                    kept = _set_aside(path)
+                    if kept:
+                        _log.error("the download list at %s could not be read, and "
+                                   "neither could its backup — kept as %s, and a new "
+                                   "list is started", path, kept)
+                    else:
+                        # Never overwrite what we could not read. Without this
+                        # guard a single failed read becomes permanent data loss
+                        # the moment anything triggers a save.
+                        self._state_load_failed = True
+                        _log.error("could not read the download list at %s (%d "
+                                   "bytes on disk) — saving is disabled this session "
+                                   "so the file is not overwritten", path,
+                                   (os.path.getsize(path) if os.path.exists(path)
+                                    else -1))
         # Restore lives in QueueManager so a headless server does the same
         # thing. The window only reports what happened.
         _restored, skipped = self.queue.restore(rows)

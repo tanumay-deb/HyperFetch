@@ -287,32 +287,73 @@ def load_json(path, default):
         return default
 
 
-def save_json(path, data, keep_backup=False):
-    """Atomically write JSON. ``keep_backup`` rotates the previous contents to
-    ``<path>.bak`` first — cheap insurance for files that are the only copy of
-    something the user cares about (the download list), so a bad write or a
-    wrongly-empty save is always recoverable."""
+def write_durably(path, text):
+    """Replace ``path`` with ``text`` so that a power cut leaves the old file or
+    the new one — never a file of the right size full of zeros.
+
+    A temp file renamed over the original is atomic for the NAME, not the data:
+    the rename reaches the disk's journal at once, while the bytes can wait in
+    the write cache for seconds. Lose power in between and Windows keeps the
+    rename and a file whose contents never arrived. That is how downloads.json
+    and its .bak both became ~5,900 zero bytes on 8 September. fsync before the
+    rename closes the gap.
+    """
     tmp = path + ".tmp"
     try:
-        if keep_backup and os.path.isfile(path) and os.path.getsize(path) > 2:
-            try:
-                import shutil
-                shutil.copy2(path, path + ".bak")
-            except OSError:
-                pass                      # never let backup failure block a save
         with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2)
+            f.write(text)
+            f.flush()
+            os.fsync(f.fileno())
         os.replace(tmp, path)
-    except (OSError, TypeError, ValueError):
-        # never crash a save (a TypeError from a non-serializable value would
-        # otherwise propagate mid-shutdown) and never leave the .tmp sidecar —
-        # but never fail SILENTLY either: a quietly-frozen state file resurrects
-        # days-old task statuses on every restart.
-        logging.getLogger("hyperfetch.utils").exception("save_json failed: %s", path)
+    except BaseException:
         try:
             os.remove(tmp)
         except OSError:
             pass
+        raise
+
+
+def _rotate_backup(path):
+    """Copy the current ``path`` to ``<path>.bak`` — if it is worth keeping.
+
+    Only a file that parses: rotating whatever was there is how a zeroed main
+    file would overwrite the one good copy left. An empty container ("[]",
+    "{}") is not rotated either, so clearing a list cannot empty its backup.
+    """
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            current = f.read()
+        json.loads(current)
+    except FileNotFoundError:
+        return
+    except (OSError, ValueError):
+        logging.getLogger("hyperfetch.utils").warning(
+            "not backing up %s: it does not hold valid JSON", path)
+        return
+    if len(current.strip()) <= 2:
+        return
+    try:
+        write_durably(path + ".bak", current)
+    except OSError:
+        pass                              # never let a backup failure block a save
+
+
+def save_json(path, data, keep_backup=False):
+    """Write JSON durably (see write_durably). ``keep_backup`` rotates the
+    previous contents to ``<path>.bak`` first — cheap insurance for files that
+    are the only copy of something the user cares about (the download list),
+    so a bad write or a wrongly-empty save is always recoverable."""
+    try:
+        text = json.dumps(data, indent=2)
+        if keep_backup:
+            _rotate_backup(path)
+        write_durably(path, text)
+    except (OSError, TypeError, ValueError):
+        # never crash a save (a TypeError from a non-serializable value would
+        # otherwise propagate mid-shutdown), and write_durably has already removed
+        # its .tmp — but never fail SILENTLY either: a quietly-frozen state file
+        # resurrects days-old task statuses on every restart.
+        logging.getLogger("hyperfetch.utils").exception("save_json failed: %s", path)
 
 
 def default_download_dir():
