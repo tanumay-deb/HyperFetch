@@ -51,8 +51,12 @@ class _RecheckDaemon:
         return {}
 
 
-def _drive(tmp_path, monkeypatch, daemon, task, seconds=1.0):
+def _drive(tmp_path, monkeypatch, daemon, task, seconds=1.0, seed=True):
     monkeypatch.setattr(utils, "app_data_dir", lambda: str(tmp_path))
+    # _RecheckDaemon seeds forever, which aria2 only does when asked to seed.
+    # With seeding off it announces "stopped" to its trackers and completes —
+    # the case test_with_seeding_off_a_verified_torrent_finishes covers.
+    monkeypatch.setattr(utils, "SEED_ENABLED", seed, raising=False)
     monkeypatch.setattr(torrent, "POLL", 0.01)
     monkeypatch.setattr(torrent, "STATUS_POLL", 0.01)
     monkeypatch.setattr(aria2d, "DAEMON", daemon)
@@ -134,3 +138,37 @@ def test_seeding_hands_the_queue_slot_back(tmp_path, monkeypatch):
     assert len(released) == 1, "released the same slot more than once"
     assert still_polling, ("the poll loop must stay alive while seeding, or pause "
                            "and the upload figure stop working")
+
+
+class _GoodbyeDaemon(_RecheckDaemon):
+    """A recheck with seeding off, as aria2 really does it: the verified torrent
+    stays "active" while it tells its trackers it is leaving, then completes.
+    forceRemove skips the telling."""
+
+    forced = False
+
+    def call(self, method, *params, **kw):
+        if method == "aria2.forceRemove":
+            self.calls.append(method)
+            self.forced = True
+            return "gid1"
+        if method == "aria2.tellStatus" and self.forced:
+            self.calls.append(method)
+            return {"status": "complete", "totalLength": str(self.total),
+                    "completedLength": str(self.total), "files": [{"path": "x"}]}
+        return super().call(method, *params, **kw)
+
+
+def test_with_seeding_off_a_verified_torrent_finishes(tmp_path, monkeypatch):
+    """Rechecking a finished torrent with seeding off has to end it. Left in
+    the goodbye window it read as seeding: parked at 100% with its worker still
+    polling, and never filed into its category folder."""
+    d = _GoodbyeDaemon()
+    t = _task(tmp_path)
+    th = _drive(tmp_path, monkeypatch, d, t, seconds=0.5, seed=False)
+    finished = not th.is_alive()
+    t.request_pause(); th.join(timeout=3)
+    assert "aria2.forceRemove" in d.calls, "waited out the tracker goodbyes"
+    assert finished, "the worker kept polling a torrent that was done"
+    assert t.status == T.COMPLETED
+    assert not t.seeding

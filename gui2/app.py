@@ -92,6 +92,9 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, QW
         self._filter = "All"
         self._search = ""
         self._completed_seen = None
+        # ids of torrents that completed while seeding: aria2 still had their
+        # files open, so they are filed into a category once it lets go
+        self._unfiled = set()
         self._power_dlg = None       # live shutdown countdown, if one is armed
         self._errored_seen = None
         self._sidebar_collapsed = False
@@ -844,7 +847,10 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, QW
         wc = self._extras.get("when_complete", "Show notification")
         for t in self.queue.tasks:
             if t.status == T.COMPLETED and t.id not in self._completed_seen:
-                self._maybe_categorize(t)      # re-home late-resolved files (yt-dlp etc.)
+                if getattr(t, "seeding", False):
+                    self._unfiled.add(t.id)
+                else:
+                    self._maybe_categorize(t)  # re-home late-resolved files (yt-dlp etc.)
                 try:
                     import history
                     history.record(t)
@@ -878,6 +884,15 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, QW
                     if self.tray and self.tray.isVisible():
                         self.tray.showMessage("Download Failed", t.filename or "download",
                                               QSystemTrayIcon.Critical, 4000)
+        # A torrent that completed while seeding was skipped above, and its
+        # completion is not news on any later tick — so without this it was
+        # never filed at all. It goes the first tick after the seeding stops.
+        for t in self.queue.tasks:
+            if t.id in self._unfiled and not getattr(t, "seeding", False):
+                self._unfiled.discard(t.id)
+                if t.status == T.COMPLETED:
+                    self._maybe_categorize(t)
+        self._unfiled &= {t.id for t in self.queue.tasks}
         # Persist terminal transitions IMMEDIATELY. Saving only on user actions
         # left a window where a finished download was still "Downloading" on
         # disk — kill/crash the app there and it resurrected as Paused.

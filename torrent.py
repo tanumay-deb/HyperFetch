@@ -1367,7 +1367,35 @@ class TorrentDownloader:
             # give up its slot.
             if (not meta_stage and total and self.t.downloaded >= total
                     and st.get("status") == "active"):
+                if not getattr(utils, "SEED_ENABLED", False):
+                    # With seeding off this is not seeding. aria2 keeps a
+                    # finished torrent "active" until it has told every tracker
+                    # it is leaving, and says "complete" only once the slowest
+                    # one answers: a second with a quick tracker, as long as a
+                    # slow one stalls, with the files held open throughout.
+                    # Calling that seeding marked the task complete while it
+                    # still pointed at its placeholder (magnet_.bin), and it
+                    # was never filed into its category folder. forceRemove
+                    # skips the goodbyes; measured on the bundled aria2c, the
+                    # result still reads "complete", the files are closed and
+                    # the control file is gone, so the next poll finishes the
+                    # task through the ordinary branch below. seeder=true is
+                    # aria2's word that every piece checked out — nothing is
+                    # cut short before it.
+                    if str(st.get("seeder") or "").lower() == "true":
+                        try:
+                            d.call("aria2.forceRemove", cur)
+                        except Exception as e:
+                            log.debug("could not end %s after it finished: %s",
+                                      self.t.filename, e)
+                    time.sleep(POLL)
+                    continue
                 if not self.t.seeding:
+                    # The payload is whole, so point at it now rather than when
+                    # the seeding ends: serving, opening and the history record
+                    # all read save_path meanwhile, and the placeholder is not
+                    # a file.
+                    self._resolve_save_path(out_dir, top)
                     self.t.seeding = True
                     self.t.status = T.COMPLETED
                     self.t.log_event("Seeding")
