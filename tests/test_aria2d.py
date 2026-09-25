@@ -1023,3 +1023,20 @@ def test_daemon_reuses_saved_metadata_and_waits_long_enough(tmp_path, monkeypatc
     assert "--enable-dht6=true" in cmd
     stall = next(a for a in cmd if a.startswith("--bt-stop-timeout="))
     assert int(stall.split("=")[1]) >= 900        # the metadata phase shares this timer
+
+
+PROXY = {"http": "http://127.0.0.1:18888", "https": "http://127.0.0.1:18888"}
+
+
+def test_torrents_use_the_proxy_by_default(tmp_path, monkeypatch):
+    monkeypatch.setattr(utils, "PROXIES", PROXY)
+    assert "--all-proxy=http://127.0.0.1:18888" in _opts(tmp_path, monkeypatch)
+
+
+def test_torrents_can_be_kept_off_the_proxy(tmp_path, monkeypatch):
+    """The users server sends web fetches through a relay but keeps torrents
+    direct: a tracker reached through the relay records the relay's address
+    as the peer's, and peers then dial a machine that is not seeding."""
+    monkeypatch.setattr(utils, "PROXIES", PROXY)
+    monkeypatch.setattr(utils, "PROXY_TORRENTS", False)
+    assert not [a for a in _opts(tmp_path, monkeypatch) if a.startswith("--all-proxy")]

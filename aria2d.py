@@ -353,7 +353,7 @@ class Aria2Daemon:
         if not utils.DISK_CACHE:
             opts.append("--disk-cache=0")
         opts.append(torrent.allocation_opt())
-        if utils.PROXIES:
+        if utils.PROXIES and utils.PROXY_TORRENTS:
             purl = utils.PROXIES.get("https") or utils.PROXIES.get("http")
             if purl:
                 opts.append(f"--all-proxy={purl}")

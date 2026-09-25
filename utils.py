@@ -47,6 +47,8 @@ VERIFY_TLS = True
 
 # Network / advanced settings wired from the GUI (Settings). Defaults = inactive.
 PROXIES = None            # requests proxies: None=auto/env, {}=force-direct, {...}=custom
+PROXY_TORRENTS = True     # torrents (aria2) use PROXIES too; the users server turns
+                          # this off, since its torrents run direct by design
 MAX_CONNECTIONS = 0       # global ceiling on per-download segments (0 = unlimited)
 LISTEN_PORT = 0           # torrent listen port (0 = aria2 default)
 DISK_CACHE = True         # aria2 --disk-cache on/off
