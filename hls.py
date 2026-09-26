@@ -150,6 +150,9 @@ class HlsDownloader:
         self._tls = threading.local()            # per-thread session for segments
         # retry / failure tally for the end-of-download log summary
         self._stats = {"retries": 0, "timeouts": 0, "http403": 0}
+        # fMP4 (CMAF) playlists name an init segment with #EXT-X-MAP; set by
+        # _parse_media, None for a classic MPEG-TS playlist.
+        self._init_map = None
 
     def _seg_session(self):
         s = getattr(self._tls, "s", None)
@@ -198,10 +201,22 @@ class HlsDownloader:
         key = None  # {"method","uri","iv"}
         seq = 0
         endlist = False
+        self._init_map = None
         for line in text.splitlines():
             line = line.strip()
             if line == "#EXT-X-ENDLIST":
                 endlist = True
+            elif line.startswith("#EXT-X-MAP"):
+                uri = self._attrs(line).get("URI")
+                if uri:
+                    where = urllib.parse.urljoin(base_url, uri)
+                    if self._init_map is None:
+                        self._init_map = where
+                    elif where != self._init_map:
+                        # A second init mid-playlist (after a discontinuity) is
+                        # rare; the file stays playable up to that point.
+                        log.warning("HLS playlist switches init segment mid-stream; "
+                                    "only the first is used")
             elif line.startswith("#EXT-X-MEDIA-SEQUENCE"):
                 try:
                     seq = int(line.split(":", 1)[1])
@@ -213,6 +228,15 @@ class HlsDownloader:
                 segments.append((urllib.parse.urljoin(base_url, line), seq, key))
                 seq += 1
         return segments, endlist
+
+    def _attrs(self, line):
+        """A tag's ATTRIBUTE=value list as a dict, quotes stripped."""
+        attrs = {}
+        for part in self._split_attrs(line.split(":", 1)[1]):
+            if "=" in part:
+                k, v = part.split("=", 1)
+                attrs[k.strip().upper()] = v.strip().strip('"')
+        return attrs
 
     def _parse_key(self, line, base_url):
         attrs = {}
@@ -322,6 +346,13 @@ class HlsDownloader:
 
         total = len(segments)
 
+        # fMP4 (CMAF): the init segment (ftyp + moov) named by #EXT-X-MAP has
+        # to lead the file, and what comes out is an MP4, not a transport
+        # stream. Joined without it, the fragments play nowhere.
+        if self._init_map and self.t.save_path.lower().endswith(".ts"):
+            self.t.save_path = self.t.save_path[:-3] + ".mp4"
+            self.t.filename = os.path.basename(self.t.save_path)
+
         # ---- resume: skip segments already in the .hfdownload file ----
         # Gates: (1) finite VOD (#EXT-X-ENDLIST) — a sliding-window live/event
         # playlist republishes the same segment COUNT but different content
@@ -371,6 +402,19 @@ class HlsDownloader:
         try:
             with open(temp_path, open_mode) as f, \
                     ThreadPoolExecutor(max_workers=workers) as ex:
+                # A fresh file starts with the init segment; a resumed one
+                # already has it, and its byte count includes it.
+                if self._init_map and open_mode == "wb":
+                    try:
+                        init = self._fetch_segment(self._init_map, -1, None)
+                    except (requests.RequestException, RuntimeError) as e:
+                        self.t.status = T.ERROR
+                        self.t.error = f"HLS init segment failed: {e}"
+                        return
+                    f.write(init)
+                    f.flush()
+                    downloaded += len(init)
+                    self.t.downloaded = downloaded
                 # download in ordered batches: fetch `workers` segments at once,
                 # then write them to disk in playlist order. Bounds memory to one
                 # batch and keeps pause/cancel latency to a single batch.
