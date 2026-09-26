@@ -242,6 +242,9 @@ class SettingsMixin:
         # DNS-over-HTTPS: override the resolver for all in-process HTTP downloads
         import doh
         doh.enable(bool(ex.get("dns_https", False)))
+        # On unless turned off: only a site the provider's DNS answers with a
+        # block page is looked up again over secure DNS.
+        doh.set_auto(bool(ex.get("dns_auto", True)))
         # UPnP: open the torrent listen port on the router (best-effort, threaded).
         # Uses the effective port — the user's setting OR the engine default —
         # because gating on a non-zero LISTEN_PORT meant the mapping never ran

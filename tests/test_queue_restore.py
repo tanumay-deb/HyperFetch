@@ -140,7 +140,7 @@ def test_the_desktop_does_not_start_the_site():
 def test_the_renamed_section_is_there():
     from gui2.dialogs import settings
     assert "Browser Access" in settings._SECTIONS
-    assert len(settings._SECTIONS) == 8
+    assert len(settings._SECTIONS) == 9
 
 
 def test_housekeeping_without_a_sweeper_starts_no_thread(tmp_path):

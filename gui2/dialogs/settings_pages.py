@@ -181,17 +181,17 @@ class PageBuilderMixin:
         self.max_conn = self._slider(1, 64, min(64, int(ex.get("max_connections", 16) or 16)))
         self._row(g, "Max Connections", "Ceiling on parallel connections per download",
                   self.max_conn)
-        self.listen_port = QSpinBox(); self.listen_port.setRange(1024, 65535)
-        self.listen_port.setValue(int(ex.get("listen_port", 56666) or 56666)); self.listen_port.setFixedWidth(130)
-        self._row(g, "Listen Port", "Port for incoming (torrent) connections", self.listen_port)
-        self.upnp = self._toggle(ex.get("upnp", True))
-        self._row(g, "Use UPnP / NAT-PMP", "Allow automatic port mapping", self.upnp)
         self._proxy_url = (ex.get("proxy") or "").strip()
         self.proxy_btn = QPushButton("Configure" if not self._proxy_url else "Edit")
         self.proxy_btn.clicked.connect(self._config_proxy)
         self._row(g, "Proxy Settings", "Configure a proxy for downloads", self.proxy_btn)
         self.dns_https = self._toggle(ex.get("dns_https", False))
         self._row(g, "DNS over HTTPS", "Use secure DNS for resolving addresses", self.dns_https)
+        self.dns_auto = self._toggle(ex.get("dns_auto", True))
+        self._row(g, "Get past provider blocks",
+                  "When your provider's DNS answers a site with a block page, look "
+                  "that one site up over secure DNS. Everything else keeps your "
+                  "normal DNS.", self.dns_auto)
         self._host_rules = dict(ex.get("host_rules", {}) or {})
         n = len(self._host_rules)
         self.hostrules_btn = QPushButton("Configure" if not n else f"Edit ({n})")
@@ -205,6 +205,59 @@ class PageBuilderMixin:
         HostRulesDialog(self, self._host_rules).exec()
         n = len(self._host_rules)
         self.hostrules_btn.setText("Configure" if not n else f"Edit ({n})")
+
+    def _p_torrents(self, ex):
+        """Everything that only torrents and magnets use, in one place: they
+        were split between Network and Advanced, where nobody looking for
+        "seeding" would think to look."""
+        sa, v = self._page("Torrents", "Configure torrents, magnets and seeding")
+        f, g = self._card()
+        self.listen_port = QSpinBox(); self.listen_port.setRange(1024, 65535)
+        self.listen_port.setValue(int(ex.get("listen_port", 56666) or 56666)); self.listen_port.setFixedWidth(130)
+        self._row(g, "Listen Port", "Port for incoming (torrent) connections", self.listen_port)
+        self.upnp = self._toggle(ex.get("upnp", True))
+        self._row(g, "Use UPnP / NAT-PMP", "Allow automatic port mapping", self.upnp)
+        self.disk_cache = self._toggle(ex.get("disk_cache", True))
+        self._row(g, "Disk cache", "Buffer torrent writes in memory to spare the disk", self.disk_cache)
+        self.preallocate = self._toggle(ex.get("preallocate", False))
+        self._row(g, "Pre-allocate disk space", "Reserve each torrent's full size before downloading", self.preallocate)
+        self.torrent_preview = self._toggle(ex.get("torrent_preview", False))
+        self._row(g, "Preview while downloading",
+                  "Fetch the start and end of each file first, so a partly "
+                  "downloaded video plays and seeks. Slightly slower overall.",
+                  self.torrent_preview)
+        self.seed_enabled = self._toggle(ex.get("seed_enabled", False))
+        self._row(g, "Seed after completing",
+                  "Keep sharing finished torrents. Off means you never give "
+                  "back, which some private trackers ban.", self.seed_enabled)
+        self.seed_ratio = QDoubleSpinBox()
+        self.seed_ratio.setRange(0.0, 100.0); self.seed_ratio.setSingleStep(0.5)
+        self.seed_ratio.setDecimals(1)
+        self.seed_ratio.setValue(float(ex.get("seed_ratio", 1.0)))
+        self.seed_ratio.setFixedWidth(80)
+        self._row(g, "Stop seeding at ratio",
+                  "Share this much of the download's size, then stop. 0 = no "
+                  "ratio limit.", self.seed_ratio)
+        self.seed_minutes = QSpinBox()
+        self.seed_minutes.setRange(0, 10080); self.seed_minutes.setSuffix(" min")
+        self.seed_minutes.setValue(int(ex.get("seed_minutes", 0)))
+        self.seed_minutes.setFixedWidth(96)
+        self._row(g, "Stop seeding after",
+                  "Also stop once this long has passed. 0 = no time limit.",
+                  self.seed_minutes)
+        self.upload_limit = self._combo(
+            ["Unlimited", "50 KB/s", "100 KB/s", "250 KB/s", "500 KB/s",
+             "1 MB/s", "2 MB/s", "5 MB/s"],
+            ex.get("upload_limit", "Unlimited"))
+        self._row(g, "Upload speed limit",
+                  "Caps what torrents send. Home connections upload far slower "
+                  "than they download, so an uncapped upload slows the download "
+                  "too — and everything else on the network.",
+                  self.upload_limit)
+        self.seed_enabled.toggled.connect(self._sync_seed_rows)
+        self._sync_seed_rows(self.seed_enabled.isChecked())
+        v.addWidget(f); v.addStretch()
+        return sa
 
     def _p_browser(self, ex):
         sa, v = self._page("Browser Integration", "Integrate with your web browser")
@@ -457,45 +510,6 @@ class PageBuilderMixin:
         srow.addWidget(QLabel("Start")); srow.addWidget(self.t_start)
         srow.addSpacing(12); srow.addWidget(QLabel("Stop")); srow.addWidget(self.t_stop); srow.addStretch()
         g.addLayout(srow)
-        self.disk_cache = self._toggle(ex.get("disk_cache", True))
-        self._row(g, "Disk cache", "Improve disk writing performance", self.disk_cache)
-        self.preallocate = self._toggle(ex.get("preallocate", False))
-        self._row(g, "Pre-allocate disk space", "Reserve the full file size before downloading", self.preallocate)
-        self.torrent_preview = self._toggle(ex.get("torrent_preview", False))
-        self._row(g, "Preview while downloading",
-                  "Fetch the start and end of each file first, so a partly "
-                  "downloaded video plays and seeks. Slightly slower overall.",
-                  self.torrent_preview)
-        self.seed_enabled = self._toggle(ex.get("seed_enabled", False))
-        self._row(g, "Seed after completing",
-                  "Keep sharing finished torrents. Off means you never give "
-                  "back, which some private trackers ban.", self.seed_enabled)
-        self.seed_ratio = QDoubleSpinBox()
-        self.seed_ratio.setRange(0.0, 100.0); self.seed_ratio.setSingleStep(0.5)
-        self.seed_ratio.setDecimals(1)
-        self.seed_ratio.setValue(float(ex.get("seed_ratio", 1.0)))
-        self.seed_ratio.setFixedWidth(80)
-        self._row(g, "Stop seeding at ratio",
-                  "Share this much of the download's size, then stop. 0 = no "
-                  "ratio limit.", self.seed_ratio)
-        self.seed_minutes = QSpinBox()
-        self.seed_minutes.setRange(0, 10080); self.seed_minutes.setSuffix(" min")
-        self.seed_minutes.setValue(int(ex.get("seed_minutes", 0)))
-        self.seed_minutes.setFixedWidth(96)
-        self._row(g, "Stop seeding after",
-                  "Also stop once this long has passed. 0 = no time limit.",
-                  self.seed_minutes)
-        self.upload_limit = self._combo(
-            ["Unlimited", "50 KB/s", "100 KB/s", "250 KB/s", "500 KB/s",
-             "1 MB/s", "2 MB/s", "5 MB/s"],
-            ex.get("upload_limit", "Unlimited"))
-        self._row(g, "Upload speed limit",
-                  "Caps what torrents send. Home connections upload far slower "
-                  "than they download, so an uncapped upload slows the download "
-                  "too — and everything else on the network.",
-                  self.upload_limit)
-        self.seed_enabled.toggled.connect(self._sync_seed_rows)
-        self._sync_seed_rows(self.seed_enabled.isChecked())
         self.hash_check = self._toggle(ex.get("hash_check", False))
         self._row(g, "Enable hash verification", "Verify file integrity after download", self.hash_check)
         self.debug_log = self._toggle(ex.get("debug_log", False))

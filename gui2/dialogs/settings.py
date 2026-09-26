@@ -21,7 +21,7 @@ from gui.icons import themed_icon
 from gui2.brand import BrandLogo
 from gui2.dialogs.settings_pages import PageBuilderMixin
 
-_SECTIONS = ["General", "Downloads", "Network", "Browser", "Browser Access",
+_SECTIONS = ["General", "Downloads", "Network", "Torrents", "Browser", "Browser Access",
              "Appearance", "Advanced", "About"]
 
 
@@ -52,7 +52,7 @@ class SettingsDialogV2(PageBuilderMixin, QDialog):
             f"QListWidget::item{{padding:6px 10px;border-radius:7px;color:{COLORS['muted']};font-weight:700;margin-bottom:1px;}}"
             f"QListWidget::item:selected{{background:{COLORS['accent']};color:white;}}")
             
-        icons = ["settings", "download", "link", "open", "link",
+        icons = ["settings", "download", "link", "magnet", "open", "link",
                  "program", "menu", "info"]
         for s, ic in zip(_SECTIONS, icons):
             item = QListWidgetItem(themed_icon(ic, "muted"), s)
@@ -112,6 +112,7 @@ class SettingsDialogV2(PageBuilderMixin, QDialog):
         self.stack.addWidget(self._p_general(save_dir, ex))
         self.stack.addWidget(self._p_downloads(max_concurrent, segments, ex))
         self.stack.addWidget(self._p_network(ex))
+        self.stack.addWidget(self._p_torrents(ex))
         self.stack.addWidget(self._p_browser(ex))
         self.stack.addWidget(self._p_web(ex))
         self.stack.addWidget(self._p_appearance(theme, accent, ex))
@@ -217,6 +218,7 @@ class SettingsDialogV2(PageBuilderMixin, QDialog):
             "listen_port": self.listen_port.value(),
             "upnp": self.upnp.isChecked(),
             "dns_https": self.dns_https.isChecked(),
+            "dns_auto": self.dns_auto.isChecked(),
             "host_rules": self._host_rules,
             "preallocate": self.preallocate.isChecked(),
             "torrent_preview": self.torrent_preview.isChecked(),
