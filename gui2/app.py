@@ -1372,6 +1372,11 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, QW
             pass
         self.queue.wait_active(2.0)
         super().closeEvent(e)
+        # End the application, not just the window. Qt quits by itself only
+        # when the last *visible* window closes, and from the tray this window
+        # is already hidden - so Quit there used to end nothing, and the
+        # process stayed in Task Manager with no window and no tray icon.
+        QApplication.quit()
 
 
 def run_v2(open_target=None, restarted=False):
