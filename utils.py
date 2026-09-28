@@ -150,7 +150,7 @@ SENSITIVE_HEADERS = {"cookie", "authorization", "proxy-authorization"}
 
 # The app version, kept here rather than in gui.theme so the headless server
 # can report it without importing PySide6.
-APP_VERSION = "2.5.2"
+APP_VERSION = "2.5.3"
 
 
 def app_data_dir():
