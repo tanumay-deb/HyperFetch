@@ -4,6 +4,16 @@ const statusEl = document.getElementById("status");
 const textEl = document.getElementById("statusText");
 const cta = document.getElementById("cta");
 
+// Firefox cannot pair itself: each install gets a random extension address, and
+// the app's /pair answers only the store listings' ids. One paste instead.
+if (chrome.runtime.getURL("").startsWith("moz-extension:")) {
+  document.getElementById("pairTitle").textContent = "Pair it once";
+  document.getElementById("pairText").textContent =
+    "In the app, open Settings → Browser and copy the Browser Pairing Token. " +
+    "Then click the ⚡ icon in your toolbar (it may be under the puzzle-piece " +
+    "button), paste the token and press Save.";
+}
+
 function check() {
   // Both ports, same reason as the worker: an older app answers on 5000.
   const tryPing = (ports) =>

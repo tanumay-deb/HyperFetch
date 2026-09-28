@@ -16,7 +16,9 @@
     "http://127.0.0.1:5000/*"
   ],
   "background": {
-    "service_worker": "background.js"
+    "scripts": [
+      "background.js"
+    ]
   },
   "action": {
     "default_popup": "popup.html",
@@ -33,8 +35,25 @@
   },
   "content_scripts": [
     {
-      "matches": ["<all_urls>"],
-      "js": ["content.js"]
+      "matches": [
+        "<all_urls>"
+      ],
+      "js": [
+        "content.js"
+      ]
     }
-  ]
+  ],
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "hyperfetch@tanumay-deb.github.io",
+      "strict_min_version": "140.0",
+      "data_collection_permissions": {
+        "required": [
+          "browsingActivity",
+          "websiteContent",
+          "websiteActivity"
+        ]
+      }
+    }
+  }
 }

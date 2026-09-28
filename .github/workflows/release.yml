@@ -71,7 +71,9 @@ jobs:
                        "popup.html","popup.js","welcome.html","welcome.js")
           $bs = [char]92; $fwd = [char]47
           New-Item -ItemType Directory -Force -Path "dist" | Out-Null
-          foreach ($browser in @("chrome","edge")) {
+          # firefox: the zip Mozilla signs (addons.mozilla.org) - release
+          # Firefox installs only signed add-ons, so it is uploaded, not installed.
+          foreach ($browser in @("chrome","edge","firefox")) {
             $src   = "${browser}_ext"
             $stage = Join-Path "dist" "extstage/$browser"
             New-Item -ItemType Directory -Force -Path $stage | Out-Null
@@ -103,3 +105,4 @@ jobs:
             dist/HyperFetch-*-portable.zip
             dist/hyperfetch-chrome-*.zip
             dist/hyperfetch-edge-*.zip
+            dist/hyperfetch-firefox-*.zip

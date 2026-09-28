@@ -15,6 +15,12 @@ let cachedBase = null;            // per service-worker life; storage outlives i
 
 const ignoreErr = () => void chrome.runtime.lastError;
 
+// Firefox gives every install a random extension address, so the app cannot
+// know it in advance and /pair (locked to the store listings' ids) refuses it.
+// There the token is pasted into the popup once, and the messages say so.
+const ON_FIREFOX = String((chrome.runtime.getURL && chrome.runtime.getURL("")) || "")
+  .startsWith("moz-extension:");
+
 const origins = () => PORTS.map((p) => `http://127.0.0.1:${p}`);
 
 /** Origin of a HyperFetch that answers, preferring the remembered one.
@@ -364,7 +370,9 @@ chrome.contextMenus.onClicked.addListener((info, tab) => {
       // surface the result in the page (the menu has no UI of its own) so a
       // pairing/offline failure isn't silently swallowed.
       const text = ok ? "Sent to HyperFetch"
-        : status === 401 ? "HyperFetch couldn't pair — open the app and try again"
+        : status === 401 ? (ON_FIREFOX
+            ? "HyperFetch isn't paired — paste the token from the app's Settings into the ⚡ popup"
+            : "HyperFetch couldn't pair — open the app and try again")
         : "HyperFetch app offline";
       if (tab && tab.id >= 0)
         chrome.tabs.sendMessage(tab.id, { type: "HYPERFETCH_TOAST", text }, ignoreErr);
@@ -478,6 +486,42 @@ if (chrome.downloads && chrome.downloads.onDeterminingFilename) {
       settle();
     }
     return true;                     // suggest() comes later, asynchronously
+  });
+} else if (chrome.downloads && chrome.downloads.onCreated) {
+  // Firefox has no onDeterminingFilename, so there capture works the way it
+  // first did everywhere: the download starts, the app is asked, and the
+  // browser's copy is cancelled and cleared only once the app has taken it.
+  // Of the two things Chrome's event fixed, one holds here anyway: Firefox has
+  // named the file before it creates the download, so the app judges the real
+  // type. The other does not: nothing holds the transfer while the app decides,
+  // so a small, fast file can finish in Firefox before the cancel lands.
+  chrome.downloads.onCreated.addListener((item) => {
+    const url = item.url || "";
+    if (!/^https?:\/\//i.test(url)) return;              // blob:, data:, file:
+    // Work in flight until Firefox's copy is cancelled and cleared, or left
+    // alone, so an update is not applied halfway through the handoff.
+    beginWork();
+    let over = false;
+    const settle = () => { if (!over) { over = true; endWork(); } };
+    try {
+      const name = (item.filename || "").split(/[\\/]/).pop()
+                || url.split("?")[0].split("/").pop() || "";
+      chrome.storage.local.get({ enabled: true }, ({ enabled }) => {
+        if (!enabled) { settle(); return; }
+        sendToApp(url, name, item.referrer || "", (ok, status, body) => {
+          if (ok && body && body.status === "queued") {
+            chrome.downloads.cancel(item.id, () => {
+              ignoreErr();
+              chrome.downloads.erase({ id: item.id }, () => { ignoreErr(); settle(); });
+            });
+          } else {
+            settle();
+          }
+        }, { auto: true });
+      });
+    } catch (e) {
+      settle();
+    }
   });
 }
 

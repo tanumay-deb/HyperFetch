@@ -16,8 +16,13 @@ const assert = require('assert');
 const BG = fs.readFileSync(path.join(__dirname, '..', 'background.js'), 'utf8');
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
+// firefox: Firefox's shape of the same APIs - a moz-extension: address, and
+// downloads.onCreated where Chrome has onDeterminingFilename. pairRefused and
+// requireToken play the app as Firefox meets it: /pair refuses an address it
+// cannot know, and a download without a token is a 401.
 function makeEnv({ online = true, port = 21456, reply = 'ok', delayMs = 0,
-                   hang = false, patchSource = null } = {}) {
+                   hang = false, patchSource = null, firefox = false,
+                   pairRefused = false, requireToken = false } = {}) {
   const state = {
     stored: { token: 'tok', enabled: true },
     posts: [],           // download POSTs that reached the "app"
@@ -35,6 +40,8 @@ function makeEnv({ online = true, port = 21456, reply = 'ok', delayMs = 0,
     erased: [],
     port,                // which port the fake app listens on
     pinged: [],          // ports the worker tried, in order
+    createdHandler: null, // downloads.onCreated listener (Firefox's capture)
+    tabMsgs: [],         // messages the worker sent to pages (toasts)
   };
   const ctx = {
     console,
@@ -53,6 +60,9 @@ function makeEnv({ online = true, port = 21456, reply = 'ok', delayMs = 0,
           : Promise.reject(new Error('nothing on that port'));
       }
       if (/\/pair$/.test(url)) {
+        if (pairRefused) {
+          return Promise.resolve({ ok: false, status: 403, json: () => Promise.resolve({}) });
+        }
         return Promise.resolve({
           ok: true, status: 200, json: () => Promise.resolve({ token: 'tok' }),
         });
@@ -64,6 +74,9 @@ function makeEnv({ online = true, port = 21456, reply = 'ok', delayMs = 0,
         return Promise.reject(new Error('nothing on that port'));
       }
       state.posts.push(JSON.parse(init.body));
+      if (requireToken && !JSON.parse(init.body).token) {
+        return Promise.resolve({ ok: false, status: 401, json: () => Promise.resolve({}) });
+      }
       if (state.hang) return new Promise(() => {});
       const answer = {
         ok: true, status: 200, json: () => Promise.resolve({ status: state.reply }),
@@ -78,7 +91,7 @@ function makeEnv({ online = true, port = 21456, reply = 'ok', delayMs = 0,
         onInstalled: { addListener: () => {} },
         onStartup: { addListener: () => {} },
         onMessage: { addListener: (cb) => { state.msgHandler = cb; } },
-        getURL: (p) => p,
+        getURL: (p) => (firefox ? 'moz-extension://0f1e2d3c/' : '') + p,
         setUninstallURL: () => {},
         onUpdateAvailable: { addListener: (cb) => { state.updateHandler = cb; } },
         reload: () => { state.reloads++; state.order.push('reload'); },
@@ -103,14 +116,16 @@ function makeEnv({ online = true, port = 21456, reply = 'ok', delayMs = 0,
         create: () => {},
         onClicked: { addListener: (cb) => { state.menuHandler = cb; } },
       },
-      tabs: { create: () => {}, sendMessage: () => {} },
-      downloads: {
-        // A real enough downloads API that the capture listener registers;
-        // without onDeterminingFilename background.js skips it.
-        onDeterminingFilename: { addListener: (cb) => { state.filenameHandler = cb; } },
+      tabs: { create: () => {}, sendMessage: (id, msg) => { state.tabMsgs.push(msg); } },
+      downloads: Object.assign({
+        // Chrome has both events and must be captured through only the one;
+        // Firefox has onCreated alone.
+        onCreated: { addListener: (cb) => { state.createdHandler = cb; } },
         cancel: (id, cb) => { state.cancelled.push(id); state.order.push('cancel'); cb && cb(); },
         erase: (q, cb) => { state.erased.push(q.id); cb && cb(); },
-      },
+      }, firefox ? {} : {
+        onDeterminingFilename: { addListener: (cb) => { state.filenameHandler = cb; } },
+      }),
       webRequest: {
         onBeforeRequest: { addListener: () => {} },
         onResponseStarted: { addListener: () => {} },
@@ -651,6 +666,111 @@ function capture(state, item) {
     await wait(20);
     assert.strictEqual(state.reloads, 1, 'reloaded more than once');
     console.log('  ok  repeated update events reload once');
+  }
+
+  // ---- Firefox: capture through downloads.onCreated --------------------------
+  // Firefox has no onDeterminingFilename. Its download is already under way when
+  // the app is asked, so the app taking it means Firefox's copy is cancelled and
+  // cleared; anything else leaves it alone.
+  const ffItem = { id: 7, url: 'https://x/get?id=1', referrer: 'https://x/page',
+                   filename: 'C:\\Users\\me\\Downloads\\setup.exe' };
+  {
+    const { state } = makeEnv({ firefox: true, reply: 'queued' });
+    await wait(10);
+    state.createdHandler(ffItem);
+    await wait(30);
+    assert.strictEqual(state.posts.length, 1, 'the app was not asked');
+    assert.strictEqual(state.posts[0].filename, 'setup.exe',
+      'Firefox has named the file by now - the app must judge that name, not the URL');
+    assert.strictEqual(state.posts[0].auto, true, 'sent as an explicit click, not a capture');
+    assert.deepStrictEqual(state.cancelled, [7], 'Firefox kept downloading a file the app took');
+    assert.deepStrictEqual(state.erased, [7], 'the cancelled download was left in Firefox\'s list');
+    console.log('  ok  Firefox: a download the app takes is cancelled and cleared');
+  }
+
+  {
+    const { state } = makeEnv({ firefox: true, reply: 'ignored' });
+    await wait(10);
+    state.createdHandler(ffItem);
+    await wait(30);
+    assert.strictEqual(state.posts.length, 1);
+    assert.deepStrictEqual(state.cancelled, [], 'cancelled a download the app did not want');
+    console.log('  ok  Firefox: a download the app ignores stays with Firefox');
+  }
+
+  {
+    const { state } = makeEnv({ firefox: true, reply: 'queued' });
+    await wait(10);
+    state.stored.enabled = false;
+    state.createdHandler(ffItem);
+    await wait(30);
+    assert.strictEqual(state.posts.length, 0, 'capture was switched off, but the app was asked');
+    assert.deepStrictEqual(state.cancelled, []);
+    console.log('  ok  Firefox: capture switched off leaves downloads alone');
+  }
+
+  {
+    const { state } = makeEnv({ firefox: true, online: false });
+    await wait(10);
+    state.createdHandler(ffItem);
+    await wait(40);
+    assert.deepStrictEqual(state.cancelled, [], 'the app is closed - Firefox must keep it');
+    assert.strictEqual(held(state).length, 0,
+      'held a capture: Firefox is saving it anyway, so a replay would fetch a second copy');
+    console.log('  ok  Firefox: with the app closed the download stays in Firefox, unqueued');
+  }
+
+  {
+    const { state } = makeEnv({ firefox: true, reply: 'queued' });
+    await wait(10);
+    state.createdHandler({ id: 8, url: 'blob:https://x/5f1c', filename: 'clip.mp4' });
+    state.createdHandler({ id: 9, url: 'data:text/plain,hi', filename: 'hi.txt' });
+    await wait(30);
+    assert.strictEqual(state.posts.length, 0, 'the app cannot fetch blob:/data: URLs');
+    console.log('  ok  Firefox: blob: and data: downloads are left alone');
+  }
+
+  {
+    const chrome_ = makeEnv({});
+    const firefox_ = makeEnv({ firefox: true });
+    await wait(10);
+    assert.ok(chrome_.state.filenameHandler, 'Chrome lost its capture');
+    assert.strictEqual(chrome_.state.createdHandler, null,
+      'Chrome captured through onCreated as well - every download would be sent twice');
+    assert.ok(firefox_.state.createdHandler, 'Firefox has no capture at all');
+    console.log('  ok  each browser captures through exactly one event');
+  }
+
+  {
+    const { state } = makeEnv({ firefox: true, reply: 'queued', delayMs: 80 });
+    await wait(10);
+    state.createdHandler(ffItem);
+    await wait(10);
+    state.updateHandler({ version: '9.9.9' });
+    await wait(20);
+    assert.strictEqual(state.reloads, 0,
+      'reloaded mid-handoff - the file could end up in Firefox and the app both');
+    await wait(120);
+    assert.deepStrictEqual(state.cancelled, [7]);
+    assert.strictEqual(state.reloads, 1, 'the update was never applied after the handoff');
+    console.log('  ok  Firefox: an update waits for a capture in flight');
+  }
+
+  // ---- Firefox: pairing is a paste, and the menu says so --------------------
+  // /pair answers only the store listings' ids, which a Firefox install's random
+  // address can never be, so the right-click toast has to say what to do.
+  {
+    const { state } = makeEnv({ firefox: true, pairRefused: true, requireToken: true });
+    await wait(10);
+    state.stored.token = '';
+    state.menuHandler({ menuItemId: 'hyperfetch-download', linkUrl: 'https://x/a.zip' },
+                      { id: 3, url: 'https://x/' });
+    await wait(40);
+    const toast = state.tabMsgs.find((m) => m.type === 'HYPERFETCH_TOAST');
+    assert.ok(toast, 'no toast - the click failed silently');
+    assert.ok(/paste the token/i.test(toast.text),
+      `Firefox cannot auto-pair, so the toast must say to paste the token: "${toast.text}"`);
+    console.log('  ok  Firefox: an unpaired right-click says how to pair');
   }
 
   console.log('offline-queue: all passed');
