@@ -72,13 +72,14 @@ Everything runs locally on your computer — no accounts, no servers, no trackin
 **Host permission `<all_urls>`**
 > A download manager must work on whatever site the user is on, so the content
 > script (download badge) and the media detector need to run on all sites. The
-> extension does not read or transmit page content; it only acts on downloads
-> the user starts. Connections are limited to `http://127.0.0.1:5000` (the local
-> app) and the download's own URL.
+> extension does not collect or transmit page content; it only acts on downloads
+> the user starts. Connections are limited to `http://127.0.0.1:21456` (the local
+> app; `:5000` for older versions of it) and the download's own URL.
 
-**Host permission `http://127.0.0.1:5000/*`**
+**Host permissions `http://127.0.0.1:21456/*` and `http://127.0.0.1:5000/*`**
 > The fixed local address of the companion desktop app the extension sends
-> downloads to.
+> downloads to. The app listens on 21456; 5000 is where older versions of it
+> listened, kept so those still connect.
 
 ---
 
@@ -92,8 +93,9 @@ Everything runs locally on your computer — no accounts, no servers, no trackin
 - **Analytics / telemetry:** none.
 - Certify: data is **not** sold, **not** used for unrelated purposes, **not**
   used for creditworthiness/lending.
-- **Privacy policy URL:** host `PRIVACY.md` (e.g. on GitHub Pages) and paste the
-  link here. Required because the extension handles authentication cookies.
+- **Privacy policy URL:** https://tanumay-deb.github.io/HyperFetch/privacy.html
+  (the same text as `PRIVACY.md`). Required because the extension handles
+  authentication cookies.
 
 ---
 
@@ -108,7 +110,7 @@ practices tab:
 > package: popup.html references only the bundled popup.js, and there are no
 > external <script> tags. The code contains no eval(), new Function(),
 > importScripts(), or dynamic import(). Its network requests fetch DATA only — JSON
-> to the user's local companion app at http://127.0.0.1:5000 to hand off a
+> to the user's local companion app at http://127.0.0.1:21456 to hand off a
 > download, and HLS (.m3u8) playlist TEXT from the current media site, which is
 > parsed with string/regex operations and never executed. DOM HTML is assigned
 > only from static, in-package string literals. Nothing executable is downloaded,
