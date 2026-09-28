@@ -61,12 +61,12 @@
     <span class="bolt">⚡</span>
     <h1>HyperFetch Privacy Policy</h1>
   </header>
-  <p class="sub">Browser extension for Chrome and Edge · Last updated 3 September 2026</p>
+  <p class="sub">Browser extension for Chrome, Edge and Firefox, and the desktop application · Last updated 28 September 2026</p>
 
   <div class="lede">
     <p><strong>HyperFetch does not collect, transmit, or store your personal
-    data on any server we control.</strong> The extension talks to one place
-    and one place only: the HyperFetch application running on your own
+    data on any server we control.</strong> The extension hands what it
+    handles to one place only: the HyperFetch application running on your own
     computer, at <code>127.0.0.1</code>. There is no HyperFetch account, no
     analytics, no telemetry, and no remote service that receives anything
     about you or what you download.</p>
@@ -87,7 +87,7 @@
       require one.</li>
 
       <li><strong>Cookies for that specific address</strong> — read with
-      Chrome's <code>cookies</code> permission, scoped to the URL being
+      the browser's <code>cookies</code> permission, scoped to the URL being
       downloaded and nothing else. This is what lets a file behind a login
       download successfully. Cookies for sites you are not downloading from
       are never read.</li>
@@ -99,19 +99,33 @@
       <li><strong>Page content, only to spot media</strong> — a content
       script runs on pages to detect video streams and show the
       "Download with HyperFetch" badge. It reads the page to find media
-      links. It does not read, store, or transmit anything else, and it sends
+      links, and when you choose "Show all downloadable links", "Download all
+      images" or "Download all links in selection", the links on that page.
+      It does not read, store, or transmit anything else, and it sends
       nothing anywhere until you click.</li>
+
+      <li><strong>Media responses, to offer a quality</strong> — the
+      extension notes the address, type and size of video and audio responses
+      on the page. To list a stream's qualities it may fetch that playlist
+      from the same site, or ask the application to.</li>
     </ul>
   </div>
 
-  <p>All of it is sent to <code>http://127.0.0.1:21456</code> — a loopback
+  <p>All of it is sent to <code>http://127.0.0.1:21456</code> (port
+  <code>5000</code> for older versions of the application) — a loopback
   address, meaning your own machine. Loopback traffic never reaches your
   network, your router, or the internet.</p>
 
+  <p><strong>On Firefox</strong>, the install prompt says the extension
+  shares browsing activity, website content and website activity. Mozilla
+  asks every extension to declare what it passes outside the browser, and
+  this is that hand-off to the application on your own computer. None of it
+  reaches us.</p>
+
   <h2>What is stored, and where</h2>
 
-  <p>The extension keeps a small amount of state in Chrome's local extension
-  storage on your device:</p>
+  <p>The extension keeps a small amount of state in the browser's local
+  extension storage on your device:</p>
 
   <div class="box">
     <ul>
@@ -119,9 +133,12 @@
       local application so that website JavaScript cannot send downloads to
       it.</li>
       <li>The <strong>local address</strong> the application was found on.</li>
-      <li>Your <strong>toggle settings</strong> from the popup.</li>
-      <li>A short <strong>queue of pending downloads</strong>, held only while
-      the application is closed, and cleared once they are delivered.</li>
+      <li>Your <strong>toggle settings</strong> from the popup, and the corner
+      you moved the download button to.</li>
+      <li>A short <strong>queue of pending downloads</strong> — address, file
+      name and page — held only while the application is closed, for at most
+      an hour, and cleared once they are delivered. Cookies are never part of
+      it.</li>
     </ul>
   </div>
 
@@ -153,11 +170,14 @@
     <ul>
       <li><code>cookies</code> — to download files that require you to be
       signed in.</li>
-      <li><code>downloads</code> — to cancel a browser download once the
-      application has accepted it, so the file is not fetched twice. Only
-      when you switch that option on.</li>
+      <li><code>downloads</code> — to hand downloads the browser starts to the
+      application, for the file types it lists (Settings → Browser → Auto
+      Capture Links), and to cancel the browser's copy once the application
+      has accepted it, so the file is not fetched twice. It is on unless you
+      switch it off in the popup.</li>
       <li><code>webRequest</code> — to notice video stream manifests
-      (<code>.m3u8</code>) that a browser cannot save on its own.</li>
+      (<code>.m3u8</code>) and media files that a browser cannot save on its
+      own.</li>
       <li><code>contextMenus</code> — the right-click "Download with
       HyperFetch" item.</li>
       <li><code>storage</code> — the local settings described above.</li>
@@ -165,6 +185,62 @@
       site. The permission is broad; what is done with it is not.</li>
     </ul>
   </div>
+
+  <h2>The desktop application</h2>
+
+  <p>The application does its work on your computer. It keeps its data in
+  <code>%APPDATA%\HyperFetch\</code>:</p>
+
+  <div class="box">
+    <ul>
+      <li>Your <strong>settings</strong>, the <strong>download list</strong> —
+      with cookies and sign-in headers removed before it is saved — and a
+      <strong>history</strong> of finished downloads: name, address, size and
+      where each was saved.</li>
+      <li>The <strong>pairing token</strong>, and — only if you set up the web
+      client — its <strong>username and a scrypt hash of its
+      password</strong>.</li>
+      <li>A <strong>log</strong> of warnings and errors (with Debug logging
+      switched on, more detail, download addresses included), and
+      <strong>crash reports</strong> — an error trace, version and platform,
+      no download addresses — which stay on your computer unless you choose
+      to share them.</li>
+    </ul>
+  </div>
+
+  <p>It connects to:</p>
+
+  <div class="box">
+    <ul>
+      <li><strong>The sites you download from</strong> — the file's own
+      server, a video site and its streams, and, with checksum verification
+      switched on, a <code>.sha256</code> file beside the download.</li>
+      <li>For <strong>torrents and magnet links</strong>, trackers —
+      including a list of public trackers added to magnet links — and other
+      peers. As with any torrent client, they see your IP address.</li>
+      <li><strong>Cloudflare's DNS</strong> (<code>cloudflare-dns.com</code>)
+      — when your internet provider's DNS answers a site with a block page,
+      the application looks that one site's name up there ("Get past provider
+      blocks", on by default). With "DNS over HTTPS" switched on, every lookup
+      goes there.</li>
+      <li><strong>GitHub</strong>, only when you press Check for
+      Updates.</li>
+      <li><strong>Your router</strong>, to open the torrent listening port
+      (UPnP, on by default, Settings → Torrents), and a
+      <strong>proxy</strong>, if you set one up.</li>
+    </ul>
+  </div>
+
+  <p>It listens on <code>127.0.0.1</code>, your own machine. Only if you
+  allow home-network access for the web client (Settings → Web Client) does
+  it also listen on your local network, behind the password you set. It
+  sends no telemetry and no usage data.</p>
+
+  <h2>This website</h2>
+
+  <p>This site is hosted on GitHub Pages, and its home page loads fonts from
+  Google Fonts. Both see your IP address, as with any website. We run no
+  analytics on it.</p>
 
   <h2>Children</h2>
 
@@ -176,13 +252,14 @@
 
   <p>If this policy changes, the revised version will be published at this
   address with an updated date. Material changes to what the extension does
-  with your data will also appear in the extension's store listing.</p>
+  with your data will also appear in the extension's store listings.</p>
 
   <h2>Contact</h2>
 
-  <p>Questions about this policy, or about what the extension does, can be
+  <p>Questions about this policy, or about what HyperFetch does, can be
   raised at
-  <a href="https://github.com/tanumay-deb/HyperFetch/issues">github.com/tanumay-deb/HyperFetch/issues</a>.</p>
+  <a href="https://github.com/tanumay-deb/HyperFetch/issues">github.com/tanumay-deb/HyperFetch/issues</a>
+  or sent to <a href="mailto:tanumaygoswami2001@gmail.com">tanumaygoswami2001@gmail.com</a>.</p>
 
   <footer>
     HyperFetch · <a href="https://tanumay-deb.github.io/HyperFetch/">Home</a>
