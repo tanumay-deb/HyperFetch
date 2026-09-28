@@ -817,8 +817,15 @@ function createOverlay(video) {
       display: none; align-items: center; justify-content: center;
       border-left: 1px solid rgba(255,255,255,0.2);
     }
+    /* The menu hangs 8px below the button, and that gap has to belong to the
+       badge: leaving the badge closes the menu, so a gap that belonged to the
+       page underneath closed it on the way down to the options. The
+       wrapper's padding is the bridge; with the menu closed the wrapper has
+       no width, so it covers nothing on the page. */
+    .menu-wrap {
+      position: absolute; top: 100%; right: 0; padding-top: 8px;
+    }
     .menu {
-      position: absolute; top: 100%; right: 0; margin-top: 8px;
       background: #111a2e; border: 1px solid #243352;
       border-radius: 8px; box-shadow: 0 8px 24px rgba(0,0,0,0.5);
       display: none; flex-direction: column; min-width: 180px;
@@ -859,7 +866,10 @@ function createOverlay(video) {
   group.appendChild(btnMain);
   group.appendChild(btnArrow);
   container.appendChild(group);
-  container.appendChild(menu);
+  const menuWrap = document.createElement('div');
+  menuWrap.className = 'menu-wrap';
+  menuWrap.appendChild(menu);
+  container.appendChild(menuWrap);
   shadow.appendChild(style);
   shadow.appendChild(container);
 

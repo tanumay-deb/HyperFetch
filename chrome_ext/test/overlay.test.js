@@ -196,6 +196,35 @@ async function test(name, fn) {
     assert.strictEqual(state.sent, null, 'link click must not send to the app');
   });
 
+  // The quality menu hangs 8px below the button, and leaving the badge closes
+  // it. With the gap as the menu's own margin, it belonged to the page, and the
+  // menu closed on the way down to its options before any could be picked. The
+  // gap is the wrapper's padding now, so it is part of the badge. jsdom has no
+  // layout, so this pins the structure; the moves were checked in a browser.
+  await test('the quality menu cannot close on the way down to it', async () => {
+    const { win } = makeEnv({ openShadow: true });
+    win.document.body.appendChild(mkVideo(win, { src: 'https://cdn.x/a.mp4' }));
+    await wait(300);
+    const root = badges(win)[0].shadowRoot;
+    const menu = root.querySelector('.menu');
+    const wrap = menu.parentElement;
+    assert.ok(wrap.classList.contains('menu-wrap'), 'the menu is not inside its bridge');
+    assert.ok(wrap.parentElement.classList.contains('badge-container'),
+      'the bridge must be part of the badge, or leaving onto it still closes the menu');
+    const css = root.querySelector('style').textContent;
+    const rule = (sel) => (css.match(new RegExp('\\n\\s*' + sel.replace('.', '\\.') + '\\s*\\{([^}]*)\\}')) || [])[1] || '';
+    assert.ok(/top:\s*100%/.test(rule('.menu-wrap')) && /padding-top:\s*8px/.test(rule('.menu-wrap')),
+      'the bridge no longer spans the gap below the button');
+    assert.ok(!/margin-top/.test(rule('.menu')),
+      'the menu has its own margin again - that gap belongs to the page');
+    // Leaving the badge still closes it.
+    const arrow = root.querySelector('.btn-arrow');
+    arrow.dispatchEvent(new win.MouseEvent('click', { bubbles: true }));
+    assert.ok(menu.classList.contains('open'), 'the arrow did not open the menu');
+    root.querySelector('.badge-container').dispatchEvent(new win.MouseEvent('mouseleave'));
+    assert.ok(!menu.classList.contains('open'), 'moving off the badge no longer closes the menu');
+  });
+
   console.log(`\n${passed} passed` + (process.exitCode ? ' (with failures)' : ''));
   // content.js installs setInterval timers on the jsdom window which keep the
   // node event loop alive; exit explicitly once assertions are done.
