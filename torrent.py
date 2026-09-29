@@ -24,6 +24,7 @@ import threading
 import urllib.parse
 
 import task as T
+import swarm
 import utils
 
 log = logging.getLogger("hyperfetch.torrent")
@@ -848,6 +849,8 @@ class TorrentDownloader:
         self._gid = None          # aria2 download id, when driven over RPC
         self._stall_since = None  # when this torrent last earned its slot
         self._stall_bytes = -1
+        self._noseed_since = None  # when it last had a seeder or new bytes
+        self._noseed_bytes = -1
 
     def run(self):
         self.t.status = T.DOWNLOADING
@@ -985,20 +988,65 @@ class TorrentDownloader:
             return False
         return (now - self._stall_since) >= STALL_YIELD
 
-    def _yield_slot(self, d, gid, out_dir):
+    def _note_no_seeds(self, seeds, done):
+        """True once this torrent has gone swarm.NO_SEED_YIELD seconds with no
+        seeders and no new bytes.
+
+        Peers can be connected all the while - peers holding nothing it needs -
+        which is why the no-peers rule above never sees this case, and such a
+        torrent could sit at 40% for good. Any seeder, and any new byte, restarts
+        the clock: a torrent trickling from partial copies is making progress.
+        """
+        now = time.time()
+        if seeds > 0 or done != self._noseed_bytes:
+            self._noseed_bytes = done
+            self._noseed_since = now
+            return False
+        if self._noseed_since is None:
+            self._noseed_since = now
+            return False
+        return (now - self._noseed_since) >= swarm.NO_SEED_YIELD
+
+    def _someone_better_waiting(self):
+        """Whether a torrent that could use this slot is waiting. queue_manager
+        sets the hook on the task; with no queue there is nobody to give way to."""
+        hook = getattr(self.t, "_better_waiting", None)
+        try:
+            return bool(hook and hook())
+        except Exception:
+            return False
+
+    def _stuck_reason(self):
+        """Why this torrent should give its slot back now, or None.
+
+        No peers at all: it gives way whatever is waiting, as it always has.
+        Peers but no seeders, and no progress: it gives way only to a waiting
+        torrent that is not known dead, so one dead swarm is never swapped for
+        another; with nothing better waiting it keeps its slot and keeps trying.
+        """
+        if self._note_stall(self.t.tor_conns, self.t.downloaded):
+            return "no peers"
+        if (self._note_no_seeds(self.t.tor_seeds, self.t.downloaded)
+                and self._someone_better_waiting()):
+            return "no seeders"
+        return None
+
+    def _yield_slot(self, d, gid, out_dir, reason="no peers"):
         """Hand the queue slot back, to be retried after a growing delay."""
         n = int(getattr(self.t, "stall_count", 0) or 0)
         delay = STALL_BACKOFF[min(n, len(STALL_BACKOFF) - 1)]
         self.t.stall_count = n + 1
         self.t.retry_after = time.time() + delay
         self.t._stall_yield = True            # queue_manager re-queues on this
+        self.t.yield_reason = reason          # the window says why
+        self.t.yielded_at = time.time()
         if d is not None and gid:
             self._rpc_remove(d, gid, force=True)
         archive_metadata(self.t, out_dir)
         self.t.status = T.QUEUED
         self.t.error = ""
-        log.info("stalled (no peers, no progress): %s — slot released, retry in %ds",
-                 self.t.filename, delay)
+        log.info("stalled (%s, no progress): %s — slot released, retry in %ds",
+                 reason, self.t.filename, delay)
 
     def _disk_guard(self, total, out_dir):
         """True if the volume cannot hold what is left of this torrent.
@@ -1313,6 +1361,12 @@ class TorrentDownloader:
                             return top
             self.t.tor_conns = int(st.get("connections") or 0)
             self.t.tor_seeds = int(st.get("numSeeders") or 0)
+            if st.get("status") == "active" and not getattr(self.t, "seeding", False):
+                # What the queue ranks it by while it waits (swarm.py). Only while
+                # downloading: finished, there is nobody left to download from,
+                # which says nothing about the swarm.
+                self.t.last_seeds = self.t.tor_seeds
+                self.t.last_seeds_at = time.time()
             self.t.tor_upload = int(st.get("uploadSpeed") or 0)
             self.t.tor_uploaded = int(st.get("uploadLength") or 0)
 
@@ -1497,8 +1551,9 @@ class TorrentDownloader:
                          f" errorCode={st.get('errorCode')}" if not msg else "")
                 return top
 
-            if self._note_stall(self.t.tor_conns, self.t.downloaded):
-                self._yield_slot(d, cur, out_dir)
+            reason = self._stuck_reason()
+            if reason:
+                self._yield_slot(d, cur, out_dir, reason)
                 return top
 
             time.sleep(POLL)

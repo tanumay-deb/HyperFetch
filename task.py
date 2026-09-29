@@ -150,6 +150,17 @@ class DownloadTask:
         # it, and waits out a growing delay before trying again.
         self.stall_count = 0
         self.retry_after = 0.0
+        # Why a torrent last gave its slot back ("no peers" / "no seeders") and
+        # when - read by the window to say so. Not saved, like retry_after.
+        self.yield_reason = ""
+        self.yielded_at = 0.0
+        # Swarm health (swarm.py): what the torrent saw while running, and what
+        # its trackers said while it waited. Saved, so the order survives restarts.
+        self.last_seeds = None
+        self.last_seeds_at = 0.0
+        self.swarm_seeds = None
+        self.swarm_peers = None
+        self.swarm_at = 0.0
         self._stall_yield = False
         # one-shot Force Recheck request; the engine consumes it on the next run
         self.force_recheck = False
@@ -338,6 +349,11 @@ class DownloadTask:
             "is_scheduled": getattr(self, "is_scheduled", False),
             "owner": self.owner,
             "completed_at": self.completed_at,
+            "last_seeds": self.last_seeds,
+            "last_seeds_at": self.last_seeds_at,
+            "swarm_seeds": self.swarm_seeds,
+            "swarm_peers": self.swarm_peers,
+            "swarm_at": self.swarm_at,
             # never write cookies/auth to disk; keep only safe headers (Referer/UA)
             "headers": utils.strip_sensitive(self.headers)
         }
@@ -374,6 +390,11 @@ class DownloadTask:
         # it defaults to "" rather than raising — those belong to admin.
         t.owner = d.get("owner", "") or ""
         t.completed_at = float(d.get("completed_at", 0) or 0)
+        t.last_seeds = d.get("last_seeds")
+        t.last_seeds_at = float(d.get("last_seeds_at", 0) or 0)
+        t.swarm_seeds = d.get("swarm_seeds")
+        t.swarm_peers = d.get("swarm_peers")
+        t.swarm_at = float(d.get("swarm_at", 0) or 0)
         t.sha256 = d.get("sha256", "")
         t.infohash = d.get("infohash", "")
         t.selected_files = d.get("selected_files", "")

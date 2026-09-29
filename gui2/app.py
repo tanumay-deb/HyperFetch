@@ -38,7 +38,7 @@ from gui.dialogs import PropertiesDialog
 from gui2.dialogs.settings import SettingsDialogV2
 from gui2.dialogs.complete import CompleteDialog
 from gui2.dialogs.pair import show_next as show_pair_question
-from gui2.notify import AddedNotifier
+from gui2.notify import AddedNotifier, YieldNotifier
 from gui2.toast import ToastManager
 from gui2 import palette
 from gui2.sidebar import Sidebar
@@ -96,6 +96,7 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, QW
             os.path.join(utils.app_data_dir(), "paired_browsers.json"))
         self._pair_dlg = None
         self._added_notifier = AddedNotifier()   # "Download added" notifications
+        self._yield_notifier = YieldNotifier()   # a torrent gave its slot back
         self._speed = {}              # id -> (last_dl, last_t, bps)
         self._spark = {}              # id -> deque(bps) for the live card sparkline
         self._filter = "All"
@@ -697,6 +698,7 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, QW
         self._drain_pending()
         self._ask_pairing()
         self._notify_added()
+        self._notify_yields()
         if (self._server_error and not self._server_error_shown
                 and hasattr(self, "_toasts")):
             self._server_error_shown = True
@@ -993,6 +995,18 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, QW
             enabled=self._extras.get("notify_added", True))
         if note and self.tray and self.tray.isVisible():
             self.tray.showMessage(note[0], note[1], QSystemTrayIcon.Information, 4000)
+
+    def _notify_yields(self):
+        """A torrent gave its slot back - no peers, or no seeders while a live
+        one waited - and what started in its place (gui2/notify.py). Said in
+        the window and in Windows: done silently it looks like the list was
+        reordered behind your back."""
+        note = self._yield_notifier.tick(self.queue.tasks)
+        if not note:
+            return
+        self._toasts.show("info", note[0], note[1])
+        if self.tray and self.tray.isVisible():
+            self.tray.showMessage(note[0], note[1], QSystemTrayIcon.Information, 5000)
 
     def _ask_pairing(self):
         """A Firefox install asking to pair: put the question, one at a time.

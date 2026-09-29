@@ -248,6 +248,8 @@ class DownloadCardWidget(QFrame):
         if left <= 0:
             return str(t.status)
         when = f"{int(left // 60) + 1}m" if left >= 60 else f"{int(left)}s"
+        if getattr(t, "yield_reason", "") == "no seeders":
+            return f"Paused — no seeders, retrying in {when}"
         return f"Stalled — no peers, retrying in {when}"
 
     def _set_eta(self, t, bps, done):

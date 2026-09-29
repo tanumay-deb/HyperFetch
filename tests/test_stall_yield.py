@@ -200,3 +200,97 @@ def test_the_card_says_why_it_is_queued():
     card.update_task(t, 0.0)
     assert "Stalled" in card.sub.text()
     assert "retrying in" in card.sub.text()
+
+
+# ------------------------------------------------ no seeders (swarm.py, Part C)
+import swarm  # noqa: E402
+
+
+def test_no_seeders_and_no_progress_counts_as_stuck(tmp_path, monkeypatch):
+    td = _td(tmp_path)
+    clock = [1000.0]
+    monkeypatch.setattr(torrent.time, "time", lambda: clock[0])
+    assert td._note_no_seeds(0, 100) is False     # starts the clock
+    clock[0] += swarm.NO_SEED_YIELD - 1
+    assert td._note_no_seeds(0, 100) is False
+    clock[0] += 2
+    assert td._note_no_seeds(0, 100) is True
+
+
+def test_a_seeder_or_new_bytes_keeps_it_alive(tmp_path, monkeypatch):
+    td = _td(tmp_path)
+    clock = [1000.0]
+    monkeypatch.setattr(torrent.time, "time", lambda: clock[0])
+    for _ in range(5):
+        clock[0] += swarm.NO_SEED_YIELD
+        assert td._note_no_seeds(1, 100) is False, "a seeder is connected"
+    done = 100
+    for _ in range(5):
+        clock[0] += swarm.NO_SEED_YIELD - 1
+        done += 10                                # trickling from partial peers
+        assert td._note_no_seeds(0, done) is False, "progress protects"
+
+
+def test_without_seeders_it_yields_only_to_a_live_torrent_waiting(tmp_path, monkeypatch):
+    td = _td(tmp_path)
+    clock = [1000.0]
+    monkeypatch.setattr(torrent.time, "time", lambda: clock[0])
+    td.t.tor_conns, td.t.tor_seeds, td.t.downloaded = 6, 0, 500   # peers, none seeding
+    assert td._stuck_reason() is None
+    clock[0] += swarm.NO_SEED_YIELD + 1
+    assert td._stuck_reason() is None, "nothing waiting: it keeps its slot"
+    td.t._better_waiting = lambda: False
+    assert td._stuck_reason() is None, "only dead torrents waiting: it keeps its slot"
+    td.t._better_waiting = lambda: True
+    assert td._stuck_reason() == "no seeders"
+
+
+def test_no_peers_still_yields_as_before(tmp_path, monkeypatch):
+    td = _td(tmp_path)
+    clock = [1000.0]
+    monkeypatch.setattr(torrent.time, "time", lambda: clock[0])
+    td.t.tor_conns, td.t.tor_seeds, td.t.downloaded = 0, 0, 500
+    td._stuck_reason()
+    clock[0] += torrent.STALL_YIELD + 1
+    assert td._stuck_reason() == "no peers", "the old rule needs nothing to be waiting"
+
+
+def test_a_yield_says_why_and_when(tmp_path, monkeypatch):
+    td = _td(tmp_path)
+    monkeypatch.setattr(torrent.time, "time", lambda: 5000.0)
+    td._yield_slot(None, None, str(tmp_path), "no seeders")
+    assert (td.t.yield_reason, td.t.yielded_at) == ("no seeders", 5000.0)
+    td._yield_slot(None, None, str(tmp_path))
+    assert td.t.yield_reason == "no peers"
+
+
+def test_a_running_torrent_remembers_its_seeders(tmp_path, monkeypatch):
+    """What it saw while downloading is what the queue ranks it by later. The
+    final "complete" reply, with nobody left to download from, must not wipe it."""
+    payload = str(tmp_path / "Movie.mkv")
+    open(payload, "w").close()
+    states = [
+        {"status": "active", "completedLength": "500", "totalLength": "1000",
+         "connections": "7", "numSeeders": "3", "files": [{"path": payload}]},
+        {"status": "complete", "completedLength": "1000", "totalLength": "1000",
+         "connections": "0", "numSeeders": "0", "files": [{"path": payload}]},
+    ]
+    t = _drive_with(tmp_path, monkeypatch, _FakeDaemon(states))
+    assert t.last_seeds == 3
+    assert t.last_seeds_at > 0
+
+
+def test_the_card_says_no_seeders_when_that_is_why():
+    import os
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication
+    from gui2.download_card import DownloadCardWidget
+    QApplication.instance() or QApplication([])
+    t = T.DownloadTask("magnet:?xt=urn:btih:abc", "x", filename="x", total_size=1000)
+    t.status = T.QUEUED
+    t.retry_after = time.time() + 90
+    t.yield_reason = "no seeders"
+    card = DownloadCardWidget(t, 1)
+    card.update_task(t, 0.0)
+    assert "no seeders" in card.sub.text() and "retrying in" in card.sub.text()
+    assert "no peers" not in card.sub.text()

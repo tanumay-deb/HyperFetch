@@ -6,6 +6,7 @@ up in the same list. Uses a Condition (no busy-spin) and tracks every task in
 """
 import time
 import heapq
+import swarm
 import logging
 import threading
 
@@ -353,24 +354,30 @@ class QueueManager:
                    for task in self.tasks)
 
     def _next_ready(self):
-        """Return a runnable task or None."""
+        """Return a runnable task or None.
+
+        In the heap's order - priority, then when it was added - the first task
+        whose queue has room starts. Except when that task is a torrent: then
+        the healthiest ready torrent of the same queue starts in its place
+        (swarm.py: known seeders, most first; then unknown; then known to have
+        none), so a dead swarm first in line does not take the slot from a live
+        one behind it. Web downloads keep their place in line.
+        """
         if not self._heap:
             return None, None
-            
-        passed_over = []
-        ready_task = None
-        active_torrents = self._active_torrent_count()
+
         now = time.time()
+        active_torrents = self._active_torrent_count()
         soonest = None                 # when the next backed-off task is due
-        while self._heap:
-            task = heapq.heappop(self._heap)
+        order = sorted(self._heap)     # the heap's own order
+        ready_task = None
+        for task in order:
             # A torrent that yielded its slot with a dead swarm waits out its
             # backoff. Without this it would be picked straight back up and
             # would simply block the queue again.
             due = float(getattr(task, "retry_after", 0) or 0)
             if due > now:
                 soonest = due if soonest is None else min(soonest, due)
-                passed_over.append(task)
                 continue
             q = self.queues.get(task.queue_name)
             if not q:
@@ -381,17 +388,35 @@ class QueueManager:
             if q.active < q.max_concurrent and not torrent_full:
                 ready_task = task
                 break
-            else:
-                passed_over.append(task)
 
-        for t in passed_over:
-            heapq.heappush(self._heap, t)
+        if ready_task is not None and self._is_torrent(ready_task):
+            place = {id(t): i for i, t in enumerate(order)}
+            rivals = [t for t in order
+                      if self._is_torrent(t) and t.queue_name == ready_task.queue_name
+                      and float(getattr(t, "retry_after", 0) or 0) <= now]
+            ready_task = min(rivals, key=lambda t: (swarm.health_rank(t, now), place[id(t)]))
+
+        if ready_task is not None:
+            self._heap.remove(ready_task)
+            heapq.heapify(self._heap)
 
         # wake by ourselves when the earliest backoff expires; nothing else will
         wait = None
         if ready_task is None and soonest is not None:
             wait = max(0.1, soonest - now)
         return ready_task, wait
+
+    def _live_candidate_waiting(self, task, qname):
+        """Whether a torrent that could take ``task``'s slot is waiting: in the
+        same queue, not backed off, and not known to have no seeders. A torrent
+        stuck without seeders gives way only to such a one (torrent.py)."""
+        now = time.time()
+        with self.cond:
+            return any(
+                t is not task and self._is_torrent(t) and t.queue_name == qname
+                and float(getattr(t, "retry_after", 0) or 0) <= now
+                and not swarm.is_known_dead(t, now)
+                for t in self._heap)
 
     def _scheduler(self):
         while True:
@@ -449,6 +474,8 @@ class QueueManager:
         task._slot_released = False
         # the engine calls this when the torrent finishes and starts seeding
         task._release_slot = lambda: self._release_slot(task, started_queue)
+        # a torrent stuck without seeders asks this before giving way (torrent.py)
+        task._better_waiting = lambda: self._live_candidate_waiting(task, started_queue)
         try:
             if not task.cancel_requested:
                 log.info("start: %s (%s) queue=%s", task.filename, task.id[:8], started_queue)
@@ -496,6 +523,7 @@ class QueueManager:
                     self.active -= 1
                 task._slot_released = False
                 task._release_slot = None
+                task._better_waiting = None
                 # notify_all (not notify) so a closeEvent's wait_active waiter
                 # always wakes — a single notify can wake the scheduler instead,
                 # leaving wait_active parked until its full timeout fires.
