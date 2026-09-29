@@ -38,6 +38,7 @@ from gui.dialogs import PropertiesDialog
 from gui2.dialogs.settings import SettingsDialogV2
 from gui2.dialogs.complete import CompleteDialog
 from gui2.dialogs.pair import show_next as show_pair_question
+from gui2.notify import AddedNotifier
 from gui2.toast import ToastManager
 from gui2 import palette
 from gui2.sidebar import Sidebar
@@ -94,6 +95,7 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, QW
         self.pair_requests = pairing.PairRequests(
             os.path.join(utils.app_data_dir(), "paired_browsers.json"))
         self._pair_dlg = None
+        self._added_notifier = AddedNotifier()   # "Download added" notifications
         self._speed = {}              # id -> (last_dl, last_t, bps)
         self._spark = {}              # id -> deque(bps) for the live card sparkline
         self._filter = "All"
@@ -694,6 +696,7 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, QW
     def refresh(self):
         self._drain_pending()
         self._ask_pairing()
+        self._notify_added()
         if (self._server_error and not self._server_error_shown
                 and hasattr(self, "_toasts")):
             self._server_error_shown = True
@@ -980,6 +983,16 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, QW
         dlg.show()
         dlg.raise_()
         dlg.activateWindow()
+
+    def _notify_added(self):
+        """Downloads added while you were not looking at HyperFetch get a Windows
+        notification, one per burst (gui2/notify.py). Looking means any of its
+        windows is active - the new card, or a dialog about it, is in front of you."""
+        note = self._added_notifier.tick(
+            self.queue.tasks, looking=QApplication.activeWindow() is not None,
+            enabled=self._extras.get("notify_added", True))
+        if note and self.tray and self.tray.isVisible():
+            self.tray.showMessage(note[0], note[1], QSystemTrayIcon.Information, 4000)
 
     def _ask_pairing(self):
         """A Firefox install asking to pair: put the question, one at a time.

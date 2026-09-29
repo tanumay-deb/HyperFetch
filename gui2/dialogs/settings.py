@@ -230,6 +230,7 @@ class SettingsDialogV2(PageBuilderMixin, QDialog):
             "upload_limit": self.upload_limit.currentText(),
             "skip_new_download_dialog": not self.ask_before_add.isChecked(),
             "skip_complete_popup": not self.show_complete.isChecked(),
+            "notify_added": self.notify_added.isChecked(),
             "proxy": self._proxy_url,
             "font_size": self.font_size.currentText(),
             "speed_units": "bytes" if self.speed_units.currentText().startswith("Bytes") else "bits",

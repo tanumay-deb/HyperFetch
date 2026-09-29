@@ -60,6 +60,8 @@ class SystemMixin:
         menu.addAction("Quit", self._real_quit)
         self.tray.setContextMenu(menu)
         self.tray.activated.connect(self._on_tray_activated)
+        # A notification is about something in this window; clicking it goes there.
+        self.tray.messageClicked.connect(self._show_from_tray)
         self.tray.show()
 
     def _on_tray_activated(self, reason):

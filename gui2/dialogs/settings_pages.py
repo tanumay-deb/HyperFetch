@@ -143,6 +143,11 @@ class PageBuilderMixin:
         self._row(g, "Show the completion popup",
                   "The celebration window when a download finishes. Off still "
                   "leaves the toast and the list entry.", self.show_complete)
+        self.notify_added = self._toggle(ex.get("notify_added", True))
+        self._row(g, "Notify when a download is added",
+                  "A Windows notification for downloads added while HyperFetch is "
+                  "not in front - from the browser, the web client, or with the "
+                  "window in the tray.", self.notify_added)
         self.auto_start = self._toggle(ex.get("auto_start", True))
         self._row(g, "Auto start downloads", "Start downloads immediately after adding", self.auto_start)
         self.categorize = self._toggle(ex.get("categorize", True))
