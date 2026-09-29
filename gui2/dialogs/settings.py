@@ -224,6 +224,7 @@ class SettingsDialogV2(PageBuilderMixin, QDialog):
             "host_rules": self._host_rules,
             "preallocate": self.preallocate.isChecked(),
             "torrent_preview": self.torrent_preview.isChecked(),
+            "scrape_trackers": self.scrape_trackers.isChecked(),
             "seed_enabled": self.seed_enabled.isChecked(),
             "seed_ratio": self.seed_ratio.value(),
             "seed_minutes": self.seed_minutes.value(),

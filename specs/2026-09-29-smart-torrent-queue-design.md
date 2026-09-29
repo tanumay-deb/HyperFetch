@@ -104,6 +104,15 @@ A background thread, `SwarmScout` in a new `scrape.py`, built like
 - **Result:** the highest seeders and leechers any tracker reported, saved as
   `swarm_seeds`, `swarm_peers`, `swarm_at` with the download list. When no tracker
   answers, earlier numbers stay and nothing is overwritten with "unknown".
+- **Settled while building:**
+  - A UDP tracker answers all zeros for a torrent it has never heard of, so an
+    all-zero reply counts as no answer, not as 0 seeders: unknown is not dead.
+  - A private torrent (`private=1`, BEP 27) is asked about only at its own
+    trackers; its infohash never goes to the public ones.
+  - The 8-per-torrent cap applies after resting trackers are skipped, so the next
+    tracker in line stands in for a dead one.
+  - Within its 5 s, a UDP request is sent once more halfway (UDP drops packets).
+    HTTP scrapes use the proxy only when torrents do (`utils.PROXY_TORRENTS`).
 
 ### What you see
 

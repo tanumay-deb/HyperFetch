@@ -1,6 +1,6 @@
 # Privacy Policy — HyperFetch
 
-**Last updated: 28 September 2026.** The same policy is published at
+**Last updated: 29 September 2026.** The same policy is published at
 <https://tanumay-deb.github.io/HyperFetch/privacy.html>.
 
 HyperFetch is a desktop download accelerator plus a companion browser
@@ -83,7 +83,11 @@ It connects to:
   beside the download.
 - For **torrents and magnet links**, trackers — including a list of public
   trackers added to magnet links — and other peers. As with any torrent
-  client, they see your IP address.
+  client, they see your IP address. While a torrent waits in the queue, the
+  application also asks its trackers now and then how many seeders it has
+  (Settings → Torrents → "Check seeders of queued torrents", on by default):
+  they see your IP address and which torrent it is, as they would once it
+  starts.
 - **Cloudflare's DNS** (`cloudflare-dns.com`) — when your internet provider's
   DNS answers a site with a block page, the application looks that one site's
   name up there ("Get past provider blocks", on by default). With "DNS over

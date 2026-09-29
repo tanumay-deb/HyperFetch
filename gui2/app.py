@@ -28,6 +28,7 @@ from PySide6.QtGui import QIcon, QKeySequence, QShortcut, QAction, QFont
 import task as T
 import utils
 import pairing
+import scrape
 import torrent as _torrent
 from queue_manager import QueueManager
 from api_server import run_server, PORT
@@ -89,6 +90,11 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, QW
         # so a queue of magnets is not a list of identical placeholders.
         self._meta = _torrent.MetadataPrefetcher(lambda: self.queue.tasks)
         self._meta.start()
+        # Ask trackers how many seeders each waiting torrent has, so the queue
+        # starts the healthiest first (scrape.py). Settings -> Torrents.
+        self._scout = scrape.SwarmScout(lambda: self.queue.tasks,
+                                        enabled_fn=self._scrape_enabled)
+        self._scout.start()
         self.pending = deque()
         # Firefox installs asking to pair, and the ones allowed (pairing.py).
         # The server records the asking; refresh() puts the question.
@@ -986,6 +992,10 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, QW
         dlg.raise_()
         dlg.activateWindow()
 
+    def _scrape_enabled(self):
+        """The Settings -> Torrents switch, read on each of the scout's rounds."""
+        return bool(self._extras.get("scrape_trackers", True))
+
     def _notify_added(self):
         """Downloads added while you were not looking at HyperFetch get a Windows
         notification, one per burst (gui2/notify.py). Looking means any of its
@@ -1410,6 +1420,7 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, QW
         for t in self.queue.tasks:
             if t.status in (T.DOWNLOADING, T.QUEUED):
                 t.request_pause()
+        self._scout.stop()
         self.queue.shutdown()
         # stop the shared aria2 daemon we own. It outlives its parent if left
         # alone (it survives a killed parent), so an explicit shutdown is what

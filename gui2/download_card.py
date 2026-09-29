@@ -36,6 +36,23 @@ def _swarm(t):
     s = int(getattr(t, "tor_seeds", 0) or 0)
     return f"{p} peer{'' if p == 1 else 's'} · {s} seed{'' if s == 1 else 's'}"
 
+
+def _scraped(t, now):
+    """" · 12 seeds · 40 peers · checked 3 min ago" for a waiting torrent: what
+    its trackers last said (scrape.py), and how long ago. Nothing when they have
+    not said, or said it more than a day ago - the queue ignores that too."""
+    import swarm
+    at = float(getattr(t, "swarm_at", 0.0) or 0.0)
+    seeds = getattr(t, "swarm_seeds", None)
+    if seeds is None or not at or now - at > swarm.FRESH_FOR:
+        return ""
+    peers = int(getattr(t, "swarm_peers", 0) or 0)
+    ago = max(0.0, now - at)
+    when = ("just now" if ago < 60 else f"{int(ago // 60)} min ago" if ago < 3600
+            else f"{int(ago // 3600)} h ago")
+    return (f" · {seeds} seed{'' if seeds == 1 else 's'}"
+            f" · {peers} peer{'' if peers == 1 else 's'} · checked {when}")
+
 _CAT_ICON = {
     "Video": ("video", "#FF80AB"), "Music": ("music", "#FF8A80"), "Compressed": ("archive", "#B388FF"),
     "Programs": ("program", "#82B1FF"), "Documents": ("document", "#80D8FF"),
@@ -244,9 +261,10 @@ class DownloadCardWidget(QFrame):
         it will be tried again.
         """
         import time as _time
-        left = float(getattr(t, "retry_after", 0) or 0) - _time.time()
+        now = _time.time()
+        left = float(getattr(t, "retry_after", 0) or 0) - now
         if left <= 0:
-            return str(t.status)
+            return str(t.status) + _scraped(t, now)
         when = f"{int(left // 60) + 1}m" if left >= 60 else f"{int(left)}s"
         if getattr(t, "yield_reason", "") == "no seeders":
             return f"Paused — no seeders, retrying in {when}"

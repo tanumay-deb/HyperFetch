@@ -61,7 +61,7 @@
     <span class="bolt">⚡</span>
     <h1>HyperFetch Privacy Policy</h1>
   </header>
-  <p class="sub">Browser extension for Chrome, Edge and Firefox, and the desktop application · Last updated 28 September 2026</p>
+  <p class="sub">Browser extension for Chrome, Edge and Firefox, and the desktop application · Last updated 29 September 2026</p>
 
   <div class="lede">
     <p><strong>HyperFetch does not collect, transmit, or store your personal
@@ -219,7 +219,11 @@
       switched on, a <code>.sha256</code> file beside the download.</li>
       <li>For <strong>torrents and magnet links</strong>, trackers —
       including a list of public trackers added to magnet links — and other
-      peers. As with any torrent client, they see your IP address.</li>
+      peers. As with any torrent client, they see your IP address. While a
+      torrent waits in the queue, the application also asks its trackers now
+      and then how many seeders it has (Settings → Torrents → "Check seeders
+      of queued torrents", on by default): they see your IP address and which
+      torrent it is, as they would once it starts.</li>
       <li><strong>Cloudflare's DNS</strong> (<code>cloudflare-dns.com</code>)
       — when your internet provider's DNS answers a site with a block page,
       the application looks that one site's name up there ("Get past provider
