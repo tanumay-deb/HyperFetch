@@ -4,6 +4,8 @@ A fast, multi-connection download manager for Windows. It splits each file
 across many connections, grabs streaming video and torrents, and pairs with a
 browser extension that sends your downloads straight to the app.
 
+**Website:** https://tanumay-deb.github.io/HyperFetch/ · **Download:** [latest release](https://github.com/tanumay-deb/HyperFetch/releases/latest)
+
 ![HyperFetch](assets/store/screenshot_1_main.png)
 
 ## Features
