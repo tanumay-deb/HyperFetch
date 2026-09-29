@@ -76,7 +76,7 @@ function sendToApp(url, suggestedName = null, opts = {}) {
   try {
     chrome.runtime.sendMessage({ type: "DOWNLOAD_URL", url, filename, hold: !fallBack }, (res) => {
       if (res && res.unpaired) {
-        showToast("Pair the extension first — open its popup and paste the app token");
+        showToast("Pair the extension first — open its ⚡ popup");
         return;
       }
       if (chrome.runtime.lastError || !res || !res.ok) {

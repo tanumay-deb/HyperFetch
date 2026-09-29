@@ -291,6 +291,20 @@ class PageBuilderMixin:
         trow.addWidget(tok, 1); trow.addWidget(copy)
         lab = QLabel("Browser Pairing Token"); lab.setStyleSheet("font-weight:700;background:transparent;")
         g3.addWidget(lab); g3.addLayout(trow)
+        # Firefox cannot pair itself; each install was allowed here, once, by
+        # its code. Forgetting them is how to take that back - they ask again.
+        pr = getattr(self, "_pair_requests", None)
+        if pr is not None:
+            forget = QPushButton()
+            def _show_paired():
+                n = pr.count()
+                forget.setText("Forget %d" % n if n else "None paired")
+                forget.setEnabled(bool(n))
+            forget.clicked.connect(lambda: (pr.forget_all(), _show_paired()))
+            _show_paired()
+            self._row(g3, "Paired Firefox browsers",
+                      "Firefox installs you allowed to send downloads here. Forget them "
+                      "and each has to ask again.", forget)
         v.addWidget(f3)
 
         # ---- Auto Capture Links allowlist (the app is the source of truth; the

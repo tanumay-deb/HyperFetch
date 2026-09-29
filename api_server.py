@@ -177,7 +177,7 @@ def is_loopback(remote_addr):
     return (remote_addr or "") in LOOPBACK_ADDRS
 
 
-def create_app(queue, save_dir, pending=None, token=None):
+def create_app(queue, save_dir, pending=None, token=None, pair_requests=None):
     app = Flask(__name__)
     # Only browser-extension origins may call cross-origin. Websites use http(s)
     # origins and are rejected at preflight. /pair is deliberately NOT covered by
@@ -233,6 +233,44 @@ def create_app(queue, save_dir, pending=None, token=None):
         # /pair sets its own CORS headers (it is deliberately outside the global
         # rule above), so it needs the Private Network Access opt-in too —
         # without it Chrome blocks the preflight and auto-pairing never runs.
+        resp.headers["Access-Control-Allow-Private-Network"] = "true"
+        return resp
+
+    @app.route("/pair/request", methods=["POST", "OPTIONS"])
+    def pair_request():
+        """Firefox's way to pair (see pairing.py): ask with a code, be told.
+
+        A Firefox install's address is a random moz-extension:// UUID, so it can
+        never be on TRUSTED_EXT_IDS. The person at this computer allows it
+        instead, comparing the code the window shows with the one the extension
+        shows, and only an allowed address is answered with the token. POST
+        because Firefox sends an Origin on a POST from an extension and not on
+        its GETs, and the Origin is the address being allowed."""
+        if not is_loopback(request.remote_addr):
+            return jsonify({"status": "error", "message": "local requests only"}), 403
+        origin = request.headers.get("Origin", "")
+        if not origin.startswith("moz-extension://"):
+            return ("", 403)
+        if request.method == "OPTIONS":
+            resp = app.make_default_options_response()
+        elif pair_requests is None:
+            # The headless server has nobody to ask. Saying so lets the
+            # extension offer the paste box instead of waiting for an answer.
+            resp = jsonify({"status": "unavailable"})
+            resp.status_code = 404
+        else:
+            data = request.get_json(silent=True) or {}
+            state = pair_requests.request(origin, str(data.get("code", "")))
+            body = {"status": state}
+            if state == "approved":
+                body["token"] = app.config.get("HYPERFETCH_TOKEN") or ""
+            resp = jsonify(body)
+            resp.status_code = {"approved": 200, "pending": 202, "denied": 403,
+                                "busy": 429}.get(state, 400)
+        resp.headers["Access-Control-Allow-Origin"] = origin
+        resp.headers["Vary"] = "Origin"
+        resp.headers["Access-Control-Allow-Methods"] = "POST, OPTIONS"
+        resp.headers["Access-Control-Allow-Headers"] = "Content-Type"
         resp.headers["Access-Control-Allow-Private-Network"] = "true"
         return resp
 
@@ -844,8 +882,8 @@ def bind_host():
     return "127.0.0.1"
 
 
-def run_server(queue, save_dir, port=PORT, pending=None, token=None):
-    app = create_app(queue, save_dir, pending, token=token)
+def run_server(queue, save_dir, port=PORT, pending=None, token=None, pair_requests=None):
+    app = create_app(queue, save_dir, pending, token=token, pair_requests=pair_requests)
     host = bind_host()
     if host != "127.0.0.1":
         # Worth a line in the log: it is the one moment this app stops being

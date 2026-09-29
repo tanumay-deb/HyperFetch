@@ -58,7 +58,36 @@ function refreshPairState() {
 
 // Auto-pair: fetch the token straight from the app (it only answers this
 // extension's id). Falls back silently to manual paste for unpacked/dev loads.
+// Firefox asks the app instead (background.js) and shows the code the app's
+// question shows, asking again every two seconds until the person answers.
+const ON_FIREFOX = chrome.runtime.getURL("").startsWith("moz-extension:");
+
+function askToPair() {
+  chrome.runtime.sendMessage({ type: "PAIR_REQUEST" }, (res) => {
+    void chrome.runtime.lastError;
+    const status = res && res.status;
+    if (status === "approved") {
+      pairStateEl.textContent = "paired ✓";
+      pairStateEl.className = "paired-ok";
+    } else if (status === "pending") {
+      pairStateEl.textContent = `approve in HyperFetch — code ${res.code}`;
+      pairStateEl.className = "paired-no";
+      setTimeout(askToPair, 2000);
+    } else if (status === "busy") {
+      pairStateEl.textContent = "HyperFetch is busy — asking again…";
+      pairStateEl.className = "paired-no";
+      setTimeout(askToPair, 2000);
+    } else if (status === "denied") {
+      pairStateEl.textContent = "refused in HyperFetch";
+      pairStateEl.className = "paired-no";
+    } else {
+      refreshPairState();          // an app that cannot ask: the paste box it is
+    }
+  });
+}
+
 function autoPair() {
+  if (ON_FIREFOX) { askToPair(); return; }
   fetch(`${APP}/pair`)
     .then((r) => (r.ok ? r.json() : null))
     .then((j) => {

@@ -48,7 +48,9 @@ application on your own computer. None of it reaches us.
 In the browser's local extension storage, on your device:
 
 - A **pairing token**, shared with your local application so that website
-  JavaScript cannot send downloads to it.
+  JavaScript cannot send downloads to it. On Firefox, until the application
+  has allowed it, the four-digit **pairing code** the application's question
+  shows.
 - The **local address** the application was found on.
 - Your **toggle settings** from the popup, and the corner you moved the
   download button to.
@@ -66,8 +68,9 @@ The application does its work on your computer. It keeps its data in
 - Your **settings**, the **download list** — with cookies and sign-in headers
   removed before it is saved (`utils.strip_sensitive`) — and a **history** of
   finished downloads: name, address, size and where each was saved.
-- The **pairing token**, and — only if you set up the web client — its
-  **username and a scrypt hash of its password**.
+- The **pairing token**, the addresses of the **Firefox installs you allowed**
+  to pair (Settings → Browser can forget them), and — only if you set up the
+  web client — its **username and a scrypt hash of its password**.
 - A **log** of warnings and errors (with Debug logging switched on, more
   detail, download addresses included), and **crash reports** — an error
   trace, version and platform, no download addresses — which stay on your

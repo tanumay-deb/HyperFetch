@@ -27,6 +27,7 @@ from PySide6.QtGui import QIcon, QKeySequence, QShortcut, QAction, QFont
 
 import task as T
 import utils
+import pairing
 import torrent as _torrent
 from queue_manager import QueueManager
 from api_server import run_server, PORT
@@ -36,6 +37,7 @@ from gui.icons import themed_icon
 from gui.dialogs import PropertiesDialog
 from gui2.dialogs.settings import SettingsDialogV2
 from gui2.dialogs.complete import CompleteDialog
+from gui2.dialogs.pair import show_next as show_pair_question
 from gui2.toast import ToastManager
 from gui2 import palette
 from gui2.sidebar import Sidebar
@@ -87,6 +89,11 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, QW
         self._meta = _torrent.MetadataPrefetcher(lambda: self.queue.tasks)
         self._meta.start()
         self.pending = deque()
+        # Firefox installs asking to pair, and the ones allowed (pairing.py).
+        # The server records the asking; refresh() puts the question.
+        self.pair_requests = pairing.PairRequests(
+            os.path.join(utils.app_data_dir(), "paired_browsers.json"))
+        self._pair_dlg = None
         self._speed = {}              # id -> (last_dl, last_t, bps)
         self._spark = {}              # id -> deque(bps) for the live card sparkline
         self._filter = "All"
@@ -377,7 +384,8 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, QW
                 attempt += 1
                 try:
                     run_server(self.queue, self.save_dir, PORT,
-                               pending=self.pending, token=self.pair_token)
+                               pending=self.pending, token=self.pair_token,
+                               pair_requests=self.pair_requests)
                     return                      # only returns if it stops serving
                 # SystemExit as well as OSError: werkzeug catches the bind error
                 # itself and calls sys.exit(1), and SystemExit derives from
@@ -685,6 +693,7 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, QW
 
     def refresh(self):
         self._drain_pending()
+        self._ask_pairing()
         if (self._server_error and not self._server_error_shown
                 and hasattr(self, "_toasts")):
             self._server_error_shown = True
@@ -972,6 +981,21 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, QW
         dlg.raise_()
         dlg.activateWindow()
 
+    def _ask_pairing(self):
+        """A Firefox install asking to pair: put the question, one at a time.
+        The window comes forward for it - the person has just clicked in
+        Firefox and is waiting on this, possibly with the window in the tray."""
+        if self._pair_dlg is not None:
+            return
+        dlg = show_pair_question(self, self.pair_requests)
+        if dlg is None:
+            return
+        self._pair_dlg = dlg
+        dlg.finished.connect(lambda *_: setattr(self, "_pair_dlg", None))
+        self._show_from_tray()
+        dlg.raise_()
+        dlg.activateWindow()
+
     def _drain_pending(self):
         while self.pending:
             item = self.pending.popleft()
@@ -1192,7 +1216,7 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, QW
             segments=self.segments, verify_tls=self.verify_tls, pair_token=self.pair_token,
             theme=self.theme, accent=cur_accent, sched_en=self.scheduler_enabled,
             sched_start=self.scheduler_start, sched_stop=self.scheduler_stop,
-            extras=getattr(self, "_extras", {}))
+            extras=getattr(self, "_extras", {}), pair_requests=self.pair_requests)
         self._active_settings_dlg = dlg
         res = dlg.exec()
         self._active_settings_dlg = None

@@ -51,10 +51,71 @@ function appBase() {
   });
 }
 
+// Firefox's pairing. Its address is a random moz-extension:// UUID, so /pair can
+// never recognise it. It asks /pair/request with a four-digit code instead, the
+// app puts the same code in front of the person, and once they allow it the
+// answer carries the token. The code is kept until then, so every ask - and the
+// popup and welcome page, which show it - speaks of the same one.
+const PAIR_CODE_KEY = "pairCode";
+let lastPairing = null;              // the app's latest answer, for the toast
+
+function pairCode() {
+  return new Promise((resolve) => {
+    chrome.storage.local.get({ [PAIR_CODE_KEY]: "" }, (v) => {
+      ignoreErr();
+      let code = (v && v[PAIR_CODE_KEY]) || "";
+      if (!/^\d{4}$/.test(code)) {
+        const n = new Uint32Array(1);
+        crypto.getRandomValues(n);
+        code = String(n[0] % 10000).padStart(4, "0");
+        chrome.storage.local.set({ [PAIR_CODE_KEY]: code }, ignoreErr);
+      }
+      resolve(code);
+    });
+  });
+}
+
+/** Ask the app to pair this Firefox. Resolves { status, code, token }: status is
+ *  the app's answer - "approved", "pending", "denied", "busy", or "unavailable"
+ *  when it has no window to ask in - or "unreachable" when no answer came, which
+ *  is also how an app too old to know /pair/request looks. */
+function requestPairing() {
+  return pairCode().then((code) => appBase()
+    .then((b) => fetch(`${b}/pair/request`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ code }),
+    }))
+    .then((r) => r.json().then((j) => j, () => ({})))
+    .then((j) => ({ status: (j && j.status) || "unreachable", token: (j && j.token) || "", code }),
+          () => ({ status: "unreachable", token: "", code }))
+    .then((res) => {
+      lastPairing = res;
+      if (res.status === "approved" && res.token) {
+        chrome.storage.local.set({ token: res.token }, ignoreErr);
+        chrome.storage.local.remove(PAIR_CODE_KEY, ignoreErr);
+      }
+      return res;
+    }));
+}
+
+// What a click that failed for want of pairing should say.
+function unpairedText() {
+  if (!ON_FIREFOX) return "HyperFetch couldn't pair — open the app and try again";
+  if (lastPairing && lastPairing.status === "pending") {
+    return `Approve HyperFetch in the app — code ${lastPairing.code}`;
+  }
+  return "HyperFetch isn't paired — paste the token from the app's Settings into the ⚡ popup";
+}
+
 // Auto-pairing: pull the token straight from the app instead of asking the user
 // to copy/paste it. The app only answers /pair for THIS extension's id (locked
 // via CORS there), so other extensions and websites can't read the token.
+// Firefox asks instead (requestPairing above): no id of its can be on that list.
 function fetchPairToken() {
+  if (ON_FIREFOX) {
+    return requestPairing().then((r) => (r.status === "approved" && r.token) || "");
+  }
   return appBase().then((b) => fetch(`${b}/pair`))
     .then((r) => (r.ok ? r.json() : null))
     .then((j) => {
@@ -175,7 +236,7 @@ function flushPending() {
     // if the app has gone away again mid-drain
     chrome.storage.local.set({ [PENDING_KEY]: [] }, () => {
       list.forEach((p) => sendToApp(p.url, p.filename, p.referrer,
-                                    () => {}, { ...p.extra, heldAt: p.at }));
+                                    () => {}, { ...p.extra, heldAt: p.at, storeId: p.storeId }));
       flushing = false;
     });
   });
@@ -187,8 +248,9 @@ function flushPending() {
 // woken service worker never sends an empty one) so only this paired extension
 // can queue.
 function sendToApp(url, filename, referrer, done, extra) {
-  // noHold and heldAt steer the offline queue below; the app never sees them.
-  const { noHold, heldAt, ...wire } = extra || {};
+  // noHold and heldAt steer the offline queue below, and storeId picks the
+  // cookie store (a Firefox container's); the app sees none of them.
+  const { noHold, heldAt, storeId, ...wire } = extra || {};
   // Work in flight until done() has run, so an update is not applied halfway
   // through a handoff. finish() runs done() once only: it is reached from both
   // the success and the failure path. A done() that throws is logged, not
@@ -202,7 +264,7 @@ function sendToApp(url, filename, referrer, done, extra) {
     try { done(...args); } catch (e) { console.error(e); } finally { endWork(); }
   };
   getToken().then((token) => {
-    chrome.cookies.getAll({ url }, (cookies) => {
+    chrome.cookies.getAll(storeId ? { url, storeId } : { url }, (cookies) => {
       ignoreErr();
       const cookieStr = (cookies || []).map((c) => `${c.name}=${c.value}`).join("; ");
       const post = (tok) => appBase().then((b) => fetch(`${b}/download`, {
@@ -256,14 +318,19 @@ function sendToApp(url, filename, referrer, done, extra) {
           // Only an explicit request with no fallback — right-click, grab links,
           // a video stream the browser cannot save — is worth keeping.
           if (!wire.auto && !noHold) {
-            holdPending({ url, filename: filename || "", referrer: referrer || "",
-                          extra: wire, at: heldAt });
+            holdPending(Object.assign({ url, filename: filename || "", referrer: referrer || "",
+                                        extra: wire, at: heldAt }, storeId ? { storeId } : {}));
           }
           finish(false, 0, {});
         });
     });
   });
 }
+
+// Firefox tabs carry the cookie store they browse in - a container's, or a
+// private window's - and a login lives in that store alone. Chrome's tabs have
+// no such field, and there the default store is the right one.
+const storeOf = (tab) => (tab && tab.cookieStoreId ? { storeId: tab.cookieStoreId } : {});
 
 // The right-click menu. One of three ways a download reaches the app; the other
 // two are the in-page video badges (content.js) and the browser-download
@@ -370,13 +437,11 @@ chrome.contextMenus.onClicked.addListener((info, tab) => {
       // surface the result in the page (the menu has no UI of its own) so a
       // pairing/offline failure isn't silently swallowed.
       const text = ok ? "Sent to HyperFetch"
-        : status === 401 ? (ON_FIREFOX
-            ? "HyperFetch isn't paired — paste the token from the app's Settings into the ⚡ popup"
-            : "HyperFetch couldn't pair — open the app and try again")
+        : status === 401 ? unpairedText()
         : "HyperFetch app offline";
       if (tab && tab.id >= 0)
         chrome.tabs.sendMessage(tab.id, { type: "HYPERFETCH_TOAST", text }, ignoreErr);
-    });
+    }, storeOf(tab));
   });
 });
 
@@ -399,6 +464,11 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     sendResponse({ ok: true });
     return false;
   }
+  if (msg && msg.type === "PAIR_REQUEST") {       // Firefox popup / welcome page
+    // The pages show the code and the answer; the token stays in here.
+    requestPairing().then((r) => sendResponse({ status: r.status, code: r.code }));
+    return true;
+  }
   if (msg && msg.type === "PENDING_COUNT") {
     chrome.storage.local.get({ [PENDING_KEY]: [] },
       (v) => sendResponse({ count: (v[PENDING_KEY] || []).filter(fresh).length }));
@@ -411,7 +481,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     // browser's straight away, and the app's when the queue replayed.
     sendToApp(msg.url, msg.filename, ref,
       (ok, status) => sendResponse({ ok, unpaired: status === 401 }),
-      msg.hold === false ? { noHold: true } : undefined);
+      Object.assign(msg.hold === false ? { noHold: true } : {}, storeOf(sender && sender.tab)));
     return true; // keep the message channel open for the async response
   }
 });
@@ -517,7 +587,8 @@ if (chrome.downloads && chrome.downloads.onDeterminingFilename) {
           } else {
             settle();
           }
-        }, { auto: true });
+        }, Object.assign({ auto: true },
+                         item.cookieStoreId ? { storeId: item.cookieStoreId } : {}));
       });
     } catch (e) {
       settle();
@@ -594,12 +665,12 @@ function hlsDuration(text) {
 // cookies/referer/UA and no CORS, so it reads referer/auth-gated manifests the
 // SW's own fetch can't. Returns the variant array, [] for single-quality, or
 // null when the app is unreachable (-> caller falls back to the SW fetch).
-function probeViaApp(url, referer) {
+function probeViaApp(url, referer, storeId) {
   return new Promise((resolve) => {
     // use the stored token only (no auto-pair fetch here) — the download path
     // pairs first, and an unpaired probe just falls back to the SW fetch below.
     chrome.storage.local.get({ token: "" }, ({ token }) => {
-      chrome.cookies.getAll({ url }, (cookies) => {
+      chrome.cookies.getAll(storeId ? { url, storeId } : { url }, (cookies) => {
         ignoreErr();
         const cookieStr = (cookies || []).map((c) => `${c.name}=${c.value}`).join("; ");
         appBase().then((b) => fetch(`${b}/probe`, {
@@ -635,7 +706,7 @@ async function probeViaFetch(url) {
 }
 
 // Resolve a sniffed .m3u8 into a quality picker (master) or a single row.
-async function handleHls(url, tabId, fallbackName, referer) {
+async function handleHls(url, tabId, fallbackName, referer, storeId) {
   const cached = parsedHls.get(url);   // re-deliver to a new tab, no re-probe
   if (cached) {
     if (tabId >= 0) chrome.tabs.sendMessage(tabId, cached, ignoreErr);
@@ -644,7 +715,7 @@ async function handleHls(url, tabId, fallbackName, referer) {
   if (inFlightHls.has(url)) return;
   inFlightHls.add(url);
   try {
-    let variants = await probeViaApp(url, referer);   // app-side (auth path)
+    let variants = await probeViaApp(url, referer, storeId);   // app-side (auth path)
     const appAnswered = variants !== null;
     if (!appAnswered) variants = await probeViaFetch(url);  // SW fallback
     const definite = appAnswered || variants !== null;     // got a real answer?
@@ -712,7 +783,7 @@ chrome.webRequest.onResponseStarted.addListener(
     // Pass the page URL so the app can send a real Referer to gated CDNs.
     if (kind === "hls") {
       const referer = details.documentUrl || details.originUrl || details.initiator || "";
-      handleHls(details.url, details.tabId, filename, referer);
+      handleHls(details.url, details.tabId, filename, referer, details.cookieStoreId);
       return;
     }
 

@@ -27,12 +27,14 @@ _SECTIONS = ["General", "Downloads", "Network", "Torrents", "Browser", "Browser 
 
 class SettingsDialogV2(PageBuilderMixin, QDialog):
     def __init__(self, parent, *, save_dir, max_concurrent, segments, verify_tls,
-                 pair_token, theme, accent, sched_en, sched_start, sched_stop, extras=None):
+                 pair_token, theme, accent, sched_en, sched_start, sched_stop, extras=None,
+                 pair_requests=None):
         super().__init__(parent)
         self.setWindowTitle("Settings")
         self.setMinimumSize(760, 540)
         self.setStyleSheet(parent.styleSheet() if parent else "")
         self._token = pair_token
+        self._pair_requests = pair_requests   # Firefox installs allowed (pairing.py)
         self._accent = accent
         ex = extras or {}
 

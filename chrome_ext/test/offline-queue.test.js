@@ -22,7 +22,8 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 // cannot know, and a download without a token is a 401.
 function makeEnv({ online = true, port = 21456, reply = 'ok', delayMs = 0,
                    hang = false, patchSource = null, firefox = false,
-                   pairRefused = false, requireToken = false } = {}) {
+                   pairRefused = false, requireToken = false,
+                   pairAnswer = 'unavailable' } = {}) {
   const state = {
     stored: { token: 'tok', enabled: true },
     posts: [],           // download POSTs that reached the "app"
@@ -42,6 +43,9 @@ function makeEnv({ online = true, port = 21456, reply = 'ok', delayMs = 0,
     pinged: [],          // ports the worker tried, in order
     createdHandler: null, // downloads.onCreated listener (Firefox's capture)
     tabMsgs: [],         // messages the worker sent to pages (toasts)
+    pairAnswer,          // what the fake app says to /pair/request
+    pairAsks: [],        // codes Firefox asked /pair/request with
+    cookieQueries: [],   // what each cookies.getAll asked for
   };
   const ctx = {
     console,
@@ -58,6 +62,14 @@ function makeEnv({ online = true, port = 21456, reply = 'ok', delayMs = 0,
         return p === state.port
           ? Promise.resolve({ ok: true, status: 200 })
           : Promise.reject(new Error('nothing on that port'));
+      }
+      if (/\/pair\/request$/.test(url)) {
+        // Firefox's pairing: the person answers in the app (see pairing.py).
+        state.pairAsks.push(JSON.parse(init.body).code);
+        const a = state.pairAnswer;
+        const body = a === 'approved' ? { status: a, token: 'tok-ff' } : { status: a };
+        const code = { approved: 200, pending: 202, denied: 403, unavailable: 404 }[a] || 400;
+        return Promise.resolve({ ok: code < 300, status: code, json: () => Promise.resolve(body) });
       }
       if (/\/pair$/.test(url)) {
         if (pairRefused) {
@@ -110,7 +122,7 @@ function makeEnv({ online = true, port = 21456, reply = 'ok', delayMs = 0,
         },
         onChanged: { addListener: () => {} },
       },
-      cookies: { getAll: (q, cb) => cb([]) },
+      cookies: { getAll: (q, cb) => { state.cookieQueries.push(q); cb([]); } },
       contextMenus: {
         removeAll: (cb) => cb && cb(),
         create: () => {},
@@ -133,6 +145,7 @@ function makeEnv({ online = true, port = 21456, reply = 'ok', delayMs = 0,
     },
   };
   ctx.self = ctx;
+  ctx.crypto = require('crypto').webcrypto;   // the pairing code
   vm.createContext(ctx);
   vm.runInContext(patchSource ? patchSource(BG) : BG, ctx, { filename: 'background.js' });
   return { ctx, state };
@@ -769,8 +782,139 @@ function capture(state, item) {
     const toast = state.tabMsgs.find((m) => m.type === 'HYPERFETCH_TOAST');
     assert.ok(toast, 'no toast - the click failed silently');
     assert.ok(/paste the token/i.test(toast.text),
-      `Firefox cannot auto-pair, so the toast must say to paste the token: "${toast.text}"`);
+      `with no way to ask, the toast must say to paste the token: "${toast.text}"`);
     console.log('  ok  Firefox: an unpaired right-click says how to pair');
+  }
+
+  // ---- Firefox: pairing by asking the app ------------------------------------
+  // /pair can never recognise a Firefox install, so it asks /pair/request with a
+  // four-digit code; the app asks the person, showing the same code.
+  {
+    const { ctx, state } = makeEnv({ firefox: true, requireToken: true, pairAnswer: 'pending' });
+    await wait(10);
+    state.stored.token = '';
+    ctx.sendToApp('https://x/a.zip', 'a.zip', '', () => {});
+    await wait(40);
+    ctx.sendToApp('https://x/b.zip', 'b.zip', '', () => {});
+    await wait(40);
+    assert.ok(state.pairAsks.length >= 2, 'Firefox never asked the app to pair');
+    assert.ok(state.pairAsks.every((c) => /^\d{4}$/.test(c)), `not four digits: ${state.pairAsks}`);
+    assert.strictEqual(new Set(state.pairAsks).size, 1,
+      'the code changed between asks - the one the person compares would not match');
+    console.log('  ok  Firefox: an unpaired install asks with one four-digit code');
+  }
+
+  {
+    const { ctx, state } = makeEnv({ firefox: true, requireToken: true, pairAnswer: 'approved' });
+    await wait(10);
+    state.stored.token = '';
+    ctx.sendToApp('https://x/a.zip', 'a.zip', '', () => {});
+    await wait(40);
+    assert.strictEqual(state.stored.token, 'tok-ff', 'the allowed token was not kept');
+    assert.ok(!('pairCode' in state.stored), 'the code outlived the pairing');
+    assert.ok(state.posts.some((p) => p.url === 'https://x/a.zip' && p.token === 'tok-ff'),
+      'the download did not go through once allowed');
+    console.log('  ok  Firefox: once allowed, the token is kept and the download goes through');
+  }
+
+  {
+    const { state } = makeEnv({ firefox: true, requireToken: true, pairAnswer: 'pending' });
+    await wait(10);
+    state.stored.token = '';
+    state.menuHandler({ menuItemId: 'hyperfetch-download', linkUrl: 'https://x/a.zip' },
+                      { id: 3, url: 'https://x/' });
+    await wait(60);
+    const toast = state.tabMsgs.find((m) => m.type === 'HYPERFETCH_TOAST');
+    const code = state.pairAsks[state.pairAsks.length - 1];
+    assert.ok(toast && toast.text.includes(code) && /approve/i.test(toast.text),
+      `while the app is asking, the toast must say so with the code: "${toast && toast.text}"`);
+    console.log('  ok  Firefox: while the app asks, a failed click shows the code to look for');
+  }
+
+  {
+    const { state } = makeEnv({ firefox: true, pairAnswer: 'approved' });
+    await wait(10);
+    let reply = null;
+    const async_ = state.msgHandler({ type: 'PAIR_REQUEST' }, {}, (r) => { reply = r; });
+    assert.strictEqual(async_, true, 'must return true or the page never gets the answer');
+    await wait(40);
+    assert.strictEqual(reply.status, 'approved');
+    assert.ok(/^\d{4}$/.test(reply.code), 'the page gets the code to show');
+    assert.ok(!('token' in reply), 'the token went to a page - it belongs to the worker alone');
+    console.log('  ok  the popup and welcome page get the code, never the token');
+  }
+
+  {
+    const { ctx, state } = makeEnv({});           // Chrome
+    await wait(10);
+    state.stored.token = '';
+    ctx.sendToApp('https://x/a.zip', 'a.zip', '', () => {});
+    await wait(40);
+    assert.strictEqual(state.pairAsks.length, 0, 'Chrome pairs through /pair; it must never ask');
+    console.log('  ok  Chrome keeps pairing on its own, never asking');
+  }
+
+  // ---- Firefox: containers ---------------------------------------------------
+  // A login lives in the cookie store of the tab it happened in - a container's
+  // or a private window's. The store is chosen per download; the app never
+  // sees its name.
+  // copied out of the vm's realm: strict deep-equal also compares prototypes
+  const lastQuery = (state) => Object.assign({}, state.cookieQueries[state.cookieQueries.length - 1]);
+  {
+    const { state } = makeEnv({ firefox: true });
+    await wait(10);
+    state.menuHandler({ menuItemId: 'hyperfetch-download', linkUrl: 'https://x/a.zip' },
+                      { id: 3, url: 'https://x/', cookieStoreId: 'firefox-container-2' });
+    await wait(40);
+    assert.deepStrictEqual(lastQuery(state), { url: 'https://x/a.zip', storeId: 'firefox-container-2' });
+    assert.ok(state.posts.length && !('storeId' in state.posts[0]), 'the store name was sent to the app');
+    console.log('  ok  Firefox: a right-click in a container sends that container\'s cookies');
+  }
+
+  {
+    const { state } = makeEnv({ firefox: true });
+    await wait(10);
+    let reply = null;
+    state.msgHandler({ type: 'DOWNLOAD_URL', url: 'https://x/v.mp4', filename: 'v.mp4' },
+                     { tab: { url: 'https://x/', cookieStoreId: 'firefox-container-5' } },
+                     (r) => { reply = r; });
+    await wait(40);
+    assert.deepStrictEqual(lastQuery(state), { url: 'https://x/v.mp4', storeId: 'firefox-container-5' });
+    assert.ok(reply && reply.ok);
+    console.log('  ok  Firefox: the page\'s own sends use the tab\'s container');
+  }
+
+  {
+    const { state } = makeEnv({ firefox: true, reply: 'queued' });
+    await wait(10);
+    state.createdHandler(Object.assign({}, ffItem, { cookieStoreId: 'firefox-container-3' }));
+    await wait(40);
+    assert.deepStrictEqual(lastQuery(state), { url: ffItem.url, storeId: 'firefox-container-3' });
+    console.log('  ok  Firefox: a capture in a container uses its cookies');
+  }
+
+  {
+    const { ctx, state } = makeEnv({ firefox: true, online: false });
+    await wait(10);
+    ctx.sendToApp('https://x/a.zip', 'a.zip', '', () => {}, { storeId: 'firefox-container-4' });
+    await wait(30);
+    assert.strictEqual(held(state)[0].storeId, 'firefox-container-4', 'the held download lost its container');
+    state.online = true;
+    ctx.flushPending();
+    await wait(60);
+    assert.deepStrictEqual(lastQuery(state), { url: 'https://x/a.zip', storeId: 'firefox-container-4' },
+      'the replay read the default store - the container\'s login was not used');
+    console.log('  ok  a download held while the app was closed keeps its container');
+  }
+
+  {
+    const { state } = makeEnv({});                 // Chrome: no containers
+    await wait(10);
+    state.menuHandler({ menuItemId: 'hyperfetch-download', linkUrl: 'https://x/a.zip' },
+                      { id: 3, url: 'https://x/' });
+    await wait(40);
+    assert.deepStrictEqual(lastQuery(state), { url: 'https://x/a.zip' });
+    console.log('  ok  Chrome reads the default cookie store as before');
   }
 
   console.log('offline-queue: all passed');
