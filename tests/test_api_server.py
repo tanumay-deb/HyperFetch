@@ -479,3 +479,18 @@ def test_the_right_token_logs_nothing(tmp_path, caplog):
                                headers={"Origin": "chrome-extension://ok"})
     assert r.status_code == 200
     assert "refused" not in caplog.text
+
+
+def test_headless_files_what_it_can_name_and_remembers_it_chose(tmp_path):
+    """Other for a type nobody knows; a magnet waits in the download folder and
+    is filed when its metadata arrives (torrent.sort_into_category) - which
+    needs the task to say the app chose its folder."""
+    magnet = "magnet:?xt=urn:btih:" + "a" * 40
+    q = _FakeQueue()
+    c = create_app(q, str(tmp_path), pending=None).test_client()
+    assert c.post("/download", json={"url": "https://x/a.xyz", "filename": "a.xyz"}).status_code == 200
+    assert c.post("/download", json={"url": magnet}).status_code == 200
+    unknown, waiting = q.tasks
+    assert os.path.dirname(unknown.save_path) == str(tmp_path / "Other")
+    assert os.path.dirname(waiting.save_path) == str(tmp_path)
+    assert unknown.sort_base == waiting.sort_base == str(tmp_path)

@@ -199,6 +199,12 @@ class DownloadTask:
         # list ("1,3,5"); "" means all. Persisted, so unticking survives a
         # pause, a restart, and the drawer being closed.
         self.selected_files = ""
+        # Who chose the folder. A path: the app sorts this download into the
+        # category folders under it (a torrent once its metadata says what it
+        # is, anything else again when its real name is known). "": the user
+        # picked the place, so it is never moved. None: a download from before
+        # this existed, filed the way it used to be. Persisted.
+        self.sort_base = None
         # SHA-256 verification result (transient): "", "ok", "fail", "nohash"
         self.hash_status = ""
 
@@ -346,6 +352,7 @@ class DownloadTask:
             "sha256": self.sha256,
             "infohash": self.infohash,
             "selected_files": self.selected_files,
+            "sort_base": self.sort_base,
             "is_scheduled": getattr(self, "is_scheduled", False),
             "owner": self.owner,
             "completed_at": self.completed_at,
@@ -398,7 +405,8 @@ class DownloadTask:
         t.sha256 = d.get("sha256", "")
         t.infohash = d.get("infohash", "")
         t.selected_files = d.get("selected_files", "")
-        t.events = [e for e in map(_migrate_event, d.get("events") or []) if e]
+        t.sort_base = d.get("sort_base")
+        t.events =[e for e in map(_migrate_event, d.get("events") or []) if e]
         if forced_requeue:
             t._auto_resume = True
             t.log_event("Restored for auto-resume", level="INFO")

@@ -389,9 +389,10 @@ def create_app(queue, save_dir, pending=None, token=None, pair_requests=None):
             return jsonify({"status": "queued"})
 
         filename = utils.filename_from_url(url, suggested)
-        cat_dir = utils.get_category_dir(save_dir, filename)
-        save_path = utils.unique_path(cat_dir, filename)
+        folder, sort_base = utils.place_download(save_dir, url, filename)
+        save_path = utils.unique_path(folder, filename)
         task = T.DownloadTask(url, save_path, filename=filename, headers=headers)
+        task.sort_base = sort_base
         queue.add_task(task)
         return jsonify({"status": "queued", "id": task.id, "filename": filename})
 
@@ -436,7 +437,9 @@ def create_app(queue, save_dir, pending=None, token=None, pair_requests=None):
             pending.append({"url": target, "filename": "", "headers": {}})
             return jsonify({"status": "queued"})
         fn = utils.filename_from_url(target) or "torrent"
-        task = T.DownloadTask(target, utils.unique_path(save_dir, fn), filename=fn)
+        folder, sort_base = utils.place_download(save_dir, target, fn)
+        task = T.DownloadTask(target, utils.unique_path(folder, fn), filename=fn)
+        task.sort_base = sort_base
         queue.add_task(task)
         return jsonify({"status": "queued", "id": task.id})
 
@@ -629,8 +632,9 @@ def create_app(queue, save_dir, pending=None, token=None, pair_requests=None):
             pending.append({"url": url, "filename": "", "headers": {}})
             return jsonify({"status": "queued"})
         fn = utils.filename_from_url(url) or "download"
-        path = utils.unique_path(utils.get_category_dir(save_dir, fn), fn)
-        task = T.DownloadTask(url, path, filename=fn)
+        folder, sort_base = utils.place_download(save_dir, url, fn)
+        task = T.DownloadTask(url, utils.unique_path(folder, fn), filename=fn)
+        task.sort_base = sort_base
         queue.add_task(task)
         return jsonify({"status": "queued", "id": task.id})
 

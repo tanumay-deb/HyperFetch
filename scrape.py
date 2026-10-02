@@ -255,28 +255,12 @@ def _torrent_file(path, mtime_ns, size):
     for a in flat:
         if isinstance(a, bytes):
             trackers.append(a.decode("utf-8", "replace").strip())
-    info = meta.get(b"info")
-    return ih, trackers, isinstance(info, dict) and info.get(b"private") == 1
-
-
-def _torrent_file_of(task):
-    """The .torrent on disk that describes this task, or '': a .torrent it was
-    added from, else the copy kept in app data once its metadata arrived."""
-    url = task.url or ""
-    if not torrent.is_magnet(url):
-        local = torrent.local_torrent_path(url)
-        if torrent.is_torrent(url, task.filename) and os.path.isfile(local):
-            return local
-    ih = getattr(task, "infohash", "") or torrent.magnet_infohash(url)
-    if ih:
-        kept = os.path.join(torrent.metadata_dir(), ih + ".torrent")
-        if os.path.isfile(kept):
-            return kept
-    return ""
+    return ih, trackers, torrent.is_private_torrent(path)
 
 
 def _file_facts(task):
-    path = _torrent_file_of(task)
+    # the .torrent it was added from, else the copy kept once its metadata arrived
+    path = torrent.metadata_torrent_path(task)
     if not path:
         return "", [], False
     try:

@@ -106,3 +106,63 @@ def test_a_single_file_download_still_works(tmp_path):
     A._maybe_categorize(_stub(), t)
     cat = utils.category_for("movie.mkv")
     assert os.path.isfile(tmp_path / cat / "movie.mkv")
+
+
+# ---- downloads that say who chose their folder (task.sort_base) ---------------
+
+def _done_task(path, name, sort_base):
+    t = T.DownloadTask("https://x/" + name, path, filename=name)
+    t.status = T.COMPLETED
+    t.sort_base = sort_base
+    return t
+
+
+def test_a_late_named_download_moves_from_other_to_its_real_category(tmp_path):
+    """A media page has no name to go by when it is added, so it waits in
+    Other; its real name is known when it finishes. It goes to the category
+    beside Other - not into a folder inside it."""
+    f = _mk(str(tmp_path / "Other"), "watch.mp4", 100)
+    t = _done_task(f, "watch.mp4", str(tmp_path))
+    A._maybe_categorize(_stub(), t)
+    assert os.path.isfile(tmp_path / "Video" / "watch.mp4")
+    assert not (tmp_path / "Other" / "Video").exists()
+    assert t.save_path == str(tmp_path / "Video" / "watch.mp4")
+
+
+def test_a_finished_file_nobody_can_classify_ends_in_other(tmp_path):
+    f = _mk(str(tmp_path), "thing.xyz", 100)
+    t = _done_task(f, "thing.xyz", str(tmp_path))
+    A._maybe_categorize(_stub(), t)
+    assert t.save_path == str(tmp_path / "Other" / "thing.xyz")
+    assert os.path.isfile(t.save_path)
+
+
+def test_a_download_whose_folder_the_user_chose_is_never_moved(tmp_path):
+    """Picked "Music" for a video on purpose: it stays in Music."""
+    f = _mk(str(tmp_path / "Music"), "concert.mkv", 100)
+    t = _done_task(f, "concert.mkv", "")
+    A._maybe_categorize(_stub(), t)
+    assert t.save_path == f and os.path.isfile(f)
+    assert not (tmp_path / "Music" / "Video").exists()
+
+
+def test_a_torrent_filed_before_it_started_is_not_filed_again(tmp_path):
+    d = tmp_path / "Video" / "Show.S01"
+    _mk(str(d), "ep.mkv", 5000)
+    t = _done_task(str(d), "Show.S01", str(tmp_path))
+    stub = _stub()
+    A._maybe_categorize(stub, t)
+    assert t.save_path == str(d) and d.is_dir()
+    assert stub._saved == [], "nothing changed, so nothing to save"
+
+
+def test_a_download_from_before_this_existed_is_filed_as_it_used_to_be(tmp_path):
+    """sort_base None: a known type goes into a category folder where it lies,
+    and an unknown one stays put."""
+    known = _mk(str(tmp_path), "old.mkv", 100)
+    unknown = _mk(str(tmp_path), "old.xyz", 100)
+    a, b = _done_task(known, "old.mkv", None), _done_task(unknown, "old.xyz", None)
+    A._maybe_categorize(_stub(), a)
+    A._maybe_categorize(_stub(), b)
+    assert a.save_path == str(tmp_path / "Video" / "old.mkv")
+    assert b.save_path == unknown, "an old download was moved into Other"

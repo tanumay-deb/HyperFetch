@@ -507,6 +507,123 @@ def parse_torrent_files(path):
         return []
 
 
+def _torrent_info(path):
+    """The info dict of a .torrent file; {} when it cannot be read."""
+    try:
+        with open(path, "rb") as f:
+            info = _bdecode(f.read()).get(b"info")
+    except (OSError, ValueError, AttributeError):
+        return {}
+    return info if isinstance(info, dict) else {}
+
+
+def is_private_torrent(path):
+    """Whether a .torrent carries the private flag (BEP 27): such a torrent
+    talks to the trackers named in it and to nobody else."""
+    return _torrent_info(path).get(b"private") == 1
+
+
+def torrent_top_name(path):
+    """The file or folder a torrent creates in its save folder; '' if unknown."""
+    name = _torrent_info(path).get(b"name")
+    return name.decode("utf-8", "replace") if isinstance(name, bytes) else ""
+
+
+def _picked(selected, count):
+    """The 1-based file numbers in an aria2 select-file list ("1,3-5"). Every
+    file when the list is empty or cannot be read - that is what aria2 fetches
+    then."""
+    every = set(range(1, count + 1))
+    picked = set()
+    for part in (selected or "").split(","):
+        part = part.strip()
+        if not part:
+            continue
+        lo, _, hi = part.partition("-")
+        try:
+            picked.update(range(int(lo), int(hi or lo) + 1))
+        except ValueError:
+            return every
+    return (picked & every) or every
+
+
+def torrent_category(path, selected=""):
+    """The category a torrent is filed under: that of the biggest file it is
+    going to fetch. Biggest rather than most common, because a release is full
+    of samples, subtitles and nfos and the one large file says what it is.
+    "Other" when that file is of no known type, or nothing can be read."""
+    rows = parse_torrent_files(path)
+    keep = _picked(selected, len(rows))
+    best_name, best_size = "", -1
+    for number, (rel, size) in enumerate(rows, 1):
+        if number in keep and size > best_size:
+            best_name, best_size = rel, size
+    return utils.category_for(os.path.basename(best_name)) if best_name else "Other"
+
+
+def sort_into_category(task, torrent_path):
+    """File a torrent under its category folder before any of it is fetched.
+
+    The folder is task.sort_base plus the category its metadata gives, so the
+    payload is written where it will stay: filing it after it finished meant
+    moving a finished download, which a torrent still seeding never allowed.
+    Returns True when the task's folder changed.
+
+    Only a download the app sorts (sort_base is a folder) is touched, and only
+    while nothing of it is on disk: one that already started keeps its folder,
+    since moving the task without its bytes would start it again from nothing.
+    """
+    base = getattr(task, "sort_base", None)
+    top = torrent_top_name(torrent_path) if torrent_path else ""
+    if not base or not top:
+        return False
+    here = os.path.dirname(task.save_path or "")
+    target = os.path.join(base, torrent_category(
+        torrent_path, getattr(task, "selected_files", "")))
+    if (os.path.normcase(os.path.abspath(here))
+            == os.path.normcase(os.path.abspath(target))):
+        return False
+    started = (int(getattr(task, "downloaded", 0) or 0) > 0
+               or os.path.exists(task.save_path or "")
+               or os.path.exists(os.path.join(here, top))
+               or os.path.exists(os.path.join(here, top + ".aria2")))
+    if started:
+        return False
+    try:
+        os.makedirs(target, exist_ok=True)
+    except OSError as e:
+        log.warning("could not make %s for %s: %s", target, task.filename, e)
+        return False
+    task.save_path = os.path.join(target, os.path.basename(task.save_path))
+    log.info("filed under %s: %s", os.path.basename(target), top)
+    return True
+
+
+def tracker_opts(task, torrent_path):
+    """Per-download tracker options for a torrent whose metadata is on disk.
+
+    {} for a public one: it gets the daemon's --bt-tracker list like every
+    other. A private torrent (BEP 27) may announce only to its own trackers,
+    and aria2 does not see to that by itself - measured on 1.37.0:
+
+      * --bt-tracker is added to a private torrent's announce list like any
+        other's, and announced to as soon as its own tracker fails;
+      * changeOption afterwards changes nothing, live or paused: the list is
+        built when the download is added, so it has to be said with the add;
+      * the metadata aria2 saves for a magnet has that list baked in, so
+        clearing bt-tracker alone leaves it there; bt-exclude-tracker takes it
+        back out.
+
+    A public tracker the magnet itself names is the torrent's own and stays.
+    """
+    if not torrent_path or not is_private_torrent(torrent_path):
+        return {}
+    own = {tr.lower() for tr in magnet_trackers(task.url or "")}
+    return {"bt-tracker": "",
+            "bt-exclude-tracker": ",".join(tr for tr in PUBLIC_TRACKERS
+                                           if tr.lower() not in own)}
+
+
 def listen_port():
     """The BitTorrent listen port actually in use: the user's setting, else the
     default. UPnP maps this, and aria2 binds it."""
@@ -566,18 +683,35 @@ def cleanup_artifacts(task):
     files belonging to THIS task — a blind sweep could delete the control file
     of a torrent another client (or another of our tasks) is still resuming."""
     save = getattr(task, "save_path", "") or ""
+    folder = os.path.dirname(save) or "."
     removed = []
-    if save:
-        ctl = save + ".aria2"
+    # aria2 names the control file after the payload's top-level entry. That is
+    # save_path only once the torrent has finished: until then save_path is the
+    # placeholder the task was added with (.../magnet_.bin), and looking only
+    # there left <TorrentName>.aria2 behind for every torrent cancelled or
+    # deleted before it was done. The name comes from the task, which the
+    # engine sets when it identifies the payload, and from the metadata.
+    # Read before the metadata is removed below.
+    names = {os.path.basename(save)} if save else set()
+    known = (getattr(task, "filename", "") or "").strip()
+    if known.lower() not in _PLACEHOLDER_FILENAMES:
+        names.add(known)
+    names.add(torrent_top_name(metadata_torrent_path(task, folder)))
+    for name in names:
+        if not name or not _within(folder, name):
+            continue
+        ctl = os.path.join(folder, name + ".aria2")
         if os.path.isfile(ctl):
             try:
                 os.remove(ctl)
                 removed.append(ctl)
             except OSError:
                 pass
-    ih = magnet_infohash(task.url or "")
+    # a .torrent task has no magnet to read the infohash from; it is on the
+    # task, and names our kept copy in app data - never the user's own file
+    ih = magnet_infohash(task.url or "") or (getattr(task, "infohash", "") or "")
     if ih:
-        for d in (metadata_dir(), os.path.dirname(save) or "."):
+        for d in (metadata_dir(), folder):
             p = os.path.join(d, ih + ".torrent")
             if os.path.isfile(p):
                 try:
@@ -589,13 +723,15 @@ def cleanup_artifacts(task):
 
 
 def metadata_torrent_path(task, *dirs):
-    """Locate the .torrent describing this task: a local .torrent input as-is,
-    else the copy aria2 saves as <infohash>.torrent (--bt-save-metadata) once a
-    magnet's metadata arrives. '' when nothing is on disk yet."""
+    """Locate the .torrent describing this task: the .torrent it was added from,
+    else the copy kept by infohash - what aria2 saves once a magnet's metadata
+    arrives (--bt-save-metadata), or our own copy of a .torrent whose original
+    has since moved. '' when nothing is on disk yet."""
     url = task.url or ""
-    if is_torrent(url) and os.path.isfile(local_torrent_path(url)):
-        return url
-    ih = magnet_infohash(url)
+    local = local_torrent_path(url)
+    if is_torrent(url) and os.path.isfile(local):
+        return local                    # a real path, also for a file:// input
+    ih = magnet_infohash(url) or (getattr(task, "infohash", "") or "")
     if not ih:
         return ""
     # the archived copy first: that is where metadata lives once a run has
@@ -889,8 +1025,6 @@ class TorrentDownloader:
         """
         import aria2d
 
-        out_dir = os.path.dirname(self.t.save_path) or "."
-        os.makedirs(out_dir, exist_ok=True)
         self._started = time.time()
 
         # display name, same rules as the subprocess path
@@ -902,7 +1036,20 @@ class TorrentDownloader:
 
         d = aria2d.DAEMON
         d.ensure()                                   # raises -> caller falls back
+        # What the torrent is decides where it goes and whom it may talk to, and
+        # both have to be said with the add. A .torrent, or a magnet resolved
+        # earlier, says so now; a magnet nobody has resolved says so when its
+        # metadata arrives (_hand_over).
+        meta = self._known_metadata()
+        sort_into_category(self.t, meta)
+        out_dir = os.path.dirname(self.t.save_path) or "."
+        os.makedirs(out_dir, exist_ok=True)
         opts = {"dir": out_dir}
+        opts.update(tracker_opts(self.t, meta))
+        if is_magnet(self.t.url):
+            # aria2 holds the payload it makes from the metadata instead of
+            # starting it, so it can be filed first
+            opts["pause-metadata"] = "true"
         picked = (getattr(self.t, "selected_files", "") or "").strip()
         if picked:
             # Re-apply the user's file choice on every start. Without it, a
@@ -920,6 +1067,7 @@ class TorrentDownloader:
         # purpose, and re-attaching would silently hand back the old one with
         # its old options, so check-integrity would never apply. (force_recheck
         # is already cleared by _take_recheck, so the opts are the signal.)
+        self._opts = opts
         gid = self._rpc_add(d, opts, reattach="check-integrity" not in opts)
         self._gid = gid
         self.t.gid = gid
@@ -944,15 +1092,72 @@ class TorrentDownloader:
                 self.t.error = ""
                 self.t.status = T.DOWNLOADING
                 self._rpc_drop_existing(d)      # same reason as the recheck path
-                gid = self._rpc_add(d, dict(opts, **{"check-integrity": "true"}),
-                                    reattach=False)
+                # self._opts, not opts: a magnet filed when its metadata arrived
+                # now lives in another folder than the one it was added with
+                self._opts = dict(self._opts, **{"check-integrity": "true"})
+                gid = self._rpc_add(d, self._opts, reattach=False)
                 self._gid = gid
                 self.t.gid = gid
-                top = self._poll_rpc(d, gid, out_dir)
+                top = self._poll_rpc(d, gid, self._opts["dir"])
         finally:
             self._gid = None
             self.t.gid = None
         return top
+
+    def _known_metadata(self):
+        """The .torrent on disk that describes this task: the file it was added
+        from (or our kept copy of it), or what the swarm already told us about
+        a magnet. '' for a magnet nobody has resolved yet."""
+        if is_torrent(self.t.url):
+            return self._torrent_file()
+        return metadata_torrent_path(self.t, os.path.dirname(self.t.save_path) or ".")
+
+    def _hand_over(self, d, held, out_dir):
+        """A magnet's metadata has arrived, and aria2 is holding the payload it
+        made from it (pause-metadata). This is the first moment the app knows
+        what the torrent is, so it is filed and its trackers settled here,
+        before a byte of it is written. Returns (gid to follow, its folder).
+
+        With nothing to change the held payload is let go. Otherwise it is
+        dropped and the saved metadata added in its place: aria2 can change
+        neither the folder nor the tracker list of a download that exists
+        (measured on 1.37.0 - changeOption is accepted and does nothing).
+        """
+        opts = dict(getattr(self, "_opts", None) or {"dir": out_dir})
+        opts.pop("pause-metadata", None)
+        # out of the download folder first: it is read from app data from now
+        # on, also by a later run if this one does not get to finish
+        archive_metadata(self.t, out_dir)
+        meta = metadata_torrent_path(self.t, out_dir)
+        want = dict(opts)
+        if sort_into_category(self.t, meta):
+            want["dir"] = os.path.dirname(self.t.save_path)
+        want.update(tracker_opts(self.t, meta))
+        if want == opts:
+            try:
+                d.call("aria2.unpause", held)
+            except Exception:
+                pass                      # already running is fine
+            return held, out_dir
+        with open(meta, "rb") as f:
+            data = f.read()               # read before the held payload is dropped
+        self._rpc_remove(d, held, force=True)
+        gid = self._add_torrent(d, data, want)
+        self._opts = want
+        log.info("metadata in for %s - started in %s%s",
+                 torrent_top_name(meta) or self.t.filename, want["dir"],
+                 ", its own trackers only" if "bt-exclude-tracker" in want else "")
+        return gid, want["dir"]
+
+    @staticmethod
+    def _add_torrent(d, data, opts):
+        """Hand aria2 the bytes of a .torrent. It is told not to keep a copy:
+        left to itself it drops every .torrent it is handed into --dir as
+        <sha1>.torrent, next to the payload, and the app keeps its own in app
+        data."""
+        import base64
+        return d.call("aria2.addTorrent", base64.b64encode(data).decode(), [],
+                      dict(opts, **{"rpc-save-upload-metadata": "false"}))
 
     def _take_recheck(self):
         """True once if Force Recheck was asked for, clearing the request.
@@ -1092,6 +1297,11 @@ class TorrentDownloader:
             # move that caused it. Drop it and add again at the new location.
             self._rpc_remove(d, existing, force=True)
             existing = ""
+        if existing and not self._entry_trackers_fit(d, existing, opts):
+            # A private torrent registered before the app knew it was one. Its
+            # tracker list is fixed at add time too, so it is added again.
+            self._rpc_remove(d, existing, force=True)
+            existing = ""
         if existing:
             log.info("torrent already in the daemon, re-attaching: %s",
                      self.t.filename)
@@ -1115,7 +1325,6 @@ class TorrentDownloader:
             return gid
 
     def _rpc_add_new(self, d, opts):
-        import base64
         if is_torrent(self.t.url):
             src = self._torrent_file()
             if not src:
@@ -1124,8 +1333,7 @@ class TorrentDownloader:
                 raise FileNotFoundError(
                     f"the .torrent file is no longer at {self.t.url}")
             with open(src, "rb") as f:
-                return d.call("aria2.addTorrent",
-                              base64.b64encode(f.read()).decode(), [], opts)
+                return self._add_torrent(d, f.read(), opts)
         return d.call("aria2.addUri", [self.t.url], opts)
 
     def _torrent_file(self):
@@ -1184,6 +1392,28 @@ class TorrentDownloader:
                      "saves to %s — re-adding rather than re-attaching",
                      self.t.filename, have, want)
         return same
+
+    def _entry_trackers_fit(self, d, gid, opts):
+        """False when the daemon entry announces to trackers this torrent must
+        be kept off (opts["bt-exclude-tracker"], set for a private torrent).
+
+        Unknown counts as a fit, for the reason it does in _entry_dir_matches.
+        """
+        unwanted = {tr.lower() for tr in
+                    ((opts or {}).get("bt-exclude-tracker") or "").split(",") if tr}
+        if not unwanted:
+            return True
+        try:
+            st = d.call("aria2.tellStatus", gid) or {}
+        except Exception:
+            return True
+        tiers = (st.get("bittorrent") or {}).get("announceList") or []
+        listed = {str(tr).lower() for tier in tiers for tr in tier}
+        if listed & unwanted:
+            log.info("daemon entry for %s lists public trackers and it is a private "
+                     "torrent — re-adding rather than re-attaching", self.t.filename)
+            return False
+        return True
 
     def _rpc_drop_existing(self, d):
         """Unregister this torrent from the daemon so the next add is a real
@@ -1318,7 +1548,7 @@ class TorrentDownloader:
             # a magnet's metadata download spawns the real payload as followedBy
             follow = st.get("followedBy") or []
             if follow:
-                cur = follow[0]
+                cur, out_dir = self._hand_over(d, follow[0], out_dir)
                 # Publish the gid we are ACTUALLY polling. The task kept the
                 # original metadata gid, so the drawer's Connections tab asked
                 # aria2 for the peers of the metadata download — which has none,

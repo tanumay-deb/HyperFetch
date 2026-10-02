@@ -84,13 +84,35 @@ def test_a_torrent_tab_never_forces_a_filename():
 
 def test_the_destination_hint_only_appears_when_it_says_something_new():
     """Repeating the folder shown directly above it is a line of noise."""
+    d = _dlg(url="https://x/notes.xyz", categorize=False)
+    assert d.dest_hint.isHidden(), "with sorting off the folder above is the whole answer"
     d = _dlg(url="https://x/notes.txt")
-    d.cat.setCurrentText("Auto")
-    d.url_edit.setText("https://x/notes.xyz")     # uncategorised -> no subfolder
-    assert d.dest_hint.isHidden()
     d.cat.setCurrentText("Video")                 # explicit subfolder
     assert not d.dest_hint.isHidden()
     assert "Video" in d.dest_hint.text()
+
+
+def test_the_hint_names_other_for_a_type_nobody_knows():
+    """Such a file is saved in Other now, not in the folder shown above."""
+    d = _dlg(url="https://x/notes.xyz")
+    d.cat.setCurrentText("Auto")
+    assert not d.dest_hint.isHidden()
+    assert d.dest_hint.text().endswith("Other")
+
+
+def test_the_hint_says_where_a_torrent_will_be_filed(tmp_path):
+    """A .torrent says what it holds; a magnet does not until its metadata is in."""
+    from test_sorting import make_torrent
+    src = make_torrent(tmp_path / "s.torrent", "Show.S01", files=[("ep1.mkv", 500)])
+    d = _dlg(url=src)
+    assert d.tabs.currentIndex() == TORRENT_TAB
+    assert not d.dest_hint.isHidden() and d.dest_hint.text().endswith("Video")
+    m = _dlg(url=MAGNET)
+    assert m.tabs.currentIndex() == MAGNET_TAB
+    assert not m.dest_hint.isHidden()
+    assert "once its contents are known" in m.dest_hint.text()
+    off = _dlg(url=MAGNET, categorize=False)
+    assert off.dest_hint.isHidden()
 
 
 def test_dont_show_again_is_reported_and_defaults_off():

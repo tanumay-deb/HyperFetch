@@ -849,8 +849,16 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, QW
         torrents) — add-time categorisation can't classify those, so we fix it
         up on completion. Multi-file torrents resolve save_path to a FOLDER,
         which the isfile guard below leaves in place; already-categorised files
-        are skipped too."""
+        are skipped too.
+
+        t.sort_base says who chose the folder. A folder: the app did, and the
+        download belongs in that folder's category subfolder - Other when
+        nobody can name its type. "": the user did, so it stays. None: a
+        download from before this was recorded, filed the way it always was."""
         if not self._extras.get("categorize", True):
+            return
+        base = getattr(t, "sort_base", None)
+        if base == "":
             return
         path = getattr(t, "save_path", "") or ""
         if getattr(t, "seeding", False):
@@ -867,14 +875,20 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, QW
             cat = utils.category_for(t.filename)
         else:
             return
-        if cat == "Other":
-            return
         cur_dir = os.path.dirname(path)
-        if os.path.basename(cur_dir).lower() == cat.lower():
-            return                                  # already inside its category folder
+        if base:
+            dest_dir = os.path.join(base, cat)
+            if (os.path.normcase(os.path.abspath(cur_dir))
+                    == os.path.normcase(os.path.abspath(dest_dir))):
+                return                              # already where it belongs
+        else:
+            if cat == "Other":
+                return
+            if os.path.basename(cur_dir).lower() == cat.lower():
+                return                              # already inside its category folder
+            dest_dir = os.path.join(cur_dir, cat)
         try:
             import shutil
-            dest_dir = os.path.join(cur_dir, cat)
             os.makedirs(dest_dir, exist_ok=True)
             dest = utils.unique_path(dest_dir, os.path.basename(path))
             shutil.move(path, dest)
@@ -1216,24 +1230,18 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, QW
                 return
         base = v["save_dir"] if os.path.isdir(v["save_dir"]) else self.save_dir
         filename = utils.filename_from_url(v["url"], v["filename"] or suggested)
-        is_tor = _torrent.is_torrent_task(v["url"], filename)
-        folder = base
-        if v["category"] == "Auto":
-            # auto-sort by file type into Downloads/<Category> when enabled
-            # (skipped for torrents/magnets, which create their own folder)
-            if self._extras.get("categorize", True) and not is_tor:
-                folder = utils.get_category_dir(base, filename)
-        else:
-            # explicit category pick always wins
-            folder = os.path.join(base, v["category"])
-            try:
-                os.makedirs(folder, exist_ok=True)
-            except OSError:
-                folder = base
+        # Category "Auto" with sorting on: the app files it by type under base,
+        # a torrent by what its metadata says it holds - at once for a
+        # .torrent, when the metadata arrives for a magnet. A category picked
+        # by hand always wins, and is never moved afterwards.
+        folder, sort_base = utils.place_download(
+            base, v["url"], filename, v["category"],
+            self._extras.get("categorize", True))
         save_path = utils.unique_path(folder, filename)
         t = T.DownloadTask(v["url"], save_path, filename=filename,
                            headers=v["headers"], priority=v["priority"],
                            queue_name=v["queue"])
+        t.sort_base = sort_base
         t.use_ytdlp = v.get("use_ytdlp", False)     # route through yt-dlp engine
         t.yt_format = v.get("yt_format", "")        # chosen quality/format string
         self.queue.segments = v["connections"]      # active per-download connections

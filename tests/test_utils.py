@@ -92,9 +92,22 @@ def test_category_dir(tmp_path, name, cat):
     assert os.path.isdir(out)
 
 
-def test_category_unknown_stays_base(tmp_path):
-    assert utils.get_category_dir(str(tmp_path), "weird.xyz") == str(tmp_path)
-    assert utils.get_category_dir(str(tmp_path), "") == str(tmp_path)
+def test_what_cannot_be_classified_goes_to_other(tmp_path):
+    """It used to stay in the download folder itself, which then filled with
+    everything the table did not know: every type has a folder, and the ones
+    nobody can name share Other."""
+    other = os.path.join(str(tmp_path), "Other")
+    assert utils.get_category_dir(str(tmp_path), "weird.xyz") == other
+    assert utils.get_category_dir(str(tmp_path), "") == other
+    assert os.path.isdir(other)
+
+
+def test_the_folder_is_the_category_the_list_shows(tmp_path):
+    """A name the sidebar counts as Video (by its release keywords) is filed
+    under Video too, not under Other because it has no extension."""
+    name = "Show.S01E01.1080p.WEB.x264"
+    assert utils.category_for(name) == "Video"
+    assert os.path.basename(utils.get_category_dir(str(tmp_path), name)) == "Video"
 
 
 def test_json_roundtrip_and_corruption(tmp_path):

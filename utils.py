@@ -470,16 +470,49 @@ def user_download_dir(base_dir, username):
 
 
 def get_category_dir(base_dir, filename):
-    """Return the base_dir + category subfolder based on file extension."""
-    if not filename:
-        return base_dir
-    ext = os.path.splitext(filename)[1].lower()
-    for cat, exts in CATEGORIES.items():
-        if ext in exts:
-            cat_dir = os.path.join(base_dir, cat)
-            os.makedirs(cat_dir, exist_ok=True)
-            return cat_dir
-    return base_dir
+    """The category folder under base_dir for a file, created if need be.
+
+    The same answer category_for gives the list, so a download sits in the
+    folder named after the category it is shown under. What cannot be
+    classified goes to Other rather than staying in base_dir, which otherwise
+    collects every type the table does not know."""
+    cat_dir = os.path.join(base_dir, category_for(filename))
+    os.makedirs(cat_dir, exist_ok=True)
+    return cat_dir
+
+
+def place_download(base_dir, url, filename, category="Auto", categorize=True):
+    """Where a new download is saved and who chose: ``(folder, sort_base)``.
+
+    sort_base goes onto the task (see DownloadTask.sort_base). With the
+    category left on "Auto" and sorting on, the app chooses and sort_base is
+    base_dir: a file goes to its category folder, Other when nobody can name
+    its type; a .torrent says what it holds, so it is filed by that at once; a
+    magnet says nothing yet and waits in base_dir until its metadata arrives
+    (torrent.sort_into_category files it then, before it downloads).
+
+    Otherwise the user chose - a category picked by hand, or sorting switched
+    off - and sort_base is "", which means the download is never moved.
+    """
+    import torrent
+    if category != "Auto":
+        folder = os.path.join(base_dir, category)
+        try:
+            os.makedirs(folder, exist_ok=True)
+        except OSError:
+            folder = base_dir
+        return folder, ""
+    if not categorize:
+        return base_dir, ""
+    if not torrent.is_torrent_task(url, filename):
+        return get_category_dir(base_dir, filename), base_dir
+    local = torrent.local_torrent_path(url)
+    if not (torrent.is_torrent(url, filename) and os.path.isfile(local)
+            and torrent.torrent_top_name(local)):
+        return base_dir, base_dir
+    folder = os.path.join(base_dir, torrent.torrent_category(local))
+    os.makedirs(folder, exist_ok=True)
+    return folder, base_dir
 
 import time
 import threading

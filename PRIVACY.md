@@ -1,6 +1,6 @@
 # Privacy Policy — HyperFetch
 
-**Last updated: 29 September 2026.** The same policy is published at
+**Last updated: 2 October 2026.** The same policy is published at
 <https://tanumay-deb.github.io/HyperFetch/privacy.html>.
 
 HyperFetch is a desktop download accelerator plus a companion browser
@@ -82,8 +82,9 @@ It connects to:
   its streams, and, with checksum verification switched on, a `.sha256` file
   beside the download.
 - For **torrents and magnet links**, trackers — including a list of public
-  trackers added to magnet links — and other peers. As with any torrent
-  client, they see your IP address. While a torrent waits in the queue, the
+  trackers the application adds to every torrent that is not marked private
+  (a magnet link is only known to be private once its details have arrived) —
+  and other peers. As with any torrent client, they see your IP address. While a torrent waits in the queue, the
   application also asks its trackers now and then how many seeders it has
   (Settings → Torrents → "Check seeders of queued torrents", on by default):
   they see your IP address and which torrent it is, as they would once it

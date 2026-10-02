@@ -120,7 +120,8 @@ class NewDownloadDialog(QDialog):
         self.dest_hint.setWordWrap(True)
         lay.addWidget(self.dest_hint)
         for sig in (self.name_edit.textChanged, self.url_edit.textChanged,
-                    self.cat.currentTextChanged, self.dir_edit.textChanged):
+                    self.cat.currentTextChanged, self.dir_edit.textChanged,
+                    self.tor_edit.textChanged):
             sig.connect(self._update_dest_hint)
         self.tabs.currentChanged.connect(self._sync_tab_fields)
 
@@ -202,29 +203,36 @@ class NewDownloadDialog(QDialog):
 
     def _update_dest_hint(self):
         """Name the real destination only when it is NOT the folder already
-        shown above — i.e. when an auto category adds a subfolder. Otherwise it
-        just repeats the line above it."""
+        shown above — i.e. when a category adds a subfolder. Otherwise it just
+        repeats the line above it. Mirrors utils.place_download, without
+        creating anything."""
+        import torrent
         base = self.dir_edit.text().strip()
         cat = self.cat.currentText()
-        name = self.name_edit.text().strip()
-        if not name:                                   # URL tab: derive the auto name
-            try:
-                name = utils.filename_from_url(self.url_edit.text().strip())
-            except Exception:
-                name = ""
-        sub = ""
-        if self.tabs.currentIndex() == URL_TAB:        # only the URL tab categorises
-            if cat == "Auto":
-                if self._categorize and name:
-                    c = utils.category_for(name)
-                    sub = "" if c == "Other" else c
-            else:
-                sub = cat                              # explicit pick (incl. "Other")
+        tab = self.tabs.currentIndex()
+        sub, note = "", ""
+        if tab == URL_TAB:
+            name = self.name_edit.text().strip()
+            if not name:                               # derive the auto name
+                try:
+                    name = utils.filename_from_url(self.url_edit.text().strip())
+                except Exception:
+                    name = ""
+            if cat != "Auto":
+                sub = cat                              # explicit pick
+            elif self._categorize and name:
+                sub = utils.category_for(name)         # a type nobody knows: Other
+        elif self._categorize:
+            # a torrent is filed by what its metadata says it holds
+            local = torrent.local_torrent_path(self.tor_edit.text().strip())
+            if tab == TORRENT_TAB and os.path.isfile(local) and torrent.torrent_top_name(local):
+                sub = torrent.torrent_category(local)
+            elif tab == MAGNET_TAB or local:
+                note = "Filed under its category once its contents are known."
         if sub:
-            self.dest_hint.setText(f"Saved to:  {os.path.join(base, sub)}")
-            self.dest_hint.setVisible(True)
-        else:
-            self.dest_hint.setVisible(False)
+            note = f"Saved to:  {os.path.join(base, sub)}"
+        self.dest_hint.setText(note)
+        self.dest_hint.setVisible(bool(note))
 
     def _paste(self):
         self.url_edit.setText(QApplication.clipboard().text().strip())
