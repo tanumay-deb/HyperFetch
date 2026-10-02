@@ -896,7 +896,19 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, QW
             t.filename = os.path.basename(dest)
             self._save_state()
         except OSError:
-            pass
+            return
+        # A download with no name to go by waits in Other and leaves it when
+        # its real name is known. An Other emptied that way is litter in the
+        # download folder. rmdir only ever takes an EMPTY folder, and only a
+        # category folder directly under the one the app sorts into is tried.
+        names = {c.lower() for c in utils.CATEGORIES} | {"other"}
+        if (base and os.path.basename(cur_dir).lower() in names
+                and os.path.normcase(os.path.abspath(os.path.dirname(cur_dir)))
+                == os.path.normcase(os.path.abspath(base))):
+            try:
+                os.rmdir(cur_dir)
+            except OSError:
+                pass                                # still holds something
 
     def _counts(self):
         tasks = self.queue.tasks

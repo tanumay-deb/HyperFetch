@@ -166,3 +166,24 @@ def test_a_download_from_before_this_existed_is_filed_as_it_used_to_be(tmp_path)
     A._maybe_categorize(_stub(), b)
     assert a.save_path == str(tmp_path / "Video" / "old.mkv")
     assert b.save_path == unknown, "an old download was moved into Other"
+
+
+def test_a_category_folder_emptied_by_the_move_is_not_left_behind(tmp_path):
+    """Other was only a waiting room for that download; an empty one in the
+    download folder is litter. One that still holds something stays."""
+    f = _mk(str(tmp_path / "Other"), "watch.mp4", 100)
+    A._maybe_categorize(_stub(), _done_task(f, "watch.mp4", str(tmp_path)))
+    assert not (tmp_path / "Other").exists()
+
+    g = _mk(str(tmp_path / "Other"), "clip.mp4", 100)
+    _mk(str(tmp_path / "Other"), "keep.xyz", 10)
+    A._maybe_categorize(_stub(), _done_task(g, "clip.mp4", str(tmp_path)))
+    assert (tmp_path / "Other" / "keep.xyz").is_file()
+
+
+def test_the_download_folder_itself_is_never_removed(tmp_path):
+    base = tmp_path / "dl"
+    f = _mk(str(base), "thing.mkv", 100)                    # lies in the base folder itself
+    A._maybe_categorize(_stub(), _done_task(f, "thing.mkv", str(base)))
+    assert (base / "Video" / "thing.mkv").is_file()
+    assert base.is_dir()
