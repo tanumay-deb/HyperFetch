@@ -145,3 +145,70 @@ def test_saved_metadata_is_used_without_touching_the_swarm(env, monkeypatch):
     assert t.total_size > 0, "did not apply the saved metadata"
 
 
+
+
+# ---- the name a resolved torrent gets ------------------------------------------
+
+def _placeholder_task():
+    """A magnet without a dn= name, as the window adds it."""
+    t = T.DownloadTask("magnet:?xt=urn:btih:" + "a" * 40, "C:/dl/download.bin",
+                       filename="download.bin")
+    t.status = T.QUEUED
+    return t
+
+
+def test_a_multi_file_torrent_is_named_after_itself_not_its_first_file(tmp_path):
+    """The file list is relative to the torrent's own folder, so its first
+    entry is an episode - or a subfolder - never the torrent's name."""
+    from test_sorting import make_torrent
+    pack = make_torrent(tmp_path / "p.torrent", "Show.S01", files=[
+        ("Show.S01E01.mkv", 500), ("Show.S01E02.mkv", 400)])
+    t = _placeholder_task()
+    assert torrent.apply_metadata(t, pack) is True
+    assert t.filename == "Show.S01"
+
+    nested = make_torrent(tmp_path / "n.torrent", "Show.Complete", files=[
+        ("Season 1/ep1.mkv", 500), ("Season 2/ep1.mkv", 400)])
+    t = _placeholder_task()
+    torrent.apply_metadata(t, nested)
+    assert t.filename == "Show.Complete"
+
+
+def test_a_single_file_torrent_is_named_after_its_file(tmp_path):
+    from test_sorting import make_torrent
+    t = _placeholder_task()
+    torrent.apply_metadata(t, make_torrent(tmp_path / "s.torrent", "film.mkv", length=900))
+    assert t.filename == "film.mkv"
+    assert t.total_size == 900
+
+
+def test_a_name_the_task_already_has_is_kept(tmp_path):
+    """A magnet's dn=, or a name the user gave, is not a placeholder."""
+    from test_sorting import make_torrent
+    pack = make_torrent(tmp_path / "p.torrent", "Show.S01", files=[("ep1.mkv", 500)])
+    t = _placeholder_task()
+    t.filename = "My show"
+    torrent.apply_metadata(t, pack)
+    assert t.filename == "My show"
+
+
+def test_a_real_torrent_gets_its_real_name():
+    src = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data",
+                       "08ada5a7a6183aae1e09d831df6748d566095a10.torrent")
+    if not os.path.isfile(src):
+        pytest.skip("sample torrent absent")
+    t = _placeholder_task()
+    torrent.apply_metadata(t, src)
+    assert t.filename == "Sintel"
+
+
+def test_a_queued_magnet_shows_the_torrents_name_once_resolved(env, monkeypatch):
+    """The whole path: saved metadata, the prefetcher's tick, the card's name."""
+    from test_sorting import make_torrent
+    make_torrent(os.path.join(torrent.metadata_dir(), "a" * 40 + ".torrent"),
+                 "Show.S01", files=[("Show.S01E01.mkv", 500), ("Show.S01E02.mkv", 400)])
+    t = _placeholder_task()
+    t.id = "task1"
+    _prefetcher([t], _Daemon(), monkeypatch)._tick()
+    assert t.filename == "Show.S01"
+    assert t.total_size == 900

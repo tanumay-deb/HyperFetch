@@ -800,12 +800,12 @@ def apply_metadata(task, torrent_path):
     if not rows:
         return False
     total = sum(sz for _, sz in rows)
-    top = ""
-    first = rows[0][0].replace("\\", "/")
-    if len(rows) > 1 or "/" in first:
-        top = first.split("/")[0]
-    else:
-        top = first
+    # The torrent's own name: what aria2 calls the file or folder it creates.
+    # Not the first row - for a multi-file torrent the rows are paths INSIDE
+    # that folder, so the first one is an episode or a subfolder, and a queued
+    # season pack was shown under the name of its first episode.
+    top = (torrent_top_name(torrent_path)
+           or rows[0][0].replace("\\", "/").split("/")[0])
     if top and (not task.filename or task.filename.lower() in _PLACEHOLDER_FILENAMES):
         task.filename = top
     if total and not task.total_size:
