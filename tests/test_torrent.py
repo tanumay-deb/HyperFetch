@@ -59,6 +59,23 @@ def test_merge_magnet_trackers_adds_only_new_trackers():
     ]
 
 
+def test_merged_trackers_can_be_put_ahead_of_the_ones_already_there():
+    """aria2 asks trackers in order and stops at the first that answers - even
+    when it answers with nobody (measured on 1.37.0). A tracker added to get a
+    stuck torrent moving has to come first, or it is never asked at all."""
+    current = "magnet:?xt=urn:btih:abc&dn=Example&tr=udp%3A%2F%2Fold.example%3A80"
+    updated, added = torrent.merge_magnet_trackers(current, [
+        "udp://new1.example:80", "UDP://old.example:80", "udp://new2.example:80",
+    ], first=True)
+
+    assert added == ["udp://new1.example:80", "udp://new2.example:80"]
+    assert torrent.magnet_trackers(updated) == [
+        "udp://new1.example:80", "udp://new2.example:80", "udp://old.example:80",
+    ]
+    assert torrent.magnet_infohash(updated) == "abc"
+    assert torrent.magnet_name(updated) == "Example"
+
+
 # ---- progress parsing ----
 def test_run_errors_clearly_without_aria2c(tmp_path, monkeypatch):
     monkeypatch.setattr(torrent, "aria2c_path", lambda: None)

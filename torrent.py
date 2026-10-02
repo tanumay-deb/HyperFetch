@@ -327,11 +327,17 @@ def magnet_trackers(url):
     return out
 
 
-def merge_magnet_trackers(url, trackers):
+def merge_magnet_trackers(url, trackers, first=False):
     """Add new tracker URLs to a magnet URI without changing its identity.
 
     Returns ``(updated_url, added_trackers)``. Tracker URLs are treated as
     case-insensitive for de-duplication, matching URI scheme/host behaviour.
+
+    ``first`` puts the new ones ahead of those already there. The order is the
+    order aria2 asks in, and it stops at the first tracker that answers - even
+    one that answers with nobody (measured on 1.37.0). So a tracker added to
+    get a torrent moving has to come first, or it is only a spare for when
+    every earlier one fails.
     """
     if not is_magnet(url):
         return url, []
@@ -349,11 +355,32 @@ def merge_magnet_trackers(url, trackers):
         if tracker and marker not in known:
             known.add(marker)
             added.append(tracker)
-            pairs.append(("tr", tracker))
     if not added:
         return url, []
+    at = len(pairs)
+    if first:
+        at = next((i for i, (key, _) in enumerate(pairs) if key.lower() == "tr"), at)
+    pairs[at:at] = [("tr", tracker) for tracker in added]
     return urllib.parse.urlunsplit((parts.scheme, parts.netloc, parts.path,
                                     urllib.parse.urlencode(pairs), parts.fragment)), added
+
+
+def add_trackers(task, trackers):
+    """Add trackers to a magnet task so that they are really used.
+
+    They go ahead of the ones it has, and the task is flagged for the engine,
+    which adds the torrent to aria2 again with them (TorrentDownloader.
+    _add_again) - aria2 cannot be told about them any other way. Returns
+    ``(added, now)``: the trackers that were new, and whether that happens at
+    once (it is downloading) or on its next start (paused, queued, seeding).
+    """
+    url, added = merge_magnet_trackers(task.url, trackers, first=True)
+    if not added:
+        return [], False
+    task.url = url                         # saved with the task
+    task.trackers_changed = True
+    now = task.status == T.DOWNLOADING and not getattr(task, "seeding", False)
+    return added, now
 
 
 def _info_span(data):
@@ -1044,18 +1071,13 @@ class TorrentDownloader:
         sort_into_category(self.t, meta)
         out_dir = os.path.dirname(self.t.save_path) or "."
         os.makedirs(out_dir, exist_ok=True)
-        opts = {"dir": out_dir}
-        opts.update(tracker_opts(self.t, meta))
-        if is_magnet(self.t.url):
-            # aria2 holds the payload it makes from the metadata instead of
-            # starting it, so it can be filed first
-            opts["pause-metadata"] = "true"
-        picked = (getattr(self.t, "selected_files", "") or "").strip()
-        if picked:
-            # Re-apply the user's file choice on every start. Without it, a
-            # paused torrent came back with everything selected again — aria2
-            # only ever knew about the selection through a live changeOption.
-            opts["select-file"] = picked
+        opts = self._add_opts(out_dir, meta)
+        # Trackers changed while aria2 held this torrent: its list there is
+        # the old one for good (see _add_again), so the registration goes and
+        # the add below is a real one.
+        fresh = self._take_tracker_change()
+        if fresh:
+            self._rpc_drop_existing(d)
         if self._take_recheck():
             opts["check-integrity"] = "true"
             # The daemon almost certainly still holds this torrent (pausing only
@@ -1068,7 +1090,8 @@ class TorrentDownloader:
         # its old options, so check-integrity would never apply. (force_recheck
         # is already cleared by _take_recheck, so the opts are the signal.)
         self._opts = opts
-        gid = self._rpc_add(d, opts, reattach="check-integrity" not in opts)
+        gid = self._rpc_add(d, opts,
+                            reattach=not fresh and "check-integrity" not in opts)
         self._gid = gid
         self.t.gid = gid
 
@@ -1111,6 +1134,52 @@ class TorrentDownloader:
         if is_torrent(self.t.url):
             return self._torrent_file()
         return metadata_torrent_path(self.t, os.path.dirname(self.t.save_path) or ".")
+
+    def _add_opts(self, out_dir, meta):
+        """The options this torrent is added with, as the task stands now."""
+        opts = {"dir": out_dir}
+        opts.update(tracker_opts(self.t, meta))
+        if is_magnet(self.t.url):
+            # aria2 holds the payload it makes from the metadata instead of
+            # starting it, so it can be filed first
+            opts["pause-metadata"] = "true"
+        picked = (getattr(self.t, "selected_files", "") or "").strip()
+        if picked:
+            # Re-apply the user's file choice on every start. Without it, a
+            # paused torrent came back with everything selected again — aria2
+            # only ever knew about the selection through a live changeOption.
+            opts["select-file"] = picked
+        return opts
+
+    def _take_tracker_change(self):
+        """True once if the task's trackers changed since aria2 was given it,
+        clearing the request."""
+        if not getattr(self.t, "trackers_changed", False):
+            return False
+        self.t.trackers_changed = False
+        return True
+
+    def _add_again(self, d, gid, out_dir):
+        """Give aria2 this torrent again, as it stands now, and return the new
+        gid. This is how trackers added to a torrent become real.
+
+        aria2 builds a download's tracker list when the download is added and
+        never again. Measured on 1.37.0: changeOption("bt-tracker") is accepted,
+        the list stays as it was - changed live, or paused, changed and resumed
+        - and on a running download it makes aria2 restart it for nothing. So
+        the old download is dropped and the torrent added anew, its trackers
+        read from the magnet as it is now. The bytes stay: the payload and its
+        .aria2 control file are on disk, and the new download resumes from them.
+        Never with check-integrity, even if this run began with a recheck:
+        new trackers are no reason to hash the payload again.
+        """
+        opts = self._add_opts(out_dir, self._known_metadata())
+        self._rpc_remove(d, gid, force=True)
+        new = self._rpc_add_new(d, opts)
+        self._opts = opts
+        self.t.log_event("Reconnecting with the new trackers")
+        log.info("trackers changed - added again: %s", self.t.filename)
+        return new
 
     def _hand_over(self, d, held, out_dir):
         """A magnet's metadata has arrived, and aria2 is holding the payload it
@@ -1496,6 +1565,14 @@ class TorrentDownloader:
                 archive_metadata(self.t, out_dir)
                 self.t.status = T.PAUSED
                 return top
+            if (getattr(self.t, "trackers_changed", False)
+                    and not getattr(self.t, "seeding", False)):
+                # A seeding torrent has nothing left to fetch: the change waits
+                # for its next start instead of restarting a finished torrent.
+                self.t.trackers_changed = False
+                cur = self._add_again(d, cur, out_dir)
+                self._gid = self.t.gid = cur
+                continue
 
             # Pause/cancel above are local flags and stay on the fast POLL beat;
             # everything below is an RPC round trip, so it runs on STATUS_POLL.

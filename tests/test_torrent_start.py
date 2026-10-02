@@ -275,3 +275,92 @@ def test_a_clean_entry_is_reattached(tmp_path, monkeypatch):
     assert d.did("aria2.unpause", "mine")
     assert d.added == [], "a healthy registration was thrown away"
     assert t.status == T.COMPLETED
+
+
+# ---- trackers added to a torrent aria2 already holds ---------------------------
+#
+# aria2 builds a download's tracker list when the download is added and never
+# again: changeOption("bt-tracker") is accepted and changes nothing (measured on
+# 1.37.0), and on a running download it only makes aria2 restart it. So a
+# tracker the user adds becomes real by adding the torrent again; its bytes stay
+# (the .aria2 control file), and its trackers are read from the magnet as it is
+# now.
+
+def _uris(d):
+    return [params[0][0] for method, params in d.calls if method == "aria2.addUri"]
+
+
+def test_trackers_added_to_a_running_torrent_make_it_start_again_with_them(tmp_path, monkeypatch):
+    t = _magnet_task(tmp_path, trackers=["udp://old.example:80"])
+    t.sort_base = ""
+
+    def the_user_adds_a_tracker():
+        t.url, _ = torrent.merge_magnet_trackers(t.url, ["udp://new.example:80"], first=True)
+        t.trackers_changed = True
+        return META_STAGE                 # still looking for peers under the old list
+
+    d = _Daemon([META_STAGE, the_user_adds_a_tracker, META_STAGE,
+                 _done(str(tmp_path / "x.mkv"))])
+    _start(t, d, tmp_path, monkeypatch)
+    first, second = _uris(d)
+    assert torrent.magnet_trackers(first) == ["udp://old.example:80"]
+    assert torrent.magnet_trackers(second) == ["udp://new.example:80", "udp://old.example:80"]
+    assert d.did("aria2.forceRemove", "gid1"), "the old download was left in the daemon"
+    assert not any(m == "aria2.changeOption" for m, _ in d.calls), \
+        "changeOption does nothing for trackers and restarts the download"
+    assert t.trackers_changed is False, "it would start over on every poll"
+    assert t.status == T.COMPLETED
+
+
+def test_adding_it_again_for_new_trackers_does_not_recheck_the_payload(tmp_path, monkeypatch):
+    """A start that began with Force Recheck must not re-hash the whole payload
+    again just because a tracker was added."""
+    t = _magnet_task(tmp_path)
+    t.sort_base = ""
+    t.force_recheck = True
+
+    def the_user_adds_a_tracker():
+        t.trackers_changed = True
+        return {"status": "active", "files": [{"path": str(tmp_path / "x.mkv")}]}
+
+    d = _Daemon([the_user_adds_a_tracker, _done(str(tmp_path / "x.mkv"))])
+    _start(t, d, tmp_path, monkeypatch)
+    first, second = [opts for _, opts in d.added]
+    assert first.get("check-integrity") == "true"
+    assert "check-integrity" not in second
+
+
+def test_a_torrent_resumed_after_its_trackers_changed_is_added_afresh(tmp_path, monkeypatch):
+    """Paused, it is still registered in the daemon with its old list.
+    Re-attaching to that entry would bring the old trackers back."""
+    t = _magnet_task(tmp_path)
+    t.sort_base = ""
+    t.trackers_changed = True
+    old = {"status": "paused", "infoHash": IH, "dir": str(tmp_path)}
+    d = _Daemon([_done(str(tmp_path / "x.mkv"))], entries={"old": old})
+    _start(t, d, tmp_path, monkeypatch)
+    assert d.did("aria2.forceRemove", "old")
+    assert not d.did("aria2.unpause", "old")
+    assert [k for k, _ in d.added] == ["magnet"]
+    assert t.trackers_changed is False
+
+
+def test_a_seeding_torrent_is_not_restarted_for_new_trackers(tmp_path, monkeypatch):
+    """It has nothing left to fetch; the new trackers wait for its next start."""
+    monkeypatch.setattr(utils, "SEED_ENABLED", True, raising=False)
+    payload = tmp_path / "x.mkv"
+    payload.write_bytes(b"x")
+    whole = {"status": "active", "seeder": "true", "completedLength": "500",
+             "totalLength": "500", "files": [{"path": str(payload)}]}
+    t = _magnet_task(tmp_path)
+    t.sort_base = ""
+
+    def the_user_adds_a_tracker():
+        t.trackers_changed = True
+        return whole
+
+    d = _Daemon([whole, the_user_adds_a_tracker, whole,
+                 dict(whole, status="complete")])
+    _start(t, d, tmp_path, monkeypatch)
+    assert [k for k, _ in d.added] == ["magnet"], "a finished torrent was added again"
+    assert t.trackers_changed is True, "the change was dropped instead of kept for the next start"

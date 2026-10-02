@@ -164,6 +164,11 @@ class DownloadTask:
         self._stall_yield = False
         # one-shot Force Recheck request; the engine consumes it on the next run
         self.force_recheck = False
+        # one-shot: the magnet's trackers changed after aria2 was given the
+        # torrent. aria2 fixes a download's tracker list when it is added, so
+        # the engine adds the torrent again - at once if it is downloading,
+        # else on its next start. Not saved: a restart is a fresh add anyway.
+        self.trackers_changed = False
         # still sharing a finished torrent (transient): aria2 keeps a seeding
         # torrent "active", so without this a seeding task would sit at 100%
         # looking like it had hung

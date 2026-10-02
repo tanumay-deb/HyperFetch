@@ -452,8 +452,11 @@ class DetailsDrawer(QFrame):
         return w
 
     def _add_trackers(self):
-        """Merge comma-separated trackers into this magnet and, if it is
-        running, hand them to aria2 so they take effect without a restart."""
+        """Add comma-separated trackers to this magnet, ahead of the ones it has.
+
+        aria2 cannot be handed trackers for a download it already holds, so the
+        engine adds the torrent again with them: at once if it is downloading,
+        else when it next starts - and the message says which."""
         raw = self.tracker_input.text()
         entries = [s.strip() for s in raw.split(",") if s.strip()]
         if not entries:
@@ -471,26 +474,16 @@ class DetailsDrawer(QFrame):
             self.tracker_msg.setText(f"Not a tracker URL: {bad[0]}")
             return
 
-        new_url, added = _torrent.merge_magnet_trackers(t.url, entries)
+        added, now = _torrent.add_trackers(t, entries)
         if not added:
             self.tracker_msg.setText("Already in this torrent's tracker list.")
             return
-        t.url = new_url                      # persisted with the task
         t.log_event(f"Added {len(added)} tracker(s)")
-
-        live = False
-        if getattr(t, "gid", None):
-            try:
-                import aria2d
-                aria2d.DAEMON.call("aria2.changeOption", t.gid,
-                                   {"bt-tracker": ",".join(_torrent.magnet_trackers(new_url))})
-                live = True
-            except Exception:
-                live = False
         self.tracker_input.clear()
         self.tracker_msg.setText(
-            f"Added {len(added)} tracker(s)."
-            + ("" if live else " They will be used the next time this torrent starts."))
+            f"Added {len(added)} tracker(s). "
+            + ("Reconnecting to use them." if now
+               else "They will be used the next time this torrent starts."))
         if win:
             win._save_state()
         self._render_trackers(t)

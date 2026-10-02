@@ -1169,7 +1169,9 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, QW
                  if _torrent.infohash_for(x.url, x.filename) == incoming_hash
                  and x.status != T.CANCELLED), None)
             if existing_torrent:
-                updated_url, added = _torrent.merge_magnet_trackers(
+                # which of its trackers are new - nothing is changed until the
+                # user says so below
+                _, added = _torrent.merge_magnet_trackers(
                     existing_torrent.url, _torrent.magnet_trackers(v["url"]))
                 if not added:
                     QMessageBox.information(
@@ -1192,30 +1194,19 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, QW
                 if box.clickedButton() is not load_btn:
                     return
 
-                existing_torrent.url = updated_url
+                # aria2 cannot be handed trackers for a download it already
+                # holds; the engine adds the torrent again with them
+                # (torrent.add_trackers), and the toast says when.
+                added, now = _torrent.add_trackers(
+                    existing_torrent, _torrent.magnet_trackers(v["url"]))
                 existing_torrent.log_event(f"Imported {len(added)} tracker(s)")
-                if getattr(existing_torrent, "gid", None):
-                    try:
-                        import aria2d
-                        opts = aria2d.DAEMON.call("aria2.getOption", existing_torrent.gid)
-                        running = [item.strip() for item in opts.get("bt-tracker", "").split(",")
-                                   if item.strip()]
-                        seen = {item.lower() for item in running}
-                        fresh = []
-                        for item in added:
-                            if item.lower() not in seen:
-                                seen.add(item.lower())
-                                fresh.append(item)
-                        if fresh:
-                            aria2d.DAEMON.call(
-                                "aria2.changeOption", existing_torrent.gid,
-                                {"bt-tracker": ",".join(running + fresh)})
-                    except Exception:
-                        pass
                 self._save_state()
                 self.refresh()
-                self._toasts.show("success", "Trackers imported",
-                                  f"Added {len(added)} tracker(s) to {existing_torrent.filename}.")
+                self._toasts.show(
+                    "success", "Trackers imported",
+                    f"Added {len(added)} tracker(s) to {existing_torrent.filename}. "
+                    + ("Reconnecting to use them." if now
+                       else "They will be used the next time it starts."))
                 return
         # duplicate detection — same URL already in the list. A cancelled task is
         # not a duplicate: the user threw it away, and re-adding it is the normal
