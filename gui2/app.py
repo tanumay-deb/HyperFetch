@@ -59,6 +59,17 @@ from gui2.app_system import SystemMixin
 _PLACEHOLDER_NAMES = ("download.bin", "magnet_.bin", "torrent", "magnet.bin")
 
 
+def _in_filter(t, flt):
+    """Whether a download belongs under a sidebar entry: a state, or the
+    category it is listed under (utils.category_of)."""
+    return (flt == "All"
+            or (flt == "Active" and t.status in (T.DOWNLOADING, T.QUEUED, T.SCHEDULED))
+            or (flt == "Paused" and t.status == T.PAUSED)
+            or (flt == "Completed" and t.status == T.COMPLETED)
+            or (flt == "Failed" and t.status in (T.ERROR, T.CANCELLED))
+            or utils.category_of(t) == flt)
+
+
 def _display_name(url, filename=""):
     """The best human name available for a freshly added download."""
     name = (filename or "").strip()
@@ -617,12 +628,7 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, QW
             show_web = self.web_toggle.isChecked()
         source = self.queue.tasks if show_web else owned
 
-        tasks = [t for t in source if getattr(self, "_filter", "All") == "All" or 
-                 (self._filter == "Active" and t.status in (T.DOWNLOADING, T.QUEUED, T.SCHEDULED)) or
-                 (self._filter == "Paused" and t.status == T.PAUSED) or
-                 (self._filter == "Completed" and t.status == T.COMPLETED) or
-                 (self._filter == "Failed" and t.status in (T.ERROR, T.CANCELLED)) or
-                 utils.category_for(t.filename) == self._filter]
+        tasks = [t for t in source if _in_filter(t, getattr(self, "_filter", "All"))]
                  
         if getattr(self, "_search", ""):
             from gui2 import search
@@ -913,8 +919,9 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, QW
     def _counts(self):
         tasks = self.queue.tasks
         c = {"All": len(tasks)}
+        listed = [utils.category_of(t) for t in tasks]     # once a task, not once a category
         for key in list(utils.CATEGORIES) + ["Other"]:
-            c[key] = sum(1 for t in tasks if utils.category_for(t.filename) == key)
+            c[key] = listed.count(key)
         c["Active"] = sum(1 for t in tasks if t.status in (T.DOWNLOADING, T.QUEUED, T.SCHEDULED))
         c["Paused"] = sum(1 for t in tasks if t.status == T.PAUSED)
         c["Completed"] = sum(1 for t in tasks if t.status == T.COMPLETED)

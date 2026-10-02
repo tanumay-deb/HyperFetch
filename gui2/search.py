@@ -122,7 +122,7 @@ def _matches(t, words, filters):
         if not allowed or t.status not in allowed:
             return False
     cat = filters.get("category")
-    if cat is not None and utils.category_for(t.filename or "").lower() != cat:
+    if cat is not None and utils.category_of(t).lower() != cat:
         return False
     size = filters.get("size")
     if size is not None:

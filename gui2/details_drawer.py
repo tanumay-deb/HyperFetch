@@ -1358,7 +1358,7 @@ class DetailsDrawer(QFrame):
         is_tor = _torrent.is_torrent_task(t.url, t.filename)
         try:
             from gui2.download_card import _CAT_ICON
-            cat = utils.category_for(t.filename)
+            cat = utils.category_of(t)
             ic_name, ic_color = _CAT_ICON.get(cat, ("document", COLORS['muted']))
             if is_tor: ic_name, ic_color = "magnet", COLORS['accent']
         except Exception:

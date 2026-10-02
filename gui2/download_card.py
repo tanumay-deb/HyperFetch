@@ -69,7 +69,7 @@ _BAR_COLOR = {
 def _icon_for(t):
     if _torrent.is_torrent_task(t.url, t.filename):
         return ("magnet", "#B388FF")
-    return _CAT_ICON.get(utils.category_for(t.filename), ("folder", "#B5B5B5"))
+    return _CAT_ICON.get(utils.category_of(t), ("folder", "#B5B5B5"))
 
 
 class ElideLabel(QLabel):

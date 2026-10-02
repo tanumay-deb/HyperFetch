@@ -42,7 +42,7 @@ def record(task):
         "filename": task.filename or "",
         "url": getattr(task, "url", "") or "",
         "size": size,
-        "category": utils.category_for(task.filename or ""),
+        "category": utils.category_of(task),
         "path": getattr(task, "save_path", "") or "",
         "completed_at": time.time(),
     })

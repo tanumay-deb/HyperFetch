@@ -558,7 +558,7 @@ def create_app(queue, save_dir, pending=None, token=None, pair_requests=None):
             "isTorrent": _torrent.is_torrent_task(t.url, t.filename),
             # Same buckets the desktop sidebar groups by, decided in one place
             # so the two never disagree about what counts as a Video.
-            "category": utils.category_for(t.filename or ""),
+            "category": utils.category_of(t),
             "peers": int(getattr(t, "tor_conns", 0) or 0),
             "seeds": int(getattr(t, "tor_seeds", 0) or 0),
             "upSpeed": int(getattr(t, "tor_upload", 0) or 0),
@@ -591,8 +591,8 @@ def create_app(queue, save_dir, pending=None, token=None, pair_requests=None):
             up_speed += int(getattr(t, "tor_upload", 0) or 0)
             up_total += int(getattr(t, "tor_uploaded", 0) or 0)
             try:
-                cats[utils.category_for(t.filename)] = \
-                    cats.get(utils.category_for(t.filename), 0) + 1
+                cat = utils.category_of(t)
+                cats[cat] = cats.get(cat, 0) + 1
             except Exception:
                 pass
         try:

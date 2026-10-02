@@ -441,6 +441,32 @@ def category_for(filename):
     return "Other"
 
 
+def category_of(task):
+    """The category a download is listed under - the one answer for the
+    sidebar, search, the web client and history.
+
+    A torrent the app filed sits in a category folder chosen from what it
+    holds (torrent.sort_into_category), and that folder is the answer: its
+    name is a folder name, with no extension and often no hint. Everything
+    else goes by its name (category_for), as before - a media page waits in
+    Other until it finishes, but is a video the moment its name says so. So
+    does a torrent in a folder the user chose, which may be named anything.
+    """
+    import torrent
+    name = getattr(task, "filename", "") or ""
+    base = getattr(task, "sort_base", None)
+    save = getattr(task, "save_path", "") or ""
+    if base and save and torrent.is_torrent_task(getattr(task, "url", ""), name):
+        folder = os.path.dirname(save)
+        if (os.path.normcase(os.path.normpath(os.path.dirname(folder)))
+                == os.path.normcase(os.path.normpath(base))):
+            filed = os.path.basename(folder).lower()
+            for cat in list(CATEGORIES) + ["Other"]:
+                if cat.lower() == filed:
+                    return cat
+    return category_for(name)
+
+
 def user_download_dir(base_dir, username):
     """Where one site account's downloads live: ``base_dir/<username>``.
 
