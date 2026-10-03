@@ -7,7 +7,9 @@ raises to abort). yt-dlp is imported lazily (heavy dependency) — it's declared
 PyInstaller in HyperFetch.spec for the frozen build.
 """
 import os
+import time
 import logging
+import threading
 
 import task as T
 
@@ -19,6 +21,11 @@ _SITES = (
     "tiktok.com", "instagram.com", "facebook.com", "twitter.com", "x.com",
     "soundcloud.com", "reddit.com", "bilibili.com", "rumble.com", "ok.ru",
 )
+
+# How long can_extract waits for yt-dlp to find a video on a page before the
+# page counts as having none. Extraction is a few requests; this only bounds a
+# host that answers slowly or not at all.
+EXTRACT_TIMEOUT = 60
 
 
 def is_ytdlp_url(url):
@@ -64,6 +71,96 @@ def available():
 
 class _Abort(Exception):
     pass
+
+
+class _YtLog:
+    """Routes yt-dlp's own messages (deprecation notices, ERROR echoes) into our
+    debug log instead of stdout/stderr, so they don't spam the app console."""
+    def debug(self, m): pass
+    def info(self, m): pass
+    def warning(self, m): log.debug("yt-dlp: %s", m)
+    def error(self, m): log.debug("yt-dlp: %s", m)
+
+
+def _http_headers(t):
+    """The browser context a task carries (UA/Referer/Cookie from the extension)."""
+    hdrs = getattr(t, "headers", {}) or {}
+    return {k: v for k, v in hdrs.items()
+            if k.lower() in ("user-agent", "referer", "cookie")}
+
+
+def _net_opts():
+    """yt-dlp options for the global TLS + proxy settings."""
+    import utils
+    opts = {}
+    if not utils.VERIFY_TLS:
+        opts["nocheckcertificate"] = True
+    if utils.PROXIES:
+        opts["proxy"] = utils.PROXIES.get("https") or utils.PROXIES.get("http")
+    return opts
+
+
+def _has_media(info):
+    """An extraction result with something in it for the engine to download."""
+    if not info:
+        return False
+    if info.get("_type") in ("playlist", "multi_video"):
+        return bool(info.get("entries"))
+    return bool(info.get("formats") or info.get("url"))
+
+
+def can_extract(t):
+    """Whether yt-dlp finds a video at the task's URL: one extraction, nothing
+    downloaded.
+
+    For a link that answered with a web page where a file was expected. A video
+    page on a site _SITES does not name looks exactly like that, and yt-dlp
+    knows far more sites than the list. False when it finds nothing, is not
+    installed or takes longer than EXTRACT_TIMEOUT - and when the task is
+    paused or cancelled first, which the caller checks.
+
+    Extraction cannot be interrupted, so it runs on a thread of its own while
+    this polls pause/cancel in 0.2 s slices. A look the user walked away from
+    finishes in the background and its answer is dropped.
+    """
+    if t.pause_requested or t.cancel_requested:
+        return False
+    opts = {
+        "logger": _YtLog(),
+        "quiet": True, "no_warnings": True,
+        "noplaylist": True,
+        # a playlist's first entry, unresolved, is enough to know
+        "extract_flat": "in_playlist", "playlist_items": "1",
+        "socket_timeout": 15,           # the downloader's own CONNECT_TIMEOUT
+        **_net_opts(),
+    }
+    http_headers = _http_headers(t)
+    if http_headers:
+        opts["http_headers"] = http_headers
+    found = []
+
+    def look():
+        try:
+            import yt_dlp               # a first import is slow too; keep it here
+            with yt_dlp.YoutubeDL(opts) as ydl:
+                info = ydl.extract_info(t.url, download=False)
+        except Exception as e:          # not installed, unsupported page, login wall, no formats
+            log.debug("yt-dlp: no video at %s: %s", t.url, str(e)[:200])
+            return
+        found.append(_has_media(info))
+
+    th = threading.Thread(target=look, daemon=True, name="ytdlp-look")
+    th.start()
+    deadline = time.monotonic() + EXTRACT_TIMEOUT
+    while th.is_alive():
+        if t.pause_requested or t.cancel_requested:
+            return False
+        if time.monotonic() >= deadline:
+            log.info("yt-dlp took over %ss on %s - taken as no video",
+                     EXTRACT_TIMEOUT, t.url)
+            return False
+        th.join(0.2)
+    return bool(found and found[0])
 
 
 def _ytdlp_version():
@@ -115,18 +212,7 @@ class YtDlpDownloader:
             elif st == "finished":
                 final["path"] = d.get("filename") or final["path"]
 
-        hdrs = getattr(self.t, "headers", {}) or {}
-        http_headers = {k: v for k, v in hdrs.items()
-                        if k.lower() in ("user-agent", "referer", "cookie")}
-
-        # route yt-dlp's own messages (deprecation notices, ERROR echoes) into our
-        # debug log instead of stdout/stderr, so they don't spam the app console
-        class _YtLog:
-            def debug(self, m): pass
-            def info(self, m): pass
-            def warning(self, m): log.debug("yt-dlp: %s", m)
-            def error(self, m): log.debug("yt-dlp: %s", m)
-
+        http_headers = _http_headers(self.t)
         ytlog = _YtLog()
 
         opts = {
@@ -143,7 +229,7 @@ class YtDlpDownloader:
         if http_headers:
             opts["http_headers"] = http_headers
 
-        import utils, shutil, re, sys
+        import shutil, re, sys
         # Locate ffmpeg (bundled with the app, or on PATH). With ffmpeg we can
         # merge separate video+audio streams -> real 1080p/4K, and videos that
         # only offer DASH (no combined stream) become downloadable. Without it we
@@ -183,10 +269,7 @@ class YtDlpDownloader:
             opts["format"] = (f"b[height<={h}]/b" if h else "b")
 
         # respect the global TLS + proxy settings
-        if not utils.VERIFY_TLS:
-            opts["nocheckcertificate"] = True
-        if utils.PROXIES:
-            opts["proxy"] = utils.PROXIES.get("https") or utils.PROXIES.get("http")
+        opts.update(_net_opts())
 
         def _attempt(o):
             """One yt-dlp run. Returns its guess at the output path."""

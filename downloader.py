@@ -247,6 +247,31 @@ class Downloader:
         self.t.total_size = size
         self.t.supports_range = accept != "none" and size > 0
 
+    def _web_page(self):
+        """The server answered with a web page where a file was expected.
+
+        yt-dlp gets one look first: a pasted video page from a site that
+        yt_dl._SITES does not name lands here, and yt-dlp knows far more sites
+        than that list. A video there hands the task to its engine, the same
+        path a ticked "Use yt-dlp" takes; nothing there is the old error.
+        """
+        import yt_dl
+        self.t.log_event("Got a web page, not the file — asking yt-dlp for a video on it")
+        found = yt_dl.can_extract(self.t)
+        if self.t.cancel_requested or self.t.pause_requested:
+            self.t.status = T.CANCELLED if self.t.cancel_requested else T.PAUSED
+            return
+        if found:
+            log.info("HTTP %s: web page with a video, handing to yt-dlp", self.t.filename)
+            self.t.log_event("yt-dlp found a video on the page")
+            self.t.use_ytdlp = True          # a resume goes straight to yt-dlp too
+            self.t.total_size = 0            # the probe measured the page, not the video
+            yt_dl.YtDlpDownloader(self.t).run()
+            return
+        self.t.status = T.ERROR
+        self.t.error = ("Server sent a web page, not the file "
+                        "(login/cookies required — use the browser extension)")
+
     # ------------------------------------------------------------- planning
     @staticmethod
     def _format_disk_error(exc, path):
@@ -486,14 +511,14 @@ class Downloader:
         try:
             if not self.t.segments:
                 self._probe()
-                # auth-gated hosts (Google Drive etc.) send an HTML login/interstitial
-                # page instead of the file — catch it before writing a broken file
+                # a web page where the file should be: a video page yt-dlp may
+                # know, or an auth-gated host's (Google Drive etc.) login /
+                # interstitial page — never write it out as the file. A name
+                # ending .html/.htm asked for the page itself.
                 ext = os.path.splitext(self.t.save_path)[1].lower()
                 if (self._probe_ctype.startswith("text/html")
                         and ext not in ("", ".html", ".htm")):
-                    self.t.status = T.ERROR
-                    self.t.error = ("Server sent a web page, not the file "
-                                    "(login/cookies required — use the browser extension)")
+                    self._web_page()
                     return
                 self._build_segments()
             else:
