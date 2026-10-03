@@ -101,6 +101,27 @@ def test_pause_resume_from_disk(file_server, tmp_path):
     assert md5(dst) == md5(ref)
 
 
+def test_a_pause_answers_at_once_on_a_slow_connection(media_server, make_payload,
+                                                      tmp_path):
+    """Pause is seen between reads, and a read waits for all of its bytes: at
+    1 MiB a read took 8 s at 128 KB/s, so a pause could take that long."""
+    media_server.put("slow.bin", make_payload(8 * 1024 * 1024))
+    media_server.rate = 128 * 1024
+    t = T.DownloadTask(media_server.url("slow.bin"), str(tmp_path / "slow.bin"))
+    th = threading.Thread(target=Downloader(t, segments=4).run, daemon=True)
+    th.start()
+    end = time.monotonic() + 10
+    while t.downloaded == 0 and time.monotonic() < end:
+        time.sleep(0.05)
+    assert t.downloaded > 0
+
+    t0 = time.monotonic()
+    t.request_pause()
+    th.join(15)
+    assert time.monotonic() - t0 < 1.0
+    assert t.status == T.PAUSED
+
+
 def test_cancel_removes_partfile(file_server, tmp_path):
     file_server.put("c.bin", n_bytes=8 * 1024 * 1024)
     dst = str(tmp_path / "c.bin")

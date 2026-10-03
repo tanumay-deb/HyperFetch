@@ -141,6 +141,13 @@ class DownloadTask:
         # by YtDlpDownloader and persisted so a paused media download resumes
         # at the same quality.
         self.yt_format = yt_format
+        # The URL is a page for yt-dlp, not a file. Persisted: a page whose
+        # video the engine was fetching in ranges has segments, and without
+        # this a restored task would fetch the page itself into them.
+        self.use_ytdlp = False
+        # The ETag of the file a video page's link served, so a resume - which
+        # gets a fresh link - continues only the same file. Persisted.
+        self.etag = ""
 
         # live torrent swarm stats (transient; set by TorrentDownloader's reader)
         self.tor_conns = 0          # connected peers
@@ -353,6 +360,8 @@ class DownloadTask:
             "seg_done": self.seg_done,
             "queue_name": self.queue_name,
             "yt_format": self.yt_format,
+            "use_ytdlp": bool(self.use_ytdlp),
+            "etag": self.etag,
             "events": self.events[-self.EVENTS_MAX:],
             "sha256": self.sha256,
             "infohash": self.infohash,
@@ -398,6 +407,8 @@ class DownloadTask:
             yt_format=d.get("yt_format", "")
         )
         t.is_scheduled = d.get("is_scheduled", False)
+        t.use_ytdlp = bool(d.get("use_ytdlp", False))
+        t.etag = d.get("etag", "") or ""
         # Missing on every task written before accounts existed, which is why
         # it defaults to "" rather than raising — those belong to admin.
         t.owner = d.get("owner", "") or ""

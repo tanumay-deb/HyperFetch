@@ -65,11 +65,21 @@ def _make_session(pool):
     s.mount("https://", ad)
     return s
 
-CHUNK = 1048576        # 1 MiB read size
+# Read size. Pause and cancel are checked between reads, and a read waits for
+# all of its bytes. Measured at 128 KB/s per connection (an 8-way share of an
+# 8 Mbit/s line): with 1 MiB reads a pause took 6.1 s, with 64 KiB 0.1-0.3 s.
+# Over loopback, server in the same process, the smaller reads still moved
+# 2.7 Gbit/s (1 MiB: 4.8).
+CHUNK = 65536
 DEFAULT_SEGMENTS = 8   # parallel connections when the server supports ranges
 HEADERS = utils.DEFAULT_HEADERS
 CONNECT_TIMEOUT = 15
 MAX_RETRIES = 5        # per-segment attempts before the task errors
+# A server pushing back on one connection too many (see _pushed_back): the
+# refused range waits this long, then for a free slot at the gate; a refusal
+# this soon after one of ours ended is taken as push-back too.
+PUSHBACK_WAIT = 0.25
+PUSHBACK_WINDOW = 1.0
 STAGGER = 0.01         # delay between segment thread starts (rate-limit friendly)
 
 # Process-wide cap on concurrent segment connections across ALL downloads.
@@ -114,9 +124,25 @@ def probe_info(url, headers=None):
     return info
 
 
+def discard_partial(t):
+    """Forget a task's partial download: its temp file and its segments."""
+    try:
+        os.remove(utils.temp_download_path(t.id))
+    except OSError:
+        pass
+    t.segments = []
+    t.downloaded = 0
+
+
 class Downloader:
-    def __init__(self, dtask: "T.DownloadTask", segments=DEFAULT_SEGMENTS):
+    def __init__(self, dtask: "T.DownloadTask", segments=DEFAULT_SEGMENTS,
+                 url=None, headers=None, cookies=None):
+        """``url``, ``headers`` and ``cookies`` are for a video page's file
+        (see run_media): the link yt-dlp found, the headers it would send
+        there, and its cookie jar. By default requests go to the task's own
+        URL with its own headers."""
         self.t = dtask
+        self.url = url or dtask.url
         self.num_segments = max(0, segments)
         # global ceiling from Settings -> Network -> Max Connections (0 = off).
         # Only clamps an explicit count; Auto mode (0) is left untouched.
@@ -124,15 +150,18 @@ class Downloader:
             self.num_segments = min(self.num_segments, utils.MAX_CONNECTIONS)
         # per-host rule may force a segment count (some servers reject many
         # parallel connections) — still capped by the global Max Connections.
-        _rule_segs = utils.host_rule(dtask.url).get("segments")
+        _rule_segs = utils.host_rule(self.url).get("segments")
         if _rule_segs:
             self.num_segments = int(_rule_segs)
             if utils.MAX_CONNECTIONS > 0:
                 self.num_segments = min(self.num_segments, utils.MAX_CONNECTIONS)
-            log.debug("host rule: %s -> %d segments", dtask.url, self.num_segments)
+            log.debug("host rule: %s -> %d segments", self.url, self.num_segments)
         # browser-supplied headers (Cookie/Referer/UA) merged into every request
-        self._base_headers = {**HEADERS, **(getattr(dtask, "headers", None) or {})}
+        if headers is None:
+            headers = getattr(dtask, "headers", None) or {}
+        self._base_headers = {**HEADERS, **headers}
         self._probe_ctype = ""
+        self._media = False             # set by run_media
         # adaptive connection gate: shrinks when the server answers 429.
         # Initialized to a safe non-zero placeholder; run() sets the real cap
         # from the ACTUAL segment count once segments exist — deriving it from
@@ -140,9 +169,17 @@ class Downloader:
         self._conn_cv = threading.Condition()
         self._active_conns = 0
         self._max_conns = max(1, self.num_segments)
+        self._conn_cap = self._max_conns
+        self._streaming = 0             # connections whose response was accepted
+        self._stream_ended = float("-inf")  # when the last of them ended
+        self._link_ok = False           # the link has served us in this run
         # one keep-alive session for this download's probe + all segment threads.
         # Auto mode (num_segments==0) can fan out to 32 segments, so size for that.
         self._session = _make_session(max(8, self.num_segments or 32))
+        if cookies is not None:
+            # a jar, not a Cookie header: requests then sends each cookie only
+            # to the hosts it belongs to, redirects included, as yt-dlp does
+            self._session.cookies.update(cookies)
 
     # ------------------------------------------------------------ conn gate
     def _acquire_conn(self):
@@ -179,9 +216,43 @@ class Downloader:
         """A stream connected successfully: allow one more parallel connection,
         up to the segment count (TCP-slow-start-style ramp; see run())."""
         with self._conn_cv:
-            if self._max_conns < getattr(self, "_conn_cap", self._max_conns):
+            if self._max_conns < self._conn_cap:
                 self._max_conns += 1
                 self._conn_cv.notify_all()
+
+    def _streams(self, n):
+        with self._conn_cv:
+            self._streaming += n
+            if n > 0:
+                self._link_ok = True
+            else:
+                self._stream_ended = time.monotonic()
+
+    def _pushed_back(self):
+        """A request was refused - 403, 429 or a reset - before it got going.
+
+        While another of this download's connections is streaming, that is the
+        server's limit and not a dead link: it is serving us, just not on one
+        more connection. So is a refusal just after one of ours ended: a server
+        that accounts for a connection a moment longer than we use it -
+        connection tracking does - refuses the next one then. The gate drops
+        to the connections being served (halving undershoots) and grows back
+        as streams are accepted, as always; no lasting ceiling, since one
+        learnt at such a moment would be one too low for the rest.
+
+        False when nothing is streaming or just ended: then it is the link's
+        answer.
+
+        Measured on a stand-in CDN serving two connections, before this:
+        refused with a reset, halving and backing off took twice as long as
+        one connection; refused with 403, the download failed outright.
+        """
+        with self._conn_cv:
+            just_ended = time.monotonic() - self._stream_ended < PUSHBACK_WINDOW
+            if self._streaming <= 0 and not just_ended:
+                return False
+            self._max_conns = max(1, min(self._max_conns, self._streaming))
+            return True
 
     # ------------------------------------------------------------------ probe
     def _capture_response(self, r):
@@ -211,7 +282,7 @@ class Downloader:
     def _probe(self):
         """One request to learn total size + range support, following redirects."""
         try:
-            r = self._session.head(self.t.url, headers=self._base_headers,
+            r = self._session.head(self.url, headers=self._base_headers,
                               allow_redirects=True,
                               timeout=CONNECT_TIMEOUT, verify=utils.VERIFY_TLS, proxies=utils.PROXIES)
             size = int(r.headers.get("Content-Length", 0))
@@ -223,7 +294,7 @@ class Downloader:
         # Some servers lie on HEAD; confirm with a tiny ranged GET.
         if size == 0 or accept == "none":
             try:
-                r = self._session.get(self.t.url,
+                r = self._session.get(self.url,
                                  headers={**self._base_headers, "Range": "bytes=0-0"},
                                  stream=True, allow_redirects=True,
                                  timeout=CONNECT_TIMEOUT, verify=utils.VERIFY_TLS, proxies=utils.PROXIES)
@@ -276,7 +347,7 @@ class Downloader:
             self.t.log_event("yt-dlp found a video on the page")
             self.t.use_ytdlp = True          # a resume goes straight to yt-dlp too
             self.t.total_size = 0            # the probe measured the page, not the video
-            yt_dl.YtDlpDownloader(self.t).run()
+            yt_dl.YtDlpDownloader(self.t, segments=self.num_segments).run()
             return
         self.t.status = T.ERROR
         self.t.error = ("Server sent a web page, not the file "
@@ -351,6 +422,7 @@ class Downloader:
         """Stream one segment, writing directly to the pre-allocated .hfdownload file."""
         temp_path = utils.temp_download_path(self.t.id)
         attempts = 0
+        refusals = 0                    # 403s after the link served us (below)
 
         while not self.t.pause_requested and not self.t.cancel_requested:
             if self.t.supports_range:
@@ -373,41 +445,67 @@ class Downloader:
             if not self._acquire_conn():
                 return  # paused while waiting for a connection slot
             retry_exc = None
+            wait_attempt = attempts
+            accepted = False
             try:
                 # with-block guarantees the response/socket closes on every
                 # path — incl. raise_for_status() failures and mid-stream errors
-                with self._session.get(self.t.url, headers=headers, stream=True,
+                with self._session.get(self.url, headers=headers, stream=True,
                                   allow_redirects=True, timeout=CONNECT_TIMEOUT,
                                   verify=utils.VERIFY_TLS, proxies=utils.PROXIES) as r:
                     r.raise_for_status()
-                    self._grow_conns()          # stream accepted -> ramp up one more slot
-                    self._capture_response(r)   # for the drawer's Headers tab
-                    with open(temp_path, mode) as f:
-                        if mode == "r+b":
-                            f.seek(seg.start + seg.downloaded)
-                        for chunk in r.iter_content(CHUNK):
-                            if self.t.pause_requested:
-                                return
-                            if chunk:
-                                utils.global_limiter.wait(len(chunk))
-                                self.t._limiter.wait(len(chunk))
-                                f.write(chunk)
-                                # Flush to the OS BEFORE advancing the counter so a
-                                # later abrupt exit (daemon threads killed mid-write)
-                                # can never leave a counted-but-unwritten gap that
-                                # resume would wrongly treat as already-downloaded.
-                                f.flush()
-                                seg.downloaded += len(chunk)
+                    accepted = True
+                    self._streams(+1)
+                    try:
+                        self._grow_conns()          # stream accepted -> ramp up one more slot
+                        self._capture_response(r)   # for the drawer's Headers tab
+                        with open(temp_path, mode) as f:
+                            if mode == "r+b":
+                                f.seek(seg.start + seg.downloaded)
+                            for chunk in r.iter_content(CHUNK):
+                                if self.t.pause_requested:
+                                    return
+                                if chunk:
+                                    utils.global_limiter.wait(len(chunk))
+                                    self.t._limiter.wait(len(chunk))
+                                    f.write(chunk)
+                                    # Flush to the OS BEFORE advancing the counter so a
+                                    # later abrupt exit (daemon threads killed mid-write)
+                                    # can never leave a counted-but-unwritten gap that
+                                    # resume would wrongly treat as already-downloaded.
+                                    f.flush()
+                                    seg.downloaded += len(chunk)
+                    finally:
+                        self._streams(-1)
                 return
             except requests.RequestException as e:
                 resp = getattr(e, "response", None)
                 code = resp.status_code if resp is not None else None
+                if not accepted and code in (403, 429, None) and self._pushed_back():
+                    # the server's limit, not the link's (see _pushed_back):
+                    # the gate holds this range until one of ours finishes -
+                    # no timer on top, so no connection sits idle - and that
+                    # is not one of its retries
+                    log.debug("seg %d refused (%s) while others stream — gate now %d",
+                              seg.index, code or "reset", self._max_conns)
+                    retry_exc, wait_attempt = e, None
+                elif code == 403 and self._link_ok and refusals < 2:
+                    # The link served us moments ago, nothing of ours is
+                    # streaming now: a server counting a connection until it
+                    # closes refuses the next one as ours ends. Two short
+                    # waits (2 s, 4 s) tell that from a link that has expired.
+                    refusals += 1
+                    retry_exc, wait_attempt = e, refusals
                 # client errors won't succeed on retry — fail fast with an
                 # actionable message (no wasted retry/backoff on a 404/410/403).
-                if code is not None and 400 <= code < 500 and code not in (408, 429):
+                elif code is not None and 400 <= code < 500 and code not in (408, 429):
                     if not self.t.cancel_requested:
                         self.t.status = T.ERROR
-                        if code in (403, 410):
+                        if code in (403, 410) and self._media:
+                            # a video page's link: a resume extracts a new one
+                            self.t.error = (f"The video's link expired (HTTP {code}) "
+                                            "— Resume fetches a new one")
+                        elif code in (403, 410):
                             self.t.error = f"URL expired (HTTP {code}) — right-click → Refresh Address"
                         elif code in (401, 407):
                             self.t.error = f"Login required (HTTP {code}) — use the browser extension"
@@ -417,31 +515,32 @@ class Downloader:
                             self.t.error = f"HTTP {code} — the server refused the download"
                         log.warning("HTTP %s seg %d: %s", code, seg.index, self.t.filename)
                     return
-                attempts += 1
-                if attempts > MAX_RETRIES:
-                    if not self.t.cancel_requested:
-                        self.t.status = T.ERROR
-                        # transient (timeout / connection reset) — resumes from disk
-                        self.t.error = "Connection lost — Resume to retry"
-                        log.error("seg %d of %s gave up after %d retries: %s",
-                                  seg.index, self.t.filename, MAX_RETRIES, e)
-                    return
-                if code == 429:
-                    self._throttle_conns()
-                    log.warning("429 rate-limited: %s — halved to %d connections",
-                                self.t.filename, self._max_conns)
-                elif code is None:
-                    # connection-level failure (reset/refused/timeout, no HTTP
-                    # code): the server or path is rejecting our concurrency —
-                    # back off the gate like a 429 so the surviving retries go
-                    # out at a rate the server tolerates.
-                    self._throttle_conns()
-                    log.debug("seg %d conn failure — gate now %d: %s",
-                              seg.index, self._max_conns, e)
                 else:
-                    log.debug("seg %d retry %d/%d: %s — %s",
-                              seg.index, attempts, MAX_RETRIES, self.t.filename, e)
-                retry_exc = e
+                    attempts += 1
+                    if attempts > MAX_RETRIES:
+                        if not self.t.cancel_requested:
+                            self.t.status = T.ERROR
+                            # transient (timeout / connection reset) — resumes from disk
+                            self.t.error = "Connection lost — Resume to retry"
+                            log.error("seg %d of %s gave up after %d retries: %s",
+                                      seg.index, self.t.filename, MAX_RETRIES, e)
+                        return
+                    if code == 429:
+                        self._throttle_conns()
+                        log.warning("429 rate-limited: %s — halved to %d connections",
+                                    self.t.filename, self._max_conns)
+                    elif code is None:
+                        # connection-level failure (reset/refused/timeout, no HTTP
+                        # code): the server or path is rejecting our concurrency —
+                        # back off the gate like a 429 so the surviving retries go
+                        # out at a rate the server tolerates.
+                        self._throttle_conns()
+                        log.debug("seg %d conn failure — gate now %d: %s",
+                                  seg.index, self._max_conns, e)
+                    else:
+                        log.debug("seg %d retry %d/%d: %s — %s",
+                                  seg.index, attempts, MAX_RETRIES, self.t.filename, e)
+                    retry_exc, wait_attempt = e, attempts
             except OSError as e:
                 # disk full / file locked: not retryable, surface a useful
                 # error with the actual free space + needed space so the user
@@ -457,16 +556,20 @@ class Downloader:
                 # global cap was added to prevent.
                 self._release_conn()
             if retry_exc is not None:
-                self._backoff_sleep(retry_exc, attempts)
+                self._backoff_sleep(retry_exc, wait_attempt)
 
     @staticmethod
     def _retry_wait(exc, attempt):
-        """Seconds to wait before a retry; honors Retry-After on 429."""
+        """Seconds to wait before a retry; honors Retry-After on 429.
+        attempt None: a pushed-back range, which waits a moment, or as long
+        as Retry-After asks, and leaves the rest to the gate."""
         resp = getattr(exc, "response", None)
         if resp is not None and resp.status_code == 429:
             ra = resp.headers.get("Retry-After", "")
             if ra.isdigit():
                 return min(int(ra), 60)
+        if attempt is None:
+            return PUSHBACK_WAIT
         return min(2 ** attempt, 30)        # 2, 4, 8, 16, 30
 
     def _backoff_sleep(self, exc, attempt):
@@ -474,11 +577,12 @@ class Downloader:
         Polling cancel_requested too (not just pause) — otherwise a Cancel
         during a 60s Retry-After window would sit dormant until the sleep
         ended, instead of breaking out within ~200ms."""
-        deadline = time.time() + self._retry_wait(exc, attempt)
-        while time.time() < deadline \
-                and not self.t.pause_requested \
-                and not self.t.cancel_requested:
-            time.sleep(0.2)
+        deadline = time.monotonic() + self._retry_wait(exc, attempt)
+        while not self.t.pause_requested and not self.t.cancel_requested:
+            left = deadline - time.monotonic()
+            if left <= 0:
+                break
+            time.sleep(min(0.2, left))
 
     # ------------------------------------------------------------- run
     def run(self):
@@ -504,7 +608,7 @@ class Downloader:
         if (getattr(self.t, "use_ytdlp", False) or yt_dl.is_ytdlp_url(self.t.url)
                 or yt_dl.is_dash(self.t.url, self.t.filename, self._probe_ctype)
                 or utils.host_rule(self.t.url).get("ytdlp")):
-            yt_dl.YtDlpDownloader(self.t).run()
+            yt_dl.YtDlpDownloader(self.t, segments=self.num_segments).run()
             return
 
         # HLS (.m3u8) playlists need segment fetch+concat, not a byte download
@@ -540,16 +644,100 @@ class Downloader:
             self.t.status = T.ERROR
             self.t.error = str(e)
             return
+        self._transfer(temp_path, first=4)
 
+    def run_media(self):
+        """Fetch a video page's file in byte ranges.
+
+        self.url is the link yt-dlp found on the page; t.url stays the page and
+        t.save_path is the name yt-dlp gave the file. The link is new on every
+        run - yt-dlp extracts again, because such links are signed, short-lived
+        or tied to this address - so a partial on disk is continued only when
+        the server describes the same file: the same size, and the same ETag
+        when it gives one. Anything else starts over.
+
+        Returns False, having written nothing, when the link cannot be fetched
+        that way - no ranges, no size, a refusal, a web page, no answer - so
+        the caller lets yt-dlp fetch it as before. True when it ran, with
+        t.status saying how it ended.
+        """
+        self._media = True
+        try:
+            return self._run_media()
+        finally:
+            try:
+                self._session.close()
+            except Exception:
+                pass
+
+    def _run_media(self):
+        temp_path = utils.temp_download_path(self.t.id)
+        found = self._probe_range()
+        if found is None:
+            return False
+        size, etag = found
+        same = (self.t.segments and os.path.exists(temp_path)
+                and size == self.t.total_size
+                and (etag == self.t.etag or not (etag and self.t.etag)))
+        if self.t.segments and not same:
+            self.t.log_event("The server's file is not the one partly on disk — starting over")
+            discard_partial(self.t)
+        self.t.total_size, self.t.etag = size, etag
+        self.t.supports_range = True
+        self.t.status = T.DOWNLOADING
+        self.t.error = ""
+        try:
+            os.makedirs(os.path.dirname(self.t.save_path) or ".", exist_ok=True)
+            if not self.t.segments:
+                self._build_segments()
+        except OSError as e:
+            self.t.status = T.ERROR
+            self.t.error = str(e)
+            return True
+        # One connection first, then one more for each the server accepts. A
+        # CDN that serves only so many answers the extra ones at once, and
+        # only a stream already accepted tells that refusal from a dead link
+        # (_pushed_back); opened together, the refusals can arrive first.
+        self._transfer(temp_path, first=1)
+        return True
+
+    def _probe_range(self):
+        """(size, etag) when self.url serves its file in byte ranges: the first
+        byte comes back as a 206 with the file's total size, and it is not a
+        web page. None otherwise, or when nothing answers."""
+        try:
+            with self._session.get(self.url,
+                                   headers={**self._base_headers, "Range": "bytes=0-0"},
+                                   stream=True, allow_redirects=True,
+                                   timeout=CONNECT_TIMEOUT, verify=utils.VERIFY_TLS,
+                                   proxies=utils.PROXIES) as r:
+                ctype = r.headers.get("Content-Type", "").split(";")[0].strip().lower()
+                total = r.headers.get("Content-Range", "").rpartition("/")[2].strip()
+                if (r.status_code != 206 or not total.isdigit() or int(total) <= 0
+                        or ctype.startswith("text/html")):
+                    log.info("no byte ranges for %s: HTTP %s, %s, Content-Range %r",
+                             self.t.filename, r.status_code, ctype or "no type",
+                             r.headers.get("Content-Range"))
+                    return None
+                self._probe_ctype = ctype
+                self._link_ok = True
+                return int(total), r.headers.get("ETag", "")
+        except requests.RequestException as e:
+            log.info("no answer for %s: %s", self.t.filename, e)
+            return None
+
+    def _transfer(self, temp_path, first):
+        """Run the segments to the end: the workers, then the final state."""
         # Connection ramp-up (TCP-style slow start): opening every segment
         # socket at once trips per-IP burst protection on big CDNs (Google's
         # gvt1 resets a 30-connection burst and the whole task dies with
-        # "Connection lost"). Start at 4; each stream that connects grows the
-        # gate by 1 (up to the real segment count), and 429s/resets halve it —
-        # the task self-tunes to what the server tolerates instead of failing.
+        # "Connection lost"). Start at `first` (4; 1 for a video's link, see
+        # _run_media); each stream that connects grows the gate by 1 (up to
+        # the real segment count), and 429s/resets halve it — the task
+        # self-tunes to what the server tolerates instead of failing.
         n = max(1, len(self.t.segments))
         self._conn_cap = n
-        self._max_conns = min(4, n)
+        self._max_conns = min(first, n)
 
         self.t.recompute_downloaded()
         log.info("HTTP %s: %d segment(s), %d bytes, range=%s",
@@ -598,7 +786,9 @@ class Downloader:
                 self.t.status = T.ERROR
                 self.t.error = self._format_disk_error(e, self.t.save_path)
                 return
-            if utils.HASH_CHECK and self._verify_hash() is False:
+            # a sidecar sits beside a file's own URL; a video's signed link
+            # has none, and appending to its query only bothers the CDN
+            if utils.HASH_CHECK and not self._media and self._verify_hash() is False:
                 self.t.status = T.ERROR
                 self.t.error = "SHA-256 mismatch — the file may be corrupt"
                 return
@@ -612,7 +802,7 @@ class Downloader:
         import re as _re
         for suffix in (".sha256", ".sha256sum"):
             try:
-                r = self._session.get(self.t.url + suffix, headers=self._base_headers,
+                r = self._session.get(self.url + suffix, headers=self._base_headers,
                                  timeout=10, verify=utils.VERIFY_TLS, proxies=utils.PROXIES)
                 if r.status_code == 200:
                     m = _re.search(r"\b([a-fA-F0-9]{64})\b", r.text)
