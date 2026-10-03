@@ -198,6 +198,48 @@ def test_pair_preflight_ok_for_official(tmp_path):
     assert r.headers.get("Access-Control-Allow-Origin") == _OFFICIAL
 
 
+# ---- /pair by POST: the only request that still says who is asking ----
+#
+# Measured on Edge 154 (Chromium 154): a GET from an extension's service worker
+# to a host it has permission for carries NO Origin header - plain, in cors mode
+# or with a custom header alike. Only a POST carries it. /pair knows the
+# extension by its Origin, so by GET every fresh install was refused and never
+# paired. The extension has to ask by POST; GET stays for a browser that still
+# sends the header on it.
+
+@pytest.mark.parametrize("store", sorted(STORE_IDS))
+def test_pair_by_post_serves_the_token_to_every_store_listing(tmp_path, store):
+    origin = "chrome-extension://" + STORE_IDS[store]
+    c = create_app(_FakeQueue(), str(tmp_path), pending=None, token="SECRET").test_client()
+    r = c.post("/pair", headers={"Origin": origin})
+    assert r.status_code == 200
+    assert r.get_json()["token"] == "SECRET"
+    assert r.headers.get("Access-Control-Allow-Origin") == origin
+
+
+def test_pair_by_post_refuses_everyone_else(tmp_path):
+    c = create_app(_FakeQueue(), str(tmp_path), pending=None, token="SECRET").test_client()
+    for headers in ({"Origin": "chrome-extension://someotherextensionidaaaaaaaaaaaa"},
+                    {"Origin": "https://evil.example"},
+                    {}):
+        r = c.post("/pair", headers=headers)
+        assert r.status_code == 403, headers
+        assert "SECRET" not in r.get_data(as_text=True)
+    lan = c.post("/pair", headers={"Origin": _OFFICIAL},
+                 environ_overrides={"REMOTE_ADDR": "192.168.1.50"})
+    assert lan.status_code == 403 and "SECRET" not in lan.get_data(as_text=True)
+
+
+def test_the_preflight_allows_the_post(tmp_path):
+    c = create_app(_FakeQueue(), str(tmp_path), pending=None, token="SECRET").test_client()
+    pre = c.open("/pair", method="OPTIONS",
+                 headers={"Origin": _OFFICIAL, "Access-Control-Request-Method": "POST",
+                          "Access-Control-Request-Private-Network": "true"})
+    assert pre.status_code == 200
+    assert "POST" in pre.headers.get("Access-Control-Allow-Methods", "")
+    assert pre.headers.get("Access-Control-Allow-Private-Network") == "true"
+
+
 # ---- /open: single-instance handoff for .torrent / magnet: ----
 def test_open_accepts_magnet_and_torrent(tmp_path):
     pend = deque()

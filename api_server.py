@@ -204,13 +204,21 @@ def create_app(queue, save_dir, pending=None, token=None, pair_requests=None):
 
     app.config["HYPERFETCH_TOKEN"] = token
 
-    @app.route("/pair", methods=["GET", "OPTIONS"])
+    @app.route("/pair", methods=["GET", "POST", "OPTIONS"])
     def pair():
         """Hand the pairing token to the official extension so it can auto-pair —
         no copy-paste. CORS is locked to the trusted extension id(s): other
         extensions get a different Origin (403 + no CORS header) and website JS is
         blocked by the browser. A local process could read the token file anyway,
-        so serving it here to localhost adds no new exposure."""
+        so serving it here to localhost adds no new exposure.
+
+        The extension is known by its Origin, and that is why POST is accepted.
+        Measured on Edge 154 (Chromium 154): a GET from an extension's service
+        worker to a host it has permission for carries NO Origin header - plain,
+        in cors mode or with a custom header - so by GET every fresh install was
+        refused here and never paired. A POST still carries it. GET stays for a
+        browser that sends the header on it. Never answer a request that has
+        no Origin: any extension allowed to reach localhost can make one."""
         # Loopback only. The bind address used to guarantee this; once the
         # server can listen on the LAN for the web UI, it has to be checked.
         if not is_loopback(request.remote_addr):
@@ -228,7 +236,7 @@ def create_app(queue, save_dir, pending=None, token=None, pair_requests=None):
             resp = jsonify({"token": app.config.get("HYPERFETCH_TOKEN") or ""})
         resp.headers["Access-Control-Allow-Origin"] = origin
         resp.headers["Vary"] = "Origin"
-        resp.headers["Access-Control-Allow-Methods"] = "GET, OPTIONS"
+        resp.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
         resp.headers["Access-Control-Allow-Headers"] = "Content-Type, X-HyperFetch-Token"
         # /pair sets its own CORS headers (it is deliberately outside the global
         # rule above), so it needs the Private Network Access opt-in too —
