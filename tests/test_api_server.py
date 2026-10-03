@@ -408,16 +408,16 @@ def test_mutex_blocks_a_second_claim_and_releases_on_death():
     import textwrap
     import time
 
-    hold = textwrap.dedent("""
+    hold = textwrap.dedent(r"""
         import sys, time; sys.path.insert(0, %r)
         import main
-        print(main._claim_single_instance("Local\HyperFetchTest.Mutex"), flush=True)
+        print(main._claim_single_instance(r"Local\HyperFetchTest.Mutex"), flush=True)
         time.sleep(10)
     """) % str(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    probe = textwrap.dedent("""
+    probe = textwrap.dedent(r"""
         import sys; sys.path.insert(0, %r)
         import main
-        print(main._claim_single_instance("Local\HyperFetchTest.Mutex"))
+        print(main._claim_single_instance(r"Local\HyperFetchTest.Mutex"))
     """) % str(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
     a = subprocess.Popen([sys.executable, "-c", hold], stdout=subprocess.PIPE, text=True)
