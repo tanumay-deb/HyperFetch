@@ -248,6 +248,37 @@ def test_a_page_asked_for_by_name_is_saved_as_the_page(page_server, ytdlp, tmp_p
     assert ytdlp.calls == []
 
 
+# ---- a link that asked for something else -----------------------------------
+@pytest.mark.parametrize("name", ["setup.exe", "pack.zip", "manual.pdf", "photo.jpg"])
+def test_a_link_named_as_another_kind_of_file_never_becomes_a_video(page_server, ytdlp,
+                                                                    tmp_path, name):
+    """A file that was taken down often redirects to the vendor's home page,
+    and a home page often has a clip on it. yt-dlp would find that clip - and
+    the download called setup.exe would finish as somebody's promo video. A
+    name that says program, archive, document or picture asked for that file,
+    so the web page is the error it always was and yt-dlp is not asked."""
+    t = T.DownloadTask(page_server.url("files/" + name), str(tmp_path / name))
+    Downloader(t).run()
+
+    assert t.status == T.ERROR
+    assert t.error == WEB_PAGE
+    assert ytdlp.calls == [], "yt-dlp was asked about a link that named another kind of file"
+    saved = [n for n in os.listdir(tmp_path) if n != "appdata"]    # conftest's app-data
+    assert saved == [], "something was saved in the file's place"
+    assert not getattr(t, "use_ytdlp", False)
+
+
+@pytest.mark.parametrize("name", ["clip.mp4", "song.mp3", "watch.php", "episode.bin"])
+def test_a_media_name_or_one_that_names_no_type_can_be_a_video_page(page_server, ytdlp,
+                                                                    tmp_path, name):
+    t = T.DownloadTask(page_server.url("v/" + name), str(tmp_path / name))
+    Downloader(t).run()
+
+    assert t.status == T.COMPLETED, t.error
+    assert _downloads(ytdlp) == [False, True]
+    assert t.filename == "A video.mp4"
+
+
 # ---- what counts as "yt-dlp found a video" ----------------------------------
 @pytest.mark.parametrize("info,found", [
     ({"id": "a", "formats": [{"url": "https://v.test/a.mp4"}]}, True),

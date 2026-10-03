@@ -254,10 +254,20 @@ class Downloader:
         yt_dl._SITES does not name lands here, and yt-dlp knows far more sites
         than that list. A video there hands the task to its engine, the same
         path a ticked "Use yt-dlp" takes; nothing there is the old error.
+
+        Only a link that could be a video page is shown to yt-dlp: one whose
+        name is a media name, or names no type at all (a page link is saved
+        as "download.bin"). A name that says program, archive, document or
+        picture asked for that file. A removed file often redirects to the
+        vendor's home page, yt-dlp would find the promo clip on it, and
+        "setup.exe" would finish as that clip - a wrong file, silently.
         """
         import yt_dl
-        self.t.log_event("Got a web page, not the file — asking yt-dlp for a video on it")
-        found = yt_dl.can_extract(self.t)
+        asked_for = utils.category_for(os.path.basename(self.t.save_path))
+        found = False
+        if asked_for in ("Video", "Music", "Other"):
+            self.t.log_event("Got a web page, not the file — asking yt-dlp for a video on it")
+            found = yt_dl.can_extract(self.t)
         if self.t.cancel_requested or self.t.pause_requested:
             self.t.status = T.CANCELLED if self.t.cancel_requested else T.PAUSED
             return
