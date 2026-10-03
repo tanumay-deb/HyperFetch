@@ -115,5 +115,5 @@ def test_lazily_imported_engine_modules_are_declared():
     """These are imported inside functions, so PyInstaller cannot see them and
     the frozen build fails at the moment somebody uses that feature."""
     src = _read(DESKTOP)
-    for mod in ("hls", "torrent", "yt_dl", "doh", "upnp"):
+    for mod in ("hls", "torrent", "yt_dl", "doh", "upnp", "unblock"):
         assert "'%s'" % mod in src, "%s: %s" % (os.path.basename(DESKTOP), mod)

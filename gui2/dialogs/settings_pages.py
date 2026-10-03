@@ -197,8 +197,9 @@ class PageBuilderMixin:
         self.dns_auto = self._toggle(ex.get("dns_auto", True))
         self._row(g, "Get past provider blocks",
                   "When your provider's DNS answers a site with a block page, look "
-                  "that one site up over secure DNS. Everything else keeps your "
-                  "normal DNS.", self.dns_auto)
+                  "that one site up over secure DNS, and send the start of each "
+                  "connection to it in two pieces so the provider's filter does "
+                  "not cut it. Everything else is left as it is.", self.dns_auto)
         self._host_rules = dict(ex.get("host_rules", {}) or {})
         n = len(self._host_rules)
         self.hostrules_btn = QPushButton("Configure" if not n else f"Edit ({n})")
