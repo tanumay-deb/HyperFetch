@@ -1,5 +1,7 @@
 # HyperFetch
 
+**Fetch everything. Download faster.**
+
 A fast, multi-connection download manager for Windows. It splits each file
 across many connections, grabs streaming video and torrents, and pairs with a
 browser extension that sends your downloads straight to the app.

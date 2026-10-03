@@ -152,6 +152,11 @@ SENSITIVE_HEADERS = {"cookie", "authorization", "proxy-authorization"}
 # can report it without importing PySide6.
 APP_VERSION = "2.6.0"
 
+# The brand line. The About page shows this; the site (docs/index.html) and
+# the README say the same words by hand - tests/test_tagline.py keeps them in
+# step. The extension's pages and store listings are not changed from here.
+TAGLINE = "Fetch everything. Download faster."
+
 
 def app_data_dir():
     """Per-user folder for settings + persisted download state."""

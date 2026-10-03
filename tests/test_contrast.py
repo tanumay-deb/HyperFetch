@@ -52,6 +52,11 @@ def _backgrounds(css, selector):
     return re.findall(HEX, re.search(r"background:([^;]*);", _rule(css, selector)).group(1))
 
 
+def _var(css, name):
+    """The value of one of a page's colour variables."""
+    return re.search(r"--%s:\s*(%s)" % (re.escape(name), HEX), css).group(1)
+
+
 def test_the_arithmetic_is_wcags():
     assert round(contrast("#ffffff", "#000000"), 1) == 21.0
     assert round(contrast("#777777", "#ffffff"), 2) == 4.48      # the textbook near miss
@@ -78,3 +83,13 @@ def test_small_white_text_on_purple_is_readable():
         assert len(stops) == 2, "expected the two stops of a gradient under %s" % selector
         for stop in stops:
             assert contrast("#ffffff", stop) >= AA, "white on %s under %s" % (stop, selector)
+
+
+def test_the_sites_brand_line_is_readable():
+    """The line above the site's headline is 12px, so it is small text. It is
+    set in the page's muted tone rather than the fainter one the section labels
+    use: a label may recede, the brand line is there to be read."""
+    css = _css("docs", "index.html")
+    tone = re.search(r"(?<![-\w])color:\s*var\(--([\w-]+)\)", _rule(css, ".tagline")).group(1)
+    text, behind = _var(css, tone), _var(css, "ink")
+    assert contrast(text, behind) >= AA, "%s on %s" % (text, behind)

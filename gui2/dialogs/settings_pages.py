@@ -580,7 +580,7 @@ class PageBuilderMixin:
         sa, v = self._page("About", "")
         f, g = self._card()
         title = QLabel(f"HyperFetch v{APP_VERSION}"); title.setStyleSheet(f"font-weight:800;font-size:{fpx(15)};background:transparent;")
-        desc = QLabel("A modern, fast and reliable download manager."); desc.setStyleSheet(f"color:{COLORS['muted']};background:transparent;")
+        desc = QLabel(utils.TAGLINE); desc.setStyleSheet(f"color:{COLORS['muted']};background:transparent;")
         g.addWidget(title); g.addWidget(desc)
         brow = QHBoxLayout()
         upd = QPushButton("Check for Updates"); upd.clicked.connect(self._check_updates)

@@ -7,7 +7,7 @@
 <meta name="description" content="Splits every download across many connections at once. Handles HTTP, HLS streams, torrents and video pages. Free, open source, Windows.">
 <link rel="icon" href="logo.png">
 <link rel="canonical" href="https://tanumay-deb.github.io/HyperFetch/">
-<meta property="og:title" content="HyperFetch — a download accelerator for Windows">
+<meta property="og:title" content="HyperFetch — Fetch everything. Download faster.">
 <meta property="og:description" content="Splits every download across many connections at once. Torrents, HLS streams and video pages go through the same queue.">
 <meta property="og:image" content="https://tanumay-deb.github.io/HyperFetch/promo.png">
 <meta property="og:url" content="https://tanumay-deb.github.io/HyperFetch/">
@@ -59,6 +59,12 @@
      behind all of it was the one decorative use, and dropping it gives the
      segment bar the contrast it wants. */
   header { padding: 76px 0 30px; }
+  .tagline {
+    /* The brand line. Set like the section labels, but in the muted tone
+       rather than the faint one: a label may recede, this is there to be read. */
+    font-family: var(--mono); font-size: 12px; letter-spacing: .14em;
+    text-transform: uppercase; color: var(--muted); margin: 0 0 18px;
+  }
   h1 {
     font-family: var(--display); font-weight: 800;
     font-size: clamp(2.3rem, 6.2vw, 4.1rem); line-height: 1.03;
@@ -176,6 +182,7 @@
   </nav>
 
   <header>
+    <p class="tagline">Fetch everything. Download faster.</p>
     <h1>One file, pulled down <em>eight ways at once</em>.</h1>
     <p class="lede">
       Most downloaders open one connection and wait. HyperFetch splits the file
