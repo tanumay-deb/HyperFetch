@@ -66,6 +66,14 @@ class _Site(threading.Thread):
             self.ended.append(1)
 
     def close(self):
+        # On Linux, close() alone leaves the socket listening while run() waits
+        # in accept(), so a connect to the closed site still gets through.
+        # shutdown() stops it. It raises on Windows, where close() is enough,
+        # and on a second close.
+        try:
+            self.sock.shutdown(socket.SHUT_RDWR)
+        except OSError:
+            pass
         self.sock.close()
 
 
