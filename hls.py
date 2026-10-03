@@ -5,6 +5,8 @@ lists many short .ts/.m4s segments. Downloading the .m3u8 itself just saves the
 text, not the video — you have to fetch every segment and join them. This module
 does that: master->variant selection, AES-128 decryption, raw concat into one
 .ts file (plays in VLC / most players without ffmpeg), with pause/cancel/progress.
+A live stream has no end to fetch, so it is reported as one, not saved as the
+few seconds its playlist happens to list.
 """
 import os
 import re
@@ -41,6 +43,17 @@ PARALLEL = 6          # default concurrent segment downloads (overridden by the
 # link is already saturated and CDNs start rate-limiting the burst — so the
 # setting stays useful for tuning down without being able to melt the process.
 MAX_PARALLEL = 24
+
+# How a live stream's task ends. Its playlist is a window that slides: the
+# oldest segment drops off the front as each new one is added, and there is no
+# #EXT-X-ENDLIST because the stream has no end. Downloading it saved the few
+# seconds on offer at that moment and called them Completed. Short enough to
+# read whole in the failure toast, which shows the first 60 characters.
+LIVE_STREAM = "Live stream: it has no end, so there is no finished video."
+# Longest wait (s) before the second look at a playlist that may be live. The
+# wait is one target duration; the cap stops a server that claims an hour-long
+# one from stalling the start for an hour.
+LIVE_WAIT_MAX = 10.0
 
 
 def is_hls(url="", filename="", ctype=""):
@@ -140,6 +153,13 @@ def _get(session, url, headers, stats=None, **kw):
                 raise
             time.sleep(1)
     raise last
+
+
+def _media_sequence(text):
+    """The number of a media playlist's first segment: its
+    #EXT-X-MEDIA-SEQUENCE, or 0 without one (RFC 8216 4.3.3.2)."""
+    m = re.search(r"^[ \t]*#EXT-X-MEDIA-SEQUENCE:[ \t]*(\d+)", text, re.M)
+    return int(m.group(1)) if m else 0
 
 
 class HlsDownloader:
@@ -268,6 +288,61 @@ class HlsDownloader:
             out.append(cur)
         return out
 
+    # ----------------------------------------------------------- live streams
+    def _is_live_window(self, url, text):
+        """True when the media playlist `text`, fetched from `url` and without
+        #EXT-X-ENDLIST, is a live stream's sliding window.
+
+        One marked VOD or EVENT keeps everything from its start, and one whose
+        first segment is numbered 0 has never dropped a segment: neither is
+        looked at twice. Anything else looks, on one fetch, just like VOD from
+        a server that leaves the end tag out. So it is fetched again one target
+        duration later, the soonest a client may reload (RFC 8216 6.3.4), and
+        is live if the number of its first segment has moved on, which a live
+        server must raise for each segment it drops. If the playlist has not
+        changed at all, a cache may have served the old copy; the RFC's retry
+        half a target duration later settles it."""
+        if re.search(r"^[ \t]*#EXT-X-PLAYLIST-TYPE:", text, re.M):
+            return False
+        first = _media_sequence(text)
+        if first <= 0:
+            return False
+        m = re.search(r"^[ \t]*#EXT-X-TARGETDURATION:[ \t]*(\d+(?:\.\d+)?)", text, re.M)
+        target = float(m.group(1)) if m else 0
+        # the spec requires the tag; without one, Apple's recommended 6 s
+        wait = min(target if target > 0 else 6.0, LIVE_WAIT_MAX)
+        host = urllib.parse.urlparse(url).netloc
+        for delay in (wait, wait / 2):
+            if not self._wait(delay):
+                return False                  # paused or cancelled; run() acts on it
+            try:
+                again = self._fetch_text(url)
+            except requests.RequestException as e:
+                log.info("HLS host=%s: second look failed (%s); downloading",
+                         host, type(e).__name__)
+                return False
+            now = _media_sequence(again)
+            if now > first:
+                log.info("HLS live stream host=%s: first segment %d -> %d; "
+                         "nothing downloaded", host, first, now)
+                return True
+            if again != text:
+                break                         # changed, but has not moved on
+        log.info("HLS host=%s: no end tag, but the playlist did not move on; "
+                 "downloading", host)
+        return False
+
+    def _wait(self, secs):
+        """Sleep `secs`, waking at once for a pause or a cancel (a cancel sets
+        pause too). False when one of them cut the wait short."""
+        end = time.monotonic() + secs
+        while not self.t.pause_requested:
+            left = end - time.monotonic()
+            if left <= 0:
+                return True
+            time.sleep(min(left, 0.2))
+        return False
+
     # ----------------------------------------------------------- decryption
     def _decrypt(self, data, key, seq):
         if not key or key["method"] != "AES-128":
@@ -342,6 +417,11 @@ class HlsDownloader:
         if not segments:
             self.t.status = T.ERROR
             self.t.error = "HLS playlist had no segments (live stream or DRM?)"
+            return
+
+        if not endlist and self._is_live_window(base, text):
+            self.t.status = T.ERROR
+            self.t.error = LIVE_STREAM
             return
 
         total = len(segments)
