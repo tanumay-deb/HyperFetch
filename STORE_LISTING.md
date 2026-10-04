@@ -1,8 +1,56 @@
-# Chrome Web Store submission notes
+# Store submission notes (Chrome, Edge, Firefox)
 
 Copy/paste material and reviewer justifications for publishing the
 "HyperFetch" extension. The desktop app must be installed
 separately (the extension is a thin bridge to it).
+
+---
+
+## Links each listing carries
+
+The three addresses, the same in every store:
+
+| | Address |
+| --- | --- |
+| Website / homepage | `https://tanumay-deb.github.io/HyperFetch/` |
+| Support | `https://github.com/tanumay-deb/HyperFetch/issues` |
+| Privacy policy | `https://tanumay-deb.github.io/HyperFetch/privacy.html` |
+| The desktop app (in the description) | `https://github.com/tanumay-deb/HyperFetch/releases/latest` |
+
+Use the support URL rather than an e-mail address: a listing's contact field
+is public and listings are scraped.
+
+What each listing had on 2026-10-04, read from the stores' public pages:
+
+| Store | Field, and where it is set | Had | Set to |
+| --- | --- | --- | --- |
+| Chrome | Homepage URL (Store listing -> Additional fields) | the GitHub repository | the website |
+| Chrome | Support URL (same place) | the issues page | keep |
+| Chrome | Privacy policy (Privacy practices) | the privacy page | keep |
+| Edge | Website URL (Properties) | the website | keep |
+| Edge | Privacy policy URL (Properties) | empty | the privacy page |
+| Firefox | Homepage (Edit Product Page) | not set | the website |
+| Firefox | Support website (same page) | the issues page | keep |
+| Firefox | Support e-mail (same page) | an address, shown publicly | clear it, unless wanted |
+| Firefox | Summary (same page) | the "single purpose" text below, with a missing space | the summary below |
+| all three | Description | links only the repository | add the two lines under "Description" |
+
+Chrome and Edge take the short summary from the manifest's `description`;
+Firefox's is typed into the listing.
+
+## What's new in 1.9.1 (release notes field / notes for reviewers)
+
+```
+1.9.1
+- The video button sends the video its player is playing, not an advert's
+  stream or a thumbnail's preview clip.
+- Chrome and Edge: new installs pair with the HyperFetch app on their own
+  again. Needs HyperFetch 2.7.0 or later.
+- The welcome page and the popup show the HyperFetch logo.
+```
+
+For a reviewer: the package is the source. Nothing is minified or built;
+`background.js`, `content.js`, `popup.js` and `welcome.js` are as written.
 
 ---
 
@@ -28,7 +76,10 @@ Features:
 - Works with login-gated downloads by forwarding your session for that one request
 - Pause / resume / queue, all managed in the desktop app
 
-Requires the free HyperFetch desktop app (link in the app/readme).
+Requires the free HyperFetch desktop app for Windows:
+https://github.com/tanumay-deb/HyperFetch/releases/latest
+Website: https://tanumay-deb.github.io/HyperFetch/
+
 Everything runs locally on your computer — no accounts, no servers, no tracking.
 
 ---
@@ -36,8 +87,8 @@ Everything runs locally on your computer — no accounts, no servers, no trackin
 ## Single purpose (required field)
 
 > The extension's single purpose is to detect downloadable files and videos in
-> the browser and forward them to the user's locally installed Smart Download
-> Manager desktop application for accelerated downloading.
+> the browser and forward them to the user's locally installed HyperFetch
+> desktop application for accelerated downloading.
 
 ---
 
