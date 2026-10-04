@@ -282,7 +282,7 @@ class YtDlpDownloader:
             self.t.log_event("The video's link would not be fetched in parallel "
                              "ranges; yt-dlp downloads it itself")
             return False
-        if self.t.status == T.COMPLETED:
+        if eng.media_done:
             self._fetched = self.t.save_path
             return True
         if self.t.pause_requested or self.t.cancel_requested:

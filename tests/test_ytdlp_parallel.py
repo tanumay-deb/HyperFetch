@@ -55,6 +55,7 @@ class _Site:
         self.calls, self.own = [], []        # extractions; yt-dlp's own downloads
         self.fields = {}                     # extra fields for the chosen format
         self.merge = False
+        self.post = None                     # yt-dlp's post-processors, given the file
         server.tokens = set()
 
     def extract(self, ydl):
@@ -104,6 +105,8 @@ class _YDL:
             # temp name is the final name); the downloader says "already
             # downloaded"
             self.dl(name, info)
+            if self.site.post:
+                self.site.post(name)             # fixups, the move to its final name
             return
         if os.path.exists(name):
             return
@@ -215,6 +218,29 @@ def test_one_direct_file_comes_down_over_parallel_ranges(site, media_server, tmp
     assert media_server.stats["max_active"] > 1
     assert [c["download"] for c in site.calls] == [True]
     assert not os.path.exists(tmp_path / "download.bin")
+
+
+def test_the_task_is_not_completed_while_ytdlp_still_has_the_file(site, media_server,
+                                                                  tmp_path):
+    """The bytes being down is not the end: yt-dlp then runs its post-processors
+    on the file - a fixup through ffmpeg can take seconds - and only then is it
+    the finished video. The window reads the status twice a second, and on
+    Completed it moves the file to its category folder, records it and says
+    "Download Complete". Told Completed while yt-dlp still held the file, it
+    moved the file from under it, and the task then finished with nothing
+    downloaded to its name."""
+    t = _task(media_server, tmp_path)
+    during = []
+
+    def post(name):
+        during.append((t.status, os.path.exists(name)))
+
+    site.post = post
+    Downloader(t, segments=4).run()
+
+    assert during == [(T.DOWNLOADING, True)], "seen as finished before yt-dlp was done"
+    assert t.status == T.COMPLETED, t.error
+    assert t.downloaded == t.total_size == SIZE
 
 
 def test_the_media_link_gets_the_formats_headers_and_ytdlps_cookies(site, media_server,

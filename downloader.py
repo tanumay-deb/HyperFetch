@@ -162,6 +162,10 @@ class Downloader:
         self._base_headers = {**HEADERS, **headers}
         self._probe_ctype = ""
         self._media = False             # set by run_media
+        # run_media's file is on disk whole. The task is not Completed on that:
+        # yt-dlp still has the file (its post-processors), and the window acts
+        # on Completed the moment it reads it - see run_media.
+        self.media_done = False
         # adaptive connection gate: shrinks when the server answers 429.
         # Initialized to a safe non-zero placeholder; run() sets the real cap
         # from the ACTUAL segment count once segments exist — deriving it from
@@ -658,8 +662,15 @@ class Downloader:
 
         Returns False, having written nothing, when the link cannot be fetched
         that way - no ranges, no size, a refusal, a web page, no answer - so
-        the caller lets yt-dlp fetch it as before. True when it ran, with
-        t.status saying how it ended.
+        the caller lets yt-dlp fetch it as before. True when it ran: media_done
+        says the file is whole, otherwise t.status says how it ended.
+
+        A file that is whole leaves the task Downloading. yt-dlp then runs its
+        post-processors on it (a fixup through ffmpeg can take seconds), and
+        only after that is it the finished video; YtDlpDownloader marks it
+        Completed then. The window reads the status twice a second and on
+        Completed moves the file to its category folder and records it. Told
+        early, it moved the file from under yt-dlp.
         """
         self._media = True
         try:
@@ -792,7 +803,10 @@ class Downloader:
                 self.t.status = T.ERROR
                 self.t.error = "SHA-256 mismatch — the file may be corrupt"
                 return
-            self.t.status = T.COMPLETED
+            if self._media:
+                self.media_done = True      # Completed is yt-dlp's to say
+            else:
+                self.t.status = T.COMPLETED
         else:
             self.t.status = T.PAUSED
 

@@ -101,7 +101,7 @@ def _by_segments(ydl, info, page, path, segments, collect):
     if not started:
         raise RuntimeError("the link would not be fetched in ranges; the app would "
                            "leave this one to yt-dlp")
-    if t.status != T.COMPLETED:
+    if not eng.media_done:
         raise RuntimeError("segmented download ended %s: %s" % (t.status, t.error))
     return dt, t
 
