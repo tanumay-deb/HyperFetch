@@ -626,11 +626,14 @@ function renderMasterItem(item, media) {
 
 function addSniffedMedia(media) {
   if (hlsVariantUrls.has(media.url)) return;  // already listed under a master
+  const owner = media.owner;                  // the element that plays it by this address
+  delete media.owner;
   const had = sniffedMedia.get(media.url);
   if (had) {
-    if (media.owned) had.owned = true;        // an element plays it by this address
+    if (owner) ownedBy(had, owner);
     return;
   }
+  if (owner) ownedBy(media, owner);
   // generic stream names (master.m3u8, index.m3u8…) -> use the page title
   if (!media.filename || isGenericName(media.filename)) {
     media.filename = buildName(sanitizeName(document.title), media.url, media.kind);
@@ -771,14 +774,21 @@ function siteOf(host) {
 
 // A sniffed address that a <video>/<audio> on the page plays as its own src is
 // that element's: a clip a thumbnail plays on hover, a trailer. It stays so
-// after the element is gone.
+// after the element is gone. It is never ANOTHER player's stream - but it may
+// well be its own element's: <video src="…m3u8"> that a script then takes over
+// plays the same playlist through a blob.
+function ownedBy(m, el) {
+  m.owned = true;
+  (m.owners || (m.owners = new WeakSet())).add(el);
+}
+
 function markOwnedStreams() {
   document.querySelectorAll('video, audio').forEach((el) => {
     const own = [el.currentSrc, el.src];
     el.querySelectorAll('source').forEach((s) => own.push(s.src));
     own.forEach((u) => {
       const m = u && sniffedMedia.get(u);
-      if (m) m.owned = true;
+      if (m) ownedBy(m, el);
     });
   });
 }
@@ -789,7 +799,7 @@ function markOwnedStreams() {
 // video page: an ad network's live stream that had started after the film, and
 // the "-preview.webm" a thumbnail plays on hover, were each sent in the film's
 // place, named after the page. So a stream has to be able to be this player's:
-//   - not one another element plays by its own address;
+//   - not one ANOTHER element plays by its own address;
 //   - not one another frame asked for (this script runs in the top frame, and
 //     a player's requests come from its own frame);
 //   - for a player that has a length: not a live stream, not a stream of
@@ -805,7 +815,8 @@ function bestSniffedStream(video) {
   sniffedMedia.forEach((m) => {
     order++;
     if (!m.url || m.url.startsWith('blob:') || m.url.startsWith('data:')) return;
-    if (m.owned || m.frameId > 0) return;
+    if (m.frameId > 0) return;
+    if (m.owned && !(video && m.owners && m.owners.has(video))) return;
     let same = 0;
     if (hasLength) {
       if (m.live) return;
@@ -1185,7 +1196,7 @@ function scanDom() {
         mime: isHls ? 'application/x-mpegurl' : (v.tagName === 'VIDEO' ? 'video/mp4' : 'audio/mp3'),
         size: 0,
         kind: isHls ? 'hls' : 'file',
-        owned: true                 // this element's own; never another player's
+        owner: v                    // this element's own; never another player's
       });
     });
   });

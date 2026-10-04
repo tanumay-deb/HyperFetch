@@ -171,6 +171,23 @@ async function test(name, fn) {
     assert.ok(main.isConnected);
   });
 
+  await test('a playlist the player itself first named as its address is still its own', async () => {
+    // <video src="…m3u8"> in the page, then the page's script takes the element
+    // over and plays the same playlist through a blob. Whose stream is it? Its
+    // own: only ANOTHER element's address rules a stream out.
+    const { win, state } = makeEnv();
+    const LIST = 'https://vod.tube.example/a/playlist.m3u8';
+    const v = mkVideo(win, { src: LIST });
+    await wait(700);                        // a scan of the page has seen the address
+    v.src_ = 'blob:https://www.tube.example/9a';
+    v.length_ = 600.2;
+    state.msgListener({ type: 'SNIFFED_MEDIA', url: LIST, kind: 'hls', mime: 'application/x-mpegurl',
+                        size: 0, filename: 'playlist.m3u8', frameId: 0, duration: 600, live: false });
+    await wait(700);
+    click(win);
+    assert.strictEqual(state.sent[0].url, LIST);
+  });
+
   await test('a file too small to be a video of that length is not it', async () => {
     const { win, state } = makeEnv();
     mkVideo(win, { length: 600 });
