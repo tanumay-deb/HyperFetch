@@ -76,7 +76,7 @@ function sendToApp(url, suggestedName = null, opts = {}) {
   try {
     chrome.runtime.sendMessage({ type: "DOWNLOAD_URL", url, filename, hold: !fallBack }, (res) => {
       if (res && res.unpaired) {
-        showToast("Pair the extension first — open its ⚡ popup");
+        showToast("Pair the extension first — open the HyperFetch popup");
         return;
       }
       if (chrome.runtime.lastError || !res || !res.ok) {
@@ -626,7 +626,11 @@ function renderMasterItem(item, media) {
 
 function addSniffedMedia(media) {
   if (hlsVariantUrls.has(media.url)) return;  // already listed under a master
-  if (sniffedMedia.has(media.url)) return;
+  const had = sniffedMedia.get(media.url);
+  if (had) {
+    if (media.owned) had.owned = true;        // an element plays it by this address
+    return;
+  }
   // generic stream names (master.m3u8, index.m3u8…) -> use the page title
   if (!media.filename || isGenericName(media.filename)) {
     media.filename = buildName(sanitizeName(document.title), media.url, media.kind);
@@ -656,7 +660,10 @@ function addHlsMaster(msg) {
     title: title,
     variants: variants,
     size: best ? best.size : 0,
-    mime: 'application/x-mpegurl'
+    mime: 'application/x-mpegurl',
+    frameId: msg.frameId,
+    duration: msg.duration || 0,
+    live: !!msg.live
   });
   updatePanel();
   try { syncOverlays(); scheduleReposition(); } catch (e) { /* ignore */ }
@@ -742,17 +749,104 @@ function buildName(title, url, kind) {
 const videoOverlays = new Map();   // HTMLVideoElement -> { host, btn }
 const MIN_W = 120, MIN_H = 68;     // skip tiny thumbnails / tracking pixels
 
-// Pick the best network-sniffed stream for a blob/MSE video (prefer HLS, newest).
-function bestSniffedStream() {
-  const arr = Array.from(sniffedMedia.values());
-  let fallback = null;
-  for (let i = arr.length - 1; i >= 0; i--) {
-    const m = arr[i];
-    if (!m.url || m.url.startsWith('blob:') || m.url.startsWith('data:')) continue;
-    if (m.kind === 'hls') return m;
-    if (!fallback) fallback = m;
-  }
-  return fallback;
+// A stream is the player's own video when its length is the player's: within
+// SAME_*, the difference a playlist's rounded segment lengths make. Past
+// OTHER_* it is another video. In between it may be either (some playlists
+// round every segment up), so it stays in, behind one that matches.
+const SAME_LENGTH_S = 2, SAME_LENGTH_PART = 0.02;
+const OTHER_LENGTH_S = 10, OTHER_LENGTH_PART = 0.25;
+// A file with fewer bytes than this per second of the player's video cannot be
+// that video: 8 kB/s is 64 kbit/s, less than any picture needs.
+const MIN_BYTES_PER_S = 8000;
+
+// The site a host belongs to: its last two labels, three where the second-last
+// is one of the short public ones (co.uk, com.au). It only puts the page's own
+// media hosts ahead of anybody else's.
+function siteOf(host) {
+  const p = String(host || '').toLowerCase().split('.').filter(Boolean);
+  if (p.length <= 2) return p.join('.');
+  const short = p[p.length - 1].length === 2 && /^(co|com|org|net|gov|edu|ac)$/.test(p[p.length - 2]);
+  return p.slice(short ? -3 : -2).join('.');
+}
+
+// A sniffed address that a <video>/<audio> on the page plays as its own src is
+// that element's: a clip a thumbnail plays on hover, a trailer. It stays so
+// after the element is gone.
+function markOwnedStreams() {
+  document.querySelectorAll('video, audio').forEach((el) => {
+    const own = [el.currentSrc, el.src];
+    el.querySelectorAll('source').forEach((s) => own.push(s.src));
+    own.forEach((u) => {
+      const m = u && sniffedMedia.get(u);
+      if (m) m.owned = true;
+    });
+  });
+}
+
+// The network-sniffed stream a blob/MSE <video> is playing, or null.
+//
+// It was the newest stream seen in the tab, HLS first. Seen 2026-10-03 on one
+// video page: an ad network's live stream that had started after the film, and
+// the "-preview.webm" a thumbnail plays on hover, were each sent in the film's
+// place, named after the page. So a stream has to be able to be this player's:
+//   - not one another element plays by its own address;
+//   - not one another frame asked for (this script runs in the top frame, and
+//     a player's requests come from its own frame);
+//   - for a player that has a length: not a live stream, not a stream of
+//     another length, not a file too small for that length.
+// Among those left: one whose length is the player's, then the page's own
+// site, then HLS before a file, then the newest - the old rule, last.
+function bestSniffedStream(video) {
+  markOwnedStreams();
+  const length = video ? video.duration : NaN;
+  const hasLength = Number.isFinite(length) && length > 0;
+  const page = siteOf(location.hostname);
+  let best = null, bestRank = null, order = 0;
+  sniffedMedia.forEach((m) => {
+    order++;
+    if (!m.url || m.url.startsWith('blob:') || m.url.startsWith('data:')) return;
+    if (m.owned || m.frameId > 0) return;
+    let same = 0;
+    if (hasLength) {
+      if (m.live) return;
+      if (m.duration > 0) {
+        const off = Math.abs(m.duration - length);
+        if (off > Math.max(OTHER_LENGTH_S, length * OTHER_LENGTH_PART)) return;
+        same = off <= Math.max(SAME_LENGTH_S, length * SAME_LENGTH_PART) ? 2 : 1;
+      } else if (m.kind === 'file' && m.size > 0 && m.size < length * MIN_BYTES_PER_S) {
+        return;
+      }
+    } else if (length === Infinity && m.live) {
+      same = 2;                              // a broadcast, and so is the player's
+    }
+    let host = '';
+    try { host = new URL(m.url).hostname; } catch (e) { /* not an address; no site */ }
+    const rank = [same, siteOf(host) === page ? 1 : 0, m.kind === 'hls' ? 1 : 0, order];
+    const better = !bestRank || rank.some((r, i) =>
+      r > bestRank[i] && rank.slice(0, i).every((q, j) => q === bestRank[j]));
+    if (better) { best = m; bestRank = rank; }
+  });
+  return best;
+}
+
+// The stream each player was last found on through MSE, and on which page.
+const lastStreamOf = new WeakMap();   // HTMLVideoElement -> { stream, page }
+
+// The stream this player was on before a file from somewhere else took it over,
+// or null. Seen in a real browser, 2026-10-04: the player attaches the film (a
+// blob); three seconds later a pre-roll advert takes the SAME element over with
+// a file of its own, on the ad network's host; afterwards the film comes back.
+// A badge that read the element's address sent the advert, named after the page.
+// A file on the page's own site, or on the film's, is the page's own doing - a
+// change of quality, a fallback - and is the video. Forgotten on the next page.
+function interruptedStream(video, src) {
+  const was = lastStreamOf.get(video);
+  if (!was || was.page !== location.href) return null;
+  if (!Array.from(sniffedMedia.values()).includes(was.stream)) return null;
+  const site = (u) => { try { return siteOf(new URL(u).hostname); } catch (e) { return ''; } };
+  const now = site(src);
+  if (now === siteOf(location.hostname) || now === site(was.stream.url)) return null;
+  return was.stream;
 }
 
 // Resolve what a video element would download, or null if nothing grabbable.
@@ -763,17 +857,30 @@ function getVideoDownload(video) {
   video.querySelectorAll('source').forEach((s) => cands.push(s.src));
   for (const u of cands) {
     if (u && /^https?:/i.test(u)) {
+      const held = interruptedStream(video, u);
+      if (held) {
+        return { url: held.url, kind: held.kind, filename: buildName(title, held.url, held.kind),
+                 variants: held.variants || [] };
+      }
       const kind = /\.m3u8(\?.*)?$/i.test(u) ? 'hls' : 'file';
       const m = sniffedMedia.get(u);
       const variants = m && m.variants ? m.variants : [];
       return { url: u, kind, filename: buildName(title, u, kind), variants };
     }
   }
-  // MSE / blob element with no direct file -> fall back to a sniffed stream
+  // MSE / blob element with no direct file -> fall back to a sniffed stream.
+  // Only for a player that has something attached (a blob, or a MediaSource
+  // handed over as srcObject): one showing a poster has asked for nothing yet,
+  // so nothing sniffed so far is its video.
   const src = video.currentSrc || video.src || '';
-  if (!src || src.startsWith('blob:') || src.startsWith('mediasource:')) {
-    const s = bestSniffedStream();
-    if (s) return { url: s.url, kind: s.kind, filename: buildName(title, s.url, s.kind), variants: s.variants || [] };
+  const attached = src.startsWith('blob:') || src.startsWith('mediasource:') ||
+    (!src && !!video.srcObject);
+  if (attached) {
+    const s = bestSniffedStream(video);
+    if (s) {
+      lastStreamOf.set(video, { stream: s, page: location.href });
+      return { url: s.url, kind: s.kind, filename: buildName(title, s.url, s.kind), variants: s.variants || [] };
+    }
   }
   return null;
 }
@@ -878,6 +985,9 @@ function createOverlay(video) {
   btnMain.addEventListener('click', (e) => {
     e.preventDefault();
     e.stopPropagation();
+    // what the player holds now: a page can load its next video into the same
+    // element, and the badge was last drawn up to half a second ago
+    updateState(getVideoDownload(video));
     if (!currentDl) return;
     sendToApp(currentDl.url, currentDl.filename);
     menu.classList.remove('open');
@@ -1074,7 +1184,8 @@ function scanDom() {
         filename: u.split('?')[0].split('/').pop() || 'media_file',
         mime: isHls ? 'application/x-mpegurl' : (v.tagName === 'VIDEO' ? 'video/mp4' : 'audio/mp3'),
         size: 0,
-        kind: isHls ? 'hls' : 'file'
+        kind: isHls ? 'hls' : 'file',
+        owned: true                 // this element's own; never another player's
       });
     });
   });

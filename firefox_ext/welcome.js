@@ -12,7 +12,7 @@ const pairTitle = document.getElementById("pairTitle");
 const pairText = document.getElementById("pairText");
 const PASTE_STEPS =
   "In the app, open Settings → Browser and copy the Browser Pairing Token. " +
-  "Then click the ⚡ icon in your toolbar (it may be under the puzzle-piece " +
+  "Then click the HyperFetch icon in your toolbar (it may be under the puzzle-piece " +
   "button), paste the token and press Save.";
 if (ON_FIREFOX) {
   pairTitle.textContent = "Approve it once";

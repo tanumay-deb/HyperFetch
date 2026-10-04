@@ -1,13 +1,13 @@
 """The brand line is said the same way everywhere it is said.
 
 "Fetch everything. Download faster." - chosen 2026-10-03. The words live in
-utils.TAGLINE. The app's About page shows that; the site and the README carry
-the same words, because neither can import them. So a change of wording is
-made in utils, and these tests say where else it has to follow.
+utils.TAGLINE. The app's About page shows that; the site, the README and the
+extension's welcome page carry the same words, because none of them can
+import them. So a change of wording is made in utils, and these tests say
+where else it has to follow.
 
-Not checked here: the browser extension's welcome page, its manifest
-description and the store listings. Extension files change only when the user
-says so, and they still describe the extension rather than the app.
+Not checked here: the extension's manifest description and the store
+listings. They describe the extension rather than the app.
 """
 import os
 import re
@@ -44,6 +44,12 @@ def test_a_shared_link_to_the_site_shows_it():
     assert og == "HyperFetch — %s" % utils.TAGLINE
     title = re.search(r"<title>(.*?)</title>", page).group(1)
     assert "download accelerator" in title
+
+
+def test_the_extensions_welcome_page_says_it():
+    """The page a browser opens when the extension is installed."""
+    page = _read("chrome_ext", "welcome.html")
+    assert '<span class="tagline">%s</span>' % utils.TAGLINE in page
 
 
 def test_the_about_page_shows_it():

@@ -105,7 +105,21 @@ function unpairedText() {
   if (lastPairing && lastPairing.status === "pending") {
     return `Approve HyperFetch in the app — code ${lastPairing.code}`;
   }
-  return "HyperFetch isn't paired — paste the token from the app's Settings into the ⚡ popup";
+  return "HyperFetch isn't paired — paste the token from the app's Settings into the HyperFetch popup";
+}
+
+// Ask the app's /pair, by POST. The app knows this extension by the Origin
+// header and answers nobody else. Measured on Chromium 154: a service worker's
+// GET to a host it has permission for carries NO Origin, so by GET every fresh
+// install was refused and never paired. A POST still carries it. An app from
+// before 2.7 knows only GET there and answers a POST with 405; it is asked the
+// old way then, which still works in a browser that sends the header on a GET.
+function askPair(base) {
+  return fetch(`${base}/pair`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: "{}",
+  }).then((r) => (r.status === 405 ? fetch(`${base}/pair`) : r));
 }
 
 // Auto-pairing: pull the token straight from the app instead of asking the user
@@ -116,7 +130,7 @@ function fetchPairToken() {
   if (ON_FIREFOX) {
     return requestPairing().then((r) => (r.status === "approved" && r.token) || "");
   }
-  return appBase().then((b) => fetch(`${b}/pair`))
+  return appBase().then(askPair)
     .then((r) => (r.ok ? r.json() : null))
     .then((j) => {
       const t = (j && j.token) || "";
@@ -661,9 +675,24 @@ function hlsDuration(text) {
   return total;
 }
 
-// Ask the desktop app to parse the master. The app has the original capture's
+// What one fetch of a media playlist says about it: its length, and whether it
+// is a live stream's sliding window - no end tag, no #EXT-X-PLAYLIST-TYPE, and
+// a first segment numbered above 0, so segments have already dropped off the
+// front. The page uses both to tell a player's own stream from an ad's live
+// one (content.js bestSniffedStream). The app's HLS engine starts from the same
+// signs and looks twice before it refuses a stream; this only ranks.
+function mediaPlaylistFacts(text) {
+  const seq = /^[ \t]*#EXT-X-MEDIA-SEQUENCE:[ \t]*(\d+)/m.exec(text);
+  const live = !/^[ \t]*#EXT-X-ENDLIST/m.test(text) &&
+    !/^[ \t]*#EXT-X-PLAYLIST-TYPE:/m.test(text) &&
+    !!seq && parseInt(seq[1], 10) > 0;
+  return { duration: hlsDuration(text), live };
+}
+
+// Ask the desktop app to parse the playlist. The app has the original capture's
 // cookies/referer/UA and no CORS, so it reads referer/auth-gated manifests the
-// SW's own fetch can't. Returns the variant array, [] for single-quality, or
+// SW's own fetch can't. Resolves { variants, duration, live } - variants [] for
+// single-quality; duration 0 and live false from an app too old to say - or
 // null when the app is unreachable (-> caller falls back to the SW fetch).
 function probeViaApp(url, referer, storeId) {
   return new Promise((resolve) => {
@@ -680,7 +709,11 @@ function probeViaApp(url, referer, storeId) {
                                  userAgent: navigator.userAgent, token })
         }))
           .then((r) => (r.ok ? r.json() : null))
-          .then((j) => resolve(j && Array.isArray(j.variants) ? j.variants : (j ? [] : null)))
+          .then((j) => resolve(j ? {
+            variants: Array.isArray(j.variants) ? j.variants : [],
+            duration: Number(j.duration) || 0,
+            live: !!j.live,
+          } : null))
           .catch(() => resolve(null));   // app offline -> fall back
       });
     });
@@ -688,52 +721,73 @@ function probeViaApp(url, referer, storeId) {
 }
 
 // Fallback: fetch + parse in the worker (works for same-origin / open CDNs).
+// Resolves what probeViaApp does, or null when the playlist cannot be read.
 async function probeViaFetch(url) {
   let text = "";
   try { text = await (await fetch(url, { credentials: "include" })).text(); }
   catch (e) { return null; }            // couldn't read it at all
   const variants = parseHlsVariants(text, url);
-  if (!variants.length) return [];      // single-quality / unreadable-as-master
-  let duration = 0;
-  try { duration = hlsDuration(await (await fetch(variants[0].url, { credentials: "include" })).text()); }
-  catch (e) { /* sizes omitted */ }
-  return variants.map((v) => ({
-    label: v.height ? v.height + "p"
-      : (v.bandwidth ? Math.round(v.bandwidth / 1000) + " kbps" : "variant"),
-    height: v.height, bandwidth: v.bandwidth, url: v.url,
-    size: (duration && v.bandwidth) ? Math.round(v.bandwidth / 8 * duration) : 0
-  }));
+  if (!variants.length) {               // single-quality / unreadable-as-master
+    return Object.assign({ variants: [] }, mediaPlaylistFacts(text));
+  }
+  let facts = { duration: 0, live: false };
+  try {
+    facts = mediaPlaylistFacts(
+      await (await fetch(variants[0].url, { credentials: "include" })).text());
+  } catch (e) { /* sizes omitted */ }
+  const duration = facts.duration;
+  return {
+    variants: variants.map((v) => ({
+      label: v.height ? v.height + "p"
+        : (v.bandwidth ? Math.round(v.bandwidth / 1000) + " kbps" : "variant"),
+      height: v.height, bandwidth: v.bandwidth, url: v.url,
+      size: (duration && v.bandwidth) ? Math.round(v.bandwidth / 8 * duration) : 0
+    })),
+    duration,
+    live: facts.live,
+  };
 }
 
-// Resolve a sniffed .m3u8 into a quality picker (master) or a single row.
-async function handleHls(url, tabId, fallbackName, referer, storeId) {
+// Resolve a sniffed .m3u8 into a quality picker (master) or a single row. The
+// page is told the frame that asked for it, its length and whether it is live:
+// that is how the badge tells a player's own stream from another's.
+async function handleHls(url, tabId, fallbackName, referer, storeId, frameId) {
+  // the frame is this request's, not the playlist's: a cached answer goes to
+  // the next page with the frame that asked there
+  const deliver = (payload) => {
+    if (tabId >= 0) {
+      chrome.tabs.sendMessage(tabId, Object.assign({}, payload, { frameId }), ignoreErr);
+    }
+  };
   const cached = parsedHls.get(url);   // re-deliver to a new tab, no re-probe
   if (cached) {
-    if (tabId >= 0) chrome.tabs.sendMessage(tabId, cached, ignoreErr);
+    deliver(cached);
     return;
   }
   if (inFlightHls.has(url)) return;
   inFlightHls.add(url);
   try {
-    let variants = await probeViaApp(url, referer, storeId);   // app-side (auth path)
-    const appAnswered = variants !== null;
-    if (!appAnswered) variants = await probeViaFetch(url);  // SW fallback
-    const definite = appAnswered || variants !== null;     // got a real answer?
+    let probed = await probeViaApp(url, referer, storeId);   // app-side (auth path)
+    const appAnswered = probed !== null;
+    if (!appAnswered) probed = await probeViaFetch(url);    // SW fallback
+    const definite = appAnswered || probed !== null;        // got a real answer?
+    const variants = probed ? probed.variants : null;
+    const facts = { duration: (probed && probed.duration) || 0, live: !!(probed && probed.live) };
 
     if (!variants || !variants.length) {
-      const payload = { type: "SNIFFED_MEDIA", url, mime: "application/x-mpegurl",
-                        size: 0, filename: fallbackName, kind: "hls" };
-      if (tabId >= 0) chrome.tabs.sendMessage(tabId, payload, ignoreErr);
+      const payload = Object.assign({ type: "SNIFFED_MEDIA", url, mime: "application/x-mpegurl",
+                                      size: 0, filename: fallbackName, kind: "hls" }, facts);
+      deliver(payload);
       // cache only on a definite answer + a real tab; a transient failure or a
       // tabId<0 background request must stay retryable for the next real tab.
       if (definite && tabId >= 0) parsedHls.set(url, payload);
       return;
     }
 
-    const payload = { type: "SNIFFED_HLS_MASTER", url,
-                      filename: fallbackName, variants };
+    const payload = Object.assign({ type: "SNIFFED_HLS_MASTER", url,
+                                    filename: fallbackName, variants }, facts);
     if (tabId >= 0) {
-      chrome.tabs.sendMessage(tabId, payload, ignoreErr);
+      deliver(payload);
       parsedHls.set(url, payload);
     }
   } finally {
@@ -783,7 +837,8 @@ chrome.webRequest.onResponseStarted.addListener(
     // Pass the page URL so the app can send a real Referer to gated CDNs.
     if (kind === "hls") {
       const referer = details.documentUrl || details.originUrl || details.initiator || "";
-      handleHls(details.url, details.tabId, filename, referer, details.cookieStoreId);
+      handleHls(details.url, details.tabId, filename, referer, details.cookieStoreId,
+                details.frameId);
       return;
     }
 
@@ -794,7 +849,8 @@ chrome.webRequest.onResponseStarted.addListener(
         mime: contentType || kind,
         size: contentLength,
         filename: filename,
-        kind: kind
+        kind: kind,
+        frameId: details.frameId
       }, ignoreErr);
     }
   },

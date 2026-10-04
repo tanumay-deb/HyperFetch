@@ -88,7 +88,15 @@ function askToPair() {
 
 function autoPair() {
   if (ON_FIREFOX) { askToPair(); return; }
-  fetch(`${APP}/pair`)
+  // By POST: the app knows this extension by its Origin, and Chromium sends
+  // none on an extension's GET (background.js askPair has the measurement).
+  // An app from before 2.7 answers a POST with 405 and is asked by GET.
+  fetch(`${APP}/pair`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: "{}",
+  })
+    .then((r) => (r.status === 405 ? fetch(`${APP}/pair`) : r))
     .then((r) => (r.ok ? r.json() : null))
     .then((j) => {
       if (j && j.token) chrome.storage.local.set({ token: j.token }, refreshPairState);
