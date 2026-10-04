@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <title>HyperFetch</title>
+  <!-- The HyperFetch logo. This file is the master: every PNG and ICO of the
+       logo in this repository is this drawing at a size. See README.md here. -->
+  <defs>
+    <linearGradient id="hf-tile" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#6366f1"/>
+      <stop offset="1" stop-color="#8b5cf6"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="112.64" fill="url(#hf-tile)"/>
+  <polygon points="297,31 271.5,215 379,215 204.5,482 230.5,287 133,287" fill="#fff"/>
+</svg>

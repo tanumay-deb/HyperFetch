@@ -152,10 +152,20 @@ SENSITIVE_HEADERS = {"cookie", "authorization", "proxy-authorization"}
 # can report it without importing PySide6.
 APP_VERSION = "2.6.0"
 
-# The brand line. The About page shows this; the site (docs/index.html) and
-# the README say the same words by hand - tests/test_tagline.py keeps them in
-# step. The extension's pages and store listings are not changed from here.
+# The brand line. The About page shows this; the site (docs/index.html), the
+# README and the extension's welcome page say the same words by hand -
+# tests/test_tagline.py keeps them in step. The extension's manifest
+# description and the store listings still describe the extension.
 TAGLINE = "Fetch everything. Download faster."
+
+# Where each browser gets the extension, in the order they are offered. The
+# app's "Get Extension" shows these; the site and the README repeat them by
+# hand (tests/test_store_links.py). Chrome's listing also serves Brave.
+EXTENSION_STORES = {
+    "Chrome Web Store": "https://chromewebstore.google.com/detail/hyperfetch/finojjembpabfbincabngboedegokdlm",
+    "Firefox Add-ons": "https://addons.mozilla.org/addon/hyperfetch/",
+    "Edge Add-ons": "https://microsoftedge.microsoft.com/addons/detail/ebgbghogfnompbkhihmaohhdehkdkcjj",
+}
 
 
 def app_data_dir():

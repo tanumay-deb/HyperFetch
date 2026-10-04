@@ -214,7 +214,7 @@
       <a class="btn" href="https://github.com/tanumay-deb/HyperFetch/releases/latest">
         Download for Windows
       </a>
-      <a class="btn ghost" href="https://chromewebstore.google.com/detail/hyperfetch/finojjembpabfbincabngboedegokdlm">
+      <a class="btn ghost" id="getExtension" href="https://chromewebstore.google.com/detail/hyperfetch/finojjembpabfbincabngboedegokdlm">
         Get the Chrome extension
       </a>
     </div>
@@ -303,7 +303,9 @@
         <p>Adds a right-click item, a badge on videos, and optional capture of
            downloads the browser starts. The app works fine without it.</p>
         <p style="margin-top:14px">
-          <a href="https://chromewebstore.google.com/detail/hyperfetch/finojjembpabfbincabngboedegokdlm">Chrome Web Store →</a>
+          <a href="https://chromewebstore.google.com/detail/hyperfetch/finojjembpabfbincabngboedegokdlm">Chrome Web Store →</a><br>
+          <a href="https://addons.mozilla.org/addon/hyperfetch/">Firefox Add-ons →</a><br>
+          <a href="https://microsoftedge.microsoft.com/addons/detail/ebgbghogfnompbkhihmaohhdehkdkcjj">Edge Add-ons →</a>
         </p>
       </div>
     </div>
@@ -320,6 +322,21 @@
 </div>
 
 <script>
+// The button above the fold goes to the visitor's own store. It is written for
+// Chrome; Firefox cannot install from there, and Edge has a listing of its own.
+(function () {
+  var link = document.getElementById("getExtension");
+  if (!link) return;
+  var ua = navigator.userAgent;
+  if (/Firefox\//.test(ua)) {
+    link.href = "https://addons.mozilla.org/addon/hyperfetch/";
+    link.textContent = "Get the Firefox add-on";
+  } else if (/Edg\//.test(ua)) {
+    link.href = "https://microsoftedge.microsoft.com/addons/detail/ebgbghogfnompbkhihmaohhdehkdkcjj";
+    link.textContent = "Get the Edge extension";
+  }
+})();
+
 (function () {
   var N = 8;
   var wrap = document.getElementById("segments");

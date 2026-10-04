@@ -8,7 +8,7 @@ the dialog behaviour (nav, search, values).
 from PySide6.QtWidgets import (
     QHBoxLayout, QVBoxLayout, QGridLayout, QLabel, QPushButton, QLineEdit,
     QComboBox, QSlider, QSpinBox, QDoubleSpinBox, QWidget, QFrame, QFileDialog, QTimeEdit,
-    QScrollArea, QApplication, QSizePolicy
+    QScrollArea, QApplication, QSizePolicy, QMenu
 )
 from PySide6.QtCore import Qt, QTime, QTimer
 
@@ -16,7 +16,6 @@ import crash_reporter
 import utils
 from gui.theme import APP_VERSION
 
-STORE_URL = "https://chromewebstore.google.com/detail/hyperfetch/finojjembpabfbincabngboedegokdlm"
 try:
     from gui.dialogs import AnimatedToggle
 except Exception:                       # fallback if unavailable
@@ -277,8 +276,14 @@ class PageBuilderMixin:
         sa, v = self._page("Browser Integration", "Integrate with your web browser")
         f, g = self._card()
         get = QPushButton("  Get Extension"); get.setIcon(themed_icon("open", "text"))
-        get.clicked.connect(lambda: __import__("webbrowser").open(STORE_URL))
-        self._row(g, "Browser Extension", "Install the HyperFetch extension from the Chrome Web Store", get)
+        # one store a browser: Firefox cannot install from Chrome's, nor Chrome from Mozilla's
+        stores = QMenu(get)
+        for store, url in utils.EXTENSION_STORES.items():
+            stores.addAction(store).triggered.connect(
+                lambda _=False, u=url: __import__("webbrowser").open(u))
+        get.setMenu(stores)
+        self.get_extension = get
+        self._row(g, "Browser Extension", "Install the HyperFetch extension for Chrome, Firefox or Edge", get)
         v.addWidget(f)
         f2, g2 = self._card()
         self.browsers = {}

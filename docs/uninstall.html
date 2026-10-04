@@ -15,11 +15,7 @@
     width: 560px; max-width: 92vw; background: #191c25; border: 1px solid #2a2f3b;
     border-radius: 18px; padding: 36px 40px; box-shadow: 0 18px 60px rgba(0,0,0,.5); text-align: center;
   }
-  .bolt {
-    width: 54px; height: 54px; border-radius: 14px; display: inline-flex; align-items: center;
-    justify-content: center; font-size: 28px; color: white; margin-bottom: 14px;
-    background: linear-gradient(135deg, #6366f1, #8b5cf6); opacity: .85;
-  }
+  .mark { width: 54px; height: 54px; margin-bottom: 14px; opacity: .85; }
   h1 { font-size: 22px; margin: 0 0 8px; }
   p { color: #8b97ad; font-size: 14px; line-height: 1.6; margin: 0 0 10px; }
   .box {
@@ -40,7 +36,7 @@
 </head>
 <body>
   <div class="card">
-    <div class="bolt">⚡</div>
+    <img class="mark" src="logo.png" alt="" width="54" height="54">
     <h1>The HyperFetch extension was removed</h1>
     <p>Sorry to see you go. If something didn't work, we'd genuinely like to fix it.</p>
 
@@ -55,11 +51,21 @@
 
     <div class="row">
       <a class="btn ghost" href="https://github.com/tanumay-deb/HyperFetch/issues/new" target="_blank">Tell us what went wrong</a>
-      <a class="btn" href="https://chromewebstore.google.com/detail/hyperfetch/finojjembpabfbincabngboedegokdlm" target="_blank">Reinstall the extension</a>
+      <a class="btn" id="reinstall" href="https://chromewebstore.google.com/detail/hyperfetch/finojjembpabfbincabngboedegokdlm" target="_blank">Reinstall the extension</a>
     </div>
 
     <p class="hint">The desktop app still works on its own — paste any link into <b>New Download</b>.<br>
        Uninstalling the extension removed only the browser side; no downloads were touched.</p>
   </div>
+<script>
+// "Reinstall" goes to the store of the browser the extension was removed from.
+(function () {
+  var link = document.getElementById("reinstall");
+  if (!link) return;
+  var ua = navigator.userAgent;
+  if (/Firefox\//.test(ua)) link.href = "https://addons.mozilla.org/addon/hyperfetch/";
+  else if (/Edg\//.test(ua)) link.href = "https://microsoftedge.microsoft.com/addons/detail/ebgbghogfnompbkhihmaohhdehkdkcjj";
+})();
+</script>
 </body>
 </html>

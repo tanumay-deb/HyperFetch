@@ -7,7 +7,7 @@ its button put 13-14px white on the brand gradient's lighter stop at 4.2:1.
 
 The palette stays purple. The grey is the pages' own muted tone, and the small
 white text sits on a deeper step of the same indigo-to-violet gradient; the
-logo tile keeps the brand gradient, since its glyph is large.
+logo is the logo's own file (tests/test_brand_logo.py).
 """
 import os
 import re

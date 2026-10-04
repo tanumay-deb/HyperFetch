@@ -6,14 +6,14 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Qt, QTimer
 
+import utils
 from gui2.palette import COLORS, DIALOG_MARGIN
 from gui2.dialogs.common import DialogHeader
 
-_STORE_URL = "https://chromewebstore.google.com/detail/hyperfetch/finojjembpabfbincabngboedegokdlm"
 _STEPS = [
-    f"Install the <b>HyperFetch</b> extension from the "
-    f"<a href='{_STORE_URL}' style='color:#8b5cf6;'>Chrome Web Store</a> "
-    "(Chrome, Edge or Brave).",
+    "Install the <b>HyperFetch</b> extension for your browser: " + ", ".join(
+        f"<a href='{url}' style='color:#8b5cf6;'>{store}</a>"
+        for store, url in utils.EXTENSION_STORES.items()) + ".",
     "Click the HyperFetch extension icon and paste the pairing token below.",
     "Right-click any link → <b>Download with HyperFetch</b>, or turn on capture in the popup.",
 ]
