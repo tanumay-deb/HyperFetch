@@ -16,9 +16,22 @@ The three addresses, the same in every store:
 | Support | `https://github.com/tanumay-deb/HyperFetch/issues` |
 | Privacy policy | `https://tanumay-deb.github.io/HyperFetch/privacy.html` |
 | The desktop app (in the description) | `https://github.com/tanumay-deb/HyperFetch/releases/latest` |
+| HyperFetch on the web (in the description) | `https://hyperfetch-dl.duckdns.org/` |
 
 Use the support URL rather than an e-mail address: a listing's contact field
 is public and listings are scraped.
+
+A listing has one website field. It stays the GitHub Pages site while the
+hosted site (`hyperfetch-dl.duckdns.org`) runs on a PC: that site answers
+"offline" (a 503) whenever the PC is off, Edge opens the website link during
+review, and the Pages site is the page about the extension and the app. The
+hosted site goes in the description instead. Once it runs on a server that is
+always on, it can take the website field if it is to be the main site.
+
+A store's link does little for search by itself: the stores mark outgoing
+links nofollow, or send them through a redirect. What gets the hosted site
+into Google is Search Console (submit `sitemap.xml`, then "Request indexing"
+on the home page) and the site answering when Google calls.
 
 What each listing had on 2026-10-04, read from the stores' public pages:
 
@@ -79,6 +92,7 @@ Features:
 Requires the free HyperFetch desktop app for Windows:
 https://github.com/tanumay-deb/HyperFetch/releases/latest
 Website: https://tanumay-deb.github.io/HyperFetch/
+On a phone, with nothing to install: https://hyperfetch-dl.duckdns.org/
 
 Everything runs locally on your computer — no accounts, no servers, no tracking.
 
