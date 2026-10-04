@@ -114,10 +114,10 @@ def test_auto_capture_empty_list_allows_all(tmp_path, monkeypatch):
 
 def test_probe_returns_variants(tmp_path, monkeypatch):
     import hls
-    monkeypatch.setattr(hls, "probe_variants",
-                        lambda url, headers=None: [{"label": "1080p", "height": 1080,
-                                                    "bandwidth": 5_000_000,
-                                                    "url": url + "#1080", "size": 9}])
+    monkeypatch.setattr(hls, "probe",
+                        lambda url, headers=None: {"variants": [
+                            {"label": "1080p", "height": 1080, "bandwidth": 5_000_000,
+                             "url": url + "#1080", "size": 9}], "duration": 0.0, "live": False})
     c = create_app(_FakeQueue(), str(tmp_path), pending=None).test_client()
     r = c.post("/probe", json={"url": "https://x/master.m3u8"})
     assert r.status_code == 200

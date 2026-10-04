@@ -324,7 +324,9 @@ def create_app(queue, save_dir, pending=None, token=None, pair_requests=None):
 
     @app.route("/probe", methods=["POST"])
     def probe():
-        """Parse an HLS master's quality variants for the extension's picker.
+        """Parse an HLS playlist for the extension: a master's quality variants
+        for the picker, and the stream's length and whether it is live, which
+        is how the page's badge tells its player's own stream from another's.
         The app has the original capture's cookies/referer/UA and no CORS, so
         it reads referer/auth-gated manifests the extension's own fetch can't."""
         # Loopback only. The bind address used to guarantee this; once the
@@ -347,10 +349,10 @@ def create_app(queue, save_dir, pending=None, token=None, pair_requests=None):
             headers["Referer"] = data["referrer"]
         import hls
         try:
-            variants = hls.probe_variants(url, headers)
+            found = hls.probe(url, headers)
         except Exception:
-            variants = []
-        return jsonify({"variants": variants})
+            found = {"variants": [], "duration": 0.0, "live": False}
+        return jsonify(found)
 
     @app.route("/download", methods=["POST"])
     def download():

@@ -64,22 +64,55 @@ def is_hls(url="", filename="", ctype=""):
             or "mpegurl" in c)
 
 
+def _playlist_facts(text):
+    """(seconds, live) of a media playlist, from this one copy of it.
+
+    Live: no end tag, no #EXT-X-PLAYLIST-TYPE, and a first segment numbered
+    above 0 - segments have already dropped off the front of a sliding window.
+    HlsDownloader starts from the same signs and fetches a second time before
+    it refuses a stream; this is for /probe, which stays one fetch."""
+    seconds = 0.0
+    for m in re.finditer(r"#EXTINF:\s*([\d.]+)", text):
+        try:
+            seconds += float(m.group(1))
+        except ValueError:
+            pass
+    live = (not re.search(r"^[ \t]*#EXT-X-ENDLIST", text, re.M)
+            and not re.search(r"^[ \t]*#EXT-X-PLAYLIST-TYPE:", text, re.M)
+            and _media_sequence(text) > 0)
+    return seconds, live
+
+
 def probe_variants(url, headers=None):
-    """Fetch an HLS master and return its quality variants, best first:
-    ``[{label, height, bandwidth, url, size}]``. Returns ``[]`` for a
-    single-quality media playlist (nothing to choose) or on any fetch error.
+    """An HLS master's quality variants, best first: ``[{label, height,
+    bandwidth, url, size}]``. ``[]`` for a single-quality media playlist
+    (nothing to choose) or on any fetch error. See probe()."""
+    return probe(url, headers)["variants"]
+
+
+def probe(url, headers=None):
+    """What the extension's /probe says of a playlist::
+
+        {"variants": [...], "duration": seconds, "live": bool}
+
+    variants is probe_variants' list. duration and live are those of the best
+    rendition (of the playlist itself when it is a media playlist): the page
+    uses them to tell its player's own stream from an ad's live one, or from
+    another video's. All three are empty, 0 and False when nothing can be read.
 
     Runs in the app, so it has the real Referer/cookies/UA and no CORS — it
     works on the referer/auth-gated CDNs the browser extension's own fetch
-    can't read. Backs the extension's /probe endpoint."""
+    can't read."""
     base = {**HEADERS, **(headers or {})}
     sess = requests.Session()
     try:
         text = _get(sess, url, base).text
     except requests.RequestException:
-        return []
+        return {"variants": [], "duration": 0.0, "live": False}
     if "#EXT-X-STREAM-INF" not in text:
-        return []                       # media playlist — single quality
+        # media playlist — single quality
+        seconds, live = _playlist_facts(text)
+        return {"variants": [], "duration": seconds, "live": live}
 
     lines = text.splitlines()
     variants = []
@@ -106,14 +139,12 @@ def probe_variants(url, headers=None):
     variants.sort(key=lambda v: (v["height"], v["bandwidth"]), reverse=True)
 
     # estimate sizes from the top variant's total duration (one extra fetch)
-    duration = 0.0
+    duration, live = 0.0, False
     if variants:
         try:
-            vtext = _get(sess, variants[0]["url"], base).text
-            for m in re.finditer(r"#EXTINF:\s*([\d.]+)", vtext):
-                duration += float(m.group(1) or 0)
+            duration, live = _playlist_facts(_get(sess, variants[0]["url"], base).text)
         except requests.RequestException:
-            duration = 0.0
+            duration, live = 0.0, False
 
     out = []
     for v in variants:
@@ -126,7 +157,7 @@ def probe_variants(url, headers=None):
         size = int(v["bandwidth"] / 8 * duration) if (duration and v["bandwidth"]) else 0
         out.append({"label": label, "height": v["height"],
                     "bandwidth": v["bandwidth"], "url": v["url"], "size": size})
-    return out
+    return {"variants": out, "duration": duration, "live": live}
 
 
 def _get(session, url, headers, stats=None, **kw):
