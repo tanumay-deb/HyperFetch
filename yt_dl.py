@@ -73,6 +73,10 @@ class _Abort(Exception):
     pass
 
 
+class _Failed(Exception):
+    """The segmented engine broke after it started; its error stands."""
+
+
 class _YtLog:
     """Routes yt-dlp's own messages (deprecation notices, ERROR echoes) into our
     debug log instead of stdout/stderr, so they don't spam the app console."""
@@ -98,6 +102,40 @@ def _net_opts():
     if utils.PROXIES:
         opts["proxy"] = utils.PROXIES.get("https") or utils.PROXIES.get("http")
     return opts
+
+
+def direct_format(info):
+    """Whether yt-dlp would fetch the chosen format as one plain http(s) file:
+    the case the app's segmented engine can take over.
+
+    Not a merge of separate video and audio, not HLS or DASH fragments, not
+    a live stream, not a request that needs a body or a browser's TLS
+    fingerprint, and not a format whose extractor asks for it in chunks
+    (YouTube's, Google Drive's): yt-dlp documents chunking as a way past a
+    server's throttling, and ranges of the engine's own size would not keep
+    to it."""
+    if not info or info.get("requested_formats"):
+        return False
+    if info.get("protocol") not in ("http", "https") or not info.get("url"):
+        return False
+    if info.get("fragments") or info.get("is_live"):
+        return False
+    if info.get("request_data") or info.get("impersonate"):
+        return False
+    return not (info.get("downloader_options") or {}).get("http_chunk_size")
+
+
+def media_headers(info):
+    """The headers yt-dlp's own download sends to a format's link: the
+    format's http_headers (the browser's User-Agent and Referer reach them
+    through the http_headers option) over an uncompressed Accept-Encoding.
+
+    Cookies are not a header here. yt-dlp keeps them in its jar, each scoped
+    to its host - the page's own to the page's host - and the engine is given
+    the jar, so a CDN gets the cookies yt-dlp would send it and no others."""
+    return {"Accept-Encoding": "identity",
+            **{k: v for k, v in (info.get("http_headers") or {}).items()
+               if k.lower() != "cookie"}}
 
 
 def _has_media(info):
@@ -175,8 +213,81 @@ def _ytdlp_version():
 
 
 class YtDlpDownloader:
-    def __init__(self, dtask: "T.DownloadTask"):
+    def __init__(self, dtask: "T.DownloadTask", segments=None):
         self.t = dtask
+        # connections for a file the segmented engine takes over (None: its
+        # default)
+        self.segments = segments
+        self._fetched = ""              # the file the engine finished, if it did
+
+    def _take_over_plain_files(self, ydl):
+        """Have the app's segmented engine fetch the video when yt-dlp would
+        fetch one plain file over one connection.
+
+        yt-dlp still extracts, picks the format, names the file and finishes
+        it - its fixups and the rest run as ever; only the bytes come over
+        parallel ranges. Every download goes through ydl.dl(): that is wrapped
+        for the video's own file, and process_info is wrapped to tell that
+        apart from the parts of a merge, which stay yt-dlp's. Subtitles and
+        format tests call dl() with more arguments and are left alone too. A
+        file the engine cannot start goes on to yt-dlp's own dl().
+        """
+        process_info = getattr(ydl, "process_info", None)
+        dl = getattr(ydl, "dl", None)
+        if process_info is None or dl is None or self.segments == 1:
+            return
+        whole = [False]
+
+        def _process_info(info, *a, **kw):
+            whole[0] = not info.get("requested_formats")
+            try:
+                return process_info(info, *a, **kw)
+            finally:
+                whole[0] = False
+
+        def _dl(name, info, *a, **kw):
+            if whole[0] and not a and not kw and direct_format(info):
+                whole[0] = False
+                if self._fetch(ydl, name, info):
+                    return True, True
+            return dl(name, info, *a, **kw)
+
+        ydl.process_info = _process_info
+        ydl.dl = _dl
+
+    def _fetch(self, ydl, name, info):
+        """The segmented engine fetches info's file into `name`, yt-dlp's name
+        for it. True when it finished; False when it did not start, and yt-dlp
+        fetches it instead. Raises _Abort on pause or cancel, _Failed when it
+        broke after starting."""
+        import downloader
+        import utils
+        if self.t.pause_requested or self.t.cancel_requested:
+            raise _Abort()   # asked while yt-dlp extracted: not one request more
+        url = info["url"]
+        if os.path.exists(name) or os.path.isfile(name + ".part"):
+            return False     # already there (yt-dlp says so), or yt-dlp's own partial
+        if utils.host_rule(url).get("ytdlp"):
+            return False     # Settings: yt-dlp fetches from this host
+        eng = downloader.Downloader(
+            self.t, segments=(downloader.DEFAULT_SEGMENTS if self.segments is None
+                              else self.segments),
+            url=url, headers=media_headers(info), cookies=getattr(ydl, "cookiejar", None))
+        if eng.num_segments == 1:
+            return False     # a host rule or Max Connections says one connection
+        before = self.t.save_path, self.t.filename
+        self.t.save_path, self.t.filename = name, os.path.basename(name)
+        if not eng.run_media():
+            self.t.save_path, self.t.filename = before
+            self.t.log_event("The video's link would not be fetched in parallel "
+                             "ranges; yt-dlp downloads it itself")
+            return False
+        if self.t.status == T.COMPLETED:
+            self._fetched = self.t.save_path
+            return True
+        if self.t.pause_requested or self.t.cancel_requested:
+            raise _Abort()
+        raise _Failed()
 
     def run(self):
         self.t.status = T.DOWNLOADING
@@ -274,6 +385,7 @@ class YtDlpDownloader:
         def _attempt(o):
             """One yt-dlp run. Returns its guess at the output path."""
             with yt_dlp.YoutubeDL(o) as ydl:
+                self._take_over_plain_files(ydl)
                 info = ydl.extract_info(self.t.url, download=True)
                 try:
                     return ydl.prepare_filename(info)
@@ -283,7 +395,7 @@ class YtDlpDownloader:
         try:
             try:
                 guess = _attempt(opts)
-            except _Abort:
+            except (_Abort, _Failed):
                 raise
             except Exception as e:
                 # YouTube answers a cookie-bearing request with a player response
@@ -305,7 +417,14 @@ class YtDlpDownloader:
                 retry["http_headers"] = {k: v for k, v in http_headers.items()
                                          if k.lower() != "cookie"}
                 guess = _attempt(retry)
-            path = guess if (guess and os.path.exists(guess)) else final["path"]
+            if self._fetched and os.path.exists(self._fetched):
+                path = self._fetched
+            else:
+                path = guess if (guess and os.path.exists(guess)) else final["path"]
+                # yt-dlp fetched it itself: a partial the engine left from an
+                # earlier run is garbage now
+                import downloader
+                downloader.discard_partial(self.t)
             if not (path and os.path.exists(path)):
                 path = self._newest(out_dir, _pre_existing)
             if path and os.path.exists(path):
@@ -321,6 +440,11 @@ class YtDlpDownloader:
             log.info("yt-dlp done: %s", self.t.filename)
         except _Abort:
             self.t.status = T.CANCELLED if self.t.cancel_requested else T.PAUSED
+            if self.t.cancel_requested:
+                import downloader
+                downloader.discard_partial(self.t)
+        except _Failed:
+            pass                        # the engine's own status and error stand
         except Exception as e:
             self.t.status = T.ERROR
             import re as _re
