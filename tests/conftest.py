@@ -2,8 +2,10 @@
 
 Every test runs against a temp app-data dir (real %APPDATA% state is never
 touched) and against in-process http.server handlers (no external network, so
-the suite is hermetic and CI-safe).
+the suite is hermetic and CI-safe). Cyclic garbage is collected only on the
+main thread, between tests.
 """
+import gc
 import os
 import sys
 import string
@@ -20,6 +22,38 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import utils  # noqa: E402
+
+
+# --------------------------------------------------------- garbage collection
+# Qt objects must be destroyed on the GUI thread. Python's cyclic collector runs
+# on whichever thread is allocating when a threshold trips, and this suite always
+# has threads about: the stand-in servers' handlers, downloader workers, UPnP
+# lookups. A widget held only by a reference cycle (a test's parentless `host`
+# and the dialog that keeps it) was then torn down off the GUI thread: directly
+# for a Python subclass, or queued by PySide6 to run at the GUI thread's next
+# bytecode, even midway through Qt delivering an event to that widget. Either
+# way the interpreter segfaulted now and then. So automatic collection is off,
+# and collect_garbage does it on the main thread, between tests.
+@pytest.fixture(scope="session", autouse=True)
+def no_automatic_gc():
+    gc.disable()
+    yield
+    gc.collect()                # the last of it, before any thread may collect
+    gc.enable()
+
+
+_tests_run = 0
+
+
+@pytest.fixture(autouse=True)
+def collect_garbage():
+    """Runs once a test's other fixtures are torn down (it is defined before
+    them, so it is torn down after them): the young generation every time, the
+    older ones every 10 and 100 tests, about CPython's own schedule."""
+    global _tests_run
+    yield
+    _tests_run += 1
+    gc.collect(2 if _tests_run % 100 == 0 else 1 if _tests_run % 10 == 0 else 0)
 
 
 @pytest.fixture(autouse=True)
