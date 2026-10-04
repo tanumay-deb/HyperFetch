@@ -65,6 +65,55 @@ Firefox's is typed into the listing.
 For a reviewer: the package is the source. Nothing is minified or built;
 `background.js`, `content.js`, `popup.js` and `welcome.js` are as written.
 
+## Firefox (addons.mozilla.org): Edit Product Page
+
+**Summary** (shown under the name; 250 characters at most):
+
+```
+Sends downloads and streaming videos to the HyperFetch desktop app, which fetches them over many connections at once. Fetch everything. Download faster.
+```
+
+**Additional Details**
+
+| Field | Value |
+| --- | --- |
+| Tags | `download`, `video downloader`, `torrent`, `streaming` - chosen from Mozilla's fixed list (42 tags, read from its API on 2026-10-04) |
+| Contributions URL | leave empty; it is for a donations page |
+| Default Locale | English (US) |
+| Homepage | `https://tanumay-deb.github.io/HyperFetch/` |
+
+**Technical Details**
+
+*Developer Comments* - shown to everyone on the listing:
+
+```
+HyperFetch needs its free desktop app for Windows, and the app has to be running:
+https://github.com/tanumay-deb/HyperFetch/releases/latest
+
+The first time, the app asks "Pair Firefox with HyperFetch?" and shows a four-digit code. Allow it if this add-on shows the same code. That needs app 2.6.0 or later; with an older app, paste the token from the app's Settings > Browser into the add-on's popup.
+
+Problems and requests: https://github.com/tanumay-deb/HyperFetch/issues
+```
+
+*UUID* - `hyperfetch@tanumay-deb.github.io`. Never change it: a new id is a new
+add-on, and everyone who installed this one stops getting updates.
+
+*Whiteboard* - seen only by you and Mozilla's reviewers, for every version:
+
+```
+HyperFetch is the browser half of a desktop download manager (source and releases: https://github.com/tanumay-deb/HyperFetch, MIT). The add-on does nothing on its own: it hands downloads to the desktop app at http://127.0.0.1:21456 (older app versions: port 5000) and contacts no server of ours.
+
+To test: install the Windows app from the GitHub releases page and start it. Open the add-on's popup: it asks the app to pair and shows a four-digit code; the app asks "Pair Firefox with HyperFetch?" with the same code - click Allow. (Needs app 2.6.0 or later. Otherwise paste the token from the app's Settings > Browser > Browser Pairing Token into the popup.) Then right-click any link > "Download with HyperFetch", or play a video and use the Download button on it.
+
+No build step: the uploaded files are the source, unminified.
+
+Permissions: downloads - capture downloads the user starts (only with capture switched on) and cancel Firefox's copy once the app has taken it; cookies - sent with that one download so logged-in downloads work, never stored; webRequest + <all_urls> - spot video playlists and media on the page for the quality picker and the video button; contextMenus; storage - pairing token, settings, and a one-hour queue of downloads clicked while the app was closed (without cookies).
+
+Linter warnings: downloads.onDeterminingFilename is Chrome-only and feature-detected; Firefox uses downloads.onCreated. The innerHTML/insertAdjacentHTML warnings insert only fixed strings; page-derived text is set with textContent.
+
+data_collection_permissions declares browsingActivity, websiteContent and websiteActivity because the add-on hands URLs, cookies and user-started downloads to the user's own desktop app, never to the developer.
+```
+
 ---
 
 ## Store listing copy
