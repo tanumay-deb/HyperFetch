@@ -90,9 +90,20 @@ class PageBuilderMixin:
         b.clicked.connect(do_copy)
         return b
 
-    def _combo(self, items, current=None):
+    def _combo(self, items, current=None, editable=False):
         c = QComboBox(); c.addItems(items)
-        if current and current in items:
+        if editable:
+            # the list is a set of suggestions: a value of the user's own is
+            # as good, and is shown again the next time Settings opens
+            c.setEditable(True)
+            c.setInsertPolicy(QComboBox.NoInsert)
+            # A box sizes itself to its list, less the arrow's share once it
+            # can be typed into: "2.5 Mb/s" showed as "5 Mb/s".
+            c.setMinimumWidth(150)
+            if current:
+                c.setCurrentText(current)
+                c.lineEdit().setCursorPosition(0)
+        elif current and current in items:
             c.setCurrentText(current)
         return c
 
@@ -154,14 +165,16 @@ class PageBuilderMixin:
                   "Auto-sort into Video / Music / Images / … subfolders by file type, "
                   "Other for the rest. A torrent is filed by its biggest file, before "
                   "it starts.", self.categorize)
-        self.speed_limit = self._combo(["Unlimited", "1 Mb/s", "5 Mb/s", "10 Mb/s"], ex.get("speed_limit"))
-        self._row(g, "Download Speed Limit", "Global download speed limit", self.speed_limit)
+        self.speed_limit = self._combo(["Unlimited", "1 Mb/s", "2 Mb/s", "5 Mb/s", "10 Mb/s", "25 Mb/s", "50 Mb/s", "100 Mb/s"], ex.get("speed_limit"), editable=True)
+        self._row(g, "Download Speed Limit",
+                  "For everything HyperFetch downloads, torrents included. "
+                  "Pick one or type your own, in Mb/s.", self.speed_limit)
         self.throttle_en = self._toggle(ex.get("throttle_enabled", False))
         self._row(g, "Scheduled speed limit", "Throttle to a slower speed during a daily time window", self.throttle_en)
         trow = QHBoxLayout()
         self.thr_start = QTimeEdit(QTime.fromString(ex.get("throttle_start", "09:00"), "HH:mm")); self.thr_start.setDisplayFormat("HH:mm")
         self.thr_stop = QTimeEdit(QTime.fromString(ex.get("throttle_stop", "17:00"), "HH:mm")); self.thr_stop.setDisplayFormat("HH:mm")
-        self.thr_limit = self._combo(["1 Mb/s", "2 Mb/s", "5 Mb/s", "10 Mb/s"], ex.get("throttle_limit"))
+        self.thr_limit = self._combo(["1 Mb/s", "2 Mb/s", "5 Mb/s", "10 Mb/s", "25 Mb/s"], ex.get("throttle_limit"), editable=True)
         trow.addWidget(QLabel("From")); trow.addWidget(self.thr_start)
         trow.addSpacing(8); trow.addWidget(QLabel("to")); trow.addWidget(self.thr_stop)
         trow.addSpacing(12); trow.addWidget(QLabel("limit")); trow.addWidget(self.thr_limit); trow.addStretch()

@@ -96,13 +96,12 @@ class SettingsMixin:
         self.queue.segments = v["segments"]
         self.verify_tls = v["verify_tls"]
         utils.VERIFY_TLS = v["verify_tls"]
-        # global speed limit (combo "Unlimited" / "N Mb/s")
-        bps = 0
-        if "Mb/s" in v.get("speed_limit", ""):
-            try:
-                bps = int(v["speed_limit"].split()[0]) * 1000 * 1000 // 8
-            except ValueError:
-                bps = 0
+        # the download speed limit: "Unlimited", one from the list, or typed
+        bps = utils.parse_speed(v.get("speed_limit"))
+        # kept the way the list writes it, so it reads the same next time
+        v["speed_limit"] = utils.speed_text(v.get("speed_limit"))
+        if "throttle_limit" in v:
+            v["throttle_limit"] = utils.speed_text(v["throttle_limit"])
         self.global_speed_limit = bps
         theme_changed = (v["theme"] != self.theme)
         self.theme = v["theme"]

@@ -158,6 +158,39 @@ def preference_opts():
     return opts
 
 
+_limit_lock = threading.Lock()
+
+
+def tell_download_limit(d, bps):
+    """Give the daemon its part of the download speed limit, if that is news.
+
+    aria2's --max-overall-download-limit, changed on the running daemon. What
+    it was last told is kept on the daemon object, with the port and secret it
+    was told at: a daemon started in its place knows nothing, and one left by
+    an earlier run of the app may still hold that run's limit - so a first
+    telling always goes out, "0" (no limit) included.
+    """
+    told = (getattr(d, "port", 0), getattr(d, "secret", ""), int(bps))
+    if getattr(d, "_download_limit", None) == told:
+        return
+    if not _limit_lock.acquire(blocking=False):
+        return                  # another torrent is telling it right now
+    try:
+        if getattr(d, "_download_limit", None) == told:
+            return
+        try:
+            d.call("aria2.changeGlobalOption",
+                   {"max-overall-download-limit": str(int(bps))})
+        except Exception as e:
+            log.debug("could not tell aria2 its download limit: %s", e)
+            return              # asked again on the next poll
+        d._download_limit = told
+        log.info("torrent download limit: %s",
+                 ("%d KiB/s" % (bps // 1024)) if bps else "none")
+    finally:
+        _limit_lock.release()
+
+
 def explain_failure(msg, save_path=""):
     """Turn an aria2 failure into something the user can act on.
 
@@ -1014,6 +1047,7 @@ class TorrentDownloader:
         self._stall_bytes = -1
         self._noseed_since = None  # when it last had a seeder or new bytes
         self._noseed_bytes = -1
+        self._own_limit = None    # (gid, limit) aria2 was last told for this one
 
     def run(self):
         self.t.status = T.DOWNLOADING
@@ -1143,6 +1177,39 @@ class TorrentDownloader:
         self.t.verifying = False
         self.t.verified_pct = 0
         self.t.verified_bytes = 0
+        self.t.tor_download = 0
+
+    def _keep_to_limits(self, d, gid):
+        """Tell aria2 the limits this torrent downloads under, when they move.
+
+        Two of them. The torrents' part of the app's download speed limit is
+        aria2's overall limit (tell_download_limit): the queue says what that
+        part is, and with no queue it is the whole limit. This torrent's own
+        limit - the card's Set Speed Limit - goes to its download.
+
+        Measured on aria2 1.37.0 against a torrent already running: both take
+        hold at once, up and down, and neither restarts it (the same gid, its
+        progress kept, no stopped/started announce). That is NOT true of
+        changeOption in general: a tracker list or a folder it accepts and
+        ignores, and it restarts the download for it.
+
+        aria2 keeps a limit as an average over about ten seconds. From a
+        source far faster than the limit, the data comes in bursts.
+        """
+        share = getattr(self.t, "_speed_share", None)
+        try:
+            part = int((share() if share else utils.global_limiter.limit_bps) or 0)
+        except Exception as e:
+            log.debug("could not work out the torrents' part of the limit: %s", e)
+        else:
+            tell_download_limit(d, part)
+        own = (gid, int(getattr(self.t, "speed_limit", 0) or 0))
+        if own != self._own_limit:
+            try:
+                d.call("aria2.changeOption", gid, {"max-download-limit": str(own[1])})
+                self._own_limit = own
+            except Exception as e:
+                log.debug("could not set the limit of %s: %s", self.t.filename, e)
 
     def _known_metadata(self):
         """The .torrent on disk that describes this task: the file it was added
@@ -1693,6 +1760,8 @@ class TorrentDownloader:
                 self.t.last_seeds_at = time.time()
             self.t.tor_upload = int(st.get("uploadSpeed") or 0)
             self.t.tor_uploaded = int(st.get("uploadLength") or 0)
+            self.t.tor_download = int(st.get("downloadSpeed") or 0)
+            self._keep_to_limits(d, cur)
 
             # Hash checking. aria2 reports it separately from download progress,
             # and it can take minutes on a large torrent — with nothing shown, a

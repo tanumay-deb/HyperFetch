@@ -36,12 +36,9 @@ class SystemMixin:
         ex = self._extras
         if ex.get("throttle_enabled") and _in_window(ex.get("throttle_start", "09:00"),
                                                      ex.get("throttle_stop", "17:00")):
-            lim = ex.get("throttle_limit", "1 Mb/s")
-            if "Mb/s" in lim:
-                try:
-                    return int(lim.split()[0]) * 1000 * 1000 // 8
-                except ValueError:
-                    pass
+            bps = utils.parse_speed(ex.get("throttle_limit", "1 Mb/s"))
+            if bps:                 # one nobody can read does not lift the limit
+                return bps
         return getattr(self, "global_speed_limit", 0)
 
     def _apply_throttle(self):

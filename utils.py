@@ -562,15 +562,38 @@ class RateLimiter:
     """A thread-safe Token Bucket rate limiter."""
     def __init__(self):
         self.limit_bps = 0
+        self._share = 0             # see set_share
         self._lock = threading.Lock()
         self._tokens = 0.0
         self._last_check = time.monotonic()
 
+    @property
+    def rate(self):
+        """Bytes a second let through right now."""
+        return self._share or self.limit_bps
+
     def set_limit(self, bps):
         with self._lock:
+            if bps == self.limit_bps:
+                # Applied again, not changed. The window does that every
+                # minute, and each time used to refill the bucket: a second's
+                # worth, free.
+                return
             self.limit_bps = bps
+            self._share = 0
             self._tokens = float(bps)
             self._last_check = time.monotonic()
+
+    def set_share(self, bps):
+        """Let only `bps` of the limit through for now; 0, or all of it, gives
+        the whole limit back. The rest is in use elsewhere: aria2 keeps the
+        torrents' part of the download speed limit itself."""
+        with self._lock:
+            bps = int(bps or 0)
+            if bps <= 0 or bps >= self.limit_bps:
+                bps = 0
+            self._share = bps
+            self._tokens = min(self._tokens, float(self._share or self.limit_bps))
 
     def wait(self, amount):
         if self.limit_bps <= 0:
@@ -584,13 +607,14 @@ class RateLimiter:
             while remaining > 0:
                 if self.limit_bps <= 0:
                     return
-                capacity = float(self.limit_bps)
+                rate = self._share or self.limit_bps
+                capacity = float(rate)
                 take = min(remaining, capacity)
 
                 now = time.monotonic()
                 elapsed = now - self._last_check
                 self._last_check = now
-                self._tokens = min(capacity, self._tokens + elapsed * self.limit_bps)
+                self._tokens = min(capacity, self._tokens + elapsed * rate)
 
                 if self._tokens >= take:
                     self._tokens -= take
@@ -598,12 +622,86 @@ class RateLimiter:
                     continue
 
                 # sleep in short slices so pause/limit changes stay responsive
-                sleep_t = min((take - self._tokens) / self.limit_bps, 0.5)
+                sleep_t = min((take - self._tokens) / rate, 0.5)
                 self._lock.release()
                 time.sleep(sleep_t)
                 self._lock.acquire()
 
 global_limiter = RateLimiter()
+
+# What the app's own connections leave for a torrent that is using less than
+# its part: this much above what it is doing now, so it has room to speed up.
+SHARE_HEADROOM = 1.2
+# Never hand out 0: to the bucket and to aria2 alike, 0 means "no limit".
+SHARE_FLOOR = 8 * 1024
+
+
+def share_speed_limit(limit, n_http, n_torrent, torrent_rate=0):
+    """Split the download speed limit between the two engines that keep it.
+
+    -> (this app's own connections, aria2), bytes a second; 0 is "no limit".
+
+    `global_limiter` paces every byte this app fetches itself. Torrents are
+    fetched by aria2, which the bucket never sees, so aria2 is given a part of
+    the limit to keep on its own (--max-overall-download-limit) and the bucket
+    lets the rest through.
+
+    Each side is owed a part by how many downloads it is running. This side
+    also takes whatever the torrents are not using - a torrent with no seeders
+    is still "running", and holding half the limit back for it would cap an
+    ordinary download at half for nothing. It does not go the other way:
+    aria2's part moves only when the mix of downloads does. Measured on aria2
+    1.37.0, its limit is an average over about ten seconds, and each time the
+    limit is RAISED it takes the difference at once (2 -> 6 MiB/s on a fast
+    source: about 40 MiB in one second). A part that followed this side's
+    speed up and down would be a burst every time it rose.
+    """
+    limit = int(limit or 0)
+    if limit <= 0:
+        return 0, 0
+    if n_http <= 0 or n_torrent <= 0:
+        return limit, limit
+    owed_http = limit * n_http // (n_http + n_torrent)
+    owed_torrent = limit - owed_http
+    http = max(owed_http, limit - int(torrent_rate * SHARE_HEADROOM))
+    return max(http, SHARE_FLOOR), max(owed_torrent, SHARE_FLOOR)
+
+
+# ---------------------------------------------------------- a speed, as typed
+_SPEED_UNITS = (("G", 1000 ** 3), ("M", 1000 ** 2), ("K", 1000))     # bits a second
+
+
+def _speed_bits(text):
+    """Bits a second from "5 Mb/s", "500 Kb/s", "12mbps" or a bare "25"; 0 for
+    "Unlimited", nothing, or anything that is not a speed above zero.
+
+    A bare number is megabits, like every entry in the Settings list. A capital
+    B is bytes ("5 MB/s" is 40 Mb/s): the two differ by eight, and someone who
+    types the capital means it.
+    """
+    m = re.fullmatch(r"\s*(\d+(?:\.\d+)?)\s*([kmg])?\s*([a-z/ ]*)", str(text or ""), re.I)
+    if not m:
+        return 0
+    per = dict((k.lower(), v) for k, v in _SPEED_UNITS)[(m.group(2) or "m").lower()]
+    bits = float(m.group(1)) * per
+    if m.group(3).startswith("B"):
+        bits *= 8
+    return bits
+
+
+def parse_speed(text):
+    """Bytes a second for a download speed limit chosen or typed in Settings."""
+    return int(_speed_bits(text) / 8)
+
+
+def speed_text(text):
+    """The same speed, written the way the Settings list writes it: "25" ->
+    "25 Mb/s". What is saved, so it reads the same the next time."""
+    bits = _speed_bits(text)
+    if parse_speed(text) <= 0:
+        return "Unlimited"
+    unit, per = next(((u, p) for u, p in _SPEED_UNITS if bits >= p), _SPEED_UNITS[-1])
+    return "%s %sb/s" % (("%.3f" % (bits / per)).rstrip("0").rstrip("."), unit)
 
 
 # ----------------------------------------------------------------- debug logging

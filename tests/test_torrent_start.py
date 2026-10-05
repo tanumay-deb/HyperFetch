@@ -306,7 +306,9 @@ def test_trackers_added_to_a_running_torrent_make_it_start_again_with_them(tmp_p
     assert torrent.magnet_trackers(first) == ["udp://old.example:80"]
     assert torrent.magnet_trackers(second) == ["udp://new.example:80", "udp://old.example:80"]
     assert d.did("aria2.forceRemove", "gid1"), "the old download was left in the daemon"
-    assert not any(m == "aria2.changeOption" for m, _ in d.calls), \
+    # (a download's own speed limit does go by changeOption: that one works)
+    assert not any(m == "aria2.changeOption" and "bt-tracker" in params[-1]
+                   for m, params in d.calls), \
         "changeOption does nothing for trackers and restarts the download"
     assert t.trackers_changed is False, "it would start over on every poll"
     assert t.status == T.COMPLETED

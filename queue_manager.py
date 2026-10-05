@@ -391,6 +391,27 @@ class QueueManager:
         return sum(bool(getattr(task, "_torrent_slot_reserved", False))
                    for task in self.tasks)
 
+    def torrent_speed_limit(self):
+        """The torrents' part of the download speed limit right now, in bytes
+        a second (0: no limit), with the bucket set to let the rest through.
+
+        Two engines keep the one limit - see utils.share_speed_limit. Every
+        running torrent asks this as it polls aria2 and passes the answer on
+        (torrent.py), so the parts follow what is running within a second; it
+        is worked out once more when a download ends, because when the last
+        torrent stops nobody is left to ask.
+        """
+        limit = int(utils.global_limiter.limit_bps or 0)
+        if limit <= 0:
+            return 0
+        running = [t for t in list(self.tasks) if t.status == T.DOWNLOADING]
+        torrents = [t for t in running if self._is_torrent(t)]
+        rate = sum(int(getattr(t, "tor_download", 0) or 0) for t in torrents)
+        http, torrent = utils.share_speed_limit(
+            limit, len(running) - len(torrents), len(torrents), rate)
+        utils.global_limiter.set_share(http)
+        return torrent
+
     def _next_ready(self):
         """Return a runnable task or None.
 
@@ -515,6 +536,8 @@ class QueueManager:
         task._release_slot = lambda: self._release_slot(task, started_queue)
         # a torrent stuck without seeders asks this before giving way (torrent.py)
         task._better_waiting = lambda: self._live_candidate_waiting(task, started_queue)
+        # a torrent asks this for aria2's part of the download speed limit
+        task._speed_share = self.torrent_speed_limit
         try:
             if not task.cancel_requested:
                 log.info("start: %s (%s) queue=%s", task.filename, task.id[:8], started_queue)
@@ -580,7 +603,12 @@ class QueueManager:
                 task._slot_released = False
                 task._release_slot = None
                 task._better_waiting = None
+                task._speed_share = None
                 # notify_all (not notify) so a closeEvent's wait_active waiter
                 # always wakes — a single notify can wake the scheduler instead,
                 # leaving wait_active parked until its full timeout fires.
                 self.cond.notify_all()
+            try:
+                self.torrent_speed_limit()       # one download fewer to share with
+            except Exception:
+                log.exception("could not share the speed limit out again")

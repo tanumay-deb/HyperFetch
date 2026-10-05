@@ -191,6 +191,9 @@ class DownloadTask:
         self.files_watched = False
         self.tor_upload = 0
         self.tor_uploaded = 0      # total bytes sent for this torrent
+        # how fast aria2 says this torrent is coming down, bytes a second
+        # (transient): the queue shares the download speed limit out by it
+        self.tor_download = 0
         # Which site account queued this. "" means the machine's owner — the
         # desktop app, the extension, and every download that existed before
         # accounts did. Empty is the safe default: a task whose owner cannot be
