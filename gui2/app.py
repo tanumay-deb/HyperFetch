@@ -41,7 +41,7 @@ from gui2.dialogs.complete import CompleteDialog
 from gui2.dialogs.pair import show_next as show_pair_question
 from gui2.notify import AddedNotifier, YieldNotifier
 from gui2.toast import ToastManager
-from gui2 import palette
+from gui2 import gc_guard, palette
 from gui2.sidebar import Sidebar
 from gui2.download_list import DownloadList
 from gui2.details_drawer import DetailsDrawer
@@ -1465,6 +1465,9 @@ def run_v2(open_target=None, restarted=False):
     from PySide6.QtGui import QFont
     app.setFont(QFont("Segoe UI", 10))
     win = DownloadAppV2()
+    # Qt objects die on this thread only: the collector is taken off the
+    # download, torrent and server threads and run from a timer here instead
+    gc_guard.keep_on_gui_thread(win)
     # launch behavior (Settings -> General -> On application launch)
     launch = win._extras.get("launch", "Show main window")
     if open_target or restarted:
