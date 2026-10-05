@@ -1053,6 +1053,7 @@ class TorrentDownloader:
         import aria2d
 
         self._started = time.time()
+        self._forget_run_state()
 
         # display name, same rules as the subprocess path
         if is_magnet(self.t.url):
@@ -1125,7 +1126,23 @@ class TorrentDownloader:
         finally:
             self._gid = None
             self.t.gid = None
+            self._forget_run_state()
         return top
+
+    def _forget_run_state(self):
+        """Clear what a run says about itself: seeding, rechecking.
+
+        Only a live run can mean either, so both go when a run starts and when
+        it ends, however it ends. "Seeding" used to be cleared on one path
+        only, aria2 reporting the torrent complete. Left standing after a
+        pause, it told the next run the torrent had already been marked
+        complete: that run skipped doing so, and a recheck that passed stayed
+        Paused, or Downloading at 100%, with its download slot held.
+        """
+        self.t.seeding = False
+        self.t.verifying = False
+        self.t.verified_pct = 0
+        self.t.verified_bytes = 0
 
     def _known_metadata(self):
         """The .torrent on disk that describes this task: the file it was added
@@ -1683,7 +1700,9 @@ class TorrentDownloader:
             verified = int(st.get("verifiedLength") or 0)
             pending = str(st.get("verifyIntegrityPending") or "").lower() == "true"
             was = self.t.verifying
-            self.t.verifying = bool(verified or pending)
+            # aria2 lists verifiedLength only while it is checking, and the
+            # first reading of it is 0: the key says so, not the number
+            self.t.verifying = "verifiedLength" in st or pending
             self.t.verified_pct = (int(verified * 100 / total)
                                    if (verified and total) else 0)
             self.t.verified_bytes = verified
@@ -1720,6 +1739,21 @@ class TorrentDownloader:
                     self.t.file_progress = _file_rows(d.call("aria2.getFiles", cur))
                 except Exception as e:
                     log.debug("getFiles failed for %s: %s", self.t.filename, e)
+
+            if self.t.verifying:
+                # A hash check is work, and until it ends nothing else is known
+                # about the torrent. Measured on aria2 1.37.0, rechecking one
+                # that had been seeding: for the WHOLE check it goes on saying
+                # what its control file said before - every byte there,
+                # seeder=true. Taken at its word the task was marked Completed
+                # the moment its recheck began, and with seeding off the
+                # download was removed as finished before a piece was read.
+                # Nor is it stalled: no peer is talked to until the check is
+                # over, so three minutes of one read as a dead swarm, the slot
+                # was given back and the check thrown away.
+                self._stall_since = self._noseed_since = None
+                time.sleep(POLL)
+                continue
 
             # Seeding: the payload is fully downloaded but aria2 keeps the
             # torrent "active" while it shares. Without recognising that, the

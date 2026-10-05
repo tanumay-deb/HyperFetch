@@ -241,50 +241,20 @@ class ActionsMixin:
         The point is to repair rather than restart: aria2 keeps every piece that
         verifies and re-fetches only the ones that do not, so a payload damaged
         by a bad disk or a half-written file costs minutes instead of the whole
-        download again. A completed torrent has to leave COMPLETED first, or
-        resume_task would refuse it as already finished.
+        download again.
         """
         t.force_recheck = True
         t.error = ""
         t.log_event("Force recheck requested")
         self._toasts.show("info", "Rechecking",
                           f"Verifying {t.filename or 'torrent'} against its piece hashes…")
-
-        # A run may still be in flight even when the status says otherwise: a
-        # SEEDING torrent reads as Completed while its poll loop is very much
-        # alive. Starting a second run then pulled the gid out from under the
-        # first, which reported "Torrent engine restarted" and paused the task.
-        # Ask the live run to stop, and recheck once it actually has.
-        if t.status == T.DOWNLOADING or getattr(t, "_torrent_slot_reserved", False):
-            t.request_pause()
-            self._start_when_idle(t)
-        else:
-            if t.status == T.COMPLETED:
-                t.status = T.PAUSED
-            self.queue.resume_task(t)
+        # A run may still be alive whatever the status says: a SEEDING torrent
+        # reads Completed, and has given its slot back, while its thread polls
+        # on. The queue knows, stops that run first, and starts the recheck
+        # when it has ended.
+        self.queue.run_again(t)
         self._save_state()
         self.refresh()
-
-    def _start_when_idle(self, t, tries=40):
-        """Re-queue t once its engine thread has actually let go.
-
-        Polled rather than waited on: this runs on the GUI thread, and blocking
-        it until a torrent engine unwinds would freeze the window.
-        """
-        from PySide6.QtCore import QTimer
-
-        def check(n=tries):
-            if getattr(t, "_torrent_slot_reserved", False) and n > 0:
-                QTimer.singleShot(300, lambda: check(n - 1))
-                return
-            t.clear_pause()
-            if t.status in (T.COMPLETED, T.CANCELLED):
-                t.status = T.PAUSED
-            self.queue.resume_task(t)
-            self._save_state()
-            self.refresh()
-
-        QTimer.singleShot(300, check)
 
     def _force_recheck(self, t):
         """Re-run SHA-256 verification on a completed file in the background;

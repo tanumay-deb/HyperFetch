@@ -49,11 +49,19 @@ class QueueManager:
                 self.tasks.append(task)
             if start:
                 task.status = T.QUEUED
-                # newly queued / resumed tasks go to the end of the pending order
-                task.priority = max((t.priority for t in self._heap), default=-1) + 1
-                heapq.heappush(self._heap, task)
+                if getattr(task, "_worker_alive", False):
+                    # One worker a task. The one it has is ending, or has been
+                    # asked to (run_again), and queues the task as it goes.
+                    task._run_again = True
+                else:
+                    self._push(task)
             self.cond.notify()
         return task
+
+    def _push(self, task):
+        """Put a task at the end of the pending order. Call with the lock held."""
+        task.priority = max((t.priority for t in self._heap), default=-1) + 1
+        heapq.heappush(self._heap, task)
 
     def restore(self, rows):
         """Load saved tasks and resume anything that was in flight.
@@ -190,15 +198,39 @@ class QueueManager:
         task.clear_pause()
         self.add_task(task)
 
+    def run_again(self, task: "T.DownloadTask"):
+        """Run a task once more from where it stands, whatever state it is in:
+        Force Recheck on a torrent.
+
+        A torrent that is seeding reads Completed and has handed its download
+        slot back, yet its worker is still polling aria2. Started again beside
+        that worker, the new run took the torrent away from it, and the old
+        one wrote "Paused - Torrent engine restarted" over a recheck that was
+        going fine (tests/test_one_worker_per_task.py has the whole timeline).
+        So a live worker is asked to stop, and the task is queued when it has.
+        """
+        with self.cond:
+            if task in self._heap:
+                return                      # already waiting for its turn
+            task.retry_after = 0.0          # asked for by hand: no backoff
+            if getattr(task, "_worker_alive", False):
+                task.request_pause()        # cleared again when it has stopped
+            else:
+                task.clear_pause()
+            self.add_task(task)
+
     def pause_task(self, task: "T.DownloadTask"):
-        if task.status in (T.DOWNLOADING, T.QUEUED):
-            task.request_pause()
-            self._drop_from_heap(task)
-            if task.status == T.QUEUED:
-                task.status = T.PAUSED
+        with self.cond:
+            if task.status in (T.DOWNLOADING, T.QUEUED):
+                task.request_pause()
+                task._run_again = False     # a worker that is ending leaves it be
+                self._drop_from_heap(task)
+                if task.status == T.QUEUED:
+                    task.status = T.PAUSED
 
     def cancel_task(self, task: "T.DownloadTask"):
         task.request_cancel()
+        task._run_again = False
         self._drop_from_heap(task)
         if task.status in (T.QUEUED, T.PAUSED, T.DOWNLOADING):
             task.status = T.CANCELLED
@@ -220,6 +252,11 @@ class QueueManager:
             if task not in self.tasks:
                 self.tasks.append(task)
             task.status = T.QUEUED # Transition state
+            if getattr(task, "_worker_alive", False):
+                # Its last worker is still ending. It queues the task as it
+                # goes, which is as soon as this one can start anyway.
+                task._run_again = True
+                return
 
             q = self.queues.get(task.queue_name)
             if not q:
@@ -227,6 +264,7 @@ class QueueManager:
                 self.queues[task.queue_name] = q
             q.active += 1
             self.active += 1
+            task._worker_alive = True
             if self._is_torrent(task):
                 task._torrent_slot_reserved = True
 
@@ -434,6 +472,7 @@ class QueueManager:
                     self.queues[task.queue_name] = q
                 q.active += 1
                 self.active += 1
+                task._worker_alive = True
                 if self._is_torrent(task):
                     task._torrent_slot_reserved = True
             # Bind the slot to the queue we charged it against (q.name), passed
@@ -495,25 +534,42 @@ class QueueManager:
             # (resumable from the bytes already on disk).
             # A stalled torrent gave its slot back on purpose — it is waiting,
             # not finished, so it must not be forced to a terminal status here.
-            stalled = bool(getattr(task, "_stall_yield", False))
-            if stalled and (task.cancel_requested or task.pause_requested):
-                stalled = False                      # the user overrode it
-            if stalled:
-                task._stall_yield = False
-                task.status = T.QUEUED
-            elif task.status in (T.DOWNLOADING, T.QUEUED, T.SCHEDULED):
-                if task.cancel_requested:
-                    task.status = T.CANCELLED
-                elif task.pause_requested:
-                    task.status = T.PAUSED
-                else:
-                    task.status = T.ERROR
-                    task.error = task.error or "Download ended unexpectedly — Resume to retry"
-                log.warning("forced terminal status for %s -> %s", task.filename, task.status)
+            #
+            # All under the lock: whoever starts this task next either sees the
+            # worker still alive, and leaves the task for it to queue (again),
+            # or sees it gone. Decided outside the lock, a Resume could land in
+            # between and the task would be queued by nobody.
             with self.cond:
+                again = bool(getattr(task, "_run_again", False)) and not task.cancel_requested
+                task._run_again = False
+                stalled = bool(getattr(task, "_stall_yield", False))
+                # the note is this run's: left on the task when a pause
+                # overrode it, it queued the next run again however that ended
+                task._stall_yield = False
+                if stalled and (task.cancel_requested or task.pause_requested):
+                    stalled = False                      # the user overrode it
+                if stalled:
+                    task.status = T.QUEUED
+                elif again:
+                    # asked to run once more while this worker was alive; what
+                    # stopped this run was meant for this run
+                    task.clear_pause()
+                    task.status = T.QUEUED
+                elif task.status in (T.DOWNLOADING, T.QUEUED, T.SCHEDULED):
+                    if task.cancel_requested:
+                        task.status = T.CANCELLED
+                    elif task.pause_requested:
+                        task.status = T.PAUSED
+                    else:
+                        task.status = T.ERROR
+                        task.error = task.error or "Download ended unexpectedly — Resume to retry"
+                    log.warning("forced terminal status for %s -> %s", task.filename, task.status)
+                task._worker_alive = False
                 task._torrent_slot_reserved = False
                 if stalled:
                     heapq.heappush(self._heap, task)
+                elif again:
+                    self._push(task)
                 # a seeding torrent already handed its slot back; decrementing
                 # again here would let the queue run over its own limit
                 if not getattr(task, "_slot_released", False):
