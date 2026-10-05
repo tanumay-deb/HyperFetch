@@ -14,7 +14,7 @@
   #define OutDir "dist\installer"
 #endif
 #ifndef AppVersion
-  #define AppVersion "2.7.0"
+  #define AppVersion "2.7.1"
 #endif
 #define AppPublisher "HyperFetch"
 #define AppExe "HyperFetch.exe"
