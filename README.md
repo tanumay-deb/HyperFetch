@@ -8,6 +8,8 @@ browser extension that sends your downloads straight to the app.
 
 **Website:** https://tanumay-deb.github.io/HyperFetch/ · **Download:** [latest release](https://github.com/tanumay-deb/HyperFetch/releases/latest)
 
+**Nothing to install:** [HyperFetch on the web](https://hyperfetch-dl.duckdns.org/) takes a link, a magnet or a torrent from any browser, a phone's included.
+
 ![HyperFetch](assets/store/screenshot_1_main.png)
 
 ## Features
