@@ -8,6 +8,7 @@ import os
 import time
 import shutil
 import logging
+import collections
 import tempfile
 import threading
 
@@ -77,9 +78,13 @@ CONNECT_TIMEOUT = 15
 MAX_RETRIES = 5        # per-segment attempts before the task errors
 # A server pushing back on one connection too many (see _pushed_back): the
 # refused range waits this long, then for a free slot at the gate; a refusal
-# this soon after one of ours ended is taken as push-back too.
+# this soon after one of ours ended is taken as push-back too; and a
+# connection of ours that ended this soon before a request went out may still
+# count against it at the server. PUSHBACK_LAG stays under PUSHBACK_WAIT, so a
+# range asking again after its wait is judged afresh.
 PUSHBACK_WAIT = 0.25
 PUSHBACK_WINDOW = 1.0
+PUSHBACK_LAG = 0.1
 STAGGER = 0.01         # delay between segment thread starts (rate-limit friendly)
 
 # Process-wide cap on concurrent segment connections across ALL downloads.
@@ -176,6 +181,7 @@ class Downloader:
         self._conn_cap = self._max_conns
         self._streaming = 0             # connections whose response was accepted
         self._stream_ended = float("-inf")  # when the last of them ended
+        self._ends = collections.deque(maxlen=64)  # when the latest of them ended
         self._link_ok = False           # the link has served us in this run
         # one keep-alive session for this download's probe + all segment threads.
         # Auto mode (num_segments==0) can fan out to 32 segments, so size for that.
@@ -231,18 +237,33 @@ class Downloader:
                 self._link_ok = True
             else:
                 self._stream_ended = time.monotonic()
+                self._ends.append(self._stream_ended)
 
-    def _pushed_back(self):
+    def _pushed_back(self, sent):
         """A request was refused - 403, 429 or a reset - before it got going.
+        `sent`: when it went out (time.monotonic()).
 
         While another of this download's connections is streaming, that is the
         server's limit and not a dead link: it is serving us, just not on one
         more connection. So is a refusal just after one of ours ended: a server
         that accounts for a connection a moment longer than we use it -
         connection tracking does - refuses the next one then. The gate drops
-        to the connections being served (halving undershoots) and grows back
-        as streams are accepted, as always; no lasting ceiling, since one
+        to the connections the server was counting as ours (halving
+        undershoots): those streaming, and those that ended just before the
+        request went out (PUSHBACK_LAG) or while it was on its way. It grows
+        back as streams are accepted, as always; no lasting ceiling, since one
         learnt at such a moment would be one too low for the rest.
+
+        It dropped to the ones streaming alone before, and that was one too
+        low: the refused range then waited for the gate, its every slot in
+        use, while the server had room - and the gate grows only when a
+        stream is accepted, so not before one ended. At that end the next
+        range got in and the one after was refused, on the account of the
+        one that had just ended, and the gate was one short again: the rest
+        of the download came down one connection at a time. On the stand-in
+        in tests/test_conn_limits.py (two connections, 6 MB, one connection
+        4.0 s) that took 3.3 s, not 2.6: in 1 run of 180, and in 67 of 120
+        with a 15.6 ms clock, as on Windows. Now in none of 300.
 
         False when nothing is streaming or just ended: then it is the link's
         answer.
@@ -252,10 +273,13 @@ class Downloader:
         one connection; refused with 403, the download failed outright.
         """
         with self._conn_cv:
-            just_ended = time.monotonic() - self._stream_ended < PUSHBACK_WINDOW
-            if self._streaming <= 0 and not just_ended:
+            now = time.monotonic()
+            if self._streaming <= 0 and now - self._stream_ended >= PUSHBACK_WINDOW:
                 return False
-            self._max_conns = max(1, min(self._max_conns, self._streaming))
+            held = self._streaming
+            if now - sent < PUSHBACK_WINDOW:    # a timeout tells nothing of that
+                held += sum(1 for t in self._ends if t >= sent - PUSHBACK_LAG)
+            self._max_conns = max(1, min(self._max_conns, held))
             return True
 
     # ------------------------------------------------------------------ probe
@@ -451,6 +475,7 @@ class Downloader:
             retry_exc = None
             wait_attempt = attempts
             accepted = False
+            sent = time.monotonic()
             try:
                 # with-block guarantees the response/socket closes on every
                 # path — incl. raise_for_status() failures and mid-stream errors
@@ -485,11 +510,10 @@ class Downloader:
             except requests.RequestException as e:
                 resp = getattr(e, "response", None)
                 code = resp.status_code if resp is not None else None
-                if not accepted and code in (403, 429, None) and self._pushed_back():
+                if not accepted and code in (403, 429, None) and self._pushed_back(sent):
                     # the server's limit, not the link's (see _pushed_back):
-                    # the gate holds this range until one of ours finishes -
-                    # no timer on top, so no connection sits idle - and that
-                    # is not one of its retries
+                    # the range waits a moment, then for a slot at the gate,
+                    # and that is not one of its retries
                     log.debug("seg %d refused (%s) while others stream — gate now %d",
                               seg.index, code or "reset", self._max_conns)
                     retry_exc, wait_attempt = e, None

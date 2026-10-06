@@ -20,6 +20,7 @@ import time
 import pytest
 
 import task as T
+import utils
 from downloader import Downloader
 
 SIZE = 6 * 1024 * 1024
@@ -57,10 +58,59 @@ def test_a_connection_limit_is_met_at_the_limit(media_server, make_payload, tmp_
     assert took < 0.85 * one_connection, (
         "%.1f s: no faster than one connection (%.1f s)" % (took, one_connection))
     # The gate grows back as streams are accepted, so it asks past the limit
-    # now and then: about once a range (7 here when all goes to plan), and the
-    # opening burst can cost one or two more on a busy machine - 9 was seen in
-    # a full run on Windows. Never in a loop: ranges retrying every
-    # PUSHBACK_WAIT without the gate would be refused 60 times and more.
+    # now and then: about once a range (8 or 9 here when all goes to plan),
+    # and the opening burst can cost one or two more on a busy machine - 9
+    # was seen in a full run on Windows. Never in a loop: ranges retrying
+    # every PUSHBACK_WAIT without the gate would be refused 60 times and more.
+    refused = media_server.stats["refused"]
+    assert refused <= 16, "the gate hammered the server: %d refusals" % refused
+
+
+def _share_with(timeline, n):
+    """The part of the transfer, from its first connection to its last, that
+    the server spent sending on n connections or more."""
+    with_n = sum(b[0] - a[0] for a, b in zip(timeline, timeline[1:]) if a[1] >= n)
+    return with_n / (timeline[-1][0] - timeline[0][0])
+
+
+def test_connections_out_of_step_both_keep_streaming(media_server, make_payload,
+                                                     tmp_path):
+    """The server counts a connection a moment past its last byte, as one
+    that tracks connections does, so a range asked for as one of ours ends is
+    refused on that one's account. A resumed download has its connections out
+    of step: its first range is three quarters done and ends while the next
+    one streams.
+
+    Before, such a refusal took the gate down to the one connection
+    streaming, and the gate grows only as a stream is accepted - none could
+    be while its one slot was in use. The refused range waited for that one
+    to end; at that end the next range got in, the one after it was refused
+    on the account of the one just ended, and so on to the last range: the
+    server sent on two connections for 8-10% of the transfer, every run,
+    and it took 3.3 s. Now 40-44% and 2.6-2.7 s (a 15.6 ms clock, as on
+    Windows, gives the lower figures). What is counted is the server's
+    connections over time, not the wall clock.
+    """
+    data = media_server.put("clip.mp4", make_payload(SIZE))
+    media_server.rate, media_server.limit, media_server.refuse = RATE, 2, "429"
+    media_server.linger = 0.05
+    t = T.DownloadTask(media_server.url("clip.mp4"), str(tmp_path / "clip.mp4"))
+    part = SIZE // 6
+    t.total_size, t.supports_range = SIZE, True
+    t.segments = [T.Segment(i, i * part, (i + 1) * part - 1) for i in range(6)]
+    t.segments[0].downloaded = done = part * 3 // 4
+    temp = utils.temp_download_path(t.id)
+    utils.allocate_file(temp, SIZE)
+    with open(temp, "r+b") as f:
+        f.write(data[:done])
+
+    Downloader(t, segments=8).run()
+
+    assert t.status == T.COMPLETED, t.error
+    assert open(t.save_path, "rb").read() == data
+    assert media_server.stats["max_active"] == 2
+    two = _share_with(media_server.timeline, 2)
+    assert two > 0.25, "two connections for only %.0f%% of the transfer" % (two * 100)
     refused = media_server.stats["refused"]
     assert refused <= 16, "the gate hammered the server: %d refusals" % refused
 

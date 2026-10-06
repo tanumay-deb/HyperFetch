@@ -183,6 +183,8 @@ def media_server():
     .rate        bytes/s per connection (0 = as fast as it goes)
     .limit       connections served at once; past it a request is refused
     .refuse      how: "403", "429" or "reset" (TCP RST)
+    .linger      seconds a connection still counts after its last byte, as
+                 a server that tracks connections counts it (0 = none)
     .tokens      when a set, /path?t=<token> must carry one of them (a signed
                  link); anything else is answered 403
     .no_range    paths answered 200 with the whole body whatever the Range
@@ -192,13 +194,14 @@ def media_server():
 
     .log holds one dict per request: method, path, query, range, headers.
     .stats["refused"] counts refusals, .stats["max_active"] the most served
-    at once.
+    at once. .timeline holds (time.monotonic(), connections being served)
+    each time that count changes; one lingering is no longer being served.
     """
     import socket
     import urllib.parse
 
     files, etags = {}, {}
-    state = {"active": 0, "max_active": 0, "refused": 0}
+    state = {"active": 0, "max_active": 0, "refused": 0, "serving": 0}
     lock = threading.Lock()
 
     class Handler(http.server.BaseHTTPRequestHandler):
@@ -234,6 +237,8 @@ def media_server():
                 else:
                     state["active"] += 1
                     state["max_active"] = max(state["max_active"], state["active"])
+                    state["serving"] += 1
+                    srv.timeline.append((time.monotonic(), state["serving"]))
             if over:
                 return self._refuse()
             try:
@@ -241,6 +246,11 @@ def media_server():
             except OSError:
                 pass                                # the client went away
             finally:
+                with lock:
+                    state["serving"] -= 1
+                    srv.timeline.append((time.monotonic(), state["serving"]))
+                if srv.linger:
+                    time.sleep(srv.linger)          # done with it, still counting it
                 with lock:
                     state["active"] -= 1
 
@@ -300,7 +310,7 @@ def media_server():
     srv = _Server(Handler)
     srv.log, srv.rate, srv.limit, srv.refuse = [], 0, 0, "403"
     srv.tokens, srv.no_range, srv.html = None, set(), set()
-    srv.forbid_range = set()
+    srv.forbid_range, srv.linger, srv.timeline = set(), 0, []
 
     def put(path, data, etag=None):
         files[path] = data
