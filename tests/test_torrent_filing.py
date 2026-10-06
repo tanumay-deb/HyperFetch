@@ -107,6 +107,7 @@ def _app(tasks):
         _extras={"categorize": True, "when_complete": "Do nothing"},
         _save_state=lambda: None,
         _folder_category=staticmethod(A._folder_category),
+        _is_update=lambda t: False,         # none of these is the app's own installer
     )
     app._maybe_categorize = lambda t: A._maybe_categorize(app, t)
     return app

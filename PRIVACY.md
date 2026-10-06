@@ -1,6 +1,6 @@
 # Privacy Policy — HyperFetch
 
-**Last updated: 2 October 2026.** The same policy is published at
+**Last updated: 6 October 2026.** The same policy is published at
 <https://tanumay-deb.github.io/HyperFetch/privacy.html>.
 
 HyperFetch is a desktop download accelerator plus a companion browser
@@ -93,7 +93,12 @@ It connects to:
   DNS answers a site with a block page, the application looks that one site's
   name up there ("Get past provider blocks", on by default). With "DNS over
   HTTPS" switched on, every lookup goes there.
-- **GitHub**, only when you press Check for Updates.
+- **GitHub**, to ask what the newest version is: when the application starts
+  and once a day while it runs (Settings → General → "Check for updates
+  automatically", on by default), and when you press Check for Updates. The
+  request says nothing about you or your downloads; GitHub sees your IP
+  address, as any site you open does. The update itself is downloaded from
+  GitHub when you ask for it.
 - **Your router**, to open the torrent listening port (UPnP, on by default,
   Settings → Torrents), and a **proxy**, if you set one up.
 

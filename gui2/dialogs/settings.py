@@ -200,6 +200,7 @@ class SettingsDialogV2(PageBuilderMixin, QDialog):
             "sched_start": self.t_start.time().toString("HH:mm"),
             "sched_stop": self.t_stop.time().toString("HH:mm"),
             # persisted UI prefs (some cosmetic until backend-wired)
+            "auto_update_check": self.auto_update.isChecked(),
             "launch": self.launch.currentText(),
             "minimize_tray": self.min_tray.isChecked(),
             "close_behavior": self.close_beh.currentText(),

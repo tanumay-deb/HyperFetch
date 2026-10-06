@@ -214,6 +214,9 @@ QPushButton#primary {{
     border: none; color: white; padding: 11px 18px; font-weight: 700; font-size: {fpx(14)};
 }}
 QPushButton#primary:hover {{ background: {c['accent2']}; }}
+/* The plain :disabled rule above loses to #primary's own colours, so a main
+   button that could not be pressed looked as if it could. */
+QPushButton#primary:disabled {{ background: {c['surface2']}; color: {c['muted']}; }}
 QPushButton#ghost {{ background: transparent; border: none; color: {c['muted']}; padding: 8px 10px; }}
 QPushButton#ghost:hover {{ color: {c['text']}; }}
 QPushButton#iconbtn {{ background: transparent; border: none; border-radius: 8px; padding: 6px; color: {c['muted']}; }}

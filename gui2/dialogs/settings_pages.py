@@ -125,6 +125,11 @@ class PageBuilderMixin:
         self._row(g, "Default Download Folder", save_dir, browse)
         v.addWidget(f)
         f2, g2 = self._card()
+        self.auto_update = self._toggle(ex.get("auto_update_check", True))
+        self._row(g2, "Check for updates automatically",
+                  "Asks GitHub for the newest version when HyperFetch starts and "
+                  "once a day. Off means only when you press Check for Updates.",
+                  self.auto_update)
         self.launch = self._combo(["Show main window", "Start minimized", "Start in tray"], ex.get("launch"))
         self._row(g2, "On application launch", "What happens when HyperFetch starts", self.launch)
         self.min_tray = self._toggle(ex.get("minimize_tray", True))
@@ -656,29 +661,23 @@ class PageBuilderMixin:
 
     def _check_updates(self):
         self.upd_lbl.setText("Checking…"); self.upd_btn.setVisible(False); QApplication.processEvents()
-        import urllib.request, json
+        import updater
         try:
-            req = urllib.request.Request(
-                "https://api.github.com/repos/tanumay-deb/HyperFetch/releases/latest",
-                headers={"Accept": "application/vnd.github+json"})
-            with urllib.request.urlopen(req, timeout=6) as r:
-                data = json.loads(r.read().decode())
-            latest = data.get("tag_name", "")
-            if latest.lstrip("v") and latest.lstrip("v") != APP_VERSION:
-                # link straight to the Windows installer, else the release page
-                url = data.get("html_url", "")
-                for a in data.get("assets", []):
-                    if (a.get("name") or "").lower().endswith("setup.exe"):
-                        url = a.get("browser_download_url") or url
-                        break
-                self._update_url = url
-                self.upd_lbl.setText(f"Update available: {latest}")
-                self.upd_btn.setText(f"Download {latest}")
-                self.upd_btn.setVisible(True)
-            else:
-                self.upd_lbl.setText("You are on the latest version.")
+            info = updater.check_for_update(APP_VERSION, force=True)
         except Exception:
+            info = None
+        if not info:
             self.upd_lbl.setText("Failed to check for updates.")
+        elif info.get("available"):
+            latest = info.get("version", "")
+            self._update_found = info
+            # the Windows installer, else the release page
+            self._update_url = info.get("installer") or info.get("url", "")
+            self.upd_lbl.setText(f"Update available: {latest}")
+            self.upd_btn.setText(f"Download {latest}")
+            self.upd_btn.setVisible(True)
+        else:
+            self.upd_lbl.setText("You are on the latest version.")
 
     def _download_update(self):
         """Fetch the update with the app itself.
@@ -698,14 +697,23 @@ class PageBuilderMixin:
             return
         name = url.split("?")[0].rsplit("/", 1)[-1]
         window = self.parent()
+        start = getattr(window, "_start_update", None)
         add = getattr(window, "_add_download", None)
-        if callable(add) and name.lower().endswith(".exe"):
-            add(url, name, None, ask=False)
-            self.upd_lbl.setText("Downloading it here: it is in the list. Run it when it has "
-                                 "finished, and the installer closes HyperFetch for you.")
-            self.upd_btn.setVisible(False)      # a second click would add it again
+        if not name.lower().endswith(".exe") or not (callable(start) or callable(add)):
+            __import__("webbrowser").open(url)      # a release page, or no window to add to
             return
-        __import__("webbrowser").open(url)
+        if callable(start):
+            # the window knows it for the update: it checks the file when it is
+            # down and offers to run it
+            start(getattr(self, "_update_found", None))
+            where = ("It is downloading here, in the list. When it is down HyperFetch "
+                     "offers to install it.")
+        else:
+            add(url, name, None, ask=False)
+            where = ("Downloading it here: it is in the list. Run it when it has "
+                     "finished, and the installer closes HyperFetch for you.")
+        self.upd_lbl.setText(where)
+        self.upd_btn.setVisible(False)              # a second click would add it again
 
     def _open_crashes(self):
         import os

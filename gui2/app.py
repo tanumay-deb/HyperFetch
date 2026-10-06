@@ -50,6 +50,7 @@ from gui2.app_settings import SettingsMixin
 from gui2.app_actions import ActionsMixin
 from gui2.app_shortcuts import ShortcutsMixin
 from gui2.app_system import SystemMixin
+from gui2.app_update import UpdateMixin
 
 
 
@@ -81,7 +82,8 @@ def _display_name(url, filename=""):
     return name or utils.filename_from_url(url or "") or (url or "")[:60]
 
 
-class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, QWidget):
+class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, UpdateMixin,
+                    QWidget):
     def __init__(self):
         super().__init__()
         self.setObjectName("root")
@@ -119,6 +121,7 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, QW
         self._filter = "All"
         self._search = ""
         self._completed_seen = None
+        self._init_update()           # a new version: gui2/app_update.py
         # ids of torrents that completed while seeding: aria2 still had their
         # files open, so they are filed into a category once it lets go
         self._unfiled = set()
@@ -450,6 +453,7 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, QW
         self.sidebar.toggleCollapse.connect(self._toggle_sidebar)
         self.sidebar.manageQueues.connect(self._open_queues)
         self.sidebar.openHistory.connect(self._open_history)
+        self.sidebar.updateClicked.connect(self._on_update_clicked)
         root.addWidget(self.sidebar)
         # animate min AND max together so the width is exact every frame (child
         # min-widths can't fight it) -> a smooth slide instead of a jumpy reflow
@@ -708,6 +712,7 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, QW
 
     def refresh(self):
         self._drain_pending()
+        self._update_tick()
         self._ask_pairing()
         self._notify_added()
         self._notify_yields()
@@ -951,6 +956,11 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, QW
                     import logging
                     logging.getLogger("hyperfetch.gui").exception(
                         "history.record failed for %s", getattr(t, "filename", "?"))
+                if self._is_update(t):
+                    # the app's own installer: checked and offered, in place of
+                    # the usual "Download Complete"
+                    self._update_finished(t)
+                    continue
                 if wc != "Do nothing":
                     self._toasts.show("success", "Download Complete", t.filename or "download")
                     self._flash_taskbar()

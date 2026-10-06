@@ -114,6 +114,7 @@ class Sidebar(QFrame):
     toggleCollapse = Signal()
     manageQueues = Signal()
     openHistory = Signal()
+    updateClicked = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -180,6 +181,16 @@ class Sidebar(QFrame):
         self.btn_queues.setToolTip("Queues")
         self.btn_queues.clicked.connect(self.manageQueues)
         lay.addWidget(self.btn_queues)
+
+        # ---- a new version (hidden until there is one) ----
+        self._update_text = ""
+        self.btn_update = QPushButton()
+        self.btn_update.setIcon(themed_icon("arrow-down", "white"))
+        self.btn_update.setObjectName("primary")
+        self.btn_update.setCursor(Qt.PointingHandCursor)
+        self.btn_update.clicked.connect(self.updateClicked)
+        self.btn_update.hide()
+        lay.addWidget(self.btn_update)
 
         # ---- stats card: line graph + speed/connections readout ----
         self.stats = QFrame()
@@ -270,10 +281,20 @@ class Sidebar(QFrame):
         self.graph.push(bps)
         self.stats.setToolTip(tip)
 
+    def set_update(self, text, enabled=True):
+        """Show the update button saying `text` ("Update to 2.8.1",
+        "Downloading the update…", "Install 2.8.1"); "" hides it."""
+        self._update_text = text
+        self.btn_update.setText("" if self._collapsed else "  " + text)
+        self.btn_update.setToolTip(text)
+        self.btn_update.setEnabled(enabled)
+        self.btn_update.setVisible(bool(text))
+
     def set_collapsed(self, on):
         # width is animated by the app (DownloadAppV2._toggle_sidebar); here we
         # only toggle what's visible so the rail reads cleanly when narrow.
         self._collapsed = on
+        self.btn_update.setText("" if on else "  " + self._update_text)
         self.brand.setVisible(not on)
         self.brand_icon.setVisible(not on)
         # The graph card has an inner minimum width. Keeping it in the 72px
