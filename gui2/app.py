@@ -1137,9 +1137,12 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, QW
             "skip_dialog": True,
         }
 
-    def _add_download(self, url, suggested, headers, flash=False):
+    def _add_download(self, url, suggested, headers, flash=False, ask=True):
+        """Add a download, through the New Download dialog unless the user has
+        switched that off - or `ask` is False: the app's own update, which
+        there is nothing to choose about (Settings -> About)."""
         queues = list(self.queue.queues.keys()) or ["Main"]
-        if self._extras.get("skip_new_download_dialog") and url:
+        if url and (not ask or self._extras.get("skip_new_download_dialog")):
             v = self._quick_values(url, suggested, headers)
             # nothing was shown, so say something: an invisible add is
             # indistinguishable from a click that did not register

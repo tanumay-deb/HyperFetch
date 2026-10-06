@@ -610,7 +610,7 @@ class PageBuilderMixin:
         self._update_url = ""
         self.upd_btn = QPushButton("Download update"); self.upd_btn.setObjectName("primary")
         self.upd_btn.setVisible(False)
-        self.upd_btn.clicked.connect(lambda: self._update_url and __import__("webbrowser").open(self._update_url))
+        self.upd_btn.clicked.connect(self._download_update)
         g.addWidget(self.upd_btn)
         links = QHBoxLayout()
         lic = QPushButton("License"); lic.setObjectName("ghost")
@@ -679,6 +679,33 @@ class PageBuilderMixin:
                 self.upd_lbl.setText("You are on the latest version.")
         except Exception:
             self.upd_lbl.setText("Failed to check for updates.")
+
+    def _download_update(self):
+        """Fetch the update with the app itself.
+
+        The button used to open the installer's link in the browser. Whether
+        the file then came back here depended on the browser extension catching
+        it - installed, paired, its capture switched on - and when it did not,
+        a download manager had sent its own update to the browser's downloads.
+
+        It goes into this app's list, with no New Download dialog: there is
+        nothing to choose about it, and a dialog would open behind this window.
+        Only a release with no installer attached, or no window to add to,
+        still opens the browser.
+        """
+        url = self._update_url
+        if not url:
+            return
+        name = url.split("?")[0].rsplit("/", 1)[-1]
+        window = self.parent()
+        add = getattr(window, "_add_download", None)
+        if callable(add) and name.lower().endswith(".exe"):
+            add(url, name, None, ask=False)
+            self.upd_lbl.setText("Downloading it here: it is in the list. Run it when it has "
+                                 "finished, and the installer closes HyperFetch for you.")
+            self.upd_btn.setVisible(False)      # a second click would add it again
+            return
+        __import__("webbrowser").open(url)
 
     def _open_crashes(self):
         import os
