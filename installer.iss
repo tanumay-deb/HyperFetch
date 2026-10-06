@@ -24,6 +24,21 @@ AppId={{8F3C1A92-5D44-4E27-9C61-2B7A0E5F1D33}
 AppName={#AppName}
 AppVersion={#AppVersion}
 AppPublisher={#AppPublisher}
+AppPublisherURL=https://tanumay-deb.github.io/HyperFetch/
+AppSupportURL=https://github.com/tanumay-deb/HyperFetch/issues
+AppUpdatesURL=https://github.com/tanumay-deb/HyperFetch/releases/latest
+; Listed as "HyperFetch", not "HyperFetch version 2.7.1": the version has its
+; own column, and it is the name winget matches the package by
+; (tools/winget_manifest.py).
+UninstallDisplayName={#AppName}
+; What the setup exe says about itself. It said nothing: no company, no
+; product, version 0.0.0.0 - and it is the first file a download scanner sees.
+VersionInfoVersion={#AppVersion}
+VersionInfoProductVersion={#AppVersion}
+VersionInfoCompany={#AppPublisher}
+VersionInfoProductName={#AppName}
+VersionInfoDescription={#AppName} Setup
+VersionInfoCopyright=Copyright (c) 2026 Tanumay Goswami. MIT License.
 DefaultDirName={autopf}\{#AppName}
 DefaultGroupName={#AppName}
 UninstallDisplayIcon={app}\{#AppExe}

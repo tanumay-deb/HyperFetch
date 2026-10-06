@@ -254,3 +254,54 @@ practices tab:
   reduces the up-front warning surface at the cost of an extra click per new site.
 - The desktop app is required for the extension to do anything; without it the
   extension's requests simply fail and the browser keeps the download.
+
+---
+
+## The desktop app: winget
+
+`winget install HyperFetch.HyperFetch`. A package is three YAML files for each
+version, sent as a pull request to
+[microsoft/winget-pkgs](https://github.com/microsoft/winget-pkgs). After a
+release is published:
+
+```
+python tools/winget_manifest.py 2.8.0
+winget validate --manifest manifests\h\HyperFetch\HyperFetch\2.8.0
+```
+
+The first reads the installer's address, SHA-256 and release date from GitHub
+and writes the files; the second is Microsoft's own check. Then the folder goes
+into a fork of winget-pkgs at the same path, and a pull request from there.
+Microsoft's pipeline installs it on a clean machine with Defender on before
+anyone merges it.
+
+The name `HyperFetch.HyperFetch` was free on 2026-10-06. Send the first one for
+a release built after that date: from then on the installer lists the program
+as "HyperFetch" (it used to be "HyperFetch version 2.7.1"), which is the name
+the package is matched by.
+
+## The desktop app: a signed installer
+
+Not done. It needs a certificate, and the free one is by application.
+
+[SignPath Foundation](https://signpath.org/) signs open-source projects for
+nothing. Its terms, read 2026-10-06:
+
+- an OSI-approved licence (MIT is one), and no commercial dual licence;
+- binaries built from the public source in a way that can be checked (the
+  GitHub release workflow is that), carrying a product name and version (they
+  do now: `tools/version_resource.py`, and `VersionInfo*` in `installer.iss`);
+- multi-factor sign-in on GitHub and on SignPath for everyone on the project;
+- every release approved by hand in SignPath before it is signed;
+- only this project's own binaries: HyperFetch.exe and the installer, not the
+  bundled aria2c or ffmpeg;
+- a section on the project's site headed "Code signing policy", saying "Free
+  code signing provided by SignPath.io, certificate by SignPath Foundation",
+  who commits and who approves, and linking the privacy policy. It goes up
+  when the application is made, not before: until then it would not be true.
+
+The certificate's publisher name is "SignPath Foundation", not the project's.
+Apply at https://signpath.org/apply. Once accepted, the release workflow gets
+one more step (SignPath's GitHub action, with the organisation id, project and
+an API token as repository secrets).
+
