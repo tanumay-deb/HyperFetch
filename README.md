@@ -112,3 +112,20 @@ cd chrome_ext/test && npm install && npm test   # extension tests
 
 MIT — see [LICENSE](LICENSE). Privacy policy: [PRIVACY.md](PRIVACY.md). Please
 download only content you have the right to.
+
+## Code signing policy
+
+Free code signing provided by SignPath.io, certificate by SignPath Foundation.
+
+The application was made on 7 October 2026 and is waiting for an answer.
+Releases up to and including 2.8.0 are not signed; the first signed release
+will say so in its notes.
+
+- **What is signed:** `HyperFetch.exe` and the installer, built by GitHub
+  Actions from the tagged source in this repository
+  ([`.github/workflows/release.yml`](.github/workflows/release.yml)). The
+  bundled `aria2c` and `ffmpeg` are other projects' binaries and are not.
+- **Committers and reviewers:** [Tanumay Goswami](https://github.com/tanumay-deb)
+- **Approvers:** [Tanumay Goswami](https://github.com/tanumay-deb)
+- **Privacy policy:** https://tanumay-deb.github.io/HyperFetch/privacy.html
+
