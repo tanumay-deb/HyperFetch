@@ -787,6 +787,7 @@ class NameScout:
     def run_once(self):
         """Name one waiting video. Returns the task asked about, or None."""
         if not self._enabled_fn():
+            self._forget()
             return None
         t = self._next()
         if t is None or not available():
@@ -837,6 +838,17 @@ class NameScout:
                 _leave(here, t.sort_base)
             log.info("named while it waits: %s", t.filename)
         return t
+
+    def _forget(self):
+        """Switched off: nobody is reading pages, so no row goes on saying
+        that one would not read - which looked as if the switch did nothing."""
+        if not self._fails:
+            return
+        for t in list(self._tasks_fn() or []):
+            if t.id in self._fails:
+                t.meta_failed = False
+                t.meta_retry_after = 0.0
+        self._fails.clear()
 
     def _failed(self, t, why):
         n = self._fails.get(t.id, 0) + 1

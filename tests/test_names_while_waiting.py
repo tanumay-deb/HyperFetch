@@ -399,6 +399,25 @@ def test_switched_off_nothing_is_asked(site, media_server, tmp_path, queue):
     assert s.run_once() is t and t.filename == NAMED
 
 
+def test_switched_off_no_row_goes_on_saying_a_page_would_not_read(media_server, tmp_path,
+                                                                 queue):
+    """It looked as if the switch did nothing."""
+    on = [True]
+
+    def look(task, give_up):
+        raise RuntimeError("no")
+
+    t, _ = _waiting(media_server, tmp_path, queue)
+    s = _scout(queue, enabled_fn=lambda: on[0], look_fn=look)
+    s.run_once()
+    assert t.meta_failed
+    on[0] = False
+    assert s.run_once() is None
+    assert not t.meta_failed
+    on[0] = True                            # and switched on again it is asked at once
+    assert s.run_once() is t
+
+
 def test_without_yt_dlp_nothing_is_asked(media_server, tmp_path, queue, monkeypatch):
     monkeypatch.setattr(yt_dl, "available", lambda: False)
     t, _ = _waiting(media_server, tmp_path, queue)
