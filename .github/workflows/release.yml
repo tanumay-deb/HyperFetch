@@ -31,7 +31,10 @@ jobs:
       - name: Install build deps
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt pyinstaller pillow
+          pip install -r requirements.txt
+          # pinned tools, and a bootloader compiled here rather than the
+          # prebuilt one every PyInstaller app shares (tests/test_build_trust.py)
+          pip install --no-binary pyinstaller -r requirements-build.txt
 
       - name: Install Inno Setup
         run: choco install innosetup -y --no-progress
@@ -51,6 +54,12 @@ jobs:
 
       - name: Smoke-test the frozen binary
         run: dist\HyperFetch\HyperFetch.exe --selftest
+
+      # Anything Defender knows by signature stops the release here. It would
+      # not have stopped 2.7.1 (tests/test_build_trust.py says what that was).
+      - name: Scan what is about to be published
+        shell: pwsh
+        run: ./tools/defender_scan.ps1 dist/HyperFetch, dist/installer
 
       - name: Package a portable zip
         shell: pwsh

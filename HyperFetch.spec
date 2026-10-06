@@ -1,7 +1,19 @@
 # -*- mode: python ; coding: utf-8 -*-
 """PyInstaller build spec for HyperFetch (onedir, windowed)."""
 import os
+import re
+import sys
+import tempfile
 from PyInstaller.utils.hooks import collect_all, collect_submodules
+
+# What the exe says about itself (name, maker, version): tools/version_resource.py
+sys.path.insert(0, os.path.join(SPECPATH, 'tools'))
+import version_resource
+with open(os.path.join(SPECPATH, 'utils.py'), encoding='utf-8') as _f:
+    _version = re.search(r'^APP_VERSION\s*=\s*"([^"]+)"', _f.read(), re.M).group(1)
+version_info = os.path.join(tempfile.mkdtemp(), 'version_info.txt')
+with open(version_info, 'w', encoding='utf-8') as _f:
+    _f.write(version_resource.version_file(_version))
 
 # cryptography is imported lazily inside hls.py -> pull it in explicitly
 crypto_datas, crypto_binaries, crypto_hidden = collect_all('cryptography')
@@ -68,6 +80,7 @@ exe = EXE(
     upx=False,
     console=False,                 # windowed GUI app
     icon='assets/icon.ico',
+    version=version_info,
 )
 
 coll = COLLECT(

@@ -7,7 +7,7 @@
     .\build.ps1 -Sign -CertPath x.pfx -CertPass ****   # sign the exe + installer
 
   Requirements:
-    - Python 3.10+ with the project deps:  pip install -r requirements.txt pyinstaller pillow
+    - Python 3.10+ with the project deps:  pip install -r requirements.txt -r requirements-build.txt
     - For -Installer:  Inno Setup 6 (iscc.exe on PATH or at the default location)
     - For -Sign:       a code-signing cert (.pfx) and Windows SDK signtool.exe
 #>

@@ -1,0 +1,13 @@
+# What builds the app. What the app needs to run is requirements.txt.
+#
+# Pinned, so a release is built with tools somebody chose, not with whatever is
+# newest that day. Install with
+#
+#     pip install --no-binary pyinstaller -r requirements-build.txt
+#
+# which compiles PyInstaller's bootloader on the build machine instead of
+# taking the prebuilt one that every PyInstaller app - and a great deal of
+# malware - is started by. It needs a C compiler (Visual Studio's on Windows).
+# Why: tests/test_build_trust.py.
+pyinstaller==6.22.3
+pillow==12.3.0

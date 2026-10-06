@@ -76,7 +76,10 @@ jobs:
       - name: Install build deps
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt pyinstaller pillow
+          pip install -r requirements.txt
+          # pinned tools, and a bootloader compiled here rather than the
+          # prebuilt one every PyInstaller app shares (tests/test_build_trust.py)
+          pip install --no-binary pyinstaller -r requirements-build.txt
       - name: Build
         run: |
           python -c "from PIL import Image; Image.open('assets/icon.png').convert('RGBA').save('assets/icon.ico', sizes=[(16,16),(32,32),(48,48),(64,64),(128,128),(256,256)])"
