@@ -2,6 +2,7 @@
 plus security primitives (pairing token, TLS-verify flag, sensitive-header strip)."""
 import os
 import re
+import sys
 import json
 import logging
 import secrets
@@ -18,6 +19,87 @@ def temp_download_path(task_id):
     return os.path.join(tempfile.gettempdir(), f"{task_id}.hfdownload")
 
 
+_FSCTL_SET_SPARSE = 0x000900C4
+
+
+def _set_sparse(f, on):
+    """Mark an open file sparse, or ordinary again. True when Windows did it.
+    FAT and exFAT have no sparse files; nothing but Windows needs asking."""
+    if sys.platform != "win32":
+        return False
+    import ctypes
+    import msvcrt
+    from ctypes import wintypes
+    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    k32.DeviceIoControl.argtypes = [
+        wintypes.HANDLE, wintypes.DWORD, wintypes.LPVOID, wintypes.DWORD,
+        wintypes.LPVOID, wintypes.DWORD, ctypes.POINTER(wintypes.DWORD), wintypes.LPVOID]
+    k32.DeviceIoControl.restype = wintypes.BOOL
+    flag = ctypes.c_ubyte(1 if on else 0)           # FILE_SET_SPARSE_BUFFER
+    returned = wintypes.DWORD(0)
+    return bool(k32.DeviceIoControl(msvcrt.get_osfhandle(f.fileno()), _FSCTL_SET_SPARSE,
+                                    ctypes.byref(flag), 1, None, 0,
+                                    ctypes.byref(returned), None))
+
+
+def _make_sparse(f):
+    return _set_sparse(f, True)
+
+
+def _set_length(f, size):
+    """Give an open file its length without writing it (SetEndOfFile). True
+    when Windows did it."""
+    import ctypes
+    import msvcrt
+    from ctypes import wintypes
+    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    k32.SetFilePointerEx.argtypes = [wintypes.HANDLE, ctypes.c_longlong,
+                                     ctypes.POINTER(ctypes.c_longlong), wintypes.DWORD]
+    k32.SetFilePointerEx.restype = wintypes.BOOL
+    k32.SetEndOfFile.argtypes = [wintypes.HANDLE]
+    k32.SetEndOfFile.restype = wintypes.BOOL
+    handle = msvcrt.get_osfhandle(f.fileno())
+    return bool(k32.SetFilePointerEx(handle, size, None, 0) and k32.SetEndOfFile(handle))
+
+
+def allocate_file(path, size):
+    """Create `path`, `size` bytes long and empty, without writing those bytes.
+
+    The engine makes its temp file the full size first, so every connection
+    can write at its own offset. truncate() did that, and on Windows it
+    extends a file by WRITING zeros, four kilobytes at a time: a 64 GiB
+    download stood at 0 bytes for more than 44 seconds on an NVMe drive
+    (measured 2026-10-05), writing what it was about to write again.
+
+    On NTFS the file is made sparse and then given its length: a part nobody
+    has written is not stored. Sparse, and not only long - with the length set
+    alone, NTFS zero-fills everything up to the first write of the LAST
+    connection, which is the same wait a moment later. Where the disk cannot
+    leave gaps (FAT, exFAT) the file is made the old way. Elsewhere truncate()
+    leaves a hole without being asked.
+    """
+    with open(path, "wb") as f:
+        if size <= 0:
+            return
+        if sys.platform == "win32" and _make_sparse(f) and _set_length(f, size):
+            return
+        f.truncate(size)
+
+
+def unsparse(path):
+    """Make a finished file an ordinary one again. The sparse flag is for the
+    temp file while it has gaps; it has none left, and a rename would carry
+    the flag onto the user's file. Best effort: a file still flagged is whole
+    all the same."""
+    if sys.platform != "win32":
+        return
+    try:
+        with open(path, "r+b") as f:
+            _set_sparse(f, False)
+    except OSError:
+        pass
+
+
 def finalize_download(temp_path, dest_path):
     """Atomically move a finished temp file to its destination, cross-volume safe.
 
@@ -30,6 +112,7 @@ def finalize_download(temp_path, dest_path):
     grabber."""
     import shutil
     staged = dest_path + ".hfmove"
+    unsparse(temp_path)
     try:
         shutil.move(temp_path, staged)
         os.replace(staged, dest_path)

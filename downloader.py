@@ -394,8 +394,8 @@ class Downloader:
         if self.t.total_size > 0:
             self._check_disk_space(temp_path, self.t.total_size)
             if not os.path.exists(temp_path) or os.path.getsize(temp_path) != self.t.total_size:
-                with open(temp_path, "wb") as f:
-                    f.truncate(self.t.total_size)
+                # full length, nothing written: see utils.allocate_file
+                utils.allocate_file(temp_path, self.t.total_size)
 
         if not self.t.supports_range or self.num_segments == 1:
             seg = T.Segment(0, 0, max(0, self.t.total_size - 1))
