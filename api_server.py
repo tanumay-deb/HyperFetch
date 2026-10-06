@@ -26,6 +26,7 @@ import task as T
 import utils
 import torrent as _torrent
 import web_auth
+import yt_dl
 
 # The loopback port the extension and the browser page both reach the app on.
 #
@@ -703,7 +704,9 @@ def create_app(queue, save_dir, pending=None, token=None, pair_requests=None):
 
         Same rule as the desktop: an in-flight task only retargets save_path,
         because its bytes live in an id-keyed .hfdownload temp and finalize
-        simply lands on the new name.
+        simply lands on the new name — but a video is renamed while it waits
+        (yt_dl.rename), since yt-dlp names its file as it starts. The name
+        stays the user's (DownloadTask.name_chosen).
         """
         deny = require_web_auth()
         if deny:
@@ -718,7 +721,7 @@ def create_app(queue, save_dir, pending=None, token=None, pair_requests=None):
         if not raw:
             return jsonify({"status": "error",
                             "message": "That is not a usable file name."}), 400
-        new = utils.safe_filename(raw)
+        new = yt_dl.name_for(t, utils.safe_filename(raw))
         if new == t.filename:
             return jsonify({"status": "ok", "name": new})
 
@@ -731,8 +734,15 @@ def create_app(queue, save_dir, pending=None, token=None, pair_requests=None):
                 return jsonify({"status": "error",
                                 "message": "Could not rename: %s" % e}), 409
             t.save_path = dest
+            t.name_chosen = yt_dl.stem(os.path.basename(dest))
+        elif yt_dl.is_ytdlp_task(t):
+            if not yt_dl.rename(queue, t, new):
+                return jsonify({"status": "error",
+                                "message": "Pause this video before renaming it — yt-dlp "
+                                           "named the file it is writing as it started."}), 409
         else:
             t.save_path = utils.unique_path(d, new)
+            t.name_chosen = yt_dl.stem(os.path.basename(t.save_path))
         t.filename = os.path.basename(t.save_path)
         t.log_event("Renamed")
         return jsonify({"status": "ok", "name": t.filename})

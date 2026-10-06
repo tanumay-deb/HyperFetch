@@ -8,6 +8,8 @@ PyInstaller in HyperFetch.spec for the frozen build.
 
 A video that is only waiting its turn is given its name by NameScout, at the
 end of this file: the same name, by the same rules, its download gives it.
+That name is the video's title, or the one the user typed for the download
+(DownloadTask.name_chosen) with the extension yt-dlp picks.
 """
 import os
 import time
@@ -140,6 +142,28 @@ def _ffmpeg_dir():
     return os.path.dirname(which) if which else None
 
 
+# What a video's file is called: its title, or the name the user gave the
+# download with the extension yt-dlp picks. That name is a field of the
+# video's info (_named), not text in the template: yt-dlp expands environment
+# variables in a template's own text ("$HOME", a leading "~"), never in a
+# field's value - and a playlist's entries, which are not given it, fall back
+# to their titles.
+TITLED = "%(title)s.%(ext)s"
+CHOSEN = "%(hyperfetch_name,title)s.%(ext)s"
+
+
+def _named(t, info):
+    """`info`, given the name the user chose for the task's file - for
+    CHOSEN, wherever yt-dlp names the file from it. Not a playlist, nor an
+    entry of one: every entry would get the one name, and all but the first
+    would be taken for downloaded already. They keep their titles."""
+    name = getattr(t, "name_chosen", "")
+    if (name and info and info.get("_type", "video") == "video"
+            and info.get("playlist_index") is None):
+        info["hyperfetch_name"] = name
+    return info
+
+
 def _choosing_opts(t, out_dir):
     """The yt-dlp options that decide which format is picked and what the file
     is called, and where ffmpeg is: ``(opts, ffdir)``.
@@ -149,7 +173,8 @@ def _choosing_opts(t, out_dir):
     gives it."""
     import re
     opts = {
-        "outtmpl": os.path.join(out_dir.replace("%", "%%"), "%(title)s.%(ext)s"),
+        "outtmpl": os.path.join(out_dir.replace("%", "%%"),
+                                CHOSEN if getattr(t, "name_chosen", "") else TITLED),
         "noplaylist": True,
         "logger": _YtLog(),
         "quiet": True, "no_warnings": True,
@@ -379,6 +404,109 @@ def _leave(folder, base):
             pass                    # still holds something
 
 
+# The extensions of a typed name that are yt-dlp's to choose: video and audio
+# containers (yt_dlp.utils.MEDIA_EXTENSIONS - copied, for yt-dlp is slow to
+# import and the window asks this), MPEG-TS, and the ".bin" a name with no
+# extension is given (utils.filename_from_url).
+_CONTAINERS = {"." + e for e in (
+    "3g2", "3gp", "f4v", "mk3d", "divx", "mpg", "ogv", "m4v", "wmv", "avi", "flv",
+    "mkv", "mov", "mp4", "webm", "ts", "aac", "ape", "asf", "f4a", "f4b", "m4b",
+    "m4r", "oga", "ogx", "spx", "vorbis", "wma", "weba", "aiff", "alac", "flac",
+    "m4a", "mka", "mp3", "ogg", "opus", "wav", "bin")}
+
+
+def stem(name):
+    """What a video's file keeps of a name the user typed: all of it but an
+    extension yt-dlp chooses (_CONTAINERS). "Lecture 1.mp4" and "Lecture
+    1.bin" give "Lecture 1"; "Part 1.5" stays "Part 1.5"."""
+    base, ext = os.path.splitext(name or "")
+    return base if base and ext.lower() in _CONTAINERS else (name or "")
+
+
+def name_for(t, typed):
+    """What a download is called when the user types `typed` for it: that -
+    but a video yt-dlp has named keeps the extension yt-dlp gave it, as its
+    file will ("Lecture 1.mkv" typed for an mp4 is "Lecture 1.mp4"). A
+    playlist's ".bin" was never yt-dlp's."""
+    ext = os.path.splitext(t.filename or "")[1]
+    if getattr(t, "yt_named", False) and ext and ext.lower() != ".bin":
+        return stem(typed) + ext
+    return typed
+
+
+def rename(queue, t, name):
+    """Rename a video that has not finished to `name` (name_for's), as the
+    user asked: it is called that while it waits, and so is its file
+    (DownloadTask.name_chosen). What its download left on disk - yt-dlp's
+    .part, the parts of a merge - is renamed with it (_carry), or it would
+    start again from nothing beside it.
+
+    Not while it runs: yt-dlp named the file it is writing as it started,
+    and the run ends under that name. False then, and nothing is changed.
+    A waiting one is changed with the queue's lock held
+    (QueueManager.while_waiting), so it cannot start half-way through.
+
+    A name is taken when a file has it, as ever - or another download's
+    partial: yt-dlp would carry on from that, into this video.
+    """
+    import utils
+
+    def change():
+        here = os.path.dirname(t.save_path) or "."
+        base, ext = os.path.splitext(name)
+        new, n = utils.unique_path(here, name), 0
+        while _left(new):
+            n += 1
+            new = utils.unique_path(here, "%s (%d)%s" % (base, n, ext))
+        if getattr(t, "yt_named", False):
+            _carry(t.save_path, new)
+        t.save_path, t.filename = new, os.path.basename(new)
+        t.name_chosen = stem(t.filename)
+
+    if t.status in WAITING:
+        return queue.while_waiting(t, change)
+    if getattr(t, "_worker_alive", False) or t.status == T.DOWNLOADING:
+        return False
+    change()                    # failed or cancelled: nothing starts it meanwhile
+    return True
+
+
+def _left(path):
+    """The names of what yt-dlp leaves beside a video it names `path` until
+    it is done: its .part and .ytdl, a fragmented download's fragments, the
+    parts of a merge and theirs (Title.f137.mp4.part), a merge it was making
+    (Title.temp.mp4). Not the video itself, nor anything else that only
+    begins like it: those may be the user's."""
+    import re
+    was, ext = os.path.splitext(os.path.basename(path))
+    tail = r"(?:\.part(?:-Frag\d+)?(?:\.part)?|\.ytdl)"
+    left = re.compile(r"%s\.(?:(?:f[^.]+|temp)\.[^.]+%s?|%s%s)" % (
+        re.escape(was), tail, re.escape(ext[1:]), tail))
+    try:
+        return [n for n in os.listdir(os.path.dirname(path) or ".") if left.fullmatch(n)]
+    except OSError:
+        return []
+
+
+def _carry(old, new):
+    """Rename what yt-dlp left of the video it named `old` (_left) to go with
+    `new`, in the same folder. Never over a file that is there."""
+    here = os.path.dirname(old) or "."
+    was = os.path.splitext(os.path.basename(old))[0]
+    now = os.path.splitext(os.path.basename(new))[0]
+    if was == now:
+        return
+    for n in _left(old):
+        frm, to = os.path.join(here, n), os.path.join(here, now + n[len(was):])
+        if os.path.exists(to):
+            log.warning("not renaming %s: %s is there", frm, to)
+            continue
+        try:
+            os.rename(frm, to)
+        except OSError as e:
+            log.warning("could not rename %s: %s", frm, e)
+
+
 class YtDlpDownloader:
     def __init__(self, dtask: "T.DownloadTask", segments=None):
         self.t = dtask
@@ -411,6 +539,7 @@ class YtDlpDownloader:
         def _process_info(info, *a, **kw):
             # yt-dlp has read the page and is about to download this video:
             # the first moment its name and kind are known
+            _named(self.t, info)
             self._settle(ydl, info)
             whole[0] = take_over and not info.get("requested_formats")
             try:
@@ -473,8 +602,10 @@ class YtDlpDownloader:
         except OSError as e:
             log.debug("yt-dlp: cannot use %s: %s", folder, e)
             return False
-        # a "%" in a folder's name is not the start of a field
-        templates["default"] = os.path.join(folder.replace("%", "%%"), "%(title)s.%(ext)s")
+        # a "%" in a folder's name is not the start of a field; the file is
+        # named as it was (TITLED or CHOSEN)
+        templates["default"] = os.path.join(folder.replace("%", "%%"),
+                                            os.path.basename(templates["default"]))
         return True
 
     def _fetch(self, ydl, name, info):
@@ -562,7 +693,7 @@ class YtDlpDownloader:
                 self._take_over_plain_files(ydl)
                 info = ydl.extract_info(self.t.url, download=True)
                 try:
-                    return ydl.prepare_filename(info)
+                    return ydl.prepare_filename(_named(self.t, info))
                 except Exception:
                     return ""
 
@@ -705,7 +836,7 @@ def look_up(t, give_up=lambda: False):
             if not info or info.get("_type") in ("playlist", "multi_video"):
                 return "", 0
             size = info.get("filesize") or info.get("filesize_approx") or 0
-            return ydl.prepare_filename(info), int(size)
+            return ydl.prepare_filename(_named(t, info)), int(size)
 
     def look():
         try:

@@ -1284,6 +1284,11 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, Up
         t.sort_base = sort_base
         t.use_ytdlp = v.get("use_ytdlp", False)     # route through yt-dlp engine
         t.yt_format = v.get("yt_format", "")        # chosen quality/format string
+        # A name the user typed, which a video's file keeps rather than its
+        # title. Not the one the dialog filled in: that is a guess from the
+        # link, and the title says more.
+        if v["filename"] and filename != utils.filename_from_url(v["url"], suggested):
+            t.name_chosen = yt_dl.stem(os.path.basename(save_path))
         self.queue.segments = v["connections"]      # active per-download connections
         if v["start_now"]:
             self.queue.add_task(t)

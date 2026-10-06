@@ -151,6 +151,12 @@ class DownloadTask:
         # waits by yt_dl.NameScout. Persisted, or every start would read the
         # page of every waiting video again.
         self.yt_named = False
+        # The name the user gave this download - typed in New Download, or
+        # by Rename - without its extension (yt_dl.stem): "" when it has none
+        # but a guess from the link or the video's title. A video's file is
+        # called this rather than by its title, and yt-dlp still chooses the
+        # extension, which is only known once it has read the page. Persisted.
+        self.name_chosen = ""
         # The ETag of the file a video page's link served, so a resume - which
         # gets a fresh link - continues only the same file. Persisted.
         self.etag = ""
@@ -371,6 +377,7 @@ class DownloadTask:
             "yt_format": self.yt_format,
             "use_ytdlp": bool(self.use_ytdlp),
             "yt_named": bool(self.yt_named),
+            "name_chosen": self.name_chosen,
             "etag": self.etag,
             "events": self.events[-self.EVENTS_MAX:],
             "sha256": self.sha256,
@@ -419,6 +426,7 @@ class DownloadTask:
         t.is_scheduled = d.get("is_scheduled", False)
         t.use_ytdlp = bool(d.get("use_ytdlp", False))
         t.yt_named = bool(d.get("yt_named", False))
+        t.name_chosen = d.get("name_chosen", "") or ""
         t.etag = d.get("etag", "") or ""
         # Missing on every task written before accounts existed, which is why
         # it defaults to "" rather than raising — those belong to admin.

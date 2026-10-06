@@ -10,6 +10,7 @@ from PySide6.QtWidgets import QMenu, QInputDialog, QLineEdit, QApplication
 import task as T
 import utils
 import torrent as _torrent
+import yt_dl
 from gui.icons import themed_icon
 from gui2 import palette
 
@@ -89,11 +90,14 @@ class ActionsMixin:
     def _rename_task(self, t):
         """Change the display name — and the file on disk when it's completed.
         In-flight tasks only retarget save_path: bytes live in the id-keyed
-        .hfdownload temp, so finalize simply lands on the new name."""
+        .hfdownload temp, so finalize simply lands on the new name. A video
+        is renamed while it waits (yt_dl.rename): yt-dlp names its file as it
+        starts. The name stays the user's (DownloadTask.name_chosen), so a
+        video's file is called that and not by its title."""
         import utils
         new, ok = QInputDialog.getText(self, "Rename", "New file name:",
                                        QLineEdit.Normal, t.filename)
-        new = utils.safe_filename((new or "").strip())
+        new = yt_dl.name_for(t, utils.safe_filename((new or "").strip()))
         if not ok or not new or new == t.filename:
             return
         d = os.path.dirname(t.save_path) or "."
@@ -106,9 +110,17 @@ class ActionsMixin:
                 return
             t.save_path = dest
             t.filename = os.path.basename(dest)
+            t.name_chosen = yt_dl.stem(t.filename)
+        elif yt_dl.is_ytdlp_task(t):
+            if not yt_dl.rename(self.queue, t, new):
+                self._toasts.show("info", "Pause first",
+                                  "Pause this video before renaming it — yt-dlp "
+                                  "named the file it is writing as it started.")
+                return
         else:
             t.save_path = utils.unique_path(d, new)
             t.filename = os.path.basename(t.save_path)
+            t.name_chosen = yt_dl.stem(t.filename)
         t.log_event("Renamed")
         self._save_state()
         self.refresh()

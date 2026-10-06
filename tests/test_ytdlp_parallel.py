@@ -22,6 +22,7 @@ import http.cookiejar
 import http.server
 import json
 import os
+import re
 import socket
 import sys
 import threading
@@ -142,8 +143,13 @@ class _YDL:
         return True, True
 
     def prepare_filename(self, info):
-        tmpl = self.params["outtmpl"]["default"]
-        return (tmpl.replace("%%", "\0") % info).replace("\0", "%")
+        # as yt-dlp reads a template: "%%" is a "%", and "%(a,b)s" is a - or
+        # b, when info has no a
+        tmpl = self.params["outtmpl"]["default"].replace("%%", "\0")
+        tmpl = re.sub(r"%\(([\w,]+)\)s", lambda m: "%%(%s)s" % next(
+            (k for k in m.group(1).split(",") if info.get(k) is not None),
+            m.group(1).split(",")[-1]), tmpl)
+        return (tmpl % info).replace("\0", "%")
 
 
 @pytest.fixture
@@ -610,8 +616,9 @@ def real_ytdlp():
 
 @pytest.fixture
 def video_page():
-    """A page with a <video>, as yt-dlp's generic extractor reads one. It sets
-    a cookie on the way, as sites do."""
+    """A page with a <video>, as yt-dlp's generic extractor reads one - or
+    with one for each source it is given, which yt-dlp reads as a playlist.
+    It sets a cookie on the way, as sites do."""
     pages = {}
 
     class H(http.server.BaseHTTPRequestHandler):
@@ -631,10 +638,11 @@ def video_page():
     threading.Thread(target=httpd.serve_forever, daemon=True).start()
     port = httpd.server_address[1]
 
-    def add(path, src):
-        pages[path] = ("<!DOCTYPE html><html><head><title>%s</title></head><body>"
-                       "<video controls><source src='%s' type='video/mp4'></video>"
-                       "</body></html>" % (TITLE, src))
+    def add(path, *srcs):
+        pages[path] = ("<!DOCTYPE html><html><head><title>%s</title></head><body>%s"
+                       "</body></html>" % (TITLE, "".join(
+                           "<video controls><source src='%s' type='video/mp4'></video>"
+                           % src for src in srcs)))
         return "http://127.0.0.1:%d%s" % (port, path)
 
     yield add
