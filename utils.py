@@ -492,6 +492,18 @@ def filename_from_url(url, suggested=None):
     return name
 
 
+def typed_filename(name):
+    """A file name the user typed, fit to save under: as typed but for the
+    characters Windows forbids. Not cut at a "#" or "?", nor %-decoded, as a
+    name from a link is (sanitize) - "Lecture #3" stays "Lecture #3" - and
+    given ".bin" when it says no type, as filename_from_url does. "" when
+    nothing usable is left."""
+    name = _safe_chars((name or "").strip())
+    if name and "." not in name:
+        name += ".bin"
+    return name
+
+
 def unique_path(directory, filename):
     """Avoid clobbering existing files: foo.zip -> foo (1).zip, foo (2).zip ...
     Always confines the result to `directory` (defends against traversal)."""

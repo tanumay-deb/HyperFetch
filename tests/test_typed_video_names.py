@@ -12,6 +12,9 @@ known only once it has read the page: "Lecture 1.mp4" typed and a webm chosen
 is "Lecture 1.webm". The name New Download fills in is a guess from the link,
 not the user's, and the title still wins over that.
 
+A name typed in New Download is read as a file's name, too, not a link's: it
+was cut at a "#" or "?", so "Lecture #3" was saved as "Lecture.bin".
+
 The stand-in for yt-dlp is tests/test_ytdlp_parallel.py's, as in
 tests/test_names_while_waiting.py; the tests at the end run the real yt-dlp
 against pages served here. No network.
@@ -80,7 +83,7 @@ def _window(base, extras=None):
     return win, added, DownloadAppV2
 
 
-def _answered(monkeypatch, typed=None):
+def _answered(monkeypatch, typed=None, ytdlp=True):
     """New Download, answered: Download pressed with the name as the dialog
     filled it in, or with `typed` in its place - and "Use yt-dlp" ticked, as
     it is for a site the app knows."""
@@ -93,7 +96,7 @@ def _answered(monkeypatch, typed=None):
             super().__init__(None, *a, **kw)        # the stand-in window is no widget
             if typed is not None:
                 self.name_edit.setText(typed)
-            self.use_ytdlp.setChecked(True)
+            self.use_ytdlp.setChecked(ytdlp)
 
         def exec(self):
             return QDialog.Accepted
@@ -127,6 +130,39 @@ def test_the_name_new_download_filled_in_is_not(site, media_server, tmp_path, mo
     queue.add_task(t, start=False)
     _scout(queue).run_once()
     assert t.filename == TITLE + ".mp4"
+
+
+@pytest.mark.parametrize("typed,named", [
+    ("Lecture #3", "Lecture #3.bin"),
+    ("Q3 #2 report.pdf", "Q3 #2 report.pdf"),
+    ("What is X?.mp4", "What is X_.mp4"),       # no "?" in a Windows name
+    ("100%25 sure.mp4", "100%25 sure.mp4"),     # nor %-decoded
+    ("AC/DC live.mp4", "AC_DC live.mp4"),
+])
+def test_a_typed_name_is_read_as_a_file_name_not_as_a_links(tmp_path, monkeypatch, typed,
+                                                            named):
+    """It was read as a link's: cut at a "#" or "?" - "Lecture #3" was saved
+    as "Lecture.bin", "Q3 #2 report.pdf" as "Q3.bin"."""
+    win, added, App = _window(tmp_path)
+    _answered(monkeypatch, typed=typed, ytdlp=False)
+
+    App._add_download(win, "https://files.example/get?id=7", "", None)
+
+    t, = added
+    assert t.filename == named
+    assert os.path.basename(t.save_path) == named
+    assert t.name_chosen == yt_dl.stem(named)
+
+
+def test_the_name_the_browser_gave_is_still_read_as_a_links(tmp_path, monkeypatch):
+    """It may be %-encoded, as the link it came with."""
+    win, added, App = _window(tmp_path)
+    _answered(monkeypatch, ytdlp=False)         # the name left as it was filled in
+
+    App._add_download(win, "https://files.example/get?id=7", "Q3%20report.pdf", None)
+
+    t, = added
+    assert t.filename == "Q3 report.pdf" and t.name_chosen == ""
 
 
 def test_the_typed_name_holds_while_it_waits_and_for_the_finished_file(
@@ -396,16 +432,16 @@ def test_with_the_real_ytdlp_a_typed_name_is_taken_as_it_is(
     out = tmp_path / "dl"
     data = media_server.put("media/clip.mp4", make_payload(SIZE), etag='"v1"')
     page = video_page("/watch/6", media_server.url("media/clip.mp4"))
-    t = _page_task(page, out, queue, typed="100% $HF_PROBE")
+    t = _page_task(page, out, queue, typed="#1 - 100% $HF_PROBE")
 
     assert _scout(queue).run_once() is t
-    assert t.filename == "100% $HF_PROBE.mp4"
+    assert t.filename == "#1 - 100% $HF_PROBE.mp4"
     assert not [e for e in media_server.log if e["method"] == "GET"], "fetched to name it"
 
     Downloader(t, segments=4).run()
 
     assert t.status == T.COMPLETED, t.error
-    assert t.save_path == str(out / "100% $HF_PROBE.mp4")
+    assert t.save_path == str(out / "#1 - 100% $HF_PROBE.mp4")
     assert open(t.save_path, "rb").read() == data
 
 

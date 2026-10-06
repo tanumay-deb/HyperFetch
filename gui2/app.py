@@ -1269,7 +1269,12 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, Up
             if box.clickedButton() is not again_btn:
                 return
         base = v["save_dir"] if os.path.isdir(v["save_dir"]) else self.save_dir
-        filename = utils.filename_from_url(v["url"], v["filename"] or suggested)
+        # A name the user typed is a file's name, kept as typed. Not the one
+        # the dialog filled in: that is a guess from the link or the
+        # browser's, read as a link's name is - and a video's title says more.
+        typed = ("" if v["filename"].strip() == (suggested or "").strip()
+                 else utils.typed_filename(v["filename"]))
+        filename = typed or utils.filename_from_url(v["url"], v["filename"] or suggested)
         # Category "Auto" with sorting on: the app files it by type under base,
         # a torrent by what its metadata says it holds - at once for a
         # .torrent, when the metadata arrives for a magnet. A category picked
@@ -1284,10 +1289,7 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, Up
         t.sort_base = sort_base
         t.use_ytdlp = v.get("use_ytdlp", False)     # route through yt-dlp engine
         t.yt_format = v.get("yt_format", "")        # chosen quality/format string
-        # A name the user typed, which a video's file keeps rather than its
-        # title. Not the one the dialog filled in: that is a guess from the
-        # link, and the title says more.
-        if v["filename"] and filename != utils.filename_from_url(v["url"], suggested):
+        if typed:                                   # a video's file keeps it, not its title
             t.name_chosen = yt_dl.stem(os.path.basename(save_path))
         self.queue.segments = v["connections"]      # active per-download connections
         if v["start_now"]:
