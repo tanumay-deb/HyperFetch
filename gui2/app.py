@@ -30,6 +30,7 @@ import utils
 import pairing
 import scrape
 import torrent as _torrent
+import yt_dl
 from queue_manager import QueueManager
 from api_server import run_server, PORT
 
@@ -108,6 +109,12 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, Up
         self._scout = scrape.SwarmScout(lambda: self.queue.tasks,
                                         enabled_fn=self._scrape_enabled)
         self._scout.start()
+        # Give a waiting video its title and folder, as a waiting magnet gets
+        # its name: a row of "watch.bin" says nothing about what is in the list.
+        self._names = yt_dl.NameScout(lambda: self.queue.tasks, self.queue.while_waiting,
+                                      enabled_fn=self._naming_enabled)
+        self._names.start()
+        self._names_saved = 0         # how many of its names the saved list has
         self.pending = deque()
         # Firefox installs asking to pair, and the ones allowed (pairing.py).
         # The server records the asking; refresh() puts the question.
@@ -376,8 +383,13 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, Up
 
     def _autosave_tick(self):
         # flush only while something is in flight — an idle list changes via
-        # user actions, and those already save
-        if any(t.status in (T.DOWNLOADING, T.QUEUED) for t in self.queue.tasks):
+        # user actions, and those already save. Or when a waiting video was
+        # given its name: nobody did anything, and a list of paused videos
+        # that lost its names would have every page read again at each start.
+        named = self._names.named
+        if named != self._names_saved or any(
+                t.status in (T.DOWNLOADING, T.QUEUED) for t in self.queue.tasks):
+            self._names_saved = named
             self._save_state()
 
     def _start_server(self):
@@ -1039,6 +1051,11 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, Up
         """The Settings -> Torrents switch, read on each of the scout's rounds."""
         return bool(self._extras.get("scrape_trackers", True))
 
+    def _naming_enabled(self):
+        """Settings -> Downloads -> "Name videos while they wait", read on each
+        of the name scout's rounds."""
+        return bool(self._extras.get("name_waiting_videos", True))
+
     def _notify_added(self):
         """Downloads added while you were not looking at HyperFetch get a Windows
         notification, one per burst (gui2/notify.py). Looking means any of its
@@ -1452,6 +1469,7 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, Up
             if t.status in (T.DOWNLOADING, T.QUEUED):
                 t.request_pause()
         self._scout.stop()
+        self._names.stop()
         self.queue.shutdown()
         # stop the shared aria2 daemon we own. It outlives its parent if left
         # alone (it survives a killed parent), so an explicit shutdown is what

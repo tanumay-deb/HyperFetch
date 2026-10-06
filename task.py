@@ -145,6 +145,12 @@ class DownloadTask:
         # video the engine was fetching in ranges has segments, and without
         # this a restored task would fetch the page itself into them.
         self.use_ytdlp = False
+        # yt-dlp has been asked what this is called: the name is the video's
+        # title, not a guess from the link - or the link has no one name to
+        # give (a playlist). Set by the download as it starts, and while it
+        # waits by yt_dl.NameScout. Persisted, or every start would read the
+        # page of every waiting video again.
+        self.yt_named = False
         # The ETag of the file a video page's link served, so a resume - which
         # gets a fresh link - continues only the same file. Persisted.
         self.etag = ""
@@ -364,6 +370,7 @@ class DownloadTask:
             "queue_name": self.queue_name,
             "yt_format": self.yt_format,
             "use_ytdlp": bool(self.use_ytdlp),
+            "yt_named": bool(self.yt_named),
             "etag": self.etag,
             "events": self.events[-self.EVENTS_MAX:],
             "sha256": self.sha256,
@@ -411,6 +418,7 @@ class DownloadTask:
         )
         t.is_scheduled = d.get("is_scheduled", False)
         t.use_ytdlp = bool(d.get("use_ytdlp", False))
+        t.yt_named = bool(d.get("yt_named", False))
         t.etag = d.get("etag", "") or ""
         # Missing on every task written before accounts existed, which is why
         # it defaults to "" rather than raising — those belong to admin.

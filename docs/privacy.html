@@ -212,7 +212,11 @@
     <ul>
       <li><strong>The sites you download from</strong> — the file's own
       server, a video site and its streams, and, with checksum verification
-      switched on, a <code>.sha256</code> file beside the download.</li>
+      switched on, a <code>.sha256</code> file beside the download. While a
+      video waits in the queue, the application reads its page once to learn
+      what it is called (Settings → Downloads → "Name videos while they
+      wait", on by default): the site sees your IP address and which video it
+      is, as it would once the download starts.</li>
       <li>For <strong>torrents and magnet links</strong>, trackers —
       including a list of public trackers the application adds to every
       torrent that is not marked private (a magnet link is only known to be

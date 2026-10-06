@@ -80,7 +80,10 @@ It connects to:
 
 - **The sites you download from** — the file's own server, a video site and
   its streams, and, with checksum verification switched on, a `.sha256` file
-  beside the download.
+  beside the download. While a video waits in the queue, the application reads
+  its page once to learn what it is called (Settings → Downloads → "Name
+  videos while they wait", on by default): the site sees your IP address and
+  which video it is, as it would once the download starts.
 - For **torrents and magnet links**, trackers — including a list of public
   trackers the application adds to every torrent that is not marked private
   (a magnet link is only known to be private once its details have arrived) —

@@ -421,6 +421,17 @@ class DownloadCardWidget(QFrame):
             # "Fetching metadata…" on its own gives no way to tell a torrent that
             # is talking to peers from one that has found nobody.
             self.sub.setText("Fetching metadata…  •  " + _swarm(t))
+        elif (not is_tor and t.status in (T.QUEUED, T.PAUSED, T.SCHEDULED)
+              and getattr(t, "meta_fetching", False)):
+            # a waiting video whose page is being read for its name
+            # (yt_dl.NameScout), said the way a waiting magnet says it
+            self.sub.setText("Fetching details…  •  " + self._queue_state(t))
+        elif (not is_tor and t.status in (T.QUEUED, T.PAUSED, T.SCHEDULED)
+              and getattr(t, "meta_failed", False)
+              and not getattr(t, "yt_named", False)):
+            # the page would not read: it is tried again later, and the
+            # reason is in the Logs tab
+            self.sub.setText("Couldn't fetch details  •  " + self._queue_state(t))
         elif t.status == T.ERROR:
             # ElideLabel already trims to the width and keeps the FULL text as
             # its tooltip, so slicing here only threw the rest away — the

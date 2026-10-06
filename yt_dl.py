@@ -5,6 +5,9 @@ A YtDlpDownloader is bound to one DownloadTask and drives the yt-dlp library wit
 progress hooks that update the task in place and honour pause/cancel (the hook
 raises to abort). yt-dlp is imported lazily (heavy dependency) — it's declared to
 PyInstaller in HyperFetch.spec for the frozen build.
+
+A video that is only waiting its turn is given its name by NameScout, at the
+end of this file: the same name, by the same rules, its download gives it.
 """
 import os
 import time
@@ -46,6 +49,23 @@ def is_dash(url="", filename="", ctype=""):
     f = (filename or "").lower()
     c = (ctype or "").lower()
     return u.endswith(".mpd") or f.endswith(".mpd") or "dash+xml" in c
+
+
+def is_ytdlp_task(t, ctype=""):
+    """Whether a download is yt-dlp's to fetch: "Use yt-dlp" is ticked, the
+    link is a media site's page or a DASH manifest (`ctype`: what the server
+    called it, once it has been asked), or Settings sends its host there. A
+    torrent never is.
+
+    One answer for the engine that routes a download (downloader.py) and for
+    NameScout, which names the ones that wait."""
+    import torrent
+    import utils
+    if torrent.is_torrent_task(t.url, t.filename):
+        return False
+    return bool(getattr(t, "use_ytdlp", False) or is_ytdlp_url(t.url)
+                or is_dash(t.url, t.filename, ctype)
+                or utils.host_rule(t.url).get("ytdlp"))
 
 
 def _formats_unavailable(err):
@@ -102,6 +122,100 @@ def _net_opts():
     if utils.PROXIES:
         opts["proxy"] = utils.PROXIES.get("https") or utils.PROXIES.get("http")
     return opts
+
+
+def _ffmpeg_dir():
+    """The folder ffmpeg is in (bundled with the app, or on PATH), or None.
+
+    With ffmpeg we can merge separate video+audio streams -> real 1080p/4K, and
+    videos that only offer DASH (no combined stream) become downloadable.
+    Without it we are limited to single muxed streams (<=720p on YouTube)."""
+    import shutil
+    import sys
+    base = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
+    bundled = os.path.join(base, "bin", "ffmpeg.exe")
+    if os.path.exists(bundled):
+        return os.path.dirname(bundled)
+    which = shutil.which("ffmpeg")
+    return os.path.dirname(which) if which else None
+
+
+def _choosing_opts(t, out_dir):
+    """The yt-dlp options that decide which format is picked and what the file
+    is called, and where ffmpeg is: ``(opts, ffdir)``.
+
+    Shared by the download and by the look a waiting download gets (look_up),
+    so the name a video is given while it waits is the name its download
+    gives it."""
+    import re
+    opts = {
+        "outtmpl": os.path.join(out_dir.replace("%", "%%"), "%(title)s.%(ext)s"),
+        "noplaylist": True,
+        "logger": _YtLog(),
+        "quiet": True, "no_warnings": True,
+    }
+    http_headers = _http_headers(t)
+    if http_headers:
+        opts["http_headers"] = http_headers
+    ffdir = _ffmpeg_dir()
+    if ffdir:
+        opts["ffmpeg_location"] = ffdir
+
+    # No JS runtime is bundled. yt-dlp warns that YouTube extraction without
+    # one is deprecated, but measured against real videos it currently changes
+    # nothing: the same 33 formats up to 2160p come back with and without a
+    # runtime, because YouTube is not demanding the "n challenge" for anonymous
+    # requests. Bundling one is not free either — deno is ~110 MB, and quickjs
+    # is 2 MB but yt-dlp ships no solver lib for it, so it must fetch one at
+    # solve time. Revisit when YouTube actually starts requiring it; the
+    # cookie fallback (_cookies_last) is what fixes the failure seen in practice.
+
+    # Build a format string that never hard-fails with "requested format is
+    # not available": prefer a height-capped merge when ffmpeg is present,
+    # else a single muxed stream — always with a plain "b" fallback.
+    req = (getattr(t, "yt_format", "") or "").strip()
+    mh = re.search(r"height<=(\d+)", req)
+    h = mh.group(1) if mh else None
+    if req.startswith("ba"):                        # audio-only intent
+        opts["format"] = "ba[ext=m4a]/ba/b"
+    elif ffdir:
+        opts["format"] = (f"bv*[height<={h}]+ba/b[height<={h}]/b" if h else "bv*+ba/b")
+    else:
+        opts["format"] = (f"b[height<={h}]/b" if h else "b")
+
+    # respect the global TLS + proxy settings
+    opts.update(_net_opts())
+    return opts, ffdir
+
+
+def _cookies_last(attempt, opts):
+    """``attempt(opts)`` - and, when the site hands back no usable format to a
+    request that carried cookies, once more without them."""
+    try:
+        return attempt(opts)
+    except (_Abort, _Failed):
+        raise
+    except Exception as e:
+        # YouTube answers a cookie-bearing request with a player response
+        # whose formats need the "n challenge" solved. Without a JS runtime
+        # yt-dlp cannot solve it, every video format drops out ("Only images
+        # are available") and extraction dies with "Requested format is not
+        # available" — while the very same URL with no cookies serves normal
+        # formats. That is why the browser's right-click download failed on a
+        # video that New Download handled: only the extension sends cookies.
+        # Cookies still matter for private/members-only videos, so try them
+        # first and fall back rather than dropping them outright. The retry
+        # also covers a plain transient extraction failure.
+        headers = opts.get("http_headers") or {}
+        if not (_formats_unavailable(e)
+                and any(k.lower() == "cookie" for k in headers)):
+            raise
+        log.info("yt-dlp: no formats with cookies, retrying without them: %s",
+                 str(e)[:120])
+        retry = dict(opts)
+        retry["http_headers"] = {k: v for k, v in headers.items()
+                                 if k.lower() != "cookie"}
+        return attempt(retry)
 
 
 def direct_format(info):
@@ -212,6 +326,59 @@ def _ytdlp_version():
         return "unknown version"
 
 
+def folder_for(t, name):
+    """The folder a video belongs in, when that is not the one `name` -
+    yt-dlp's path for it - is in: its category's, under the folder the app
+    sorts into (task.sort_base). "" when it stays where it is.
+
+    It stays when the user chose its folder, when it is there already, and
+    when anything of the download is on disk: yt-dlp's partial is in the
+    folder the download began in, and moved now it would start again from
+    nothing beside it. Such a download is filed when it finishes, as before.
+    """
+    base = getattr(t, "sort_base", None)
+    if not base:
+        return ""
+    import utils
+    here = os.path.dirname(name)
+    there = os.path.join(base, utils.category_for(os.path.basename(name)))
+    if os.path.normcase(os.path.abspath(there)) == os.path.normcase(os.path.abspath(here)):
+        return ""
+    return "" if _begun(name) else there
+
+
+def take_name(t, name, size=0):
+    """Write a video's name onto its task: the path, the name shown, the size
+    when the site said one - and that yt-dlp has been asked (task.yt_named)."""
+    t.save_path, t.filename = name, os.path.basename(name)
+    if size and not t.total_size:
+        t.total_size = int(size)
+    t.yt_named = True
+    t.meta_failed = False
+
+
+def _begun(name):
+    """Whether anything of this video is on disk already: the file, yt-dlp's
+    .part and .ytdl beside it, or the parts of a merge (Title.f137.mp4)."""
+    import glob
+    return bool(glob.glob(glob.escape(os.path.splitext(name)[0]) + ".*"))
+
+
+def _leave(folder, base):
+    """Remove the folder a download only waited in, if that left it empty
+    and it is one of the app's own, directly under the folder it sorts
+    into. rmdir takes nothing that holds a file."""
+    import utils
+    names = {c.lower() for c in utils.CATEGORIES} | {"other"}
+    if (os.path.basename(folder).lower() in names
+            and os.path.normcase(os.path.abspath(os.path.dirname(folder)))
+            == os.path.normcase(os.path.abspath(base))):
+        try:
+            os.rmdir(folder)
+        except OSError:
+            pass                    # still holds something
+
+
 class YtDlpDownloader:
     def __init__(self, dtask: "T.DownloadTask", segments=None):
         self.t = dtask
@@ -272,10 +439,9 @@ class YtDlpDownloader:
         download, and the finished file was moved out of Other afterwards.
 
         Once a run, when yt-dlp hands over the video it is about to download.
-        The folder changes only where the app chose it (task.sort_base) and
-        nothing of the download is in it yet: yt-dlp's partial is in the folder
-        the download began in, and moved now it would start again from nothing
-        beside it. Such a download is filed when it finishes, as before.
+        A download that waited has usually been named already (NameScout);
+        this is the same name by the same rules (folder_for), from the page as
+        it is now.
         """
         if self._settled:
             return
@@ -287,28 +453,13 @@ class YtDlpDownloader:
             return
         if not name:
             return
-        here = os.path.dirname(name)
-        base = getattr(self.t, "sort_base", None)
-        if base:
-            import utils
-            there = os.path.join(base, utils.category_for(os.path.basename(name)))
-            if (os.path.normcase(os.path.abspath(there)) != os.path.normcase(os.path.abspath(here))
-                    and not self._begun(name) and self._send_to(ydl, there)):
-                name = ydl.prepare_filename(info)
-                self._moved = True
-                self._leave(here, base)
-        self.t.save_path, self.t.filename = name, os.path.basename(name)
-        size = info.get("filesize") or info.get("filesize_approx") or 0
-        if size and not self.t.total_size:
-            self.t.total_size = int(size)
+        there = folder_for(self.t, name)
+        if there and self._send_to(ydl, there):
+            here, name = os.path.dirname(name), ydl.prepare_filename(info)
+            self._moved = True
+            _leave(here, self.t.sort_base)
+        take_name(self.t, name, info.get("filesize") or info.get("filesize_approx") or 0)
         log.info("yt-dlp named it: %s", self.t.filename)
-
-    @staticmethod
-    def _begun(name):
-        """Whether anything of this video is on disk already: the file, yt-dlp's
-        .part and .ytdl beside it, or the parts of a merge (Title.f137.mp4)."""
-        import glob
-        return bool(glob.glob(glob.escape(os.path.splitext(name)[0]) + ".*"))
 
     @staticmethod
     def _send_to(ydl, folder):
@@ -325,21 +476,6 @@ class YtDlpDownloader:
         # a "%" in a folder's name is not the start of a field
         templates["default"] = os.path.join(folder.replace("%", "%%"), "%(title)s.%(ext)s")
         return True
-
-    @staticmethod
-    def _leave(folder, base):
-        """Remove the folder the download only waited in, if that left it empty
-        and it is one of the app's own, directly under the folder it sorts
-        into. rmdir takes nothing that holds a file."""
-        import utils
-        names = {c.lower() for c in utils.CATEGORIES} | {"other"}
-        if (os.path.basename(folder).lower() in names
-                and os.path.normcase(os.path.abspath(os.path.dirname(folder)))
-                == os.path.normcase(os.path.abspath(base))):
-            try:
-                os.rmdir(folder)
-            except OSError:
-                pass                    # still holds something
 
     def _fetch(self, ydl, name, info):
         """The segmented engine fetches info's file into `name`, yt-dlp's name
@@ -378,6 +514,7 @@ class YtDlpDownloader:
     def run(self):
         self.t.status = T.DOWNLOADING
         self.t.error = ""
+        self.t.meta_failed = False      # a page that would not read while it waited
         self.t.supports_range = False
         log.info("yt-dlp start: %s", self.t.url)
         try:
@@ -409,64 +546,15 @@ class YtDlpDownloader:
             elif st == "finished":
                 final["path"] = d.get("filename") or final["path"]
 
-        http_headers = _http_headers(self.t)
-        ytlog = _YtLog()
-
-        opts = {
-            "outtmpl": os.path.join(out_dir.replace("%", "%%"), "%(title)s.%(ext)s"),
-            "noplaylist": True,
+        opts, ffdir = _choosing_opts(self.t, out_dir)
+        opts.update({
             "progress_hooks": [hook],
-            "logger": ytlog,
-            "quiet": True, "no_warnings": True, "noprogress": True,
+            "noprogress": True,
             "concurrent_fragment_downloads": 4,
             "retries": 5, "fragment_retries": 5,
             "continuedl": True,           # resume a paused/partial download
             "nopart": False,
-        }
-        if http_headers:
-            opts["http_headers"] = http_headers
-
-        import shutil, re, sys
-        # Locate ffmpeg (bundled with the app, or on PATH). With ffmpeg we can
-        # merge separate video+audio streams -> real 1080p/4K, and videos that
-        # only offer DASH (no combined stream) become downloadable. Without it we
-        # are limited to single muxed streams (<=720p on YouTube).
-        ffdir = None
-        _base = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
-        _bundled = os.path.join(_base, "bin", "ffmpeg.exe")
-        if os.path.exists(_bundled):
-            ffdir = os.path.dirname(_bundled)
-        else:
-            _which = shutil.which("ffmpeg")
-            if _which:
-                ffdir = os.path.dirname(_which)
-        if ffdir:
-            opts["ffmpeg_location"] = ffdir
-
-        # No JS runtime is bundled. yt-dlp warns that YouTube extraction without
-        # one is deprecated, but measured against real videos it currently changes
-        # nothing: the same 33 formats up to 2160p come back with and without a
-        # runtime, because YouTube is not demanding the "n challenge" for anonymous
-        # requests. Bundling one is not free either — deno is ~110 MB, and quickjs
-        # is 2 MB but yt-dlp ships no solver lib for it, so it must fetch one at
-        # solve time. Revisit when YouTube actually starts requiring it; the
-        # cookie fallback below is what fixes the failure seen in practice.
-
-        # Build a format string that never hard-fails with "requested format is
-        # not available": prefer a height-capped merge when ffmpeg is present,
-        # else a single muxed stream — always with a plain "b" fallback.
-        req = (getattr(self.t, "yt_format", "") or "").strip()
-        mh = re.search(r"height<=(\d+)", req)
-        h = mh.group(1) if mh else None
-        if req.startswith("ba"):                        # audio-only intent
-            opts["format"] = "ba[ext=m4a]/ba/b"
-        elif ffdir:
-            opts["format"] = (f"bv*[height<={h}]+ba/b[height<={h}]/b" if h else "bv*+ba/b")
-        else:
-            opts["format"] = (f"b[height<={h}]/b" if h else "b")
-
-        # respect the global TLS + proxy settings
-        opts.update(_net_opts())
+        })
 
         def _attempt(o):
             """One yt-dlp run. Returns its guess at the output path."""
@@ -479,30 +567,7 @@ class YtDlpDownloader:
                     return ""
 
         try:
-            try:
-                guess = _attempt(opts)
-            except (_Abort, _Failed):
-                raise
-            except Exception as e:
-                # YouTube answers a cookie-bearing request with a player response
-                # whose formats need the "n challenge" solved. Without a JS runtime
-                # yt-dlp cannot solve it, every video format drops out ("Only images
-                # are available") and extraction dies with "Requested format is not
-                # available" — while the very same URL with no cookies serves normal
-                # formats. That is why the browser's right-click download failed on a
-                # video that New Download handled: only the extension sends cookies.
-                # Cookies still matter for private/members-only videos, so try them
-                # first and fall back rather than dropping them outright. The retry
-                # also covers a plain transient extraction failure.
-                if not (_formats_unavailable(e)
-                        and any(k.lower() == "cookie" for k in http_headers)):
-                    raise
-                log.info("yt-dlp: no formats with cookies, retrying without them: %s",
-                         str(e)[:120])
-                retry = dict(opts)
-                retry["http_headers"] = {k: v for k, v in http_headers.items()
-                                         if k.lower() != "cookie"}
-                guess = _attempt(retry)
+            guess = _cookies_last(_attempt, opts)
             if self._fetched and os.path.exists(self._fetched):
                 path = self._fetched
             else:
@@ -591,3 +656,198 @@ class YtDlpDownloader:
         except OSError:
             return ""
         return newest[1] if newest else ""
+
+
+# ---- a name while it waits ---------------------------------------------------
+# A video page is added as "watch.bin": the link says nothing else. yt-dlp
+# knows the title once it has read the page, and a download does that as it
+# starts - so everything still waiting its turn was a row of "watch.bin", and
+# nobody could tell what was already in the list. NameScout reads the page for
+# those and gives each the name and folder its download will, as
+# torrent.MetadataPrefetcher does for a waiting magnet.
+NAME_TICK = 3.0               # how often it looks for a waiting video with no name
+# A page that would not read is asked for again: soon the first time - the
+# app starts with Windows, often before the network is up - and then ever
+# more seldom, for a video that is gone stays gone.
+NAME_RETRY_FIRST = 60.0
+NAME_RETRY = 900.0            # the second wait; twice as long each time after,
+NAME_RETRY_MAX = 6 * 3600.0   # up to this
+WAITING = (T.QUEUED, T.PAUSED, T.SCHEDULED)
+
+
+def _plain(err):
+    """yt-dlp's message without its colour codes and its "ERROR:"."""
+    import re
+    msg = re.sub(r"\x1b\[[0-9;]*m", "", str(err)).strip()
+    return re.sub(r"^ERROR:\s*", "", msg)[:200]
+
+
+def look_up(t, give_up=lambda: False):
+    """What the task's video will be called and how big it is, read off its
+    page: ``(path, size)``, in the folder the task is in. One extraction with
+    the options its download uses; nothing is downloaded.
+
+    ``("", 0)`` for a link with no one name to give: a playlist, of which no
+    more than the first entry is listed. None when `give_up()` says to stop
+    waiting - extraction cannot be interrupted, so it runs on a thread of its
+    own, as in can_extract, and an answer nobody waits for is dropped. Raises
+    what yt-dlp raised, and TimeoutError past EXTRACT_TIMEOUT.
+    """
+    opts, _ = _choosing_opts(t, os.path.dirname(t.save_path) or ".")
+    opts.update({"extract_flat": "in_playlist", "playlist_items": "1",
+                 "socket_timeout": 15})
+    url, box = t.url, {}
+
+    def attempt(o):
+        import yt_dlp                   # a first import is slow too; keep it here
+        with yt_dlp.YoutubeDL(o) as ydl:
+            info = ydl.extract_info(url, download=False)
+            if not info or info.get("_type") in ("playlist", "multi_video"):
+                return "", 0
+            size = info.get("filesize") or info.get("filesize_approx") or 0
+            return ydl.prepare_filename(info), int(size)
+
+    def look():
+        try:
+            box["found"] = _cookies_last(attempt, opts)
+        except Exception as e:          # unsupported page, login wall, no formats
+            box["error"] = e
+
+    th = threading.Thread(target=look, daemon=True, name="ytdlp-name")
+    th.start()
+    deadline = time.monotonic() + EXTRACT_TIMEOUT
+    while th.is_alive():
+        if give_up():
+            return None
+        if time.monotonic() >= deadline:
+            raise TimeoutError("the page took over %d s to read" % EXTRACT_TIMEOUT)
+        th.join(0.2)
+    if "error" in box:
+        raise box["error"]
+    return box["found"]
+
+
+class NameScout:
+    """Gives waiting videos their names, in the background.
+
+    One thread, one page at a time, NAME_TICK apart: what downloads next
+    first. The name is the one the download itself would give (look_up reads
+    the page with its options) and is written through `waiting_fn` -
+    QueueManager.while_waiting, which does it only while no worker has the
+    task. A download that starts while its page is being read names itself,
+    as it always has.
+    """
+
+    def __init__(self, tasks_fn, waiting_fn, enabled_fn=lambda: True, look_fn=None,
+                 clock=time.time):
+        self._tasks_fn = tasks_fn
+        self._waiting_fn = waiting_fn
+        self._enabled_fn = enabled_fn     # Settings -> Downloads, read every round
+        self._look_fn = look_fn or look_up
+        self._clock = clock
+        self._fails = {}              # task id -> pages that would not read, in a row
+        self._stop = threading.Event()
+        self._thread = None
+        # how many downloads it has settled: the window saves the list when
+        # this moves, since nobody did anything that would save it
+        self.named = 0
+
+    def start(self):
+        if self._thread:
+            return
+        self._thread = threading.Thread(target=self._loop, daemon=True, name="name-scout")
+        self._thread.start()
+
+    def stop(self):
+        self._stop.set()
+
+    def _loop(self):
+        while not self._stop.wait(NAME_TICK):
+            try:
+                self.run_once()
+            except Exception:
+                log.exception("name scout")
+
+    def _due(self, t, now):
+        return (t.status in WAITING and not getattr(t, "yt_named", False)
+                and not getattr(t, "_worker_alive", False)
+                and now >= float(getattr(t, "meta_retry_after", 0) or 0)
+                and is_ytdlp_task(t))
+
+    def _next(self):
+        tasks = list(self._tasks_fn() or [])
+        live = {t.id for t in tasks}
+        for gone in [k for k in self._fails if k not in live]:
+            del self._fails[gone]
+        now = self._clock()
+        due = [t for t in tasks if self._due(t, now)]
+        # what downloads next first: the queued before the paused
+        return min(due, key=lambda t: t.status == T.PAUSED) if due else None
+
+    def run_once(self):
+        """Name one waiting video. Returns the task asked about, or None."""
+        if not self._enabled_fn():
+            return None
+        t = self._next()
+        if t is None or not available():
+            return None
+        was = t.save_path
+        t.meta_fetching = True          # the card says "Fetching details…"
+        try:
+            found = self._look_fn(
+                t, lambda: self._stop.is_set() or t.status not in WAITING)
+        except Exception as e:
+            self._failed(t, e)
+            return t
+        finally:
+            t.meta_fetching = False
+        if found is None:
+            return t                    # its download started, or the app is closing
+        name, size = found
+        here = os.path.dirname(name)
+        there = folder_for(t, name) if name else ""
+        if there:
+            # the folder is made before the lock is taken: a disk that has to
+            # spin up must not hold the whole queue still
+            try:
+                os.makedirs(there, exist_ok=True)
+                name = os.path.join(there, os.path.basename(name))
+            except OSError as e:
+                log.debug("cannot use %s: %s", there, e)
+                there = ""
+        taken = []
+
+        def take():
+            if t.save_path != was:
+                return                  # renamed or moved by hand meanwhile: asked again
+            if name:
+                take_name(t, name, size)
+            else:
+                t.yt_named = True       # asked: a playlist has no one name
+                t.meta_failed = False
+            taken.append(True)
+
+        self._waiting_fn(t, take)
+        if not taken:
+            return t
+        self._fails.pop(t.id, None)
+        self.named += 1
+        if name:
+            if there:
+                _leave(here, t.sort_base)
+            log.info("named while it waits: %s", t.filename)
+        return t
+
+    def _failed(self, t, why):
+        n = self._fails.get(t.id, 0) + 1
+        self._fails[t.id] = n
+        wait = (NAME_RETRY_FIRST if n == 1
+                else min(NAME_RETRY * 2 ** (n - 2), NAME_RETRY_MAX))
+        t.meta_failed = True
+        t.meta_retry_after = self._clock() + wait
+        reason = _plain(why)
+        if n == 1:                      # once: the next tries say the same
+            t.log_event("Could not read the page while it waits: " + reason,
+                        level="WARNING")
+        log.info("no name yet for %s (try %d, next in %d min): %s",
+                 t.filename, n, wait // 60, reason)

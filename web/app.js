@@ -486,7 +486,9 @@ function subtitle(d, bps) {
   if (d.status === "Error") return d.error || "Failed";
   if (d.verifying) return "Checking files — " + d.verifiedPercent + "%";
   if (d.metaFailed) return "No details yet";
-  if (d.fetchingMeta) return "Reading torrent details…";
+  // a waiting video's page is read for its name too (yt_dl.NameScout)
+  if (d.fetchingMeta) return d.isTorrent ? "Reading torrent details…"
+                                         : "Reading video details…";
   if (d.isTorrent && !d.totalBytes) return "Reading torrent details…";
   if (d.seeding) return "Seeding · " + swarm(d) +
                         (d.upSpeed ? " · ↑ " + speed(d.upSpeed) : "");

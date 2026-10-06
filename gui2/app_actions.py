@@ -151,6 +151,10 @@ class ActionsMixin:
         # nothing on disk yet (queued/paused HTTP): just retarget the destination
         t.save_path = target
         t.filename = os.path.basename(target)
+        # the user chose this folder: the app files it nowhere else from now
+        # on. Left as it was, a video went back under Video when it was named
+        # and a magnet when its metadata came.
+        t.sort_base = ""
         t.log_event(f"Moved to {dest_dir}")
         self._save_state()
         self.refresh()

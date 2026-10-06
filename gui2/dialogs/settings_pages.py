@@ -170,6 +170,11 @@ class PageBuilderMixin:
                   "Auto-sort into Video / Music / Images / … subfolders by file type, "
                   "Other for the rest. A torrent is filed by its biggest file, before "
                   "it starts.", self.categorize)
+        self.name_waiting = self._toggle(ex.get("name_waiting_videos", True))
+        self._row(g, "Name videos while they wait",
+                  "Reads the page of a queued or paused video once, so the list "
+                  "shows its title and size and not \"watch.bin\". Off means it "
+                  "is named when it starts.", self.name_waiting)
         self.speed_limit = self._combo(["Unlimited", "1 Mb/s", "2 Mb/s", "5 Mb/s", "10 Mb/s", "25 Mb/s", "50 Mb/s", "100 Mb/s"], ex.get("speed_limit"), editable=True)
         self._row(g, "Download Speed Limit",
                   "For everything HyperFetch downloads, torrents included. "

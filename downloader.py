@@ -609,9 +609,7 @@ class Downloader:
         # New Download toggle or auto-detected by host/extension. Not a direct
         # file, so it can't be byte-split.
         import yt_dl
-        if (getattr(self.t, "use_ytdlp", False) or yt_dl.is_ytdlp_url(self.t.url)
-                or yt_dl.is_dash(self.t.url, self.t.filename, self._probe_ctype)
-                or utils.host_rule(self.t.url).get("ytdlp")):
+        if yt_dl.is_ytdlp_task(self.t, self._probe_ctype):
             yt_dl.YtDlpDownloader(self.t, segments=self.num_segments).run()
             return
 

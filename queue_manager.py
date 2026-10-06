@@ -219,6 +219,23 @@ class QueueManager:
                 task.clear_pause()
             self.add_task(task)
 
+    def while_waiting(self, task, change):
+        """Make a change to a task only while it waits - queued, paused or
+        scheduled, and no worker has it. True when `change()` was called.
+
+        With the lock held, so the scheduler cannot start the task half-way
+        through. A worker notes where its file goes as it starts; a name or
+        folder written just after would point somewhere else than the file
+        (yt_dl.NameScout names waiting videos through this). `change` must
+        be quick: everything that needs the lock waits for it.
+        """
+        with self.cond:
+            if (task not in self.tasks or getattr(task, "_worker_alive", False)
+                    or task.status not in (T.QUEUED, T.PAUSED, T.SCHEDULED)):
+                return False
+            change()
+            return True
+
     def pause_task(self, task: "T.DownloadTask"):
         with self.cond:
             if task.status in (T.DOWNLOADING, T.QUEUED):
