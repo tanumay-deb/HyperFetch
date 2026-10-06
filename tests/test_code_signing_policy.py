@@ -1,6 +1,6 @@
 """The code signing policy SignPath Foundation asks a project to publish.
 
-An application for its free certificate was made on 2026-10-07. Its terms
+An application for its free certificate was made on 2026-10-06. Its terms
 (https://signpath.org/terms) want, on the project's own pages, a section headed
 "Code signing policy" that carries their attribution line word for word, says
 who commits and who approves, and links the privacy policy. The section also
