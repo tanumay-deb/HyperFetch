@@ -56,6 +56,7 @@ class _Site:
         self.fields = {}                     # extra fields for the chosen format
         self.merge = False
         self.post = None                     # yt-dlp's post-processors, given the file
+        self.on_dl = None                    # told the name as yt-dlp starts a fetch
         server.tokens = set()
 
     def extract(self, ydl):
@@ -84,6 +85,8 @@ class _YDL:
     def __init__(self, site, opts):
         self.site, self.opts = site, opts
         self.cookiejar = http.cookiejar.CookieJar()
+        # as the real one holds it: read each time a name is made
+        self.params = {"outtmpl": {"default": opts["outtmpl"]}}
 
     def __enter__(self):
         return self
@@ -127,6 +130,8 @@ class _YDL:
         if os.path.exists(name):
             return True, False                       # "has already been downloaded"
         self.site.own.append(info["url"])
+        if self.site.on_dl:
+            self.site.on_dl(name)
         r = requests.get(info["url"], headers=info.get("http_headers"),
                          cookies=self.cookiejar, timeout=30)
         r.raise_for_status()
@@ -137,7 +142,8 @@ class _YDL:
         return True, True
 
     def prepare_filename(self, info):
-        return self.opts["outtmpl"] % info
+        tmpl = self.params["outtmpl"]["default"]
+        return (tmpl.replace("%%", "\0") % info).replace("\0", "%")
 
 
 @pytest.fixture
@@ -490,6 +496,112 @@ def test_the_finished_video_is_filed_under_video(site, media_server, tmp_path):
     assert not os.path.exists(os.path.join(base, "Other"))
 
 
+# ---- named and filed before it downloads --------------------------------------
+# A pasted video page is added as "download.bin" in Other: nobody knows what it
+# is yet. yt-dlp knows the moment it has read the page, and used to keep it to
+# itself until the file was finished - so the list said "download.bin" for the
+# whole download, and the finished file was moved out of Other afterwards.
+
+def _added(media_server, tmp_path, base=None):
+    """A video page added the way the app adds one it knows nothing about."""
+    base = base or str(tmp_path / "dl")
+    os.makedirs(base, exist_ok=True)
+    page = media_server.url("watch/8xGJx1")
+    folder, sort_base = utils.place_download(base, page, "download.bin")
+    t = T.DownloadTask(page, utils.unique_path(folder, "download.bin"))
+    t.sort_base, t.use_ytdlp = sort_base, True
+    return t, base
+
+
+def test_the_task_has_its_real_name_before_a_byte_is_fetched(site, media_server, tmp_path):
+    site.merge = True                           # yt-dlp fetches these itself
+    t = _task(media_server, tmp_path)
+    named = []
+    site.on_dl = lambda name: named.append((t.filename, t.save_path))
+
+    Downloader(t, segments=4).run()
+
+    assert t.status == T.COMPLETED, t.error
+    assert named[0] == (TITLE + ".mp4", str(tmp_path / (TITLE + ".mp4"))), (
+        "still called %r when yt-dlp started fetching" % (named[0],))
+
+
+def test_it_is_in_its_folder_before_it_downloads(site, media_server, tmp_path):
+    site.merge = True
+    t, base = _added(media_server, tmp_path)
+    assert os.path.dirname(t.save_path) == os.path.join(base, "Other")
+    fetched_into = []
+    site.on_dl = lambda name: fetched_into.append(os.path.dirname(name))
+
+    Downloader(t, segments=4).run()
+
+    assert t.status == T.COMPLETED, t.error
+    assert set(fetched_into) == {os.path.join(base, "Video")}, fetched_into
+    assert t.save_path == os.path.join(base, "Video", TITLE + ".mp4")
+    assert not os.path.exists(os.path.join(base, "Other")), (
+        "the folder it only waited in was left behind, empty")
+
+
+def test_the_segmented_engine_fetches_into_that_folder_too(site, media_server, tmp_path):
+    t, base = _added(media_server, tmp_path)
+
+    Downloader(t, segments=4).run()
+
+    assert t.status == T.COMPLETED, t.error
+    assert t.save_path == os.path.join(base, "Video", TITLE + ".mp4")
+    assert open(t.save_path, "rb").read() == site.data
+    assert not site.own, "yt-dlp fetched it itself"
+    assert not os.path.exists(os.path.join(base, "Other"))
+
+
+def test_an_audio_only_download_goes_to_music(site, media_server, tmp_path):
+    site.fields = {"ext": "m4a", "vcodec": "none"}
+    t, base = _added(media_server, tmp_path)
+    t.yt_format = "ba"
+
+    Downloader(t, segments=4).run()
+
+    assert t.status == T.COMPLETED, t.error
+    assert t.save_path == os.path.join(base, "Music", TITLE + ".m4a")
+
+
+def test_a_folder_the_user_chose_is_not_changed(site, media_server, tmp_path):
+    chosen = tmp_path / "my clips"
+    chosen.mkdir()
+    t = T.DownloadTask(media_server.url("watch/8xGJx1"), str(chosen / "download.bin"))
+    t.sort_base, t.use_ytdlp = "", True         # "": the user picked the place
+
+    Downloader(t, segments=4).run()
+
+    assert t.status == T.COMPLETED, t.error
+    assert t.save_path == str(chosen / (TITLE + ".mp4"))
+
+
+def test_a_download_already_begun_stays_where_it_is(site, media_server, tmp_path):
+    """yt-dlp's partial is in the folder the download began in. Moved now, it
+    would start again from nothing beside it."""
+    site.merge = True
+    t, base = _added(media_server, tmp_path)
+    other = os.path.join(base, "Other")
+    with open(os.path.join(other, TITLE + ".f720p.mp4.part"), "wb") as f:
+        f.write(b"x" * 100)
+
+    Downloader(t, segments=4).run()
+
+    assert t.status == T.COMPLETED, t.error
+    assert t.save_path == os.path.join(other, TITLE + ".mp4")
+
+
+def test_a_percent_sign_in_the_folder_does_not_break_the_name(site, media_server, tmp_path):
+    site.merge = True
+    t, base = _added(media_server, tmp_path, base=str(tmp_path / "100% mine"))
+
+    Downloader(t, segments=4).run()
+
+    assert t.status == T.COMPLETED, t.error
+    assert t.save_path == os.path.join(base, "Video", TITLE + ".mp4")
+
+
 # ---- the real yt-dlp ---------------------------------------------------------
 @pytest.fixture
 def real_ytdlp():
@@ -597,3 +709,31 @@ def test_with_the_real_ytdlp_the_cdn_sees_what_ytdlp_itself_sends(
         assert seen(own[0], "cookie") == ["pref=1", "sess=abc"]
     else:
         assert seen(own[0], "cookie") == ""
+
+
+def test_with_the_real_ytdlp_the_video_is_named_and_filed_first(real_ytdlp, video_page,
+                                                               media_server, make_payload,
+                                                               tmp_path):
+    data = media_server.put("media/clip.mp4", make_payload(SIZE), etag='"v1"')
+    page = video_page("/watch/2", media_server.url("media/clip.mp4"))
+    base = str(tmp_path / "dl")
+    os.makedirs(base)
+    folder, sort_base = utils.place_download(base, page, "download.bin")
+    t = T.DownloadTask(page, utils.unique_path(folder, "download.bin"))
+    t.sort_base, t.use_ytdlp = sort_base, True
+    media_server.rate = 2 * 1024 * 1024         # slow enough to look while it runs
+    th = _start(t)
+    try:
+        assert _wait_for(lambda: t.downloaded > 0), "never got going"
+        midway = (t.filename, os.path.dirname(t.save_path))
+    finally:
+        media_server.rate = 0
+        th.join(30)
+
+    assert t.status == T.COMPLETED, t.error
+    assert midway[0].startswith(TITLE) and midway[0].endswith(".mp4"), midway
+    assert midway[1] == os.path.join(base, "Video"), midway
+    assert t.save_path == os.path.join(base, "Video", midway[0])
+    assert open(t.save_path, "rb").read() == data
+    assert not os.path.exists(os.path.join(base, "Other"))
+

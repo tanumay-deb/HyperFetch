@@ -219,6 +219,8 @@ class YtDlpDownloader:
         # default)
         self.segments = segments
         self._fetched = ""              # the file the engine finished, if it did
+        self._settled = False           # named and filed already, this run
+        self._moved = False             # ...into another folder than it began in
 
     def _take_over_plain_files(self, ydl):
         """Have the app's segmented engine fetch the video when yt-dlp would
@@ -234,12 +236,16 @@ class YtDlpDownloader:
         """
         process_info = getattr(ydl, "process_info", None)
         dl = getattr(ydl, "dl", None)
-        if process_info is None or dl is None or self.segments == 1:
+        if process_info is None:
             return
+        take_over = dl is not None and self.segments != 1
         whole = [False]
 
         def _process_info(info, *a, **kw):
-            whole[0] = not info.get("requested_formats")
+            # yt-dlp has read the page and is about to download this video:
+            # the first moment its name and kind are known
+            self._settle(ydl, info)
+            whole[0] = take_over and not info.get("requested_formats")
             try:
                 return process_info(info, *a, **kw)
             finally:
@@ -253,7 +259,87 @@ class YtDlpDownloader:
             return dl(name, info, *a, **kw)
 
         ydl.process_info = _process_info
-        ydl.dl = _dl
+        if take_over:
+            ydl.dl = _dl
+
+    def _settle(self, ydl, info):
+        """Give the task its real name and folder, before a byte is fetched.
+
+        A pasted video page is added as "download.bin" in Other: nobody knows
+        what it is yet. yt-dlp knows once it has read the page - the title, the
+        container, so Video or Music - and used to keep that to itself until
+        the file was finished. The list said "download.bin" for the whole
+        download, and the finished file was moved out of Other afterwards.
+
+        Once a run, when yt-dlp hands over the video it is about to download.
+        The folder changes only where the app chose it (task.sort_base) and
+        nothing of the download is in it yet: yt-dlp's partial is in the folder
+        the download began in, and moved now it would start again from nothing
+        beside it. Such a download is filed when it finishes, as before.
+        """
+        if self._settled:
+            return
+        self._settled = True
+        try:
+            name = ydl.prepare_filename(info)
+        except Exception as e:
+            log.debug("yt-dlp: no name for %s yet: %s", self.t.url, e)
+            return
+        if not name:
+            return
+        here = os.path.dirname(name)
+        base = getattr(self.t, "sort_base", None)
+        if base:
+            import utils
+            there = os.path.join(base, utils.category_for(os.path.basename(name)))
+            if (os.path.normcase(os.path.abspath(there)) != os.path.normcase(os.path.abspath(here))
+                    and not self._begun(name) and self._send_to(ydl, there)):
+                name = ydl.prepare_filename(info)
+                self._moved = True
+                self._leave(here, base)
+        self.t.save_path, self.t.filename = name, os.path.basename(name)
+        size = info.get("filesize") or info.get("filesize_approx") or 0
+        if size and not self.t.total_size:
+            self.t.total_size = int(size)
+        log.info("yt-dlp named it: %s", self.t.filename)
+
+    @staticmethod
+    def _begun(name):
+        """Whether anything of this video is on disk already: the file, yt-dlp's
+        .part and .ytdl beside it, or the parts of a merge (Title.f137.mp4)."""
+        import glob
+        return bool(glob.glob(glob.escape(os.path.splitext(name)[0]) + ".*"))
+
+    @staticmethod
+    def _send_to(ydl, folder):
+        """Point yt-dlp's output at another folder. It reads its template each
+        time it names a file, so changing it now is in time for this video."""
+        templates = (getattr(ydl, "params", None) or {}).get("outtmpl")
+        if not isinstance(templates, dict) or "default" not in templates:
+            return False
+        try:
+            os.makedirs(folder, exist_ok=True)
+        except OSError as e:
+            log.debug("yt-dlp: cannot use %s: %s", folder, e)
+            return False
+        # a "%" in a folder's name is not the start of a field
+        templates["default"] = os.path.join(folder.replace("%", "%%"), "%(title)s.%(ext)s")
+        return True
+
+    @staticmethod
+    def _leave(folder, base):
+        """Remove the folder the download only waited in, if that left it empty
+        and it is one of the app's own, directly under the folder it sorts
+        into. rmdir takes nothing that holds a file."""
+        import utils
+        names = {c.lower() for c in utils.CATEGORIES} | {"other"}
+        if (os.path.basename(folder).lower() in names
+                and os.path.normcase(os.path.abspath(os.path.dirname(folder)))
+                == os.path.normcase(os.path.abspath(base))):
+            try:
+                os.rmdir(folder)
+            except OSError:
+                pass                    # still holds something
 
     def _fetch(self, ydl, name, info):
         """The segmented engine fetches info's file into `name`, yt-dlp's name
@@ -327,7 +413,7 @@ class YtDlpDownloader:
         ytlog = _YtLog()
 
         opts = {
-            "outtmpl": os.path.join(out_dir, "%(title)s.%(ext)s"),
+            "outtmpl": os.path.join(out_dir.replace("%", "%%"), "%(title)s.%(ext)s"),
             "noplaylist": True,
             "progress_hooks": [hook],
             "logger": ytlog,
@@ -425,7 +511,9 @@ class YtDlpDownloader:
                 # earlier run is garbage now
                 import downloader
                 downloader.discard_partial(self.t)
-            if not (path and os.path.exists(path)):
+            if not (path and os.path.exists(path)) and not self._moved:
+                # by what is new in the folder - which says nothing in a folder
+                # the download moved to after that list was taken
                 path = self._newest(out_dir, _pre_existing)
             if path and os.path.exists(path):
                 self.t.save_path = path
