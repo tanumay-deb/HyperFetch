@@ -314,6 +314,43 @@ def test_what_yt_dlp_left_on_disk_is_renamed_with_it_and_nothing_else(tmp_path, 
         [n.replace("A video", "Lecture 1", 1) for n in left] + others)
 
 
+def test_a_subtitle_or_a_note_beside_it_is_not_yt_dlps(tmp_path, queue):
+    """The parts of a merge are named "Title.f137.mp4", and anything shaped
+    like that was taken for one: "A video.fr.srt" - a subtitle the user put
+    there - was renamed with the video, and so were "A video.full.txt" and
+    "A video.temp.txt". A part of a merge is a video or an audio file; these
+    are the user's."""
+    video = tmp_path / "Video"
+    video.mkdir()
+    t = T.DownloadTask(YOUTUBE, str(video / "A video.mp4"), filename="A video.mp4",
+                       status=T.PAUSED)
+    t.yt_named = True
+    queue.add_task(t, start=False)
+    left = ["A video.f137.mp4", "A video.f251.webm.part", "A video.temp.mkv"]
+    mine = ["A video.fr.srt", "A video.fr.srt.part", "A video.full.txt",
+            "A video.final.pdf", "A video.temp.txt"]
+    for name in left + mine:
+        (video / name).write_bytes(b"x")
+
+    assert yt_dl.rename(queue, t, "Lecture 1.mp4")
+
+    assert sorted(os.listdir(video)) == sorted(
+        [n.replace("A video", "Lecture 1", 1) for n in left] + mine)
+
+
+def test_a_name_with_only_a_subtitle_beside_it_is_free(tmp_path, queue):
+    """...and such a file does not make its name one that is taken."""
+    t = T.DownloadTask(YOUTUBE, str(tmp_path / "A video.mp4"), filename="A video.mp4",
+                       status=T.PAUSED)
+    t.yt_named = True
+    queue.add_task(t, start=False)
+    (tmp_path / "Lecture 1.fr.srt").write_bytes(b"x")
+
+    assert yt_dl.rename(queue, t, "Lecture 1.mp4")
+
+    assert t.filename == "Lecture 1.mp4"
+
+
 def test_a_name_another_downloads_partial_has_is_taken(tmp_path, queue):
     """yt-dlp would carry on from that partial, into this video."""
     t = T.DownloadTask(YOUTUBE, str(tmp_path / "A video.mp4"), filename="A video.mp4",

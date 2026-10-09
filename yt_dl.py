@@ -476,12 +476,19 @@ def _left(path):
     it is done: its .part and .ytdl, a fragmented download's fragments, the
     parts of a merge and theirs (Title.f137.mp4.part), a merge it was making
     (Title.temp.mp4). Not the video itself, nor anything else that only
-    begins like it: those may be the user's."""
+    begins like it: those may be the user's.
+
+    A part of a merge is a video or an audio file (_CONTAINERS). Anything
+    shaped "Title.f<something>.<anything>" passed for one before, so a
+    subtitle the user kept beside the video ("Title.fr.srt") or a note
+    ("Title.full.txt") was renamed with it. A video or audio file of the
+    user's named that way still passes: a format's id can be any word."""
     import re
     was, ext = os.path.splitext(os.path.basename(path))
     tail = r"(?:\.part(?:-Frag\d+)?(?:\.part)?|\.ytdl)"
-    left = re.compile(r"%s\.(?:(?:f[^.]+|temp)\.[^.]+%s?|%s%s)" % (
-        re.escape(was), tail, re.escape(ext[1:]), tail))
+    media = "|".join(sorted(re.escape(e[1:]) for e in _CONTAINERS if e != ".bin"))
+    left = re.compile(r"%s\.(?:(?:f[^.]+|temp)\.(?:%s)%s?|%s%s)" % (
+        re.escape(was), media, tail, re.escape(ext[1:]), tail))
     try:
         return [n for n in os.listdir(os.path.dirname(path) or ".") if left.fullmatch(n)]
     except OSError:
