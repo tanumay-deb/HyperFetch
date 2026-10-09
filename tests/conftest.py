@@ -1,9 +1,10 @@
 """Shared pytest fixtures: isolated app-data, deterministic local HTTP servers.
 
 Every test runs against a temp app-data dir (real %APPDATA% state is never
-touched) and against in-process http.server handlers (no external network, so
-the suite is hermetic and CI-safe). Cyclic garbage is collected only on the
-main thread, between tests.
+touched), a temp folder of its own (the real one holds the downloads of an
+app that may be running) and in-process http.server handlers (no external
+network, so the suite is hermetic and CI-safe). Cyclic garbage is collected
+only on the main thread, between tests.
 """
 import gc
 import os
@@ -11,6 +12,7 @@ import sys
 import time
 import string
 import struct
+import tempfile
 import threading
 import http.server
 
@@ -23,6 +25,9 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import utils  # noqa: E402
+
+# The machine's own temp folder, read before any test is given another.
+REAL_TEMP = tempfile.gettempdir()
 
 
 # --------------------------------------------------------- garbage collection
@@ -64,6 +69,26 @@ def isolate_appdata(tmp_path, monkeypatch):
     d.mkdir()
     monkeypatch.setattr(utils, "app_data_dir", lambda: str(d))
     monkeypatch.setattr(utils, "VERIFY_TLS", True, raising=False)
+    yield d
+
+
+@pytest.fixture(autouse=True)
+def isolate_temp(tmp_path_factory, monkeypatch):
+    """Give every test a temp folder of its own.
+
+    The app keeps its in-progress downloads in the temp folder and, as it
+    starts, removes the ones that belong to no download it knows. A test that
+    loads the app's state knows none - so on a machine where HyperFetch was
+    downloading, running the tests removed that app's temp files: the partial
+    of every paused download, and on 2026-10-09 a 2 GB one in the seconds it
+    was being copied into place (it failed at 100% with "disk error").
+    Child processes get the folder too. It is beside the test's tmp_path, not
+    in it: tests list that one to see that nothing was saved.
+    """
+    d = tmp_path_factory.mktemp("temp")
+    monkeypatch.setattr(tempfile, "tempdir", str(d))
+    for var in ("TMPDIR", "TEMP", "TMP"):
+        monkeypatch.setenv(var, str(d))
     yield d
 
 

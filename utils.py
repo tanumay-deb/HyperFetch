@@ -13,10 +13,72 @@ import urllib.parse
 DEFAULT_HEADERS = {"User-Agent": "Mozilla/5.0 (HyperFetch)"}
 
 
+def temp_dir():
+    """The folder this installation keeps its in-progress temp files in: one
+    for each app-data folder, inside the system temp folder.
+
+    They were straight in the temp folder, where every HyperFetch on the
+    machine kept its own - the desktop app, the server beside it, a second
+    window started with another app-data folder - and each took the others'
+    for leftovers of its own (sweep_orphan_temps). Whose a temp file is, is
+    now told by where it is."""
+    import zlib
+    home = os.path.normcase(os.path.abspath(app_data_dir()))
+    tag = zlib.crc32(home.encode("utf-8", "surrogatepass")) & 0xFFFFFFFF
+    return os.path.join(tempfile.gettempdir(), "HyperFetch-%08x" % tag)
+
+
 def temp_download_path(task_id):
     """The in-progress ``.hfdownload`` temp file for a task (one place defines the
-    convention; downloader + HLS both use it)."""
-    return os.path.join(tempfile.gettempdir(), f"{task_id}.hfdownload")
+    convention; downloader + HLS both use it): in temp_dir, which is made
+    here. A download begun before there was such a folder has its file
+    straight in the temp folder, and goes on from that."""
+    name = f"{task_id}.hfdownload"
+    old = os.path.join(tempfile.gettempdir(), name)
+    if os.path.exists(old):
+        return old
+    folder = temp_dir()
+    try:
+        os.makedirs(folder, exist_ok=True)
+    except OSError:
+        return old                  # no folder of our own: where they always were
+    return os.path.join(folder, name)
+
+
+# What a crash left behind is removed once nobody has written it for this long.
+ORPHAN_AGE = 24 * 60 * 60
+
+
+def sweep_orphan_temps(known_ids, now=None):
+    """Remove the temp files in this installation's own folder (temp_dir) that
+    belong to no download in `known_ids` and that nobody has written for
+    ORPHAN_AGE: what a crash left behind. Returns the paths removed.
+
+    Only there, and only old ones. The window used to remove, as it started,
+    every ``*.hfdownload`` in the temp folder that its own list did not name.
+    Another HyperFetch's files are not in that list: the server's beside the
+    desktop app, or the first app's when a second window is started with an
+    app-data folder of its own. A file being written cannot be deleted on
+    Windows - but one not being written can: every paused download's partial,
+    and a finished one in the seconds it is copied to another drive. That
+    last cost a 2 GB download on 2026-10-09 (finalize_download). A file
+    straight in the temp folder, where they all were, is nobody's to remove:
+    whose it is cannot be told.
+    """
+    import glob
+    import time
+    now = time.time() if now is None else now
+    removed = []
+    for path in glob.glob(os.path.join(glob.escape(temp_dir()), "*.hfdownload")):
+        tid = os.path.basename(path)[:-len(".hfdownload")]
+        try:
+            if tid in known_ids or now - os.path.getmtime(path) < ORPHAN_AGE:
+                continue
+            os.remove(path)
+            removed.append(path)
+        except OSError:
+            pass                    # in use after all, or gone already
+    return removed
 
 
 _FSCTL_SET_SPARSE = 0x000900C4
@@ -109,12 +171,34 @@ def finalize_download(temp_path, dest_path):
     final path (atomic same-volume swap). On failure the staging file is cleaned
     up and the OSError re-raised, so the caller can set the task error and leave
     the temp in place for a retry. Shared by the byte downloader and the HLS
-    grabber."""
+    grabber.
+
+    A copy that is whole is kept when the move then fails for want of its
+    source. Across drives a move is a copy and then a remove; Windows copies
+    with the source open for others to delete (Python 3.12 on), so another
+    program's delete of the temp file succeeds meanwhile, the copy finishes,
+    and the remove fails with WinError 2. Measured: 1.5 GB from C: to D:,
+    removed 0.17 s into the move - the copy at the other end was whole. It
+    was thrown away as a failed move all the same, and the download said
+    "disk error" at 100% (2026-10-09; sweep_orphan_temps has who removed it)."""
     import shutil
     staged = dest_path + ".hfmove"
     unsparse(temp_path)
     try:
-        shutil.move(temp_path, staged)
+        size = os.path.getsize(temp_path)
+    except OSError:
+        size = -1                   # not there: the move says so below
+    try:
+        try:
+            shutil.move(temp_path, staged)
+        except OSError:
+            whole = (size >= 0 and not os.path.exists(temp_path)
+                     and os.path.isfile(staged) and os.path.getsize(staged) == size)
+            if not whole:
+                raise
+            logging.getLogger("hyperfetch.downloader").warning(
+                "the temp file %s went while it was being moved; the copy is whole "
+                "and is kept", os.path.basename(temp_path))
         os.replace(staged, dest_path)
     except OSError:
         try:

@@ -322,17 +322,12 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, Up
         if skipped:
             _log.warning("%d download(s) in %s could not be restored",
                          skipped, self._state_path)
-        # Orphan .hfdownload sweep — clean up temp files from crashed sessions
-        import glob, tempfile
-        known_ids = {t.id for t in self.queue.tasks}
-        for pattern_dir in (tempfile.gettempdir(),):
-            for temp_file in glob.glob(os.path.join(pattern_dir, "*.hfdownload")):
-                tid = os.path.splitext(os.path.basename(temp_file))[0]
-                if tid not in known_ids:
-                    try:
-                        os.remove(temp_file)
-                    except OSError:
-                        pass
+        # What a crash left behind in this installation's own temp folder,
+        # once it is a day old - and nobody else's (utils.sweep_orphan_temps:
+        # this used to remove every temp file the list did not name, another
+        # HyperFetch's downloads among them).
+        for path in utils.sweep_orphan_temps({t.id for t in self.queue.tasks}):
+            _log.info("removed a temp file no download owns: %s", os.path.basename(path))
 
     def _save_state(self):
         # Refuse to write when the list could not be READ this session: the
