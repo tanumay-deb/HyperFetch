@@ -73,6 +73,15 @@ def isolate_appdata(tmp_path, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def no_ffmpeg_unasked(monkeypatch):
+    """The HLS engine rewrites what it fetched with ffmpeg when the machine
+    has one (hls.remux). A test that wants that says so; every other test
+    gets the same result on a machine with ffmpeg as on one without."""
+    import hls
+    monkeypatch.setattr(hls, "ffmpeg_path", lambda: None)
+
+
+@pytest.fixture(autouse=True)
 def isolate_temp(tmp_path_factory, monkeypatch):
     """Give every test a temp folder of its own.
 

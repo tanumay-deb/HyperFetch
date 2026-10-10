@@ -399,6 +399,9 @@ class DownloadCardWidget(QFrame):
                                  % (human_size(seen), human_size(total), pct))
             else:
                 self.sub.setText("Rechecking…")
+        elif t.status == T.DOWNLOADING and getattr(t, "finishing", False):
+            # everything is fetched; ffmpeg is rewriting it (hls.remux)
+            self.sub.setText("Saving as MP4…")
         elif done and getattr(t, "seeding", False):
             up = human_speed(getattr(t, "tor_upload", 0) or 0)
             bits = ["Seeding"]

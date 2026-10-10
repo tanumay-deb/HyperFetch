@@ -192,6 +192,10 @@ class DownloadTask:
         # torrent "active", so without this a seeding task would sit at 100%
         # looking like it had hung
         self.seeding = False
+        # an HLS download rewriting what it fetched as an ordinary MP4
+        # (hls.remux): at 100% with no speed, and for a big file for a while,
+        # so the card says so. Transient.
+        self.finishing = False
         # Metadata prefetch (magnets only). Transient: a fetch is cheap to
         # repeat and a stale 'failed' must not outlive the session.
         self.meta_fetching = False

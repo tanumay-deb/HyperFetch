@@ -3,8 +3,11 @@
 Web video is usually delivered as an HLS playlist: a small text manifest that
 lists many short .ts/.m4s segments. Downloading the .m3u8 itself just saves the
 text, not the video — you have to fetch every segment and join them. This module
-does that: master->variant selection, AES-128 decryption, raw concat into one
-.ts file (plays in VLC / most players without ffmpeg), with pause/cancel/progress.
+does that: master->variant selection, AES-128 decryption, the segments joined
+into one file, with pause/cancel/progress. With ffmpeg at hand that file is
+then rewritten as an ordinary MP4 (remux), which a player can seek in at once;
+without it the joined file is what is saved - a .ts, or a fragmented .mp4 for
+fMP4 playlists - which plays in VLC and most players all the same.
 A live stream has no end to fetch, so it is reported as one, not saved as the
 few seconds its playlist happens to list.
 """
@@ -15,6 +18,7 @@ import logging
 import tempfile
 import struct
 import threading
+import subprocess
 import urllib.parse
 from concurrent.futures import ThreadPoolExecutor
 
@@ -193,6 +197,95 @@ def _media_sequence(text):
     return int(m.group(1)) if m else 0
 
 
+def ffmpeg_path():
+    """ffmpeg - the app's own (bin/) or one on PATH - or None."""
+    import yt_dl
+    folder = yt_dl._ffmpeg_dir()
+    for name in ("ffmpeg.exe", "ffmpeg"):
+        if folder and os.path.isfile(os.path.join(folder, name)):
+            return os.path.join(folder, name)
+    return None
+
+
+def remux(src, dst, seconds=0.0, should_stop=lambda: False):
+    """Rewrite a joined HLS download, `src`, as an ordinary MP4 at `dst`: the
+    same video and audio, copied, with the index a player seeks by. True when
+    `dst` is whole. False, and no `dst` left, when there is no ffmpeg, it
+    failed, what came out is shorter than `seconds` (the playlist's length;
+    0: unknown), or `should_stop()` said so - a pause or a cancel, asked five
+    times a second.
+
+    What is joined plays, but a player cannot seek in it. Measured in VLC
+    3.0.24 on its Direct3D output (2026-10-10), frames shown in the first,
+    second and third second after each +5 s skip:
+      an ordinary MP4                      45 / 30 / 30
+      joined fMP4 fragments, no index      25 /  0 /  0-27
+      the same video after this rewrite    46 / 30 / 30
+      a joined transport stream            18 /  0 /  0-19
+    VLC jumps to the start of a four-second fragment in the one and has no
+    index at all in the other; the picture stands still until it catches up.
+    The rewrite took 1 s for 110 MB. Only video and audio are taken: a
+    transport stream's timed metadata has no place in an MP4.
+    """
+    exe = ffmpeg_path()
+    if not exe or should_stop():
+        return False
+    cmd = [exe, "-nostdin", "-hide_banner", "-loglevel", "error", "-y", "-i", src,
+           "-map", "0:v?", "-map", "0:a?", "-c", "copy", "-f", "mp4",
+           "-progress", "pipe:1", "-nostats", dst]
+    try:
+        p = subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                             stderr=subprocess.PIPE,
+                             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    except OSError as e:
+        log.warning("ffmpeg would not start: %s", e)
+        return False
+    reached, said = [0], []
+
+    def progress():
+        for line in p.stdout:
+            # both count microseconds, whatever the second one is called
+            if line.startswith((b"out_time_us=", b"out_time_ms=")):
+                try:
+                    reached[0] = max(reached[0], int(line.split(b"=", 1)[1]))
+                except ValueError:
+                    pass                    # "N/A", before the first packet
+
+    def errors():
+        said.append(p.stderr.read()[-600:].decode("utf-8", "replace").strip())
+
+    readers = [threading.Thread(target=f, daemon=True) for f in (progress, errors)]
+    for r in readers:
+        r.start()
+    stopped = False
+    while True:
+        try:
+            p.wait(timeout=0.2)
+            break
+        except subprocess.TimeoutExpired:
+            if should_stop():
+                stopped = True
+                p.kill()
+                p.wait()
+                break
+    for r in readers:
+        r.join(5)
+    stopped = stopped or should_stop()
+    got = reached[0] / 1e6
+    ok = (not stopped and p.returncode == 0 and os.path.isfile(dst)
+          and os.path.getsize(dst) > 0 and (seconds <= 0 or got >= 0.9 * seconds))
+    if not ok:
+        try:
+            os.remove(dst)
+        except OSError:
+            pass
+        if not stopped:
+            log.warning("ffmpeg did not rewrite %s as an MP4 (exit %s, %.0f of %.0f s): %s",
+                        os.path.basename(src), p.returncode, got, seconds,
+                        (said or [""])[0][-300:])
+    return ok
+
+
 class HlsDownloader:
     def __init__(self, dtask: "T.DownloadTask"):
         self.t = dtask
@@ -279,6 +372,18 @@ class HlsDownloader:
                 segments.append((urllib.parse.urljoin(base_url, line), seq, key))
                 seq += 1
         return segments, endlist
+
+    @staticmethod
+    def _seconds(text):
+        """A media playlist's length: its #EXTINF durations, added up."""
+        total = 0.0
+        for line in text.splitlines():
+            if line.startswith("#EXTINF:"):
+                try:
+                    total += float(line[8:].split(",")[0])
+                except ValueError:
+                    pass
+        return total
 
     def _attrs(self, line):
         """A tag's ATTRIBUTE=value list as a dict, quotes stripped."""
@@ -417,6 +522,60 @@ class HlsDownloader:
         data = _get(self._seg_session(), url, self.headers, self._stats).content
         return self._decrypt(data, key, seq)
 
+    def _stopped(self, temp_path):
+        """A cancel or a pause asked for: the status says so - and a cancel
+        takes the temp file with it. True then."""
+        if not (self.t.cancel_requested or self.t.pause_requested):
+            return False
+        if self.t.cancel_requested:
+            self._rm(temp_path)
+            self.t.status = T.CANCELLED
+        else:
+            self.t.status = T.PAUSED
+        return True
+
+    def _save_as_mp4(self, temp_path, seconds):
+        """Save the joined download as an ordinary MP4 in its place (remux).
+        True when that is the file now; False when it is still to be saved
+        as it was joined - no ffmpeg, the rewrite failed, or a pause or
+        cancel came (the temp file is untouched either way).
+
+        ffmpeg writes beside the destination, so the move to another drive
+        that a finished download needs anyway is this one pass. A ".ts" name
+        becomes ".mp4" - not over somebody's file of that name - and any
+        other name, the browser's as a rule, is kept.
+        """
+        if ffmpeg_path() is None:
+            return False
+        dest = self.t.save_path
+        if dest.lower().endswith(".ts"):
+            dest = utils.unique_path(os.path.dirname(dest) or ".",
+                                     os.path.basename(dest)[:-3] + ".mp4")
+        staged = dest + ".hfmove"
+        self.t.finishing = True                 # the card: "Saving as MP4…"
+        try:
+            ok = remux(temp_path, staged, seconds,
+                       lambda: self.t.pause_requested or self.t.cancel_requested)
+            if ok:
+                os.replace(staged, dest)
+                size = os.path.getsize(dest)
+        except OSError as e:
+            log.warning("HLS: the MP4 could not be put in its place: %s", e)
+            self._rm(staged)
+            ok = False
+        finally:
+            self.t.finishing = False
+        if not ok:
+            if not (self.t.pause_requested or self.t.cancel_requested):
+                self.t.log_event("Could not be rewritten as an ordinary MP4; "
+                                 "saved as it was joined")
+            return False
+        self._rm(temp_path)
+        self.t.save_path, self.t.filename = dest, os.path.basename(dest)
+        self.t.total_size = self.t.downloaded = size
+        self.t.log_event("Saved as an ordinary MP4, so a player can seek in it at once")
+        return True
+
     # ----------------------------------------------------------- run
     def run(self):
         self.t.status = T.DOWNLOADING
@@ -456,6 +615,7 @@ class HlsDownloader:
             return
 
         total = len(segments)
+        seconds = self._seconds(text)
 
         # fMP4 (CMAF): the init segment (ftyp + moov) named by #EXT-X-MAP has
         # to lead the file, and what comes out is an MP4, not a transport
@@ -581,24 +741,25 @@ class HlsDownloader:
             self.t.error = f"disk error: {e}"
             return
 
-        if self.t.cancel_requested or self.t.pause_requested:
-            if self.t.cancel_requested:
-                self._rm(temp_path)
-                self.t.status = T.CANCELLED
-            else:
-                self.t.status = T.PAUSED
+        if self._stopped(temp_path):
             return
 
-        # cross-volume-safe atomic finalize (shared helper). On failure mark ERROR
-        # and keep the temp for retry instead of claiming COMPLETED with no file.
-        try:
-            utils.finalize_download(temp_path, self.t.save_path)
-        except OSError as e:
-            self.t.status = T.ERROR
-            self.t.error = f"finalize failed (pick another folder, then Resume): {e}"
-            return
-        self.t.total_size = downloaded
-        self.t.downloaded = downloaded
+        # An ordinary MP4 when ffmpeg is at hand (remux has why); without it,
+        # or when the rewrite fails, what was joined - as it always was.
+        if not self._save_as_mp4(temp_path, seconds):
+            if self._stopped(temp_path):        # paused or cancelled meanwhile
+                return
+            # cross-volume-safe atomic finalize (shared helper). On failure mark
+            # ERROR and keep the temp for retry instead of claiming COMPLETED
+            # with no file.
+            try:
+                utils.finalize_download(temp_path, self.t.save_path)
+            except OSError as e:
+                self.t.status = T.ERROR
+                self.t.error = f"finalize failed (pick another folder, then Resume): {e}"
+                return
+            self.t.total_size = downloaded
+            self.t.downloaded = downloaded
         self.t.status = T.COMPLETED
         el = max(0.001, time.time() - seg_t0)
         log.info("HLS done host=%s segments=%d %.1fMB in %.1fs (%.2f MB/s) "
