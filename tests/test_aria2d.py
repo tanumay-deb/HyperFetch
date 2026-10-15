@@ -42,10 +42,11 @@ def _silent_daemon(tmp_path, monkeypatch, pid=9999):
     d = aria2d.Aria2Daemon()
 
     def dead(*a, **k):
-        raise OSError("connection refused")
+        raise TimeoutError("timed out")       # busy: the port is open, nobody reads
 
     monkeypatch.setattr(d, "_post", dead)
     monkeypatch.setattr(aria2d, "_pid_alive", lambda p: p == pid)
+    monkeypatch.setattr(aria2d, "_started", lambda p: None)
     killed = []
     monkeypatch.setattr(aria2d, "_kill", killed.append)
     return d, killed

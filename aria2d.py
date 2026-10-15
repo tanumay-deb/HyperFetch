@@ -48,6 +48,9 @@ DEAD_STRIKES = 3            # consecutive missed probes before declaring death
 # missed probes can mean "verifying a 40 GB torrent", and killing it there is
 # both wrong and destructive.
 DEAD_GRACE = 300.0
+# The record is written once the daemon answers, up to START_TIMEOUT after it
+# started; a daemon that started later than this after the record is another.
+RECORD_SLACK = 60.0
 # Headroom over the app's own limit. aria2 must never be the narrower of the
 # two: the app decides what runs, and anything aria2 holds back sits in its
 # queue looking stalled with no explanation anywhere in the UI. This used to be
@@ -81,17 +84,77 @@ def _free_port():
         s.close()
 
 
-def _pid_alive(pid):
+def _process(pid):
+    """``(image name, start time)`` of the running process `pid` - the start
+    as epoch seconds, None where it cannot be told - or None when there is no
+    such process. On Windows the kernel is asked directly: no console, no
+    tasklist, a millisecond."""
     if not pid:
-        return False
+        return None
+    if sys.platform != "win32":
+        try:
+            os.kill(int(pid), 0)
+        except (OSError, ValueError):
+            return None
+        try:
+            with open("/proc/%d/comm" % int(pid), encoding="utf-8") as f:
+                return f.read().strip(), None
+        except OSError:
+            return "", None
+    import ctypes
+    from ctypes import wintypes
+    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    k32.OpenProcess.restype = wintypes.HANDLE
+    k32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    k32.CloseHandle.argtypes = [wintypes.HANDLE]
+    h = k32.OpenProcess(0x1000, False, int(pid))    # PROCESS_QUERY_LIMITED_INFORMATION
+    if not h:
+        return None                                  # gone, or not ours to look at
     try:
-        out = subprocess.run(
-            ["tasklist", "/FI", f"PID eq {int(pid)}", "/NH"],
-            capture_output=True, text=True,
-            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)).stdout
-        return str(pid) in out
-    except Exception:
+        code = wintypes.DWORD()
+        if not k32.GetExitCodeProcess(h, ctypes.byref(code)) or code.value != 259:
+            return None                              # 259: STILL_ACTIVE
+        buf = ctypes.create_unicode_buffer(32768)
+        size = wintypes.DWORD(len(buf))
+        name = ""
+        if k32.QueryFullProcessImageNameW(h, 0, buf, ctypes.byref(size)):
+            name = os.path.basename(buf.value)
+        times = [wintypes.FILETIME() for _ in range(4)]
+        started = None
+        if k32.GetProcessTimes(h, *(ctypes.byref(t) for t in times)):
+            ticks = (times[0].dwHighDateTime << 32) | times[0].dwLowDateTime
+            started = ticks / 1e7 - 11644473600.0    # 100 ns since 1601 -> epoch
+        return name, started
+    finally:
+        k32.CloseHandle(h)
+
+
+def _pid_alive(pid):
+    """Whether `pid` is a running aria2c.
+
+    Only an aria2c: a number is all a record keeps, and after a restart
+    Windows hands a dead daemon's number to whatever starts next. It was
+    "is any process `pid` running" (tasklist), and on 2026-10-15 the recorded
+    daemon's number belonged to the Windows Search host."""
+    info = _process(pid)
+    return bool(info) and info[0].lower().startswith("aria2c")
+
+
+def _started(pid):
+    """When the process `pid` started (epoch seconds), or None."""
+    info = _process(pid)
+    return info[1] if info else None
+
+
+def _recorded_daemon_alive(pid, since):
+    """Whether the daemon named by a record written at `since` (epoch
+    seconds; None: unknown) is still running: an aria2c with that number,
+    started no later than the record was written. One started since is not
+    it - the number was handed on, and maybe to the server's own daemon."""
+    if not _pid_alive(pid):
         return False
+    started = _started(pid)
+    return started is None or since is None or started <= since + RECORD_SLACK
 
 
 def _our_aria2_pids():
@@ -129,6 +192,11 @@ def _our_aria2_pids():
 
 
 def _kill(pid):
+    """Hard-kill an aria2c - never another program: the number may have been
+    handed on since it was recorded."""
+    if not _pid_alive(pid):
+        log.info("not killing pid %s: it is no aria2c now", pid)
+        return
     try:
         subprocess.run(["taskkill", "/F", "/PID", str(int(pid))],
                        capture_output=True,
@@ -206,6 +274,14 @@ class Aria2Daemon:
         except Exception:
             return 0, 0, ""
 
+    @staticmethod
+    def _state_written():
+        """When the record was written (epoch seconds), or None."""
+        try:
+            return os.path.getmtime(_state_path())
+        except OSError:
+            return None
+
     def _save_state(self, retries=3, delay=0.2):
         """Record the daemon we just started.
 
@@ -249,7 +325,12 @@ class Aria2Daemon:
             self._post(port, secret, "aria2.getGlobalStat", [],
                        timeout=PROBE_TIMEOUT)
         except Exception as e:
-            if not _pid_alive(pid):
+            if not _recorded_daemon_alive(pid, self._state_written()):
+                # gone, or its number handed on (a restart): start another at
+                # once - and the program that has the number now is not ours
+                if _pid_alive(pid) or (_process(pid) is not None):
+                    log.info("aria2 daemon pid %s from the record is gone; its number "
+                             "belongs to another process now", pid)
                 self._strikes = 0
                 return False
             self._strikes += 1
