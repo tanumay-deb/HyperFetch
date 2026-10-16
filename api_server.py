@@ -26,6 +26,7 @@ import task as T
 import utils
 import torrent as _torrent
 import web_auth
+import plain_errors
 import yt_dl
 
 # The loopback port the extension and the browser page both reach the app on.
@@ -565,7 +566,9 @@ def create_app(queue, save_dir, pending=None, token=None, pair_requests=None):
             "doneBytes": done,
             "percent": round(done * 100.0 / total, 2) if total else 0.0,
             "added": float(getattr(t, "added", 0) or 0),
-            "error": getattr(t, "error", "") or "",
+            # in words for the list (plain_errors); the engine's own text too
+            "error": plain_errors.plain(getattr(t, "error", "") or ""),
+            "errorDetail": getattr(t, "error", "") or "",
             "isTorrent": _torrent.is_torrent_task(t.url, t.filename),
             # Same buckets the desktop sidebar groups by, decided in one place
             # so the two never disagree about what counts as a Video.

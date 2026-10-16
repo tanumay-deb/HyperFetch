@@ -15,6 +15,7 @@ from PySide6.QtGui import (
 
 import os
 
+import plain_errors
 import task as T
 import utils
 import torrent as _torrent
@@ -439,7 +440,13 @@ class DownloadCardWidget(QFrame):
             # ElideLabel already trims to the width and keeps the FULL text as
             # its tooltip, so slicing here only threw the rest away — the
             # tooltip was truncated too, and messages ended mid-sentence.
-            self.sub.setText(t.error or "Failed")
+            # In words on the card (plain_errors); the engine's own text
+            # under the tooltip, as in the Logs tab.
+            raw = t.error or ""
+            said = plain_errors.plain(raw)
+            self.sub.setText(said or "Failed")
+            if raw and raw != said:
+                self.sub.setToolTip(said + "\n\n" + raw)
         else:
             parts = [f"{human_size(t.downloaded)} / {human_size(t.total_size)}"]
             if t.status == T.DOWNLOADING:

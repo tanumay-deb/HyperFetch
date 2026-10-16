@@ -28,6 +28,7 @@ from PySide6.QtGui import QIcon, QKeySequence, QShortcut, QAction, QFont
 import task as T
 import utils
 import pairing
+import plain_errors
 import scrape
 import torrent as _torrent
 import yt_dl
@@ -986,7 +987,8 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, Up
                     dlg.show()
             elif t.status == T.ERROR and t.id not in self._errored_seen:
                 if wc != "Do nothing":
-                    self._toasts.show("error", "Download Failed", (t.error or t.filename or "")[:60])
+                    self._toasts.show("error", "Download Failed",
+                                      (plain_errors.plain(t.error) or t.filename or "")[:60])
                     self._flash_taskbar()
                     if self.tray and self.tray.isVisible():
                         self.tray.showMessage("Download Failed", t.filename or "download",
