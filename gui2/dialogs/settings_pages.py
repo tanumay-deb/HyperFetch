@@ -243,7 +243,11 @@ class PageBuilderMixin:
         sa, v = self._page("Torrents", "Configure torrents, magnets and seeding")
         f, g = self._card()
         self.listen_port = QSpinBox(); self.listen_port.setRange(1024, 65535)
-        self.listen_port.setValue(int(ex.get("listen_port", 56666) or 56666)); self.listen_port.setFixedWidth(130)
+        # unset: the port the engine really uses (it showed 56666 while
+        # aria2 listened on 51413, until the dialog was saved)
+        import torrent
+        self.listen_port.setValue(int(ex.get("listen_port") or torrent.DEFAULT_LISTEN_PORT))
+        self.listen_port.setFixedWidth(130)
         self._row(g, "Listen Port", "Port for incoming (torrent) connections", self.listen_port)
         self.upnp = self._toggle(ex.get("upnp", True))
         # UPnP only: there is no NAT-PMP in upnp.py, and the label said so

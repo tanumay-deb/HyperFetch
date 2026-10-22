@@ -198,6 +198,10 @@ def _kill(pid):
         log.info("not killing pid %s: it is no aria2c now", pid)
         return
     try:
+        if sys.platform != "win32":            # taskkill is Windows only
+            import signal
+            os.kill(int(pid), signal.SIGKILL)
+            return
         subprocess.run(["taskkill", "/F", "/PID", str(int(pid))],
                        capture_output=True,
                        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))

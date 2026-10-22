@@ -236,6 +236,11 @@ def test_no_test_uses_the_machines_ffmpeg_unasked():
 
 # ---- the real ffmpeg ----------------------------------------------------------------------
 REAL = shutil.which("ffmpeg")
+# CI installs ffmpeg and sets this: there, a missing ffmpeg is a failure, not
+# five quiet skips (they were skipped on every CI run until 2026-10-22)
+REQUIRED = bool(os.environ.get("HF_REQUIRE_ENGINES"))
+if REQUIRED and not REAL:
+    raise RuntimeError("HF_REQUIRE_ENGINES is set and there is no ffmpeg on PATH")
 
 
 def _boxes(path):
@@ -267,7 +272,8 @@ def _make(tmp_path, *args):
                         *args],
                        cwd=str(tmp_path), capture_output=True, text=True)
     if r.returncode:
-        pytest.skip("this ffmpeg cannot make the test media: " + r.stderr[-200:])
+        (pytest.fail if REQUIRED else pytest.skip)(
+            "this ffmpeg cannot make the test media: " + r.stderr[-200:])
 
 
 def _is_ordinary_mp4(path):

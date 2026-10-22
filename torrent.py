@@ -1093,10 +1093,12 @@ def list_files(task):
 def aria2c_path():
     """Locate aria2c: bundled bin/ (frozen build) first, then PATH. None if absent."""
     base = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
-    for cand in (os.path.join(base, "bin", "aria2c.exe"),
-                 os.path.join(base, "bin", "aria2c")):
-        if os.path.isfile(cand):
-            return cand
+    # The checkout carries bin/aria2c.exe; elsewhere than Windows it cannot
+    # run, and was found first all the same.
+    name = "aria2c.exe" if sys.platform == "win32" else "aria2c"
+    cand = os.path.join(base, "bin", name)
+    if os.path.isfile(cand):
+        return cand
     return shutil.which("aria2c")
 
 
