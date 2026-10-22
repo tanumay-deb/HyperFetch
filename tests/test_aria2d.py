@@ -210,17 +210,15 @@ def test_rpc_follows_magnet_metadata_to_the_payload(tmp_path, monkeypatch):
 
 
 @pytest.mark.parametrize("aria2_says, expect", [
-    # aria2 gave no reason: the cold-swarm wording
-    ("", "No peers found yet"),
-    # aria2 gave one: it is passed on rather than guessed over
+    # aria2 gave a reason: it is passed on rather than guessed over
     ("no peers", "no peers. Resume to try again"),
     # a port this machine will not bind is not a dead swarm
     ("Errors occurred while binding port", "Could not open the BitTorrent port"),
 ])
 def test_rpc_cold_swarm_stays_resumable(tmp_path, monkeypatch, aria2_says, expect):
-    """Same rule as the subprocess engine: never saw a peer or a payload means
-    a cold swarm, not a failure, so it pauses whatever aria2 said. What the
-    message says depends on whether aria2 gave a reason."""
+    """Never saw a peer or a payload, and aria2 said why: a pause, not a
+    failure, with what it said. (aria2 saying nothing is a stall it is
+    tried again after by itself - test_torrent_auto_retry.py.)"""
     states = [{"status": "error", "completedLength": "0", "totalLength": "0",
                "errorMessage": aria2_says, "files": [{"path": "[METADATA]x"}]}]
     t, _ = _drive(tmp_path, monkeypatch, states)
@@ -258,7 +256,8 @@ def test_rpc_pause_and_cancel(tmp_path, monkeypatch):
 
 def test_rpc_daemon_loss_leaves_task_resumable(tmp_path, monkeypatch):
     """If the daemon dies mid-download the bytes are still on disk, so the task
-    must come back as Paused rather than Error."""
+    never comes back as Error: it is queued again (torrent.ENGINE_RETRY), and
+    Paused once those tries are spent."""
     monkeypatch.setattr(utils, "app_data_dir", lambda: str(tmp_path))
     monkeypatch.setattr(torrent, "POLL", 0)
     monkeypatch.setattr(torrent, "STATUS_POLL", 0)
@@ -274,6 +273,9 @@ def test_rpc_daemon_loss_leaves_task_resumable(tmp_path, monkeypatch):
 
     monkeypatch.setattr(aria2d, "DAEMON", _Dying([]))
     t = _task(tmp_path)
+    torrent.TorrentDownloader(t)._run_rpc()
+    assert t.status == T.QUEUED and t.yield_reason == "engine"
+    t.engine_retries = len(torrent.ENGINE_RETRY)
     torrent.TorrentDownloader(t)._run_rpc()
     assert t.status == T.PAUSED
     assert "Resume" in t.error
@@ -295,7 +297,10 @@ def test_a_dead_daemon_leaves_the_task_resumable(tmp_path, monkeypatch):
     t = T.DownloadTask("magnet:?xt=urn:btih:abc&dn=Movie",
                        str(tmp_path / "download.bin"))
     torrent.TorrentDownloader(t).run()
+    assert t.status == T.QUEUED, f"ended {t.status}, so the download is stuck"
 
+    t.engine_retries = len(torrent.ENGINE_RETRY)     # the tries are spent
+    torrent.TorrentDownloader(t).run()
     assert t.status == T.PAUSED, f"ended {t.status}, so the download is stuck"
     assert "engine" in t.error.lower() and "resume" in t.error.lower(), t.error
 
@@ -338,13 +343,15 @@ def test_a_busy_daemon_does_not_pause_a_healthy_download(tmp_path, monkeypatch):
 
 
 def test_a_daemon_that_stays_silent_still_pauses_the_task(tmp_path, monkeypatch):
-    """Retrying must not become retrying forever — a genuinely dead engine has
-    to surface, and resumably."""
+    """Retrying must not become retrying forever — once ENGINE_RETRY is spent,
+    a genuinely dead engine has to surface, and resumably."""
     # the budget is a DURATION now, not a retry count — collapse it so the test
     # does not have to sit through the real grace period
     monkeypatch.setattr(torrent, "RPC_RETRY_GRACE", 0.0)
     daemon = _FlakyDaemon([], misses=torrent.RPC_RETRIES + 5)
-    t = _drive_with(tmp_path, monkeypatch, daemon)
+    t = _task(tmp_path)
+    t.engine_retries = len(torrent.ENGINE_RETRY)
+    t = _drive_with(tmp_path, monkeypatch, daemon, task=t)
     assert t.status == T.PAUSED
     assert "stopped" in t.error
 
@@ -352,9 +359,12 @@ def test_a_daemon_that_stays_silent_still_pauses_the_task(tmp_path, monkeypatch)
 def test_a_lost_gid_reports_a_restart_not_a_failure(tmp_path, monkeypatch):
     """When the daemon is replaced, the old gid dies with it. The download
     itself is intact, so say the engine restarted rather than blaming it for
-    stopping — and never fail the task, whose bytes are still on disk."""
+    stopping — and never fail the task, whose bytes are still on disk. (It is
+    queued again by itself first: test_torrent_auto_retry.py.)"""
     daemon = _FlakyDaemon([], misses=1, error="GID abc is not found")
-    t = _drive_with(tmp_path, monkeypatch, daemon)
+    t = _task(tmp_path)
+    t.engine_retries = len(torrent.ENGINE_RETRY)
+    t = _drive_with(tmp_path, monkeypatch, daemon, task=t)
     assert t.status == T.PAUSED
     assert "restarted" in t.error
 

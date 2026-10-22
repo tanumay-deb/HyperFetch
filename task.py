@@ -173,6 +173,9 @@ class DownloadTask:
         # when - read by the window to say so. Not saved, like retry_after.
         self.yield_reason = ""
         self.yielded_at = 0.0
+        # How many times in a row the torrent engine let this one down and it
+        # was queued again by itself (torrent.ENGINE_RETRY). Not saved.
+        self.engine_retries = 0
         # Swarm health (swarm.py): what the torrent saw while running, and what
         # its trackers said while it waited. Saved, so the order survives restarts.
         self.last_seeds = None

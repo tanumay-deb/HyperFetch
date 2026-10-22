@@ -57,6 +57,19 @@ STALL_YIELD = 180
 # Delays before a yielded torrent is tried again; the last value repeats. Long
 # enough that a genuinely dead swarm is not re-announced every minute.
 STALL_BACKOFF = (120, 300, 900)
+# Delays before a torrent the ENGINE let down - the daemon replaced (every gid
+# it held is gone), not answering, or not starting - is queued again by
+# itself. Then it waits for Resume. A real log (2026-08-25 .. 10-16) had 38
+# torrents waiting on "Torrent engine restarted - Resume to continue", every
+# one with its bytes and .aria2 control file on disk; nothing was wrong with
+# them. A poll that works starts the count again (_poll_rpc).
+ENGINE_RETRY = (5, 30, 120)
+
+
+class CannotStart(Exception):
+    """A reason a torrent cannot start that is not the engine's - its
+    .torrent is gone, its folder cannot be made. Said in words, and not
+    tried again by itself: waiting does not bring a file back."""
 # How often to refresh per-file progress. getFiles returns the WHOLE file list,
 # so calling it on every 0.3s poll would be wasteful on a torrent with hundreds
 # of files; the drawer only redraws twice a second anyway.
@@ -1062,16 +1075,46 @@ class TorrentDownloader:
             return
         try:
             return self._run_rpc()
+        except CannotStart as e:
+            # failed, not paused: the card says why only for a failure, and
+            # this one needs the user (Resume once it is put right)
+            self.t.status = T.ERROR
+            self.t.error = str(e)
+            log.warning("torrent cannot start: %s: %s", self.t.filename, e)
         except Exception as e:
             # There is no second engine to fall back to any more, so say what
             # happened rather than failing blankly — and stay resumable: the
             # bytes and the .aria2 control file are still on disk.
             if self.t.cancel_requested or self.t.pause_requested:
                 return
-            self.t.status = T.PAUSED
-            self.t.error = f"Torrent engine unavailable ({e}) — Resume to retry"
             log.warning("torrent engine unavailable for %s: %s",
                         self.t.filename, e)
+            if self._engine_retry("Torrent engine unavailable (%s)" % e):
+                return
+            self.t.status = T.PAUSED
+            self.t.error = f"Torrent engine unavailable ({e}) — Resume to retry"
+
+    def _engine_retry(self, why):
+        """Queue the torrent again after ENGINE_RETRY, the engine having let
+        it down (`why`, for its log). False once those tries are spent: then
+        it is for the user, and a Resume starts a fresh count."""
+        n = int(getattr(self.t, "engine_retries", 0) or 0)
+        if n >= len(ENGINE_RETRY):
+            self.t.engine_retries = 0
+            return False
+        delay = ENGINE_RETRY[n]
+        self.t.engine_retries = n + 1
+        self.t.retry_after = time.time() + delay
+        self.t._stall_yield = True            # queue_manager re-queues on this
+        # no yielded_at: the swarm did nothing, so there is no "paused, no
+        # seeders" notification to give - the card says it
+        self.t.yield_reason = "engine"
+        self.t.status = T.QUEUED
+        self.t.error = ""
+        self.t.log_event("%s — trying again in %ds" % (why, delay))
+        log.info("%s: %s — queued again in %ds (%d of %d)", why,
+                 self.t.filename, delay, n + 1, len(ENGINE_RETRY))
+        return True
 
     # ------------------------------------------------------------- RPC engine
     def _run_rpc(self):
@@ -1105,7 +1148,10 @@ class TorrentDownloader:
         meta = self._known_metadata()
         sort_into_category(self.t, meta)
         out_dir = os.path.dirname(self.t.save_path) or "."
-        os.makedirs(out_dir, exist_ok=True)
+        try:
+            os.makedirs(out_dir, exist_ok=True)
+        except OSError as e:
+            raise CannotStart("cannot create folder: %s" % e) from None
         opts = self._add_opts(out_dir, meta)
         # Trackers changed while aria2 held this torrent: its list there is
         # the old one for good (see _add_again), so the registration goes and
@@ -1483,8 +1529,9 @@ class TorrentDownloader:
             if not src:
                 # a plain error the caller can show; aria2's own wording for
                 # this ("No URI to download.") explains nothing to a user
-                raise FileNotFoundError(
-                    f"the .torrent file is no longer at {self.t.url}")
+                raise CannotStart(
+                    "The .torrent file is no longer at %s — put it back, then "
+                    "Resume" % local_torrent_path(self.t.url))
             with open(src, "rb") as f:
                 return self._add_torrent(d, f.read(), opts)
         return d.call("aria2.addUri", [self.t.url], opts)
@@ -1669,6 +1716,7 @@ class TorrentDownloader:
             try:
                 st = d.call("aria2.tellStatus", cur)
                 fails = 0
+                self.t.engine_retries = 0      # the engine is back: a fresh count
             except Exception as e:
                 # We no longer know how the swarm looks, so stop presenting the
                 # last reading as if it were current. A busy daemon left these
@@ -1681,12 +1729,14 @@ class TorrentDownloader:
                 if "is not found" in str(e):
                     # The daemon was replaced under us, so our gid died with it.
                     # Nothing is wrong with the download itself — the bytes and
-                    # control file are on disk — so stay resumable and say so
-                    # accurately instead of blaming the engine for stopping.
-                    self.t.status = T.PAUSED
-                    self.t.error = "Torrent engine restarted — Resume to continue"
+                    # control file are on disk — so it is queued again, and
+                    # the next run adds it to the new daemon and goes on.
                     log.warning("gid %s lost for %s (daemon replaced)",
                                 cur, self.t.filename)
+                    archive_metadata(self.t, out_dir)
+                    if not self._engine_retry("Torrent engine restarted"):
+                        self.t.status = T.PAUSED
+                        self.t.error = "Torrent engine restarted — Resume to continue"
                     return top
                 if not fails:
                     fail_since = time.time()
@@ -1701,9 +1751,11 @@ class TorrentDownloader:
                     continue
                 # daemon vanished mid-download: leave the task resumable rather
                 # than failing it — the bytes and control file are still on disk
-                self.t.status = T.PAUSED
-                self.t.error = "Torrent engine stopped — Resume to continue"
                 log.warning("tellStatus failed for %s: %s", self.t.filename, e)
+                archive_metadata(self.t, out_dir)
+                if not self._engine_retry("Torrent engine stopped answering"):
+                    self.t.status = T.PAUSED
+                    self.t.error = "Torrent engine stopped — Resume to continue"
                 return top
 
             # a magnet's metadata download spawns the real payload as followedBy
@@ -1916,6 +1968,27 @@ class TorrentDownloader:
                             pass
                         continue
                 archive_metadata(self.t, out_dir)
+                if not msg:
+                    # aria2 leaves errorMessage empty when it stops a torrent
+                    # itself, which --bt-stop-timeout does after STALL_TIMEOUT
+                    # seconds of no progress: a swarm with nobody to send. That
+                    # is a yield like any other - the slot goes back, and the
+                    # queue tries it again after the stall backoff, longer each
+                    # time. It waited for Resume, 70 times in a real log
+                    # (2026-08-25 .. 10-16), with nothing wrong but the swarm.
+                    if not top and self.t.downloaded == 0:
+                        self.t.log_event("No peers found yet — the swarm may be "
+                                         "offline or still waking up")
+                        why = "no peers"
+                    else:
+                        mins = int(STALL_TIMEOUT // 60)
+                        self.t.log_event(f"No data received for {mins} minutes — "
+                                         "the swarm has no active seeders right now")
+                        why = "no seeders"
+                    log.info("torrent stopped by aria2 (%s): %s errorCode=%s", why,
+                             self.t.filename, st.get("errorCode"))
+                    self._yield_slot(d, cur, out_dir, why)
+                    return top
                 if not top and self.t.downloaded == 0:
                     # never reached the payload and never saw a peer. Usually a
                     # cold swarm — but only say so when aria2 had nothing to
@@ -1924,7 +1997,7 @@ class TorrentDownloader:
                     # sends somebody hunting for seeders when the real problem
                     # is a listen port this machine will not let anything bind.
                     self.t.status = T.PAUSED
-                    low = (msg or "").lower()
+                    low = msg.lower()
                     if "binding port" in low or "bind" in low and "port" in low:
                         self.t.error = (
                             "Could not open the BitTorrent port (%d). Another "
@@ -1932,33 +2005,15 @@ class TorrentDownloader:
                             "it — check `netsh int ipv4 show excludedportrange "
                             "protocol=tcp` and set a different port."
                             % listen_port())
-                    elif msg:
+                    else:
                         self.t.error = (explain_failure(msg, self.t.save_path)
                                         or "No peers yet — %s. Resume to try "
                                            "again." % msg)
-                    else:
-                        self.t.error = ("No peers found yet — the swarm may be "
-                                        "offline or still waking up. Resume to "
-                                        "try again.")
                 else:
                     self.t.status = T.ERROR
-                    if msg:
-                        self.t.error = (explain_failure(msg, self.t.save_path)
-                                        or f"torrent failed: {msg}")
-                    else:
-                        # aria2 leaves errorMessage empty when it stops a torrent
-                        # itself, which --bt-stop-timeout does after STALL_TIMEOUT
-                        # seconds of no progress. A bare "torrent failed" told the
-                        # user nothing; measured against a real log every one of
-                        # these had run for almost exactly 30 minutes.
-                        mins = int(STALL_TIMEOUT // 60)
-                        code = str(st.get("errorCode") or "")
-                        self.t.error = (
-                            f"No data received for {mins} minutes — the swarm "
-                            "has no active seeders right now. Resume to try again."
-                            + (f" (aria2 code {code})" if code and code != "0" else ""))
-                log.info("torrent ended (%s): %s%s", status, self.t.filename,
-                         f" errorCode={st.get('errorCode')}" if not msg else "")
+                    self.t.error = (explain_failure(msg, self.t.save_path)
+                                    or f"torrent failed: {msg}")
+                log.info("torrent ended (%s): %s", status, self.t.filename)
                 return top
 
             reason = self._stuck_reason()

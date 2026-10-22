@@ -61,9 +61,32 @@ def test_a_genuinely_missing_torrent_says_so(tmp_path, monkeypatch):
         def call(self, *a, **k):
             raise AssertionError("must not reach aria2 with a bad path")
 
-    with pytest.raises(FileNotFoundError) as e:
+    # CannotStart: said as it is, and not taken for the engine failing (which
+    # is tried again by itself - waiting does not bring a file back)
+    with pytest.raises(torrent.CannotStart) as e:
         td._rpc_add_new(_D(), {})
     assert "never.torrent" in str(e.value)
+
+
+def test_a_missing_torrent_fails_in_words_and_is_not_retried(tmp_path, monkeypatch):
+    monkeypatch.setattr(utils, "app_data_dir", lambda: str(tmp_path / "app"))
+    monkeypatch.setattr(torrent, "aria2c_path", lambda: "aria2c.exe")
+    import aria2d
+
+    class _D:
+        def ensure(self):
+            return True
+
+        def call(self, *a, **k):
+            return []
+
+    monkeypatch.setattr(aria2d, "DAEMON", _D())
+    td = _td(str(tmp_path / "never.torrent"), tmp_path)
+    td.run()
+    t = td.t
+    assert t.status == T.ERROR and "never.torrent" in t.error
+    assert "engine" not in t.error.lower(), t.error
+    assert not getattr(t, "_stall_yield", False) and not t.engine_retries
 
 
 def test_a_magnet_is_unaffected(tmp_path, monkeypatch):
