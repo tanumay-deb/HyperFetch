@@ -246,7 +246,8 @@ class PageBuilderMixin:
         self.listen_port.setValue(int(ex.get("listen_port", 56666) or 56666)); self.listen_port.setFixedWidth(130)
         self._row(g, "Listen Port", "Port for incoming (torrent) connections", self.listen_port)
         self.upnp = self._toggle(ex.get("upnp", True))
-        self._row(g, "Use UPnP / NAT-PMP", "Allow automatic port mapping", self.upnp)
+        # UPnP only: there is no NAT-PMP in upnp.py, and the label said so
+        self._row(g, "Use UPnP", "Ask the router to open the listen port", self.upnp)
         self.disk_cache = self._toggle(ex.get("disk_cache", True))
         self._row(g, "Disk cache", "Buffer torrent writes in memory to spare the disk", self.disk_cache)
         self.preallocate = self._toggle(ex.get("preallocate", False))
