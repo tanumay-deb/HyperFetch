@@ -412,21 +412,65 @@ def merge_magnet_trackers(url, trackers, first=False):
 
 
 def add_trackers(task, trackers):
-    """Add trackers to a magnet task so that they are really used.
+    """Add trackers to a torrent task so that they are really used.
 
-    They go ahead of the ones it has, and the task is flagged for the engine,
-    which adds the torrent to aria2 again with them (TorrentDownloader.
+    They go ahead of the ones it has - into the magnet, or for a .torrent
+    into task.extra_trackers, which the engine puts first in the .torrent it
+    hands aria2 (with_trackers_first) - and the task is flagged for the
+    engine, which adds the torrent to aria2 again with them (TorrentDownloader.
     _add_again) - aria2 cannot be told about them any other way. Returns
     ``(added, now)``: the trackers that were new, and whether that happens at
     once (it is downloading) or on its next start (paused, queued, seeding).
+    A private torrent takes none: it may only talk to its own (BEP 27).
     """
-    url, added = merge_magnet_trackers(task.url, trackers, first=True)
-    if not added:
-        return [], False
-    task.url = url                         # saved with the task
+    if is_magnet(task.url):
+        url, added = merge_magnet_trackers(task.url, trackers, first=True)
+        if not added:
+            return [], False
+        task.url = url                     # saved with the task
+    else:
+        if is_private_task(task):
+            return [], False
+        known = {tr.lower() for tr in trackers_of(task)}
+        added, seen = [], set()
+        for tr in trackers or []:
+            tr = str(tr or "").strip()
+            if tr and tr.lower() not in known and tr.lower() not in seen:
+                seen.add(tr.lower())
+                added.append(tr)
+        if not added:
+            return [], False
+        task.extra_trackers = added + list(getattr(task, "extra_trackers", []) or [])
     task.trackers_changed = True
     now = task.status == T.DOWNLOADING and not getattr(task, "seeding", False)
     return added, now
+
+
+def trackers_of(task):
+    """The trackers a torrent task has of its own, in the order they are
+    asked: a magnet's tr=, or for a .torrent the ones added to it
+    (extra_trackers) and then its file's. The daemon's public list is not
+    counted: every public torrent gets that."""
+    if is_magnet(getattr(task, "url", "") or ""):
+        return magnet_trackers(task.url)
+    out = list(getattr(task, "extra_trackers", []) or [])
+    src = torrent_file_for(task)
+    seen = {tr.lower() for tr in out}
+    for tr in (torrent_trackers(src) if src else []):
+        if tr.lower() not in seen:
+            seen.add(tr.lower())
+            out.append(tr)
+    return out
+
+
+def is_private_task(task):
+    """True for a torrent that is private (BEP 27), as far as its .torrent -
+    or for a magnet, the metadata already fetched - says."""
+    src = torrent_file_for(task)
+    if not src:
+        ih = task_infohash(task)
+        src = kept_torrent(ih) if ih and os.path.isfile(kept_torrent(ih)) else ""
+    return bool(src) and is_private_torrent(src)
 
 
 def _info_span(data):
@@ -438,29 +482,64 @@ def _info_span(data):
     re-encode to different bytes and hash to something no other client agrees
     with, silently, and only for the files where it matters.
     """
-    def skip(i):
-        c = data[i:i + 1]
-        if c == b"i":
-            return data.index(b"e", i) + 1
-        if c in (b"l", b"d"):
-            i += 1
-            while data[i:i + 1] != b"e":
-                i = skip(i)
-            return i + 1
-        j = data.index(b":", i)
-        return j + 1 + int(data[i:j])
-
     if data[:1] != b"d":
         return -1, -1
     i = 1
-    while data[i:i + 1] != b"e":
-        key_end = skip(i)
+    while data[i:i + 1] != b"e":       # stops at info: what follows is not read
+        key_end = _skip(data, i)
         key = data[i:key_end].split(b":", 1)[-1]
-        val_end = skip(key_end)
+        val_end = _skip(data, key_end)
         if key == b"info":
             return key_end, val_end
         i = val_end
     return -1, -1
+
+
+# What a bencoded value that cannot be read raises here. RecursionError too:
+# a .torrent from a web link is anybody's bytes, and lists nested a few
+# thousand deep are a short file.
+_BAD_BENCODE = (ValueError, IndexError, TypeError, RecursionError)
+
+
+def _skip(data, i):
+    """Index just past the bencoded value that starts at data[i]."""
+    c = data[i:i + 1]
+    if c == b"i":
+        return data.index(b"e", i) + 1
+    if c in (b"l", b"d"):
+        i += 1
+        while data[i:i + 1] != b"e":
+            i = _skip(data, i)
+        return i + 1
+    j = data.index(b":", i)
+    return j + 1 + int(data[i:j])
+
+
+def _top_spans(data):
+    """[(key, start, end)] of a .torrent's top-level dictionary, in the file's
+    order: each value's RAW bytes are data[start:end]. [] when the bytes are
+    not a dictionary; raises one of _BAD_BENCODE when they break off."""
+    if data[:1] != b"d":
+        return []
+    out, i = [], 1
+    while data[i:i + 1] != b"e":
+        key_end = _skip(data, i)
+        key = data[i:key_end].split(b":", 1)[-1]
+        val_end = _skip(data, key_end)
+        out.append((key, key_end, val_end))
+        i = val_end
+    return out
+
+
+def infohash_of(data):
+    """The 40-hex infohash of a .torrent's bytes; '' when they are not one."""
+    try:
+        start, end = _info_span(data or b"")
+    except _BAD_BENCODE:
+        return ""
+    if start < 0 or data[start:start + 1] != b"d":     # info is a dictionary
+        return ""
+    return hashlib.sha1(data[start:end]).hexdigest()
 
 
 def torrent_infohash(path):
@@ -470,13 +549,7 @@ def torrent_infohash(path):
             data = f.read()
     except OSError:
         return ""
-    try:
-        start, end = _info_span(data)
-    except (ValueError, IndexError, TypeError):
-        return ""
-    if start < 0:
-        return ""
-    return hashlib.sha1(data[start:end]).hexdigest()
+    return infohash_of(data)
 
 
 def infohash_for(url, filename=""):
@@ -493,6 +566,188 @@ def infohash_for(url, filename=""):
         if os.path.isfile(local):
             return torrent_infohash(local)
     return ""
+
+
+def is_web_torrent(url, filename=""):
+    """A .torrent given as a web link - what the extension sends for a
+    .torrent link - rather than a file on this machine."""
+    return (is_torrent(url or "", filename or "")
+            and (url or "").strip().lower().startswith(("http://", "https://")))
+
+
+def kept_torrent(ih):
+    """Where the app keeps its own copy of torrent `ih`'s .torrent."""
+    return os.path.join(metadata_dir(), (ih or "").lower() + ".torrent")
+
+
+def keep_torrent(data):
+    """Keep these .torrent bytes as the app's copy, and return
+    ``(infohash, path)``; ``("", "")`` for bytes that are not a torrent.
+
+    Written whole or not at all (a temp file, then a rename), over any older
+    copy: it is called for a torrent being added, so no task in the list has
+    this infohash - an older copy is a removed task's."""
+    ih = infohash_of(data)
+    if not ih:
+        return "", ""
+    path = kept_torrent(ih)
+    tmp = "%s.%d.tmp" % (path, os.getpid())
+    try:
+        with open(tmp, "wb") as f:
+            f.write(data)
+        os.replace(tmp, path)
+    except OSError as e:
+        log.debug("could not keep %s: %s", path, e)
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+        return ih, (path if os.path.isfile(path) else "")
+    return ih, path
+
+
+def torrent_file_for(task):
+    """A readable .torrent for a task added from one: the file it was added
+    from, else the app's copy. '' for a magnet, or when there is neither."""
+    url = getattr(task, "url", "") or ""
+    if is_magnet(url) or not is_torrent(url, getattr(task, "filename", "") or ""):
+        return ""
+    local = local_torrent_path(url)
+    if not is_web_torrent(url) and os.path.isfile(local):
+        return local
+    ih = getattr(task, "infohash", "") or ""
+    if ih and os.path.isfile(kept_torrent(ih)):
+        return kept_torrent(ih)
+    return ""
+
+
+def task_infohash(task):
+    """Which torrent a task is, however it was added: a magnet's btih, the
+    infohash saved on the task (kept after its .torrent is deleted, and the
+    only one a web link has), or the one its .torrent file gives. ''
+    for anything that is not a torrent."""
+    url = getattr(task, "url", "") or ""
+    return (magnet_infohash(url) or (getattr(task, "infohash", "") or "").lower()
+            or infohash_for(url, getattr(task, "filename", "") or ""))
+
+
+# A .torrent is a few hundred KB; one for a vast torrent a few MB. More than
+# this from a ".torrent" link is not one.
+TORRENT_FETCH_MAX = 50 * 1024 * 1024
+TORRENT_FETCH_TIMEOUT = 30
+
+
+def fetch_torrent(url, headers=None):
+    """The .torrent behind a web link, as bytes - fetched with the headers
+    the browser sent (a site's cookies included), through the app's own
+    network settings. Raises CannotStart, in words, when there is none."""
+    import requests
+    import plain_errors
+    host = urllib.parse.urlsplit(url).hostname or "the site"
+    sent = {**utils.DEFAULT_HEADERS, **(headers or {})}
+
+    def failed(why):
+        return CannotStart("Could not get the .torrent from %s: %s" % (host, why))
+
+    try:
+        with requests.get(url, headers=sent, stream=True, allow_redirects=True,
+                          timeout=TORRENT_FETCH_TIMEOUT, verify=utils.VERIFY_TLS,
+                          proxies=utils.PROXIES) as r:
+            if r.status_code >= 400:
+                raise failed(plain_errors.status_words(r.status_code, lower=True))
+            data = b""
+            for chunk in r.iter_content(65536):
+                data += chunk
+                if len(data) > TORRENT_FETCH_MAX:
+                    raise CannotStart("The link at %s is not a .torrent: it is "
+                                      "larger than %d MB"
+                                      % (host, TORRENT_FETCH_MAX // (1024 * 1024)))
+    except requests.RequestException as e:
+        said = plain_errors.plain(str(e))
+        raise failed(said[0].lower() + said[1:] if said != str(e) else said) from None
+    if not infohash_of(data):
+        # a sign-in page, an advert, a "file removed" page
+        raise CannotStart("%s sent a web page, not a .torrent — sign in on the "
+                          "site, or save the .torrent in the browser and open it"
+                          % host)
+    return data
+
+
+def trackers_in(data):
+    """The announce URLs .torrent bytes name, in the order they are asked:
+    announce-list's tiers one after another, else announce. Unique, ignoring
+    case; [] for bytes that are not a torrent."""
+    try:
+        top = {k: data[s:e] for k, s, e in _top_spans(data or b"")}
+        tiers = _bdecode(top[b"announce-list"]) if b"announce-list" in top else []
+        if not tiers and b"announce" in top:
+            tiers = [[_bdecode(top[b"announce"])]]
+    except _BAD_BENCODE:
+        return []
+    out, seen = [], set()
+    for tier in (tiers if isinstance(tiers, list) else []):
+        for url in (tier if isinstance(tier, list) else []):
+            if not isinstance(url, bytes):
+                continue
+            url = url.decode("utf-8", "replace").strip()
+            if url and url.lower() not in seen:
+                seen.add(url.lower())
+                out.append(url)
+    return out
+
+
+def torrent_trackers(path):
+    """trackers_in() for a .torrent file; [] when it cannot be read."""
+    try:
+        with open(path, "rb") as f:
+            return trackers_in(f.read())
+    except OSError:
+        return []
+
+
+def _bstr(b):
+    return b"%d:%s" % (len(b), b)
+
+
+def with_trackers_first(data, trackers):
+    """These .torrent bytes with `trackers` put ahead of the ones they name,
+    each a tier of its own, as a magnet's are. The info dictionary is copied
+    byte for byte, so the infohash - which torrent it is - does not change;
+    the bytes as they were when nothing is new, or anything goes wrong.
+
+    First, because aria2 asks one tracker at a time and stays with the first
+    that answers, even with nobody (measured on 1.37.0; its AnnounceList.cc
+    goes back to the first tier after every success). A tracker added to get
+    a torrent moving is a spare unless it comes first.
+    """
+    if not infohash_of(data):
+        return data
+    own = {tr.lower() for tr in trackers_in(data)}
+    new, seen = [], set()
+    for tr in trackers or []:
+        tr = str(tr or "").strip()
+        if tr and tr.lower() not in own and tr.lower() not in seen:
+            seen.add(tr.lower())
+            new.append(tr)
+    if not new:
+        return data
+    try:
+        spans = _top_spans(data)
+        top = {k: data[s:e] for k, s, e in spans}
+        if b"announce-list" in top:
+            tiers = [t for t in _bdecode(top[b"announce-list"]) if isinstance(t, list)]
+        elif b"announce" in top:
+            tiers = [[_bdecode(top[b"announce"])]]
+        else:
+            tiers = []
+        tiers = [[tr.encode("utf-8")] for tr in new] + tiers
+        top[b"announce-list"] = b"l%se" % b"".join(
+            b"l%se" % b"".join(_bstr(u) for u in tier if isinstance(u, bytes))
+            for tier in tiers)
+        out = b"d%se" % b"".join(_bstr(k) + top[k] for k in sorted(top))
+    except _BAD_BENCODE:
+        return data
+    return out if infohash_of(out) == infohash_of(data) else data
 
 
 def _bdecode(data):
@@ -958,7 +1213,7 @@ class MetadataPrefetcher:
 
     def _begin(self, t):
         # a .torrent already on disk needs no swarm at all
-        if is_torrent(t.url):
+        if is_torrent(t.url) and not is_web_torrent(t.url):
             local = local_torrent_path(t.url)
             if local and os.path.isfile(local) and apply_metadata(t, local):
                 log.info("metadata read from the .torrent file: %s", t.filename)
@@ -969,6 +1224,22 @@ class MetadataPrefetcher:
             if os.path.isfile(cached) and apply_metadata(t, cached):
                 log.info("metadata already saved for %s", t.filename)
                 return
+        if is_web_torrent(t.url):
+            # Fetched here, never handed to aria2's addUri: it would fetch the
+            # .torrent and then the whole payload, into app data -
+            # bt-metadata-only is for magnets only.
+            try:
+                ih, keep = keep_torrent(fetch_torrent(t.url, getattr(t, "headers", None)))
+            except CannotStart as e:
+                t.meta_failed = True
+                t.meta_retry_after = time.time() + META_RETRY
+                t.log_event(str(e))
+                return
+            if keep:
+                t.infohash = ih
+                apply_metadata(t, keep)
+                log.info("fetched the .torrent for %s", t.filename)
+            return
         try:
             import aria2d
             d = aria2d.DAEMON
@@ -1533,7 +1804,13 @@ class TorrentDownloader:
                     "The .torrent file is no longer at %s — put it back, then "
                     "Resume" % local_torrent_path(self.t.url))
             with open(src, "rb") as f:
-                return self._add_torrent(d, f.read(), opts)
+                data = f.read()
+            extra = list(getattr(self.t, "extra_trackers", []) or [])
+            if extra and not is_private_torrent(src):
+                # trackers added to it since (add_trackers): first, so they
+                # are asked - the .torrent itself is left as it is
+                data = with_trackers_first(data, extra)
+            return self._add_torrent(d, data, opts)
         return d.call("aria2.addUri", [self.t.url], opts)
 
     def _torrent_file(self):
@@ -1546,9 +1823,14 @@ class TorrentDownloader:
 
         So the first time it is readable we take a copy into app data, keyed by
         infohash, and fall back to that copy afterwards.
+
+        A web link - what the extension sends for a .torrent link - is fetched
+        the first time (fetch_torrent: the browser's headers, the app's
+        network settings) and kept the same way. It used to go no further
+        than "the .torrent file is no longer at https://...".
         """
         src = local_torrent_path(self.t.url or "")
-        if os.path.isfile(src):
+        if not is_web_torrent(self.t.url) and os.path.isfile(src):
             ih = getattr(self.t, "infohash", "") or torrent_infohash(src)
             if ih:
                 self.t.infohash = ih
@@ -1564,9 +1846,21 @@ class TorrentDownloader:
         if ih:
             keep = os.path.join(metadata_dir(), ih + ".torrent")
             if os.path.isfile(keep):
-                log.info("original .torrent is gone; using the archived copy "
-                         "for %s", self.t.filename)
+                if not is_web_torrent(self.t.url):
+                    log.info("original .torrent is gone; using the archived "
+                             "copy for %s", self.t.filename)
                 return keep
+        if is_web_torrent(self.t.url):
+            ih, keep = keep_torrent(fetch_torrent(self.t.url,
+                                                  getattr(self.t, "headers", None)))
+            if keep:
+                self.t.infohash = ih
+                log.info("fetched the .torrent for %s from %s", self.t.filename,
+                         urllib.parse.urlsplit(self.t.url).hostname)
+                return keep
+            raise CannotStart("Could not keep the .torrent from %s in %s"
+                              % (urllib.parse.urlsplit(self.t.url).hostname,
+                                 metadata_dir()))
         return ""
 
     def _entry_dir_matches(self, d, gid, opts):

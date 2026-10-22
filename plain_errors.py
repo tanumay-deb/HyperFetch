@@ -43,6 +43,13 @@ def _http(code):
     return "The site answered %d" % code
 
 
+def status_words(code, lower=False):
+    """An HTTP status in words ("The site refused it (403) - ..."); with
+    `lower`, to follow a colon."""
+    said = _http(int(code))
+    return said[0].lower() + said[1:] if lower else said
+
+
 def _why(text):
     """Why it failed, in words - or None when the text is not a shape known
     here."""

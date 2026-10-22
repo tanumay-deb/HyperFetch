@@ -105,7 +105,7 @@ def test_a_tracker_it_already_has_changes_nothing():
 
 class _Box:
     """QMessageBox, with the user pressing the first button (Load Trackers)."""
-    Question = AcceptRole = RejectRole = 0
+    Question = Information = AcceptRole = RejectRole = ActionRole = 0
     informed = []
 
     def __init__(self, *a):
@@ -139,6 +139,7 @@ def _add_magnet_again(existing, monkeypatch):
         _toasts=types.SimpleNamespace(show=lambda *a, **k: toasts.append(a)),
         _save_state=lambda: saved.append(1), refresh=lambda: None)
     win._quick_values = lambda *a: DownloadAppV2._quick_values(win, *a)
+    win._torrent_again = lambda *a: DownloadAppV2._torrent_again(win, *a)
     incoming = "magnet:?xt=urn:btih:%s&tr=%s" % (IH, "udp%3A%2F%2Fnew.example%3A80")
     DownloadAppV2._add_download(win, incoming, "", None)
     return [t for t in toasts if t[1] != "Added"], saved

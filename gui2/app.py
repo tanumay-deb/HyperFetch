@@ -1190,57 +1190,33 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, Up
                 self._save_settings()
         if not v["url"]:
             return
-        # Magnets with the same infohash are the same torrent even when their
-        # display name or tracker list differs. Import fresh trackers instead
-        # of creating a second downloader against the same payload.
-        # infohash_for, not magnet_infohash: a .torrent file is the same torrent
-        # as the magnet that resolves to it, and adding the same .torrent twice
-        # was not caught at all.
-        incoming_hash = _torrent.infohash_for(v["url"], v.get("filename", ""))
+        # One torrent is one download, however it comes - a magnet, a .torrent
+        # file, a .torrent link: two tasks with one infohash are two
+        # downloaders writing the same payload. So the second add stops here,
+        # and the trackers it brings are offered to the first.
+        # task_infohash, not the task's link: a .torrent's original file is
+        # often deleted once it is added, and a link has no file at all until
+        # it is fetched - the infohash saved on the task outlives both.
+        torrent_data = None                # the .torrent's bytes, if there is one
+        if _torrent.is_web_torrent(v["url"], v.get("filename", "")):
+            torrent_data = self._fetch_torrent(v["url"], v["headers"])
+            if torrent_data is None:
+                return                     # could not be had; the toast said why
+        elif _torrent.is_torrent(v["url"], v.get("filename", "")):
+            try:
+                with open(_torrent.local_torrent_path(v["url"]), "rb") as f:
+                    torrent_data = f.read()
+            except OSError:
+                pass                       # the engine will say it is gone
+        incoming_hash = (_torrent.infohash_of(torrent_data) if torrent_data
+                         else _torrent.infohash_for(v["url"], v.get("filename", "")))
         if incoming_hash:
             existing_torrent = next(
                 (x for x in self.queue.tasks
-                 if _torrent.infohash_for(x.url, x.filename) == incoming_hash
+                 if _torrent.task_infohash(x) == incoming_hash
                  and x.status != T.CANCELLED), None)
             if existing_torrent:
-                # which of its trackers are new - nothing is changed until the
-                # user says so below
-                _, added = _torrent.merge_magnet_trackers(
-                    existing_torrent.url, _torrent.magnet_trackers(v["url"]))
-                if not added:
-                    QMessageBox.information(
-                        self, "Torrent already added",
-                        f"This torrent is already in the list as '{existing_torrent.filename}'.\n"
-                        "Its tracker list is already up to date.")
-                    return
-
-                box = QMessageBox(self)
-                box.setIcon(QMessageBox.Question)
-                box.setWindowTitle("Torrent already added")
-                box.setText(f"This torrent is already in the list as '{existing_torrent.filename}'.")
-                box.setInformativeText(
-                    f"The new magnet contains {len(added)} tracker"
-                    f"{'s' if len(added) != 1 else ''} not saved on the existing task.")
-                load_btn = box.addButton("Load Trackers", QMessageBox.AcceptRole)
-                box.addButton("Keep Existing", QMessageBox.RejectRole)
-                box.setDefaultButton(load_btn)
-                box.exec()
-                if box.clickedButton() is not load_btn:
-                    return
-
-                # aria2 cannot be handed trackers for a download it already
-                # holds; the engine adds the torrent again with them
-                # (torrent.add_trackers), and the toast says when.
-                added, now = _torrent.add_trackers(
-                    existing_torrent, _torrent.magnet_trackers(v["url"]))
-                existing_torrent.log_event(f"Imported {len(added)} tracker(s)")
-                self._save_state()
-                self.refresh()
-                self._toasts.show(
-                    "success", "Trackers imported",
-                    f"Added {len(added)} tracker(s) to {existing_torrent.filename}. "
-                    + ("Reconnecting to use them." if now
-                       else "They will be used the next time it starts."))
+                self._torrent_again(existing_torrent, v["url"], torrent_data)
                 return
         # duplicate detection — same URL already in the list. A cancelled task is
         # not a duplicate: the user threw it away, and re-adding it is the normal
@@ -1259,13 +1235,16 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, Up
             box.setDefaultButton(show_btn)
             box.exec()
             if box.clickedButton() is show_btn:
-                self._set_filter("All")
-                self.list.set_selection({existing.id})
-                self.drawer.open_for(existing)
+                self._show_existing(existing)
                 return
             if box.clickedButton() is not again_btn:
                 return
         base = v["save_dir"] if os.path.isdir(v["save_dir"]) else self.save_dir
+        # The app's own copy of a .torrent, kept now: the original is often
+        # deleted once it is added, and a link's is only what was fetched.
+        kept = ""
+        if torrent_data:
+            incoming_hash, kept = _torrent.keep_torrent(torrent_data)
         # A name the user typed is a file's name, kept as typed. Not the one
         # the dialog filled in: that is a guess from the link or the
         # browser's, read as a link's name is - and a video's title says more.
@@ -1277,13 +1256,15 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, Up
         # .torrent, when the metadata arrives for a magnet. A category picked
         # by hand always wins, and is never moved afterwards.
         folder, sort_base = utils.place_download(
-            base, v["url"], filename, v["category"],
+            base, kept or v["url"], filename, v["category"],
             self._extras.get("categorize", True))
         save_path = utils.unique_path(folder, filename)
         t = T.DownloadTask(v["url"], save_path, filename=filename,
                            headers=v["headers"], priority=v["priority"],
                            queue_name=v["queue"])
         t.sort_base = sort_base
+        if incoming_hash:
+            t.infohash = incoming_hash              # which torrent it is, for good
         t.use_ytdlp = v.get("use_ytdlp", False)     # route through yt-dlp engine
         t.yt_format = v.get("yt_format", "")        # chosen quality/format string
         if typed:                                   # a video's file keeps it, not its title
@@ -1297,6 +1278,97 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, Up
         self.segments = v["connections"]
         self._save_state()
         self.refresh()
+
+    def _show_existing(self, task):
+        """Bring a download in the list into view, its drawer open."""
+        self._set_filter("All")
+        self.list.set_selection({task.id})
+        self.drawer.open_for(task)
+
+    def _fetch_torrent(self, url, headers):
+        """The .torrent behind a web link, as bytes - or None when it cannot
+        be had, and a toast says why. Fetched on a thread, the window kept
+        live meanwhile: a slow site must not freeze it."""
+        import threading
+        from PySide6.QtCore import QEventLoop
+        got = {}
+
+        def fetch():
+            try:
+                got["data"] = _torrent.fetch_torrent(url, headers)
+            except _torrent.CannotStart as e:
+                got["error"] = str(e)
+            except Exception as e:             # never leave the loop waiting
+                got["error"] = "Could not get the .torrent: %s" % e
+
+        worker = threading.Thread(target=fetch, name="torrent-fetch", daemon=True)
+        worker.start()
+        loop = QEventLoop()
+        tick = QTimer()
+        tick.timeout.connect(lambda: worker.is_alive() or loop.quit())
+        tick.start(50)
+        if worker.is_alive():
+            loop.exec()
+        tick.stop()
+        if "data" not in got:
+            self._toasts.show("error", "Could not add the torrent",
+                              got.get("error", "Could not get the .torrent"))
+            return None
+        return got["data"]
+
+    def _torrent_again(self, existing, url, data):
+        """The torrent `existing` is, added again (`url`; `data`: its .torrent's
+        bytes, None for a magnet). Says so, and offers the trackers it brings
+        that the one in the list does not have - nothing changes unless the
+        user says. A private torrent takes none (BEP 27)."""
+        brought = (_torrent.magnet_trackers(url) if _torrent.is_magnet(url)
+                   else _torrent.trackers_in(data or b""))
+        known = {tr.lower() for tr in _torrent.trackers_of(existing)}
+        new = []
+        for tr in brought:
+            if tr.lower() not in known:
+                known.add(tr.lower())
+                new.append(tr)
+        private = bool(new) and _torrent.is_private_task(existing)
+        box = QMessageBox(self)
+        box.setWindowTitle("Torrent already added")
+        box.setText(f"This torrent is already in the list as '{existing.filename}'.")
+        load_btn = None
+        if new and not private:
+            box.setIcon(QMessageBox.Question)
+            box.setInformativeText(
+                f"The new {'magnet' if _torrent.is_magnet(url) else '.torrent'} has "
+                f"{len(new)} tracker{'s' if len(new) != 1 else ''} the one in the "
+                "list does not.")
+            load_btn = box.addButton("Load Trackers", QMessageBox.AcceptRole)
+        else:
+            box.setIcon(QMessageBox.Information)
+            box.setInformativeText(
+                "It is a private torrent: it talks only to its own trackers."
+                if private else "Its tracker list is already up to date.")
+        show_btn = box.addButton("Show Existing", QMessageBox.ActionRole)
+        box.addButton("Keep Existing" if load_btn else "OK", QMessageBox.RejectRole)
+        box.setDefaultButton(load_btn or show_btn)
+        box.exec()
+        if box.clickedButton() is show_btn:
+            self._show_existing(existing)
+            return
+        if load_btn is None or box.clickedButton() is not load_btn:
+            return
+        # aria2 cannot be handed trackers for a download it already holds;
+        # the engine adds the torrent again with them (torrent.add_trackers),
+        # and the toast says when.
+        added, now = _torrent.add_trackers(existing, new)
+        if not added:
+            return
+        existing.log_event(f"Imported {len(added)} tracker(s)")
+        self._save_state()
+        self.refresh()
+        self._toasts.show(
+            "success", "Trackers imported",
+            f"Added {len(added)} tracker(s) to {existing.filename}. "
+            + ("Reconnecting to use them." if now
+               else "They will be used the next time it starts."))
 
     def _open_settings(self):
         cur_accent = next((k for k, v in palette.ACCENTS.items() if v == palette.COLORS["accent"]), "purple")

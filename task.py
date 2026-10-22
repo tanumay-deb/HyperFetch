@@ -229,6 +229,10 @@ class DownloadTask:
         # finds our archived copy after the user's original file has moved or
         # been deleted.
         self.infohash = ""
+        # Trackers added to a torrent added from a .torrent (a magnet keeps
+        # its own in its tr=): the engine puts them first in the .torrent it
+        # gives aria2 (torrent.add_trackers). Persisted.
+        self.extra_trackers = []
         # Which files of a torrent to fetch, as aria2's 1-based select-file
         # list ("1,3,5"); "" means all. Persisted, so unticking survives a
         # pause, a restart, and the drawer being closed.
@@ -389,6 +393,7 @@ class DownloadTask:
             "events": self.events[-self.EVENTS_MAX:],
             "sha256": self.sha256,
             "infohash": self.infohash,
+            "extra_trackers": list(self.extra_trackers or []),
             "selected_files": self.selected_files,
             "sort_base": self.sort_base,
             "is_scheduled": getattr(self, "is_scheduled", False),
@@ -446,6 +451,8 @@ class DownloadTask:
         t.swarm_at = float(d.get("swarm_at", 0) or 0)
         t.sha256 = d.get("sha256", "")
         t.infohash = d.get("infohash", "")
+        t.extra_trackers = [str(x) for x in (d.get("extra_trackers") or [])
+                            if isinstance(x, str) and x.strip()]
         t.selected_files = d.get("selected_files", "")
         t.sort_base = d.get("sort_base")
         t.events =[e for e in map(_migrate_event, d.get("events") or []) if e]

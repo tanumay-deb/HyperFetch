@@ -452,7 +452,8 @@ class DetailsDrawer(QFrame):
         return w
 
     def _add_trackers(self):
-        """Add comma-separated trackers to this magnet, ahead of the ones it has.
+        """Add comma-separated trackers to this torrent, ahead of the ones it
+        has - a magnet or a .torrent (torrent.add_trackers).
 
         aria2 cannot be handed trackers for a download it already holds, so the
         engine adds the torrent again with them: at once if it is downloading,
@@ -465,8 +466,11 @@ class DetailsDrawer(QFrame):
         t = next((x for x in win.queue.tasks if x.id == self._tid), None) if win else None
         if not t:
             return
-        if not _torrent.is_magnet(t.url):
-            self.tracker_msg.setText("Trackers can only be added to magnet links.")
+        if not _torrent.is_torrent_task(t.url, t.filename):
+            return
+        if _torrent.is_private_task(t):
+            self.tracker_msg.setText(
+                "A private torrent talks only to its own trackers.")
             return
 
         bad = [e for e in entries if "://" not in e]
@@ -494,7 +498,7 @@ class DetailsDrawer(QFrame):
             it = lay.takeAt(0)
             if it.widget():
                 it.widget().deleteLater()
-        urls = _torrent.magnet_trackers(t.url) if _torrent.is_magnet(t.url) else []
+        urls = _torrent.trackers_of(t)       # a magnet's, or a .torrent's own
         if not urls:
             urls = [u for u in getattr(self, "_static_trackers", []) or []]
         for u in urls:
@@ -1393,18 +1397,10 @@ class DetailsDrawer(QFrame):
                 for pt in torrent.PUBLIC_TRACKERS:
                     if pt not in self._static_trackers:
                         self._static_trackers.append(pt + " (Public)")
-            elif t.url and os.path.isfile(t.url):
-                try:
-                    with open(t.url, "rb") as f:
-                        data = torrent._bdecode(f.read())
-                        if b"announce-list" in data:
-                            for tier in data[b"announce-list"]:
-                                for tr_b in tier:
-                                    self._static_trackers.append(tr_b.decode("utf-8", "ignore"))
-                        elif b"announce" in data:
-                            self._static_trackers.append(data[b"announce"].decode("utf-8", "ignore"))
-                except Exception:
-                    pass
+            else:
+                # a .torrent: the trackers added to it, then its file's - the
+                # file it was added from, or the app's copy once that is gone
+                self._static_trackers.extend(torrent.trackers_of(t))
 
         self._file_row_widgets = []
         self._file_bars = []
