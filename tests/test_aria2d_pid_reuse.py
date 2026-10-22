@@ -101,17 +101,23 @@ def test_a_number_nobody_has_is_replaced_at_once(tmp_path, monkeypatch):
     assert spawned == [1] and killed == []
 
 
-def test_kill_never_touches_another_program(monkeypatch):
+def _kills(monkeypatch):
+    """What _kill asks for: taskkill on Windows, a signal elsewhere."""
     calls = []
     monkeypatch.setattr(aria2d.subprocess, "run", lambda *a, **k: calls.append(a[0]))
+    monkeypatch.setattr(aria2d.os, "kill", lambda pid, sig: calls.append(["kill", str(pid)]))
+    return calls
+
+
+def test_kill_never_touches_another_program(monkeypatch):
+    calls = _kills(monkeypatch)
     monkeypatch.setattr(aria2d, "_process", lambda pid: ("SearchHost.exe", time.time()))
     aria2d._kill(12576)
     assert calls == []
 
 
 def test_kill_still_stops_an_aria2c(monkeypatch):
-    calls = []
-    monkeypatch.setattr(aria2d.subprocess, "run", lambda *a, **k: calls.append(a[0]))
+    calls = _kills(monkeypatch)
     monkeypatch.setattr(aria2d, "_process", lambda pid: ("aria2c.exe", time.time()))
     aria2d._kill(12576)
     assert len(calls) == 1 and "12576" in calls[0]
