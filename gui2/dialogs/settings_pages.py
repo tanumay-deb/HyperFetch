@@ -175,6 +175,11 @@ class PageBuilderMixin:
                   "Reads the page of a queued or paused video once, so the list "
                   "shows its title and size and not \"watch.bin\". Off means it "
                   "is named when it starts.", self.name_waiting)
+        self.hls_to_mp4 = self._toggle(ex.get("hls_to_mp4", False))
+        self._row(g, "Save stream videos as MP4",
+                  "Rewrites a finished stream video (HLS) as an ordinary MP4, so a "
+                  "player can skip around in it without freezing. Needs ffmpeg. "
+                  "Off keeps the file as it was downloaded.", self.hls_to_mp4)
         self.speed_limit = self._combo(["Unlimited", "1 Mb/s", "2 Mb/s", "5 Mb/s", "10 Mb/s", "25 Mb/s", "50 Mb/s", "100 Mb/s"], ex.get("speed_limit"), editable=True)
         self._row(g, "Download Speed Limit",
                   "For everything HyperFetch downloads, torrents included. "

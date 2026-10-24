@@ -208,6 +208,7 @@ class SettingsDialogV2(PageBuilderMixin, QDialog):
             "auto_start": self.auto_start.isChecked(),
             "categorize": self.categorize.isChecked(),
             "name_waiting_videos": self.name_waiting.isChecked(),
+            "hls_to_mp4": self.hls_to_mp4.isChecked(),
             "badge_corner": self._badge_corner_map.get(self.badge_corner.currentText(), "top-right"),
             "speed_limit": self.speed_limit.currentText(),
             "throttle_enabled": self.throttle_en.isChecked(),

@@ -377,10 +377,15 @@ class DownloadCardWidget(QFrame):
         is_tor = _torrent.is_torrent_task(t.url, t.filename)
         done = t.status == T.COMPLETED
 
-        pct = 100 if done else max(0, min(100, t.percent))
+        moving = getattr(t, "moving", False)
+        if moving:                          # "Move to…": how far the copy is
+            total = getattr(t, "move_total", 0) or 0
+            pct = int(100 * (getattr(t, "move_done", 0) or 0) / total) if total else 0
+        else:
+            pct = 100 if done else max(0, min(100, t.percent))
         self.bar.setValue(pct)
-        self.bar.setVisible(not done)
-        self.pct.setText("" if done else f"{pct}%")
+        self.bar.setVisible(moving or not done)
+        self.pct.setText(f"{pct}%" if moving or not done else "")
         col = _BAR_COLOR.get(t.status, COLORS["accent"])
         self.bar.setStyleSheet(
             f"QProgressBar{{background:{COLORS['surface2']};border:none;border-radius:4px;max-height:6px;}}"
@@ -391,7 +396,11 @@ class DownloadCardWidget(QFrame):
         # filenames below it stay in one column.
         self._render_serial(done)
 
-        if getattr(t, "verifying", False):
+        if moving:
+            self.sub.setText("Moving…  •  %s / %s" % (
+                human_size(getattr(t, "move_done", 0) or 0),
+                human_size(getattr(t, "move_total", 0) or 0)))
+        elif getattr(t, "verifying", False):
             # A recheck reads the whole payload off disk and can take minutes.
             # Show it counting up — a bare "verifying" is indistinguishable
             # from a hang, which is exactly how it was reported.

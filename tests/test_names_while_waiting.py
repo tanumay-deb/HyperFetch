@@ -653,6 +653,7 @@ def test_a_download_moved_by_hand_is_no_longer_the_apps_to_file(tmp_path, monkey
     win = types.SimpleNamespace(save_dir=str(base), _save_state=lambda: None,
                                 refresh=lambda: None,
                                 _toasts=types.SimpleNamespace(show=lambda *a, **k: None))
+    win._moved = lambda *a: ActionsMixin._moved(win, *a)
 
     ActionsMixin._move_task_files(win, t)
 

@@ -229,6 +229,7 @@ class SettingsMixin:
         utils.SEED_MINUTES = int(ex.get("seed_minutes", 0) or 0)
         utils.MAX_UPLOAD_BPS = _parse_rate(ex.get("upload_limit"))
         utils.HASH_CHECK = bool(ex.get("hash_check", False))
+        utils.HLS_TO_MP4 = bool(ex.get("hls_to_mp4", False))
         # Auto-capture allowlist (Settings -> Browser). The Flask /download endpoint
         # reads utils.CAPTURE_EXTS to filter the extension's auto-captures.
         ce = ex.get("capture_exts")

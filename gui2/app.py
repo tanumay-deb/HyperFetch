@@ -155,6 +155,7 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, Up
         self._restore_window()
 
         self._tick_errors = set()   # distinct refresh failures already logged
+        self._moves = deque()       # (task, target, folder, error) from move threads
         self.timer = QTimer(self)
         self.timer.timeout.connect(self._tick)
         self.timer.start(500)
@@ -720,6 +721,7 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, Up
 
     def refresh(self):
         self._drain_pending()
+        self._finish_moves()
         self._update_tick()
         self._ask_pairing()
         self._notify_added()

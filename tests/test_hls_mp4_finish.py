@@ -14,9 +14,11 @@ second and third second after each +5 s skip:
   joined transport stream (H.264)      18 /  0 /  0-19
 So it is the container, not the codec: VLC can only jump to a fragment's start
 in the one, and has no index at all in the other. With ffmpeg at hand the
-engine now rewrites what it joined as an ordinary MP4 - the same video and
+engine rewrites what it joined as an ordinary MP4 - the same video and
 audio, copied - and saves that; without it, or if the rewrite fails or comes
-out short, the joined file is saved as before.
+out short, the joined file is saved as before. Only when asked: Settings ->
+Downloads -> "Save stream videos as MP4" (utils.HLS_TO_MP4), off by default -
+it was done unasked in 2.8.1, and the user wanted the file as downloaded.
 
 The first tests drive the engine with a stand-in for the rewrite; the last ones
 use the real ffmpeg on media it makes itself, and are skipped where there is
@@ -104,6 +106,12 @@ class _Rewrite:
         return True
 
 
+@pytest.fixture(autouse=True)
+def mp4_asked_for(monkeypatch):
+    """Every test here but one is about the rewrite, so it is switched on."""
+    monkeypatch.setattr(utils, "HLS_TO_MP4", True)
+
+
 @pytest.fixture
 def dl(tmp_path):
     """The folder the download is saved in, and nothing else is."""
@@ -152,6 +160,26 @@ def test_another_file_of_the_new_name_is_not_written_over(stream, dl, monkeypatc
     assert t.status == T.COMPLETED, t.error
     assert t.filename == "clip (1).mp4"
     assert (dl / "clip.mp4").read_bytes() == b"somebody's"
+
+
+def test_not_asked_for_the_file_is_saved_as_it_came(stream, dl, monkeypatch):
+    """The setting is off by default: ffmpeg at hand changes nothing then."""
+    monkeypatch.setattr(utils, "HLS_TO_MP4", False)
+    monkeypatch.setattr(hls, "ffmpeg_path", lambda: "ffmpeg")
+    monkeypatch.setattr(hls, "remux", lambda *a, **k: pytest.fail("rewritten unasked"))
+    t = _task(stream, dl, name="clip.ts")
+    Downloader(t).run()
+    assert t.status == T.COMPLETED, t.error
+    assert t.filename == "clip.ts"
+    assert open(t.save_path, "rb").read() == stream.joined
+
+
+def test_the_setting_is_off_unless_switched_on():
+    import inspect
+    import re
+    assert re.search(r"^HLS_TO_MP4 = False", inspect.getsource(utils), re.M)
+    from gui2.dialogs import settings_pages
+    assert 'ex.get("hls_to_mp4", False)' in inspect.getsource(settings_pages)
 
 
 # ---- when it cannot be done ----------------------------------------------------------

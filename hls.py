@@ -545,7 +545,8 @@ class HlsDownloader:
         becomes ".mp4" - not over somebody's file of that name - and any
         other name, the browser's as a rule, is kept.
         """
-        if ffmpeg_path() is None:
+        # asked for in Settings -> Downloads, not done unasked
+        if not utils.HLS_TO_MP4 or ffmpeg_path() is None:
             return False
         dest = self.t.save_path
         if dest.lower().endswith(".ts"):

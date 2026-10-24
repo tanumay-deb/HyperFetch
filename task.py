@@ -199,6 +199,11 @@ class DownloadTask:
         # (hls.remux): at 100% with no speed, and for a big file for a while,
         # so the card says so. Transient.
         self.finishing = False
+        # "Move to…" copying its files to another folder (transient): the card
+        # shows how far, and Resume waits for it
+        self.moving = False
+        self.move_done = 0
+        self.move_total = 0
         # Metadata prefetch (magnets only). Transient: a fetch is cheap to
         # repeat and a stale 'failed' must not outlive the session.
         self.meta_fetching = False

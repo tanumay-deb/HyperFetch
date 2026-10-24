@@ -162,6 +162,81 @@ def unsparse(path):
         pass
 
 
+def tree_size(path):
+    """Bytes in a file, or in every file under a folder."""
+    if os.path.isfile(path):
+        return os.path.getsize(path)
+    return sum(os.path.getsize(os.path.join(d, f))
+               for d, _, files in os.walk(path) for f in files)
+
+
+def move_with_progress(src, dst, progress=lambda n: None, chunk=4 * 1024 * 1024):
+    """Move a file or folder to `dst` (which must not exist), calling
+    progress(bytes moved so far) as it goes. On one drive it is a rename. To
+    another it is a copy, and the source is removed only once all of it is
+    across: on any failure what was copied goes and the source stays."""
+    import errno
+    import shutil
+    try:
+        os.rename(src, dst)
+        progress(tree_size(dst))
+        return
+    except OSError as e:
+        if getattr(e, "winerror", None) != 17 and e.errno != errno.EXDEV:
+            raise                       # not "another drive": say so as it is
+    moved = 0
+
+    def copy_file(a, b):
+        nonlocal moved
+        with open(a, "rb") as fa, open(b, "wb") as fb:
+            while True:
+                block = fa.read(chunk)
+                if not block:
+                    break
+                fb.write(block)
+                moved += len(block)
+                progress(moved)
+        shutil.copystat(a, b)
+
+    if os.path.isfile(src):
+        staged = dst + ".hfmove"
+        try:
+            copy_file(src, staged)
+            os.replace(staged, dst)
+        except BaseException:
+            try:
+                os.remove(staged)
+            except OSError:
+                pass
+            raise
+        _drop_moved(src)
+        return
+    try:
+        for d, _, files in os.walk(src):
+            to = os.path.join(dst, os.path.relpath(d, src))
+            os.makedirs(to, exist_ok=True)
+            for f in files:
+                copy_file(os.path.join(d, f), os.path.join(to, f))
+    except BaseException:
+        shutil.rmtree(dst, ignore_errors=True)
+        raise
+    _drop_moved(src)
+
+
+def _drop_moved(src):
+    """Remove what was moved once its copy is whole. A file another program
+    holds stays where it was - two copies, nothing lost - and is logged."""
+    import shutil
+    try:
+        if os.path.isdir(src):
+            shutil.rmtree(src)
+        else:
+            os.remove(src)
+    except OSError as e:
+        logging.getLogger("hyperfetch.utils").warning(
+            "moved, but the old copy could not all be removed: %s", e)
+
+
 def finalize_download(temp_path, dest_path):
     """Atomically move a finished temp file to its destination, cross-volume safe.
 
@@ -221,6 +296,7 @@ LISTEN_PORT = 0           # torrent listen port (0 = aria2 default)
 DISK_CACHE = True         # aria2 --disk-cache on/off
 PREALLOCATE = False       # aria2 file pre-allocation
 HASH_CHECK = False        # verify SHA-256 against a <url>.sha256 sidecar on finish
+HLS_TO_MP4 = False        # rewrite a finished HLS video as an ordinary MP4 (hls.remux)
 SPEED_IN_BYTES = False    # speed readout units: False = bits (Kb/s), True = bytes (KB/s)
 # Torrent engine: False = one aria2c subprocess per task (legacy, stable),
 # True = one shared aria2 daemon driven over JSON-RPC. The daemon gives every

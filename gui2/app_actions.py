@@ -128,16 +128,21 @@ class ActionsMixin:
     def _move_task_files(self, t):
         """Move a download to another folder.
 
-        Completed or partially-downloaded files are moved on disk. An in-flight
-        HTTP download only needs its destination retargeted: the bytes live in
-        an id-keyed .hfdownload temp until finalize, so nothing has to move. A
-        running torrent is the exception — aria2 owns its --dir and cannot be
-        repointed mid-download — so that one asks for a pause first.
+        Completed or partially-downloaded files are moved on disk - on a
+        thread, the card showing how far (utils.move_with_progress); the
+        window took the whole copy on itself and froze for a move to another
+        drive. An in-flight HTTP download only needs its destination
+        retargeted: the bytes live in an id-keyed .hfdownload temp until
+        finalize, so nothing has to move. A running torrent is the exception —
+        aria2 owns its --dir and cannot be repointed mid-download — so that
+        one asks for a pause first.
         """
-        import shutil
+        import threading
         import utils
         from PySide6.QtWidgets import QFileDialog
 
+        if getattr(t, "moving", False):
+            return
         is_tor = _torrent.is_torrent_task(t.url, t.filename)
         if is_tor and t.status in (T.DOWNLOADING, T.QUEUED):
             self._toasts.show("info", "Pause first",
@@ -155,12 +160,37 @@ class ActionsMixin:
         target = utils.unique_path(dest_dir, name)
 
         if cur and os.path.exists(cur):
-            try:
-                shutil.move(cur, target)         # handles files and folders
-            except OSError as e:
-                self._toasts.show("error", "Move failed", str(e))
-                return
+            t.move_total = utils.tree_size(cur)
+            t.move_done = 0
+            t.moving = True                    # the card: "Moving…", Resume waits
+
+            def move():
+                try:
+                    utils.move_with_progress(
+                        cur, target, lambda n: setattr(t, "move_done", n))
+                    said = ""
+                except Exception as e:          # never leave it "Moving…"
+                    said = str(e) or type(e).__name__
+                self._moves.append((t, target, dest_dir, said))   # _finish_moves
+
+            threading.Thread(target=move, name="move", daemon=True).start()
+            self.refresh()
+            return
         # nothing on disk yet (queued/paused HTTP): just retarget the destination
+        self._moved(t, target, dest_dir)
+        self.refresh()
+
+    def _finish_moves(self):
+        """Moves the threads finished, taken up on the window's own thread."""
+        while self._moves:
+            t, target, dest_dir, said = self._moves.popleft()
+            t.moving = False
+            if said:
+                self._toasts.show("error", "Move failed", said)
+            else:
+                self._moved(t, target, dest_dir)
+
+    def _moved(self, t, target, dest_dir):
         t.save_path = target
         t.filename = os.path.basename(target)
         # the user chose this folder: the app files it nowhere else from now
@@ -169,7 +199,6 @@ class ActionsMixin:
         t.sort_base = ""
         t.log_event(f"Moved to {dest_dir}")
         self._save_state()
-        self.refresh()
         self._toasts.show("success", "Moved", t.filename)
 
     def _restart_task(self, t):

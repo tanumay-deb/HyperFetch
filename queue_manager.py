@@ -183,6 +183,8 @@ class QueueManager:
 
     def resume_task(self, task: "T.DownloadTask"):
         """Re-queue a paused/errored task; keeps its segments to resume from disk."""
+        if getattr(task, "moving", False):
+            return                          # its files are on their way elsewhere
         # A stalled torrent sits in QUEUED waiting out its backoff. An explicit
         # Resume is the user overruling that, so drop the delay and let it run
         # now — otherwise the click looks like it did nothing.
@@ -262,7 +264,8 @@ class QueueManager:
     def force_start(self, task: "T.DownloadTask"):
         """Force start a task immediately, bypassing concurrency limits."""
         with self.cond:
-            if task.status in (T.DOWNLOADING, T.COMPLETED, T.CANCELLED):
+            if (task.status in (T.DOWNLOADING, T.COMPLETED, T.CANCELLED)
+                    or getattr(task, "moving", False)):
                 return
             task.clear_pause()
             self._drop_from_heap(task)
