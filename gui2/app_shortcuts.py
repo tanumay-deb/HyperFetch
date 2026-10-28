@@ -117,6 +117,15 @@ class ShortcutsMixin:
         name = (getattr(t, "filename", "") or "").strip()
         # "torrent" and "download" are the engine's own placeholders; joining
         # either would point at something that is not this download's payload
+        # A torrent still being written in the unfinished-downloads folder is
+        # there, not in its own folder (task.unfinished_in).
+        work = getattr(t, "unfinished_in", "") or ""
+        if work and name and name.lower() not in ("torrent", "download", "download.bin"):
+            payload = os.path.join(work, name)
+            real = os.path.abspath(payload)
+            if (real.startswith(os.path.abspath(work) + os.sep) and os.path.exists(real)
+                    and real not in map(os.path.abspath, out)):
+                out.append(payload)
         if name and name.lower() not in ("torrent", "download", "download.bin"):
             payload = os.path.join(base, name)
             real = os.path.abspath(payload)

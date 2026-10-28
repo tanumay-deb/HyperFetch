@@ -837,7 +837,8 @@ class DetailsDrawer(QFrame):
         of order anyway, so a file reaches full size when its LAST piece lands.
         """
         rows = getattr(t, "file_progress", None) or []
-        base = os.path.dirname(t.save_path or "") or "."
+        # where aria2 writes it: its folder, or the unfinished-downloads one
+        base = (getattr(t, "unfinished_in", "") or os.path.dirname(t.save_path or "")) or "."
         out = []
         for f in rows:
             p = (f.get("path") or "").replace("\\", "/")

@@ -195,3 +195,74 @@ def test_a_paused_torrent_goes_on_from_where_it_was(swarm, daemon, tmp_path, mon
     _run(t)
     assert t.status == T.COMPLETED, (t.status, t.error)
     assert (out / "Payload.bin").read_bytes() == swarm["payload"]
+
+
+# ---- the unfinished-downloads folder (utils.INCOMPLETE_DIR) ---------------------
+def _wait(cond, limit=60):
+    end = time.monotonic() + limit
+    while time.monotonic() < end and not cond():
+        time.sleep(0.05)
+    return cond()
+
+
+def test_it_is_written_in_the_unfinished_folder_and_finishes_in_its_own(
+        swarm, daemon, tmp_path, monkeypatch):
+    unfinished, home = tmp_path / "unfinished", tmp_path / "downloads"
+    home.mkdir()
+    monkeypatch.setattr(utils, "INCOMPLETE_DIR", str(unfinished))
+    t = T.DownloadTask(swarm["torrent"], str(home / "Payload.torrent"))
+    seen = {}
+
+    def watch():                                   # where are the bytes while it runs?
+        if _wait(lambda: t.downloaded > 0, 60):
+            seen["unfinished"] = (unfinished / "Payload.bin").exists()
+            seen["home"] = (home / "Payload.bin").exists()
+
+    was = utils.global_limiter.limit_bps
+    utils.global_limiter.set_limit(512 * 1024)     # slow enough to look while it runs
+    try:
+        threading.Thread(target=watch, daemon=True).start()
+        _run(t)
+    finally:
+        utils.global_limiter.set_limit(was)
+    assert seen == {"unfinished": True, "home": False}, seen
+    assert t.status == T.COMPLETED, (t.status, t.error)
+    assert (home / "Payload.bin").read_bytes() == swarm["payload"]
+    assert t.save_path == str(home / "Payload.bin") and t.unfinished_in == ""
+    left = [f for _, _, fs in os.walk(unfinished) for f in fs]
+    assert left == [], "left in the unfinished folder: %s" % left
+
+
+def test_one_that_seeds_is_moved_and_seeds_from_its_own_folder(
+        swarm, daemon, tmp_path, monkeypatch):
+    unfinished, home = tmp_path / "unfinished", tmp_path / "downloads"
+    home.mkdir()
+    monkeypatch.setattr(utils, "INCOMPLETE_DIR", str(unfinished))
+    monkeypatch.setattr(utils, "SEED_ENABLED", True)
+    monkeypatch.setattr(utils, "SEED_RATIO", 0.0)
+    monkeypatch.setattr(utils, "SEED_MINUTES", 60)
+    t = T.DownloadTask(swarm["torrent"], str(home / "Payload.torrent"))
+    done = threading.Event()
+    threading.Thread(target=lambda: (torrent.TorrentDownloader(t).run(), done.set()),
+                     daemon=True).start()
+    try:
+        assert _wait(lambda: t.seeding and not t.verifying
+                     and (home / "Payload.bin").exists(), 90), (t.status, t.error)
+        assert (home / "Payload.bin").read_bytes() == swarm["payload"]
+        st = daemon.call("aria2.tellStatus", t.gid, ["dir", "status", "seeder"])
+        assert os.path.normcase(st["dir"]) == os.path.normcase(str(home)), st
+        assert st["status"] == "active" and st["seeder"] == "true", st
+        assert not (unfinished / "Payload.bin").exists()
+        assert t.status == T.COMPLETED and t.unfinished_in == ""
+    finally:
+        t.request_pause()
+        done.wait(20)
+
+
+def test_one_with_bytes_in_its_own_folder_goes_on_there(tmp_path, monkeypatch):
+    monkeypatch.setattr(utils, "INCOMPLETE_DIR", str(tmp_path / "unfinished"))
+    t = T.DownloadTask("magnet:?xt=urn:btih:%040d" % 1, str(tmp_path / "dl" / "x"))
+    t.downloaded = 1234                               # started before the folder was picked
+    td = torrent.TorrentDownloader(t)
+    td._final_dir = str(tmp_path / "dl")
+    assert td._work_dir() == str(tmp_path / "dl") and t.unfinished_in == ""

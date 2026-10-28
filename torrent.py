@@ -1025,16 +1025,18 @@ def cleanup_artifacts(task):
     if known.lower() not in _PLACEHOLDER_FILENAMES:
         names.add(known)
     names.add(torrent_top_name(metadata_torrent_path(task, folder)))
-    for name in names:
-        if not name or not _within(folder, name):
-            continue
-        ctl = os.path.join(folder, name + ".aria2")
-        if os.path.isfile(ctl):
-            try:
-                os.remove(ctl)
-                removed.append(ctl)
-            except OSError:
-                pass
+    work = getattr(task, "unfinished_in", "") or ""     # where it is written, if not home
+    for where in {folder, work} - {""}:
+        for name in names:
+            if not name or not _within(where, name):
+                continue
+            ctl = os.path.join(where, name + ".aria2")
+            if os.path.isfile(ctl):
+                try:
+                    os.remove(ctl)
+                    removed.append(ctl)
+                except OSError:
+                    pass
     # a .torrent task has no magnet to read the infohash from; it is on the
     # task, and names our kept copy in app data - never the user's own file
     ih = magnet_infohash(task.url or "") or (getattr(task, "infohash", "") or "")
@@ -1085,7 +1087,8 @@ def list_files(task):
     # above it - or, for a torrent the app filed into a category, the folder
     # it was filed from (sort_base). Only <infohash>.torrent is looked for.
     parent = os.path.dirname(save) or "."
-    dirs = [parent, os.path.dirname(parent), getattr(task, "sort_base", None) or ""]
+    dirs = [parent, os.path.dirname(parent), getattr(task, "sort_base", None) or "",
+            getattr(task, "unfinished_in", "") or ""]
     path = metadata_torrent_path(task, *dirs)
     rows = parse_torrent_files(path) if path else []
     if rows:
@@ -1447,7 +1450,8 @@ class TorrentDownloader:
         if meta:
             remember_files(self.t, parse_torrent_files(meta))
         sort_into_category(self.t, meta)
-        out_dir = os.path.dirname(self.t.save_path) or "."
+        self._final_dir = os.path.dirname(self.t.save_path) or "."
+        out_dir = self._work_dir()
         try:
             os.makedirs(out_dir, exist_ok=True)
         except OSError as e:
@@ -1557,6 +1561,65 @@ class TorrentDownloader:
             except Exception as e:
                 log.debug("could not set the limit of %s: %s", self.t.filename, e)
 
+    def _work_dir(self):
+        """The folder aria2 writes this torrent in: the unfinished-downloads
+        folder (utils.INCOMPLETE_DIR, Settings -> General) for one that starts
+        there, else its own. Decided at its first start, while nothing of it
+        is on disk; after that it goes on where its bytes are."""
+        if (not self.t.unfinished_in and utils.INCOMPLETE_DIR
+                and not self.t.downloaded and self.t.status != T.COMPLETED):
+            self.t.unfinished_in = utils.INCOMPLETE_DIR
+        return self.t.unfinished_in or self._final_dir
+
+    def _take_home(self, out_dir, top):
+        """A torrent finished in the unfinished-downloads folder is moved to
+        its own folder (utils.move_with_progress: the card says "Moving",
+        and the source goes only once all of it is across). Returns the
+        folder it is in now. Left where it is, and said so in its log, when
+        something of that name is already in the way or the move fails."""
+        work = self.t.unfinished_in
+        final = getattr(self, "_final_dir", "") or os.path.dirname(self.t.save_path) or "."
+        if not work:
+            return out_dir
+        if os.path.normcase(os.path.abspath(work)) == os.path.normcase(os.path.abspath(final)):
+            self.t.unfinished_in = ""
+            return out_dir
+        src, dst = os.path.join(work, top or ""), os.path.join(final, top or "")
+        if not top or not os.path.exists(src):
+            return out_dir
+        if os.path.exists(dst):
+            self.t.log_event("Left in %s: %s is already there" % (work, dst))
+            return work
+        self.t.move_total, self.t.move_done = utils.tree_size(src), 0
+        self.t.moving = True
+        try:
+            os.makedirs(final, exist_ok=True)
+            utils.move_with_progress(src, dst, lambda n: setattr(self.t, "move_done", n))
+        except Exception as e:
+            self.t.log_event("Could not move it to %s (%s); it is in %s" % (final, e, work))
+            log.warning("could not move %s home: %s", self.t.filename, e)
+            return work
+        finally:
+            self.t.moving = False
+        self.t.unfinished_in = ""
+        self.t.log_event("Moved to %s" % final)
+        log.info("moved home: %s -> %s", top, final)
+        return final
+
+    def _seed_from(self, d, out_dir):
+        """Add the finished torrent again in `out_dir`, to seed from there.
+        With a hash check: aria2 deleted the control file when it finished,
+        and without one it will not take files on disk as done."""
+        meta = self._known_metadata()
+        opts = self._add_opts(out_dir, meta)
+        opts.pop("pause-metadata", None)
+        opts["check-integrity"] = "true"
+        self._opts = opts
+        if meta and os.path.isfile(meta):
+            with open(meta, "rb") as f:
+                return self._add_torrent(d, f.read(), opts)
+        return self._rpc_add_new(d, opts)
+
     def _known_metadata(self):
         """The .torrent on disk that describes this task: the file it was added
         from (or our kept copy of it), or what the swarm already told us about
@@ -1631,7 +1694,9 @@ class TorrentDownloader:
         remember_files(self.t, parse_torrent_files(meta) if meta else [])
         want = dict(opts)
         if sort_into_category(self.t, meta):
-            want["dir"] = os.path.dirname(self.t.save_path)
+            self._final_dir = os.path.dirname(self.t.save_path)
+            if not self.t.unfinished_in:      # else it is written there, moved later
+                want["dir"] = self._final_dir
         want.update(tracker_opts(self.t, meta))
         if want == opts:
             try:
@@ -2231,6 +2296,13 @@ class TorrentDownloader:
                     time.sleep(POLL)
                     continue
                 if not self.t.seeding:
+                    if self.t.unfinished_in:
+                        # Finished in the unfinished-downloads folder: out of
+                        # aria2, moved home, added again to seed from there.
+                        self._rpc_remove(d, cur, force=True)
+                        out_dir = self._take_home(out_dir, top)
+                        cur = self._seed_from(d, out_dir)
+                        self._gid = self.t.gid = cur
                     # The payload is whole, so point at it now rather than when
                     # the seeding ends: serving, opening and the history record
                     # all read save_path meanwhile, and the placeholder is not
@@ -2269,6 +2341,7 @@ class TorrentDownloader:
                 if self.t.total_size:
                     self.t.downloaded = self.t.total_size
                 archive_metadata(self.t, out_dir)
+                out_dir = self._take_home(out_dir, top)   # from the unfinished folder
                 self._resolve_save_path(out_dir, top)     # before COMPLETED
                 self.t.status = T.COMPLETED
                 log.info("torrent done: %s", self.t.filename)

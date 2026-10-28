@@ -242,6 +242,11 @@ class DownloadTask:
         # metadata (torrent.remember_files). Persisted: the Files tab falls back
         # to it when the metadata file cannot be found after a restart.
         self.files = []
+        # The unfinished-downloads folder (utils.INCOMPLETE_DIR) a torrent is
+        # being downloaded in, "" when it is downloaded in its own folder. Set
+        # at its first start, cleared once it is moved home. Persisted: a
+        # paused one goes on where its bytes are, whatever the setting says.
+        self.unfinished_in = ""
         # Which files of a torrent to fetch, as aria2's 1-based select-file
         # list ("1,3,5"); "" means all. Persisted, so unticking survives a
         # pause, a restart, and the drawer being closed.
@@ -404,6 +409,7 @@ class DownloadTask:
             "infohash": self.infohash,
             "extra_trackers": list(self.extra_trackers or []),
             "files": self.files or [],
+            "unfinished_in": self.unfinished_in or "",
             "selected_files": self.selected_files,
             "sort_base": self.sort_base,
             "is_scheduled": getattr(self, "is_scheduled", False),
@@ -463,6 +469,7 @@ class DownloadTask:
         t.infohash = d.get("infohash", "")
         t.extra_trackers = [str(x) for x in (d.get("extra_trackers") or [])
                             if isinstance(x, str) and x.strip()]
+        t.unfinished_in = str(d.get("unfinished_in") or "")
         t.files = []
         for f in d.get("files") or []:         # a damaged entry is dropped, not fatal
             try:
