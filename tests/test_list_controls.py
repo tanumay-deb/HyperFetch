@@ -167,3 +167,66 @@ def test_a_click_on_blank_space_outside_the_list_clears_the_selection(tmp_path):
     picked, left = map(int, line.split()[1:])
     assert picked == 5, "the checkboxes did not select"
     assert left == 0, "a click on blank space left %d ticked" % left
+
+
+# ---- where the bulk bar sits ------------------------------------------------------
+# Reported 2026-10-28 with a screenshot: the bar sat on the left of the list
+# with its labels cut ("Paus", "Start r", "Folde", "Remo"). It had been placed
+# beside the details drawer, and stayed there after the drawer closed; then its
+# selection went from Downloading to Queued, "Start now" joined it, and five
+# buttons were squeezed into the width it had for four.
+BAR_SCRIPT = textwrap.dedent('''
+    import json, os, sys
+    appdata, root = sys.argv[1], sys.argv[2]
+    os.makedirs(os.path.join(appdata, "HyperFetch"), exist_ok=True)
+    with open(os.path.join(appdata, "HyperFetch", "settings.json"), "w") as f:
+        json.dump({"welcomed": True}, f)
+    sys.path.insert(0, root)
+    from PySide6.QtCore import QPoint
+    from PySide6.QtWidgets import QApplication
+    app = QApplication([])
+    import gui2.app as appmod
+    appmod.run_server = lambda *a, **k: None          # no local server
+    import task as T
+    win = appmod.DownloadAppV2()
+    win.timer.stop()                                  # refreshed only where it says so
+    win.resize(1400, 700); win.show(); app.processEvents()
+    t = T.DownloadTask("https://example.invalid/a.bin", os.path.join(appdata, "dl", "a.bin"),
+                       filename="a.bin")
+    t.status = T.DOWNLOADING
+    win.queue.add_task(t, start=False)
+    win.refresh(); app.processEvents()
+    bar, lst = win.action_bar, win.list
+
+    def say(when):
+        mid = lst.mapTo(win, QPoint(0, 0)).x() + lst.width() // 2
+        print(when, bar.geometry().center().x() - mid,
+              bar.width() - bar.sizeHint().width(), flush=True)
+
+    win.list.set_selection({t.id}); app.processEvents(); say("SHOWN")
+    win._on_card_action("details", t.id); app.processEvents(); say("DRAWER")
+    t.status = T.QUEUED                                            # "Start now" joins "Pause"
+    win.refresh(); app.processEvents(); say("GROWN")
+    win.drawer.close_drawer(); app.processEvents(); say("CLOSED")
+    win.queue.shutdown()
+    os._exit(0)
+''')
+
+
+def test_the_bar_is_centred_on_the_list_and_never_cut_short(tmp_path):
+    script = tmp_path / "bar_case.py"
+    script.write_text(BAR_SCRIPT, encoding="utf-8")
+    appdata = tmp_path / "appdata"
+    env = dict(os.environ, QT_QPA_PLATFORM="offscreen", APPDATA=str(appdata),
+               HOME=str(appdata))
+    r = subprocess.run([sys.executable, str(script), str(appdata), ROOT], env=env, cwd=ROOT,
+                       capture_output=True, text=True, timeout=90)
+    got = {x.split()[0]: tuple(map(int, x.split()[1:])) for x in r.stdout.splitlines()
+           if x.split()[:1] in (["SHOWN"], ["DRAWER"], ["GROWN"], ["CLOSED"])}
+    assert len(got) == 4, r.stdout + r.stderr[-2000:]
+    # (how far its middle is from the list's, its width less what its buttons need)
+    assert abs(got["SHOWN"][0]) <= 1 and got["SHOWN"][1] >= 0, got
+    assert got["DRAWER"][0] < -100, "the bar stayed under the drawer: %s" % (got,)
+    assert got["GROWN"][1] >= 0, "a new button cut the labels short: %s" % (got,)
+    assert abs(got["CLOSED"][0]) <= 1 and got["CLOSED"][1] >= 0, \
+        "the bar stayed beside a closed drawer: %s" % (got,)

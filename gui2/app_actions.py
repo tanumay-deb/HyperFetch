@@ -51,7 +51,6 @@ class ActionsMixin:
         elif action == "details":
             self.list.set_selection({t.id})
             self.drawer.open_for(t)
-            self._position_action_bar()      # re-dodge now that the drawer is visible
             return
         elif action == "delete":
             # drawer quick-action: same confirm dialog as the bulk bar
@@ -462,8 +461,8 @@ class ActionsMixin:
             force=bool(st & {T.QUEUED, T.PAUSED, T.ERROR, T.SCHEDULED}),
             move=(len(self.queue.queues) > 1 and T.QUEUED in st),
         )
+        self._position_action_bar()      # a button may have come or gone: its width with it
         if not bar.isVisible():
-            self._position_action_bar()
             bar.show(); bar.raise_()
 
     def _bar_folder(self):

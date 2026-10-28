@@ -594,6 +594,7 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, Up
         self.action_bar.removeClicked.connect(self._del_selected)
         self.action_bar.clearClicked.connect(lambda: self.list.clear_selection())
         self.action_bar.moveClicked.connect(self._bar_move_menu)
+        self.drawer.installEventFilter(self)   # the bar moves aside for it: see eventFilter
 
         # drag-drop overlay (shown while a link hovers over the window)
         self._drag_overlay = QLabel("Drop a link to add", self)
@@ -1435,6 +1436,14 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, Up
         x = tl.x() + margin + max(0, (avail - bw) // 2)
         y = tl.y() + lh - bh - margin
         bar.setGeometry(x, y, bw, bh)
+
+    def eventFilter(self, obj, e):
+        # The bar is placed beside the details drawer: again as that opens,
+        # closes or is resized - it stayed squeezed beside a closed one.
+        if (obj is self.drawer and e.type() in (QEvent.Show, QEvent.Hide, QEvent.Resize)
+                and self.action_bar.isVisible()):
+            self._position_action_bar()
+        return super().eventFilter(obj, e)
 
     def resizeEvent(self, e):
         super().resizeEvent(e)
