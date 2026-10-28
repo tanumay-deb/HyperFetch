@@ -84,6 +84,24 @@ def _display_name(url, filename=""):
     return name or utils.filename_from_url(url or "") or (url or "")[:60]
 
 
+SORT_KEYS = ["Added", "Name", "Size", "Progress", "Speed", "Seeds", "Peers"]
+
+
+def _seeds_peers(t, now):
+    """(seeds, peers) a torrent is known to have: live while it runs, else
+    what its trackers last said (swarm.py). -1 for unknown and for anything
+    that is not a torrent, so those go last."""
+    import swarm
+    if not _torrent.is_torrent_task(t.url, t.filename):
+        return -1, -1
+    if t.status == T.DOWNLOADING:
+        return int(t.tor_seeds or 0), int(t.tor_conns or 0)
+    seeds = swarm.known_seeds(t, now)
+    fresh = now - float(getattr(t, "swarm_at", 0) or 0) <= swarm.FRESH_FOR
+    peers = getattr(t, "swarm_peers", None) if fresh else None
+    return (-1 if seeds is None else int(seeds)), (-1 if peers is None else int(peers))
+
+
 class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, UpdateMixin,
                     QWidget):
     def __init__(self):
@@ -517,7 +535,7 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, Up
         from PySide6.QtWidgets import QMenu
         menu = QMenu(self.sort)
         menu.setStyleSheet(f"QMenu {{ background: {palette.COLORS['surface']}; color: {palette.COLORS['text']}; border: 1px solid {palette.COLORS['border']}; }} QMenu::item:selected {{ background: {palette.COLORS['surface2']}; }}")
-        for label in ["Added", "Name", "Size", "Progress", "Speed"]:
+        for label in SORT_KEYS:
             action = menu.addAction(label)
             action.triggered.connect(lambda checked=False, k=label: self._on_sort_changed(k))
         self.sort.setMenu(menu)
@@ -567,6 +585,7 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, Up
         self.action_bar = ActionBar(self)
         self.action_bar.hide()
         self.action_bar.openClicked.connect(self._bar_open)
+        self.action_bar.folderClicked.connect(self._bar_folder)
         self.action_bar.pauseClicked.connect(lambda: self._bar_bulk(self.queue.pause_task))
         self.action_bar.resumeClicked.connect(lambda: self._bar_bulk(self.queue.resume_task))
         self.action_bar.forceClicked.connect(lambda: self._bar_bulk(self.queue.force_start))
@@ -590,8 +609,7 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, Up
 
     def _on_sort_changed(self, key):
         """Toggle ascending/descending when the same sort is clicked again."""
-        keys = ["Added", "Name", "Size", "Progress", "Speed"]
-        idx = keys.index(key)
+        idx = SORT_KEYS.index(key)
         
         if not hasattr(self, "_sort_asc"):
             self._sort_asc = False
@@ -658,6 +676,9 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, Up
             tasks.sort(key=lambda t: t.percent, reverse=not asc)
         elif idx == 4: # Speed
             tasks.sort(key=lambda t: self._speed.get(t.id, (0,0,0.0))[2], reverse=not asc)
+        elif idx in (5, 6): # Seeds, Peers
+            now = time.time()
+            tasks.sort(key=lambda t: _seeds_peers(t, now)[idx - 5], reverse=not asc)
         else:          # Added (default)
             tasks.sort(key=lambda t: getattr(t, "added", 0), reverse=not asc)
         return tasks
@@ -722,6 +743,11 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, Up
     def refresh(self):
         self._drain_pending()
         self._finish_moves()
+        bar = getattr(self, "action_bar", None)
+        if bar is not None and bar.isVisible():   # statuses change under a selection
+            self._update_action_bar(self.list.selected_ids())
+        self._keep_awake(self._extras.get("keep_awake", False)
+                         and any(t.status == T.DOWNLOADING for t in self.queue.tasks))
         self._update_tick()
         self._ask_pairing()
         self._notify_added()

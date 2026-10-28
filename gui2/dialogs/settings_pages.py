@@ -165,6 +165,10 @@ class PageBuilderMixin:
                   "window in the tray.", self.notify_added)
         self.auto_start = self._toggle(ex.get("auto_start", True))
         self._row(g, "Auto start downloads", "Start downloads immediately after adding", self.auto_start)
+        self.keep_awake = self._toggle(ex.get("keep_awake", False))
+        self._row(g, "Keep the PC awake while downloading",
+                  "Windows does not go to sleep while a download is running. The "
+                  "screen can still turn off.", self.keep_awake)
         self.categorize = self._toggle(ex.get("categorize", True))
         self._row(g, "Organize into category folders",
                   "Auto-sort into Video / Music / Images / … subfolders by file type, "

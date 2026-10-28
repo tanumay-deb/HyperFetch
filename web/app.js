@@ -479,7 +479,7 @@ function build(d) {
 
 function swarm(d) {
   const p = d.peers, s = d.seeds;
-  return `${p} peer${p === 1 ? "" : "s"} · ${s} seed${s === 1 ? "" : "s"}`;
+  return `${s} seed${s === 1 ? "" : "s"} · ${p} peer${p === 1 ? "" : "s"}`;   // seeds first, as in the app
 }
 
 function subtitle(d, bps) {
@@ -993,9 +993,9 @@ function setStatus(downBps, stats, swarm) {
   if (swarm.torrents) {
     /* Peers alone flatters: 49 connected peers next to 0 B/s is normal in a
        swarm where nobody holds a complete copy, so the seed count goes beside
-       it — and the caption has to name the format or "104 / 5" is a riddle. */
-    $("connNow").textContent = swarm.peers + " / " + swarm.seeds;
-    $("connCap").textContent = "Peers / Seeds";
+       it — and the caption has to name the format or "5 / 104" is a riddle. */
+    $("connNow").textContent = swarm.seeds + " / " + swarm.peers;
+    $("connCap").textContent = "Seeds / Peers";
   } else {
     $("connNow").textContent = String(swarm.active);
     $("connCap").textContent = "Downloading";

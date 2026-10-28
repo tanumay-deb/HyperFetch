@@ -5,6 +5,7 @@ that pauses or releases downloads at set times.
 """
 import datetime
 import os
+import sys
 
 from PySide6.QtWidgets import QSystemTrayIcon, QApplication
 
@@ -29,6 +30,20 @@ def _in_window(start_hhmm, stop_hhmm):
 
 
 class SystemMixin:
+    # ------------------------------------------------------------- keep awake
+    def _keep_awake(self, on):
+        """Hold off Windows' sleep while `on` (Settings -> Downloads -> "Keep
+        the PC awake while downloading", and a download running). Told only
+        when it changes; the window's own thread holds it, and it ends with
+        the app."""
+        if bool(on) == getattr(self, "_awake", False) or sys.platform != "win32":
+            return
+        import ctypes
+        ES_CONTINUOUS, ES_SYSTEM_REQUIRED = 0x80000000, 0x00000001
+        ctypes.windll.kernel32.SetThreadExecutionState(
+            ES_CONTINUOUS | (ES_SYSTEM_REQUIRED if on else 0))
+        self._awake = bool(on)
+
     # ------------------------------------------------------------- speed throttle
     def _throttle_bps(self):
         """The speed limit to enforce right now: the scheduled throttle when its

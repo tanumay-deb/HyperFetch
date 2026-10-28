@@ -26,16 +26,16 @@ from gui2.graphing import moving_avg, smooth_path
 
 
 def _swarm(t):
-    """"N peers · M seeds" for a torrent card.
+    """"M seeds · N peers" for a torrent card - seeds first, as _scraped says it.
 
     Shown whenever the torrent is live — downloading, still fetching metadata,
-    or seeding — and shown even at zero. "0 peers · 0 seeds" is the single most
+    or seeding — and shown even at zero. "0 seeds · 0 peers" is the single most
     useful thing a stalled torrent can tell you; hiding it left "Fetching
     metadata…" looking identical whether the swarm was answering or silent.
     """
     p = int(getattr(t, "tor_conns", 0) or 0)
     s = int(getattr(t, "tor_seeds", 0) or 0)
-    return f"{p} peer{'' if p == 1 else 's'} · {s} seed{'' if s == 1 else 's'}"
+    return f"{s} seed{'' if s == 1 else 's'} · {p} peer{'' if p == 1 else 's'}"
 
 
 def _scraped(t, now):

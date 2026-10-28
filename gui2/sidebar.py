@@ -270,9 +270,9 @@ class Sidebar(QFrame):
             self.cap_conns.setText("Connections")
             tip = f"Speed {sp}  ·  {conns} connection{'s' if conns != 1 else ''}"
         else:
-            self.lbl_conns.setText(f"{conns} / {seeds}")
-            # the caption has to name the format, or "104 / 5" is a riddle
-            self.cap_conns.setText("Peers / Seeds")
+            self.lbl_conns.setText(f"{seeds} / {conns}")      # seeds first, as on the cards
+            # the caption has to name the format, or "5 / 104" is a riddle
+            self.cap_conns.setText("Seeds / Peers")
             tip = (f"Speed {sp}  ·  {conns} peer connection"
                    f"{'s' if conns != 1 else ''}  ·  {seeds} seeder"
                    f"{'s' if seeds != 1 else ''}\n"

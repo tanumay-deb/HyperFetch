@@ -65,11 +65,13 @@ def test_zero_is_shown_not_hidden(app):
 
 
 @pytest.mark.parametrize("p,s,expect", [
-    (1, 1, "1 peer · 1 seed"),
-    (2, 0, "2 peers · 0 seeds"),
-    (0, 3, "0 peers · 3 seeds"),
+    (1, 1, "1 seed · 1 peer"),
+    (2, 0, "0 seeds · 2 peers"),
+    (0, 3, "3 seeds · 0 peers"),
 ])
 def test_singular_and_plural(p, s, expect):
+    """Seeds first - the order a waiting torrent's scraped counts are in, so
+    every card reads the same way (they were peers-first on some)."""
     assert _swarm(_tor(peers=p, seeds=s)) == expect
 
 

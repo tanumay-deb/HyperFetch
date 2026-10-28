@@ -206,6 +206,7 @@ class SettingsDialogV2(PageBuilderMixin, QDialog):
             "close_behavior": self.close_beh.currentText(),
             "default_queue": self.def_queue.currentText(),
             "auto_start": self.auto_start.isChecked(),
+            "keep_awake": self.keep_awake.isChecked(),
             "categorize": self.categorize.isChecked(),
             "name_waiting_videos": self.name_waiting.isChecked(),
             "hls_to_mp4": self.hls_to_mp4.isChecked(),

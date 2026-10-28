@@ -17,6 +17,7 @@ from gui2.palette import COLORS
 
 class ActionBar(QFrame):
     openClicked = Signal()
+    folderClicked = Signal()
     pauseClicked = Signal()
     resumeClicked = Signal()
     forceClicked = Signal()
@@ -45,10 +46,11 @@ class ActionBar(QFrame):
         lay.addWidget(self.count)
         lay.addSpacing(4)
 
-        self.btn_open = self._btn("open", "Open", self.openClicked, lay)
         self.btn_pause = self._btn("pause", "Pause", self.pauseClicked, lay)
         self.btn_resume = self._btn("play", "Resume", self.resumeClicked, lay)
-        self.btn_force = self._btn("force", "Force", self.forceClicked, lay)
+        self.btn_force = self._btn("force", "Start now", self.forceClicked, lay)
+        self.btn_open = self._btn("open", "Open", self.openClicked, lay)
+        self.btn_folder = self._btn("folder", "Folder", self.folderClicked, lay)
         self.move_btn = self._btn("arrow-down", "Move to", self.moveClicked, lay)
         lay.addStretch()
         self.btn_remove = self._btn("trash", "Remove", self.removeClicked, lay, danger=True)
@@ -73,11 +75,13 @@ class ActionBar(QFrame):
     def set_count(self, n):
         self.count.setText(f"{n} selected")
 
-    def set_applicable(self, *, open_=False, pause=False, resume=False, force=False, move=False):
+    def set_applicable(self, *, open_=False, folder=False, pause=False, resume=False,
+                       force=False, move=False):
         """Show only the actions that make sense for the current selection's
         status(es) — e.g. a completed file gets Open (+ Remove), a downloading
-        one gets Pause, a paused/failed one gets Resume/Force. Remove is always on."""
+        one gets Pause, a paused/failed one gets Resume/Start now. Remove is always on."""
         self.btn_open.setVisible(open_)
+        self.btn_folder.setVisible(folder)
         self.btn_pause.setVisible(pause)
         self.btn_resume.setVisible(resume)
         self.btn_force.setVisible(force)

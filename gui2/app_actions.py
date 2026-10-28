@@ -5,6 +5,7 @@ calls. Mixed into `DownloadAppV2`; runs on the live window via `self`.
 """
 import os
 
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QMenu, QInputDialog, QLineEdit, QApplication
 
 import task as T
@@ -431,29 +432,44 @@ class ActionsMixin:
         return m
 
     def _on_selection_changed(self, ids):
-        # contextual bulk-action bar: visible only while something is selected
-        bar = getattr(self, "action_bar", None)
-        if bar is not None:
-            if ids:
-                ts = [x for x in (self.queue.get_task(i) for i in ids) if x]
-                st = {x.status for x in ts}
-                bar.set_count(len(ids))
-                bar.set_applicable(
-                    open_=(len(ts) == 1 and T.COMPLETED in st),
-                    pause=T.DOWNLOADING in st,
-                    resume=bool(st & {T.PAUSED, T.ERROR, T.QUEUED, T.SCHEDULED}),
-                    force=bool(st & {T.QUEUED, T.PAUSED, T.ERROR, T.SCHEDULED}),
-                    move=(len(self.queue.queues) > 1 and T.QUEUED in st),
-                )
-                self._position_action_bar()
-                bar.show(); bar.raise_()
-            else:
-                bar.hide()
+        self._update_action_bar(ids)
         # when the details drawer is open, selecting another single card retargets it
         if self.drawer.isVisible() and len(ids) == 1:
             t = self.queue.get_task(next(iter(ids)))
             if t:
                 self.drawer.retarget(t)
+
+    def _update_action_bar(self, ids):
+        """The bulk-action bar, for what the selection is NOW: it is called
+        again on every refresh, as downloads start, finish and fail under it.
+        Each state gets its own: running or waiting - Pause; paused or failed
+        - Resume; not running - Start now; one finished file - Open; one of
+        anything - its Folder. Remove and Clear always."""
+        bar = getattr(self, "action_bar", None)
+        if bar is None:
+            return
+        ts = [x for x in (self.queue.get_task(i) for i in ids) if x]
+        if not ts:
+            bar.hide()
+            return
+        st = {x.status for x in ts}
+        bar.set_count(len(ts))
+        bar.set_applicable(
+            open_=(len(ts) == 1 and T.COMPLETED in st),
+            folder=len(ts) == 1,
+            pause=bool(st & {T.DOWNLOADING, T.QUEUED}),       # what pause_task takes
+            resume=bool(st & {T.PAUSED, T.ERROR}),
+            force=bool(st & {T.QUEUED, T.PAUSED, T.ERROR, T.SCHEDULED}),
+            move=(len(self.queue.queues) > 1 and T.QUEUED in st),
+        )
+        if not bar.isVisible():
+            self._position_action_bar()
+            bar.show(); bar.raise_()
+
+    def _bar_folder(self):
+        ts = [x for x in (self.queue.get_task(i) for i in self.list.selected_ids()) if x]
+        if len(ts) == 1:
+            self._open_folder(ts[0])
 
     def _bar_bulk(self, fn):
         ts = [x for x in (self.queue.get_task(i) for i in self.list.selected_ids()) if x]
@@ -473,6 +489,17 @@ class ActionsMixin:
         for q in self.queue.queues.values():
             m.addAction(q.name, lambda n=q.name: self._bulk(ts, lambda x: self.queue.move_to_queue(x, n)))
         m.exec(self.action_bar.move_btn.mapToGlobal(self.action_bar.move_btn.rect().bottomLeft()))
+
+    def mousePressEvent(self, e):
+        # A press no widget took - the header row, the title, the margins -
+        # comes up to the window: blank space, like the list's own empty space.
+        # The drawer and the bar keep theirs.
+        w = self.childAt(e.position().toPoint())
+        own = [x for x in (getattr(self, "drawer", None), getattr(self, "action_bar", None)) if x]
+        if e.button() == Qt.LeftButton and not any(
+                w is not None and (x is w or x.isAncestorOf(w)) for x in own):
+            self._on_blank_clicked()
+        super().mousePressEvent(e)
 
     def _on_blank_clicked(self):
         # left-click on empty list space clears the selection and closes the drawer
