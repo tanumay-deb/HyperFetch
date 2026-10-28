@@ -69,3 +69,51 @@ def test_a_download_is_written_there_and_finishes_in_its_folder(tmp_path, monkey
     assert dest.read_bytes() == data
     left = [f for _, _, fs in os.walk(picked) for f in fs]
     assert left == [], "left in the unfinished folder: %s" % left
+
+
+# ---- video pages (yt-dlp) ----------------------------------------------------------
+from test_ytdlp_parallel import SIZE, TITLE, real_ytdlp, video_page  # noqa: E402,F401
+
+
+def test_a_video_is_written_there_and_filed_in_its_folder(real_ytdlp, video_page, media_server,
+                                                          make_payload, tmp_path, monkeypatch):
+    unfinished = tmp_path / "unfinished"
+    monkeypatch.setattr(utils, "INCOMPLETE_DIR", str(unfinished))
+    data = media_server.put("media/clip.mp4", make_payload(SIZE), etag='"v1"')
+    page = video_page("/watch/7", media_server.url("media/clip.mp4"))
+    base = str(tmp_path / "dl")
+    os.makedirs(base)
+    folder, sort_base = utils.place_download(base, page, "7.bin")
+    t = T.DownloadTask(page, utils.unique_path(folder, "7.bin"), filename="7.bin")
+    t.sort_base, t.use_ytdlp = sort_base, True
+    moves = []
+    real_move = utils.move_with_progress
+
+    def move(src, dst, progress=lambda n: None, **kw):    # where it was, where it goes
+        moves.append((src, dst))
+        return real_move(src, dst, progress, **kw)
+
+    monkeypatch.setattr(utils, "move_with_progress", move)
+    Downloader(t, segments=4).run()
+    assert t.status == T.COMPLETED, t.error
+    (src, dst), = moves
+    assert os.path.dirname(src) == str(unfinished), src
+    # its name is yt-dlp's (the generic extractor says "A video (1)")
+    assert dst == t.save_path == os.path.join(base, "Video", os.path.basename(src))
+    assert os.path.basename(dst).startswith(TITLE) and dst.endswith(".mp4"), dst
+    assert open(t.save_path, "rb").read() == data
+    assert t.unfinished_in == ""
+    left = [f for _, _, fs in os.walk(unfinished) for f in fs]
+    assert left == [], "left in the unfinished folder: %s" % left
+
+
+def test_a_video_begun_in_its_own_folder_goes_on_there(tmp_path, monkeypatch):
+    import yt_dl
+    home = tmp_path / "dl" / "Video"
+    home.mkdir(parents=True)
+    (home / "Clip.mp4.part").write_bytes(b"x" * 10)        # began before the folder was picked
+    monkeypatch.setattr(utils, "INCOMPLETE_DIR", str(tmp_path / "unfinished"))
+    t = T.DownloadTask("https://www.youtube.com/watch?v=x", str(home / "Clip.mp4"), filename="Clip.mp4")
+    t.yt_named = True
+    y = yt_dl.YtDlpDownloader(t)
+    assert y._work_dir() == str(home) and t.unfinished_in == ""

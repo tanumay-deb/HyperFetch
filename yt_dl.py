@@ -372,6 +372,24 @@ def folder_for(t, name):
     return "" if _begun(name) else there
 
 
+def _category_folder(t, name):
+    """The folder the app files a video called `name` in (its category's,
+    under task.sort_base); "" when the user chose its folder."""
+    base = getattr(t, "sort_base", None)
+    if not base:
+        return ""
+    import utils
+    return os.path.join(base, utils.category_for(os.path.basename(name)))
+
+
+def _where_written(t, path):
+    """Where yt-dlp writes the video named `path` (its destination): there,
+    or under the same name in the unfinished-downloads folder it is being
+    downloaded in (task.unfinished_in)."""
+    work = getattr(t, "unfinished_in", "") or ""
+    return os.path.join(work, os.path.basename(path)) if work else path
+
+
 def take_name(t, name, size=0):
     """Write a video's name onto its task: the path, the name shown, the size
     when the site said one - and that yt-dlp has been asked (task.yt_named)."""
@@ -455,11 +473,11 @@ def rename(queue, t, name):
         here = os.path.dirname(t.save_path) or "."
         base, ext = os.path.splitext(name)
         new, n = utils.unique_path(here, name), 0
-        while _left(new):
+        while _left(_where_written(t, new)):
             n += 1
             new = utils.unique_path(here, "%s (%d)%s" % (base, n, ext))
         if getattr(t, "yt_named", False):
-            _carry(t.save_path, new)
+            _carry(_where_written(t, t.save_path), _where_written(t, new))
         t.save_path, t.filename = new, os.path.basename(new)
         t.name_chosen = stem(t.filename)
 
@@ -523,6 +541,8 @@ class YtDlpDownloader:
         self._fetched = ""              # the file the engine finished, if it did
         self._settled = False           # named and filed already, this run
         self._moved = False             # ...into another folder than it began in
+        # where the finished video goes (run() and _settle say it again)
+        self._final_dir = os.path.dirname(dtask.save_path or "") or "."
 
     def _take_over_plain_files(self, ydl):
         """Have the app's segmented engine fetch the video when yt-dlp would
@@ -589,6 +609,14 @@ class YtDlpDownloader:
             return
         if not name:
             return
+        if self.t.unfinished_in:
+            # written in the unfinished-downloads folder, moved home when it
+            # is done: the task names its destination, filed as ever
+            self._final_dir = _category_folder(self.t, name) or self._final_dir
+            take_name(self.t, os.path.join(self._final_dir, os.path.basename(name)),
+                      info.get("filesize") or info.get("filesize_approx") or 0)
+            log.info("yt-dlp named it: %s", self.t.filename)
+            return
         there = folder_for(self.t, name)
         if there and self._send_to(ydl, there):
             here, name = os.path.dirname(name), ydl.prepare_filename(info)
@@ -596,6 +624,42 @@ class YtDlpDownloader:
             _leave(here, self.t.sort_base)
         take_name(self.t, name, info.get("filesize") or info.get("filesize_approx") or 0)
         log.info("yt-dlp named it: %s", self.t.filename)
+
+    def _work_dir(self):
+        """The folder yt-dlp writes this video in: the unfinished-downloads
+        folder (utils.INCOMPLETE_DIR) for one that starts there, else its
+        own. Decided while nothing of it is on disk; after that it goes on
+        where its partial is (task.unfinished_in, saved)."""
+        import utils
+        if (not self.t.unfinished_in and utils.INCOMPLETE_DIR and not self.t.downloaded
+                and not (getattr(self.t, "yt_named", False) and _begun(self.t.save_path))):
+            self.t.unfinished_in = utils.INCOMPLETE_DIR
+        return self.t.unfinished_in or self._final_dir
+
+    def _take_home(self, path):
+        """The finished video, moved from the unfinished-downloads folder to
+        its own (utils.move_with_progress; the card says "Moving"). Returns
+        where it is; left where it was, said in its log, if the move fails."""
+        import utils
+        dst = utils.unique_path(self._final_dir, os.path.basename(path))
+        try:
+            self.t.move_total, self.t.move_done = os.path.getsize(path), 0
+        except OSError:
+            return path
+        self.t.moving = True
+        try:
+            os.makedirs(self._final_dir, exist_ok=True)
+            utils.move_with_progress(path, dst, lambda n: setattr(self.t, "move_done", n))
+        except Exception as e:
+            self.t.log_event("Could not move it to %s (%s); it is in %s"
+                             % (self._final_dir, e, os.path.dirname(path)))
+            log.warning("could not move %s home: %s", path, e)
+            return path
+        finally:
+            self.t.moving = False
+        self.t.unfinished_in = ""
+        self.t.log_event("Moved to %s" % self._final_dir)
+        return dst
 
     @staticmethod
     def _send_to(ydl, folder):
@@ -662,7 +726,8 @@ class YtDlpDownloader:
             self.t.error = "yt-dlp not installed — run: pip install yt-dlp"
             return
 
-        out_dir = os.path.dirname(self.t.save_path) or "."
+        self._final_dir = os.path.dirname(self.t.save_path) or "."
+        out_dir = self._work_dir()
         _pre_existing = set(os.listdir(out_dir)) if os.path.isdir(out_dir) else set()
         try:
             os.makedirs(out_dir, exist_ok=True)
@@ -718,6 +783,8 @@ class YtDlpDownloader:
                 # by what is new in the folder - which says nothing in a folder
                 # the download moved to after that list was taken
                 path = self._newest(out_dir, _pre_existing)
+            if path and os.path.exists(path) and self.t.unfinished_in:
+                path = self._take_home(path)
             if path and os.path.exists(path):
                 self.t.save_path = path
                 self.t.filename = os.path.basename(path)
