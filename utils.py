@@ -22,10 +22,17 @@ def temp_dir():
     window started with another app-data folder - and each took the others'
     for leftovers of its own (sweep_orphan_temps). Whose a temp file is, is
     now told by where it is."""
+    return _temp_dir_in(INCOMPLETE_DIR or tempfile.gettempdir())
+
+
+def _temp_dir_in(base):
+    """This installation's own folder inside `base` (see temp_dir). Also in a
+    folder the user picked (INCOMPLETE_DIR, Settings -> General): two
+    installations pointed at one folder must not sweep each other's files."""
     import zlib
     home = os.path.normcase(os.path.abspath(app_data_dir()))
     tag = zlib.crc32(home.encode("utf-8", "surrogatepass")) & 0xFFFFFFFF
-    return os.path.join(tempfile.gettempdir(), "HyperFetch-%08x" % tag)
+    return os.path.join(base, "HyperFetch-%08x" % tag)
 
 
 def temp_download_path(task_id):
@@ -35,8 +42,12 @@ def temp_download_path(task_id):
     straight in the temp folder, and goes on from that."""
     name = f"{task_id}.hfdownload"
     old = os.path.join(tempfile.gettempdir(), name)
-    if os.path.exists(old):
-        return old
+    # a paused download goes on where its bytes are: straight in the temp
+    # folder (before temp_dir), or in the temp folder's own one (before an
+    # unfinished-downloads folder was picked)
+    for where in (old, os.path.join(_temp_dir_in(tempfile.gettempdir()), name)):
+        if os.path.exists(where):
+            return where
     folder = temp_dir()
     try:
         os.makedirs(folder, exist_ok=True)
@@ -69,7 +80,9 @@ def sweep_orphan_temps(known_ids, now=None):
     import time
     now = time.time() if now is None else now
     removed = []
-    for path in glob.glob(os.path.join(glob.escape(temp_dir()), "*.hfdownload")):
+    homes = {temp_dir(), _temp_dir_in(tempfile.gettempdir())}   # ours, picked or not
+    for path in [p for h in homes
+                 for p in glob.glob(os.path.join(glob.escape(h), "*.hfdownload"))]:
         tid = os.path.basename(path)[:-len(".hfdownload")]
         try:
             if tid in known_ids or now - os.path.getmtime(path) < ORPHAN_AGE:
@@ -297,6 +310,7 @@ DISK_CACHE = True         # aria2 --disk-cache on/off
 PREALLOCATE = False       # aria2 file pre-allocation
 HASH_CHECK = False        # verify SHA-256 against a <url>.sha256 sidecar on finish
 HLS_TO_MP4 = False        # rewrite a finished HLS video as an ordinary MP4 (hls.remux)
+INCOMPLETE_DIR = ""       # unfinished downloads are kept here ("" = the system temp folder)
 SPEED_IN_BYTES = False    # speed readout units: False = bits (Kb/s), True = bytes (KB/s)
 # Torrent engine: False = one aria2c subprocess per task (legacy, stable),
 # True = one shared aria2 daemon driven over JSON-RPC. The daemon gives every

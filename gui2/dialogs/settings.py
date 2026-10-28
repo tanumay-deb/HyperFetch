@@ -191,6 +191,7 @@ class SettingsDialogV2(PageBuilderMixin, QDialog):
     def values(self):
         return {
             "save_dir": self.dir_lbl.text(),
+            "incomplete_dir": self.incomplete_dir,
             "max_concurrent": self.conc._slider.value(),
             "segments": self.conns._slider.value(),
             "verify_tls": self.verify.isChecked(),

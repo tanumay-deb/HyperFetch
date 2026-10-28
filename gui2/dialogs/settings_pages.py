@@ -12,6 +12,8 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Qt, QTime, QTimer
 
+import os
+
 import crash_reporter
 import utils
 from gui.theme import APP_VERSION
@@ -123,6 +125,21 @@ class PageBuilderMixin:
         self.dir_lbl = QLabel(save_dir); self.dir_lbl.setStyleSheet(f"color:{COLORS['muted']};background:transparent;")
         browse = QPushButton("Change…"); browse.clicked.connect(self._browse)
         self._row(g, "Default Download Folder", save_dir, browse)
+        # unfinished downloads somewhere else, finished ones moved to their
+        # folder (utils.INCOMPLETE_DIR)
+        self.incomplete_dir = ex.get("incomplete_dir", "") or ""
+        box = QWidget(); hb = QHBoxLayout(box); hb.setContentsMargins(0, 0, 0, 0)
+        self.incomplete_lbl = QLabel()
+        self.incomplete_lbl.setStyleSheet(f"color:{COLORS['muted']};background:transparent;")
+        pick = QPushButton("Change…"); pick.clicked.connect(self._pick_incomplete)
+        off = QPushButton("Off"); off.clicked.connect(lambda: self._set_incomplete(""))
+        for w_ in (self.incomplete_lbl, pick, off):
+            hb.addWidget(w_)
+        self._set_incomplete(self.incomplete_dir)
+        self._row(g, "Keep unfinished downloads in",
+                  "Downloads are written here and moved to their folder when they "
+                  "finish. Off: torrents and videos download in their own folder.",
+                  box)
         v.addWidget(f)
         f2, g2 = self._card()
         self.auto_update = self._toggle(ex.get("auto_update_check", True))
@@ -663,6 +680,18 @@ class PageBuilderMixin:
             b.setStyleSheet(f"QPushButton {{ background: {bg}; color: {fg}; border: 2px solid {border}; border-radius: 8px; font-weight: 700; font-size: {fpx(14)}; }}"
                             f"QPushButton:hover {{ border: 2px solid {COLORS['accent2']}; }}")
 
+
+    def _pick_incomplete(self):
+        d = QFileDialog.getExistingDirectory(self, "Keep unfinished downloads in",
+                                             self.incomplete_dir or self.dir_lbl.text())
+        if d:
+            self._set_incomplete(d)
+
+    def _set_incomplete(self, d):
+        self.incomplete_dir = d
+        name = os.path.basename(d.rstrip("/\\")) or d
+        self.incomplete_lbl.setText(name if d else "Off")
+        self.incomplete_lbl.setToolTip(d)
 
     def _browse(self):
         d = QFileDialog.getExistingDirectory(self, "Default download folder", self.dir_lbl.text())
