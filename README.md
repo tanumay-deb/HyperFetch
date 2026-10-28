@@ -16,18 +16,20 @@ browser extension that sends your downloads straight to the app.
 
 - **Download large files much faster** — splits each file across up to 16 connections at once (auto-detects support; falls back to a single stream otherwise).
 - **Never lose progress** — pause and resume anytime, even across restarts; resume picks up from the bytes already on disk. Organize downloads into named queues with their own limits.
-- **Save streaming video** — capture HLS (`.m3u8`) streams as one playable file, and download from YouTube, Vimeo, Twitch and more with a quality picker.
-- **Torrents & magnets** — built in, no separate app needed.
-- **Grab downloads from your browser** — right-click a link, click the badge on a video, or auto-capture downloads by file type. The Chrome/Edge extension hands them to the app.
+- **Save streaming video** — capture HLS (`.m3u8`) streams as one playable file (optionally rewritten as an ordinary MP4, so players can skip around in it), and download from YouTube, Vimeo, Twitch and more with a quality picker.
+- **Torrents & magnets** — built in, no separate app needed. A torrent that stalls is tried again by itself, the same torrent is never added twice (as a magnet, a `.torrent` file or a link), and the list sorts by seeds or peers.
+- **Grab downloads from your browser** — right-click a link, click the badge on a video, or auto-capture downloads by file type. The extension for Chrome, Edge and Firefox hands them to the app.
+- **Updates itself** — checks GitHub once a day, downloads the new version, checks it against the SHA-256 GitHub lists, and asks before installing.
 - **Track everything** — every completed download is logged with lifetime totals and stats.
-- **Privacy & control** — set speed limits and a global proxy, encrypt DNS lookups (DNS-over-HTTPS), enable UPnP, and optionally verify file integrity with SHA-256.
+- **Privacy & control** — speed limits, a global proxy, encrypted DNS lookups (DNS-over-HTTPS), a local relay that gets past a provider's site block, UPnP, optional SHA-256 checks, and keeping the PC awake while downloading.
 
 ## Install
 
-**Windows (most people — no Python needed):** download **`HyperFetch-Setup.exe`**
+**Windows (most people — no Python needed):** download **`HyperFetch-<version>-setup.exe`**
 from the [Releases](https://github.com/tanumay-deb/HyperFetch/releases) page and
-run it. The installer bundles its own Python runtime and `aria2c`, so it works on
-a clean machine. (Unsigned, so Windows SmartScreen shows *"Windows protected your
+run it. The installer bundles its own Python runtime, `aria2c` and `ffmpeg`, so it
+works on a clean machine, and from then on the app updates itself
+(**Update to …** in the sidebar; Settings → General). (Unsigned, so Windows SmartScreen shows *"Windows protected your
 PC"* on first run → **More info → Run anyway**.) Prefer no install? Grab the
 `-portable.zip`, extract it, and run `HyperFetch.exe` inside the folder.
 
@@ -74,8 +76,20 @@ audit trail. It is not part of this repository and not part of the desktop
 app — a download manager is not a hosting service, and keeping them apart is
 how you avoid publishing a machine you did not mean to.
 
-The desktop app has **Browser Access** instead: one page, your own network,
-one password, off by default. That is in here and documented below.
+The desktop app has a **web client** instead: one page, your own network,
+one password, off by default — see [Web client](#web-client).
+
+## Web client
+
+Use the app from another browser or your phone (**Settings → Web Client**):
+
+1. Turn on **Enable web client** and set a username and password.
+2. On this PC, open `http://127.0.0.1:21456/ui/`. For your phone, also turn on
+   **Allow access from my network** (it then needs a password of at least 8
+   characters) and open the same page at this PC's address.
+
+It shares nothing with the browser extension: the extension pairs with a token,
+the web client signs in with its own password.
 
 ## How it works
 
@@ -87,7 +101,8 @@ one password, off by default. That is in here and documented below.
 | `history.py` | completed-download log + stats |
 | `api_server.py` | local Flask server the extension talks to |
 | `gui2/` | the desktop GUI |
-| `chrome_ext/` · `edge_ext/` | the browser extension (kept in sync) |
+| `web/` | the web client's page |
+| `chrome_ext/` · `edge_ext/` · `firefox_ext/` | the browser extension (kept in sync) |
 
 The GUI and the server share **one** queue, so browser-sent and manually-added
 downloads land in the same list. Everything runs on your machine — no accounts,
@@ -97,7 +112,7 @@ no tracking. Settings and state live in `%APPDATA%\HyperFetch\`.
 
 ```powershell
 pip install -r requirements-dev.txt
-pytest                                  # Python suite (fully offline)
+pytest                                  # Python suite (offline; the real-engine tests need aria2c and ffmpeg)
 cd chrome_ext/test && npm install && npm test   # extension tests
 ```
 
