@@ -6,9 +6,10 @@ said while it waited (``swarm_seeds``, from scrape.py). The newer of the two is
 what is known, and a count older than a day is not known at all - a swarm is
 not the same crowd a day later.
 
-The queue starts torrents in the order of health_rank: known seeders, most
-first; then unknown; then known to have none. And a torrent stuck without
-seeders gives way only to one that is not known dead (queue_manager.py).
+A torrent stuck without seeders gives way only to one that is not known dead
+(queue_manager.py). What starts next is the number order, not the swarm: the
+queue used to start known seeders first (health_rank), and the user asked for
+the number order instead (2026-10-28).
 """
 
 # A running torrent with no seeders and no new bytes for this long gives its
@@ -34,13 +35,3 @@ def known_seeds(task, now):
 
 def is_known_dead(task, now):
     return known_seeds(task, now) == 0
-
-
-def health_rank(task, now):
-    """Sort key, lower first: known seeders (most first), unknown, known none."""
-    n = known_seeds(task, now)
-    if n is None:
-        return (1, 0)
-    if n > 0:
-        return (0, -n)
-    return (2, 0)

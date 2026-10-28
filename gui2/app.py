@@ -123,8 +123,8 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, Up
         # so a queue of magnets is not a list of identical placeholders.
         self._meta = _torrent.MetadataPrefetcher(lambda: self.queue.tasks)
         self._meta.start()
-        # Ask trackers how many seeders each waiting torrent has, so the queue
-        # starts the healthiest first (scrape.py). Settings -> Torrents.
+        # Ask trackers how many seeders each waiting torrent has, for the cards
+        # and for whom a stuck torrent gives way to (scrape.py). Settings -> Torrents.
         self._scout = scrape.SwarmScout(lambda: self.queue.tasks,
                                         enabled_fn=self._scrape_enabled)
         self._scout.start()
@@ -644,9 +644,9 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, Up
         ones, and independently of the sort — a card's "#3" identifies it, so it
         must not change when the user re-sorts or filters the list. `added` is
         persisted, so the numbers survive a restart too; `seq` breaks ties for
-        tasks stamped in the same instant."""
-        ordered = sorted(self.queue.tasks,
-                         key=lambda t: (getattr(t, "added", 0) or 0, getattr(t, "seq", 0)))
+        tasks stamped in the same instant. The queue starts waiting downloads
+        in this same order (T.number_key)."""
+        ordered = sorted(self.queue.tasks, key=T.number_key)
         return {t.id: i for i, t in enumerate(ordered, 1)}
 
     def _visible_tasks(self):

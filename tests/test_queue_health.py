@@ -1,10 +1,12 @@
-"""Which queued torrent starts next, and whether a stuck one has anyone to give
-way to (queue_manager.py with swarm.py).
+"""Which waiting download starts next, and whether a stuck torrent has anyone
+to give way to (queue_manager.py with swarm.py).
 
-When the next task in line is a torrent, the healthiest ready torrent of the
-same queue starts in its place: known seeders (most first), then unknown, then
-known to have none - ahead of the priority setting, which breaks ties. Web
-downloads keep their place in line.
+Asked 2026-10-28: the "#" on a card is the order downloads go in - the first
+one added is #1 and starts first. One that is resumed goes back to its place
+by number (it used to join the end of the line), and a torrent with seeders
+no longer starts ahead of a lower number with none (the queue used to rank
+torrents by their swarm first). The lowest waiting number whose backoff is
+over starts; a running download is never stopped for it.
 """
 import threading
 import time
@@ -14,88 +16,125 @@ import task as T
 from queue_manager import QueueManager
 
 
-def _tor(name, prio=0, seeds=None, queue="Main"):
+def _tor(name, number=0, seeds=None, queue="Main"):
     t = T.DownloadTask("magnet:?xt=urn:btih:" + name.ljust(40, "0"), name,
-                       filename=name, priority=prio, queue_name=queue)
+                       filename=name, queue_name=queue)
+    t.added = number or t.added                           # its "#"
     if seeds is not None:
         t.swarm_seeds, t.swarm_at = seeds, time.time()
     return t
 
 
-def _web(name, prio=0):
-    return T.DownloadTask("https://x.example/%s.zip" % name, name, filename=name, priority=prio)
+def _web(name, number):
+    t = T.DownloadTask("https://x.example/%s.zip" % name, name, filename=name)
+    t.added = number
+    return t
 
 
 def _qm(queues=None):
     return QueueManager(queues=queues or [{"name": "Main", "max_concurrent": 1}])
 
 
-def _pick(*tasks, queues=None):
-    q = _qm(queues)
+def _line(*tasks):
+    """The waiting line after `tasks` are queued in that order, and who starts."""
+    q = _qm()
     try:
-        for t in tasks:
-            queue_manager.heapq.heappush(q._heap, t)
+        with q.cond:
+            for t in tasks:
+                q._push(t)
+            line = [t.filename for t in sorted(q._heap)]
         ready, _ = q._next_ready()
-        return ready
+        return line, ready
     finally:
         q.shutdown()
 
 
-def test_seeders_beat_priority():
-    dead_first = _tor("dead", prio=0, seeds=0)
-    alive_later = _tor("alive", prio=5, seeds=12)
-    assert _pick(dead_first, alive_later) is alive_later
+def test_the_lowest_number_starts_first_seeders_or_not():
+    dead_1, alive_2 = _tor("one", 1, seeds=0), _tor("two", 2, seeds=40)
+    line, ready = _line(alive_2, dead_1)
+    assert line == ["one", "two"] and ready is dead_1
 
 
-def test_most_seeders_first():
-    few = _tor("few", prio=0, seeds=2)
-    many = _tor("many", prio=5, seeds=30)
-    assert _pick(few, many) is many
+def test_a_resumed_download_goes_back_to_its_place():
+    one, two, three = _tor("one", 1), _tor("two", 2), _tor("three", 3)
+    line, ready = _line(two, three, one)                 # #1 was paused, now resumed
+    assert line == ["one", "two", "three"] and ready is one
 
 
-def test_unknown_before_known_dead():
-    dead = _tor("dead", prio=0, seeds=0)
-    unknown = _tor("unknown", prio=5)
-    assert _pick(dead, unknown) is unknown
+def test_a_new_download_goes_last():
+    assert _line(_tor("one", 1), _tor("two", 2), _tor("three", 3))[0] == ["one", "two", "three"]
 
 
-def test_ties_go_to_priority_then_order():
-    a, b = _tor("a", prio=0), _tor("b", prio=0)          # both unknown, a added first
-    assert _pick(b, a) is a
-    c, d = _tor("c", prio=3, seeds=5), _tor("d", prio=0, seeds=5)
-    assert _pick(c, d) is d
+def test_web_downloads_and_torrents_share_one_line():
+    assert _line(_tor("tor", 2, seeds=40), _web("web", 1))[1].filename == "web"
 
 
-def test_a_web_download_first_in_line_still_goes_first():
-    web = _web("web", prio=0)
-    alive = _tor("alive", prio=5, seeds=40)
-    assert _pick(web, alive) is web
+def test_a_backed_off_torrent_waits_and_the_next_number_runs():
+    one, two = _tor("one", 1), _tor("two", 2)
+    one.retry_after = time.time() + 3600
+    assert _line(one, two)[1] is two
 
 
-def test_each_queue_ranks_only_its_own_torrents():
-    queues = [{"name": "Main", "max_concurrent": 1}, {"name": "Night", "max_concurrent": 1}]
-    dead_main = _tor("dead", prio=0, seeds=0, queue="Main")
-    alive_night = _tor("alive", prio=5, seeds=40, queue="Night")
-    assert _pick(dead_main, alive_night, queues=queues) is dead_main
-
-
-def test_a_backed_off_torrent_is_not_a_candidate():
-    dead = _tor("dead", prio=0, seeds=0)
-    waiting = _tor("alive", prio=5, seeds=40)
-    waiting.retry_after = time.time() + 3600
-    assert _pick(dead, waiting) is dead
-
-
-def test_the_picked_one_leaves_the_queue_and_the_rest_stay():
+def test_the_picked_one_leaves_the_line_and_the_rest_stay():
     q = _qm()
     try:
-        dead, alive = _tor("dead", seeds=0), _tor("alive", prio=5, seeds=9)
-        for t in (dead, alive):
-            queue_manager.heapq.heappush(q._heap, t)
+        one, two = _tor("one", 1, seeds=0), _tor("two", 2, seeds=9)
+        with q.cond:
+            q._push(two)
+            q._push(one)
         ready, _ = q._next_ready()
-        assert ready is alive
-        assert q._heap == [dead]
+        assert ready is one and q._heap == [two]
     finally:
+        q.shutdown()
+
+
+class _Held:
+    """Stands in for the engine: a download runs until let go, or paused."""
+    started, go = [], {}
+
+    def __init__(self, task, segments=8):
+        self.t = task
+
+    def run(self):
+        _Held.started.append(self.t.filename)
+        self.t.status = T.DOWNLOADING
+        go = _Held.go.setdefault(self.t.filename, threading.Event())
+        while not go.wait(0.02):
+            if self.t.pause_requested:
+                self.t.status = T.PAUSED
+                return
+        self.t.status = T.COMPLETED
+
+
+def _until(cond, limit=5.0):
+    end = time.monotonic() + limit
+    while time.monotonic() < end and not cond():
+        time.sleep(0.02)
+    assert cond(), _Held.started
+
+
+def test_one_paused_and_resumed_later_is_next_when_the_slot_frees(monkeypatch):
+    """What was asked: max downloads 1, #1 paused - so #2 starts - and resumed
+    later. #2 goes on, and #1 is next when #2 is done, before #3."""
+    monkeypatch.setattr(queue_manager, "Downloader", _Held)
+    _Held.started, _Held.go = [], {}
+    q = _qm()
+    try:
+        one, two, three = _web("one", 1), _web("two", 2), _web("three", 3)
+        for t in (one, two, three):
+            q.add_task(t)
+        _until(lambda: _Held.started == ["one"])
+        q.pause_task(one)
+        _until(lambda: _Held.started == ["one", "two"])
+        q.resume_task(one)
+        time.sleep(0.3)
+        assert _Held.started == ["one", "two"], "a running download was stopped for it"
+        _Held.go["two"].set()                              # #2 is done
+        _until(lambda: len(_Held.started) == 3)
+        assert _Held.started == ["one", "two", "one"]
+    finally:
+        for go in list(_Held.go.values()):
+            go.set()
         q.shutdown()
 
 
@@ -138,8 +177,8 @@ def test_a_running_torrent_can_ask_whether_someone_better_waits(monkeypatch):
     _AsksDownloader.seen = []
     q = _qm()
     try:
-        first = _tor("first", prio=0, seeds=3)
-        behind = _tor("behind", prio=5)                    # unknown: alive enough
+        first = _tor("first", seeds=3)
+        behind = _tor("behind")                            # unknown: alive enough
         q.add_task(first)
         q.add_task(behind)
         deadline = time.time() + 5

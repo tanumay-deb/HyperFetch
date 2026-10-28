@@ -40,15 +40,6 @@ def test_known_dead():
     assert not swarm.is_known_dead(_t(last=1, last_at=NOW - 60), NOW)
 
 
-def test_the_order_seeders_then_unknown_then_dead():
-    many = _t(last=30, last_at=NOW - 60)
-    few = _t(scraped=2, scraped_at=NOW - 60)
-    unknown = _t()
-    dead = _t(last=0, last_at=NOW - 60)
-    ranked = sorted([dead, unknown, few, many], key=lambda t: swarm.health_rank(t, NOW))
-    assert ranked == [many, few, unknown, dead]
-
-
 def test_the_counts_survive_a_restart():
     t = _t(last=7, last_at=NOW - 60, scraped=12, scraped_at=NOW - 30)
     t.swarm_peers = 40

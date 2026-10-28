@@ -52,6 +52,13 @@ _id_counter = itertools.count(1)
 _seq_counter = itertools.count(1)   # monotonic insertion order for FIFO tie-breaks
 
 
+def number_key(task):
+    """A download's place by number - the "#" on its card: when it was added
+    (persisted), then the order it was made in. The queue starts waiting
+    downloads in this order (queue_manager._push)."""
+    return (getattr(task, "added", 0) or 0, getattr(task, "seq", 0))
+
+
 class Segment:
     """One byte-range of a multi-segment download. Writes to ``{path}.part{index}``."""
 

@@ -59,9 +59,18 @@ class QueueManager:
         return task
 
     def _push(self, task):
-        """Put a task at the end of the pending order. Call with the lock held."""
-        task.priority = max((t.priority for t in self._heap), default=-1) + 1
-        heapq.heappush(self._heap, task)
+        """Put a task in the pending order at its place by number (the "#" on
+        its card, T.number_key): a new one goes last, and one resumed or
+        given back goes before the first waiting one with a higher number -
+        it used to join the end (asked 2026-10-28). Moves made by hand keep
+        their place. Call with the lock held."""
+        line = sorted(self._heap)
+        mine = T.number_key(task)
+        at = next((i for i, t in enumerate(line) if T.number_key(t) > mine), len(line))
+        line.insert(at, task)
+        for rank, t in enumerate(line):
+            t.priority = rank
+        self._heap[:] = line                   # in order, so already a heap
 
     def restore(self, rows):
         """Load saved tasks and resume anything that was in flight.
@@ -435,12 +444,12 @@ class QueueManager:
     def _next_ready(self):
         """Return a runnable task or None.
 
-        In the heap's order - priority, then when it was added - the first task
-        whose queue has room starts. Except when that task is a torrent: then
-        the healthiest ready torrent of the same queue starts in its place
-        (swarm.py: known seeders, most first; then unknown; then known to have
-        none), so a dead swarm first in line does not take the slot from a live
-        one behind it. Web downloads keep their place in line.
+        In the heap's order - by number (_push), or where it was moved by
+        hand - the first task whose queue has room starts; one waiting out a
+        backoff is passed over until it is due. A torrent with seeders no
+        longer starts ahead of a lower number: the user asked for the number
+        order, dead swarm or not (2026-10-28) - a stuck torrent gives its slot
+        back by itself (torrent.py), and waits out its backoff meanwhile.
         """
         if not self._heap:
             return None, None
@@ -467,13 +476,6 @@ class QueueManager:
             if q.active < q.max_concurrent and not torrent_full:
                 ready_task = task
                 break
-
-        if ready_task is not None and self._is_torrent(ready_task):
-            place = {id(t): i for i, t in enumerate(order)}
-            rivals = [t for t in order
-                      if self._is_torrent(t) and t.queue_name == ready_task.queue_name
-                      and float(getattr(t, "retry_after", 0) or 0) <= now]
-            ready_task = min(rivals, key=lambda t: (swarm.health_rank(t, now), place[id(t)]))
 
         if ready_task is not None:
             self._heap.remove(ready_task)
@@ -609,9 +611,7 @@ class QueueManager:
                     log.warning("forced terminal status for %s -> %s", task.filename, task.status)
                 task._worker_alive = False
                 task._torrent_slot_reserved = False
-                if stalled:
-                    heapq.heappush(self._heap, task)
-                elif again:
+                if stalled or again:
                     self._push(task)
                 # a seeding torrent already handed its slot back; decrementing
                 # again here would let the queue run over its own limit

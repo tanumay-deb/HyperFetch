@@ -4,8 +4,10 @@ A torrent waiting in the queue says nothing about its swarm: aria2 counts
 seeders only once it is running. A tracker's scrape reply does - seeders,
 completed downloads and leechers, for up to 70 torrents in one question - so
 SwarmScout asks the trackers about waiting torrents now and then and writes the
-answer onto them (swarm_seeds, swarm_peers, swarm_at). The queue then starts
-the torrent with the most seeders first (swarm.py, queue_manager.py).
+answer onto them (swarm_seeds, swarm_peers, swarm_at). The cards and the
+Seeds/Peers sort show it, and a torrent stuck without seeders gives way only
+to one not known to have none (swarm.py). What starts next is the number
+order, not this (asked 2026-10-28; queue_manager.py).
 
 Two protocols: UDP (BEP 15: connect, then scrape) and HTTP (the announce
 address's "scrape" twin, a bencoded reply). UDP goes direct, as aria2's tracker
