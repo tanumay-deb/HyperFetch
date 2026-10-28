@@ -2045,7 +2045,13 @@ class TorrentDownloader:
                 gid = r.get("gid") or ""
                 if not gid:
                     continue
-                if live_only and str(r.get("status") or "").lower() in _DEAD_RPC:
+                status = str(r.get("status") or "").lower()
+                # A magnet's finished METADATA download is not the torrent: that
+                # is its followedBy, found above while it lives. A stall yield
+                # drops the payload and leaves this record, and re-attaching to
+                # it led to the gone gid on every start (reported 2026-10-28).
+                if live_only and (status in _DEAD_RPC
+                                  or (status == "complete" and r.get("followedBy"))):
                     dead.append(gid)
                     continue
                 return gid
@@ -2105,7 +2111,6 @@ class TorrentDownloader:
             try:
                 st = d.call("aria2.tellStatus", cur)
                 fails = 0
-                self.t.engine_retries = 0      # the engine is back: a fresh count
             except Exception as e:
                 # We no longer know how the swarm looks, so stop presenting the
                 # last reading as if it were current. A busy daemon left these
@@ -2157,6 +2162,9 @@ class TorrentDownloader:
                 # and the tab sat on "Connecting…" for the whole download.
                 self._gid = self.t.gid = cur
                 continue
+            # The engine is back: a fresh count - from a poll of the download
+            # itself, not of a record that only hands over to it.
+            self.t.engine_retries = 0
 
             # Identify the payload FIRST. A magnet starts as a download of the
             # .torrent itself, reported as a "[METADATA]" pseudo-file whose

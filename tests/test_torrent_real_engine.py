@@ -109,7 +109,7 @@ def swarm(tmp_path):
         creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
     try:
         yield {"torrent": str(tpath), "payload": payload, "peers": peers,
-               "seed_port": seed_port}
+               "seed_port": seed_port, "announce": announce}
     finally:
         seeder.kill()
         seeder.wait(10)
@@ -257,6 +257,29 @@ def test_one_that_seeds_is_moved_and_seeds_from_its_own_folder(
     finally:
         t.request_pause()
         done.wait(20)
+
+
+def test_a_magnets_metadata_record_outlives_its_payload_and_is_not_reattached(
+        swarm, daemon, tmp_path):
+    """What a stall yield leaves in aria2 for a magnet (reported 2026-10-28:
+    six magnets restarting about once a second, for as long as the app ran)."""
+    ih = torrent.torrent_infohash(swarm["torrent"])
+    magnet = "magnet:?xt=urn:btih:%s&tr=%s" % (ih, urllib.parse.quote(swarm["announce"], safe=""))
+    meta = daemon.call("aria2.addUri", [magnet], {"dir": str(tmp_path), "pause-metadata": "true"})
+    assert _wait(lambda: daemon.call("aria2.tellStatus", meta).get("followedBy"), 60)
+    payload = daemon.call("aria2.tellStatus", meta)["followedBy"][0]
+    stopped = lambda: daemon.call("aria2.tellStopped", 0, 100)  # noqa: E731
+    # dropped as _yield_slot and _hand_over drop it; a held (paused) download
+    # leaves no result behind - measured: its gid is "not found" at once
+    daemon.call("aria2.forceRemove", payload)
+    with pytest.raises(aria2d.Aria2Error, match="is not found"):
+        daemon.call("aria2.tellStatus", payload)
+    left = [r for r in stopped() if r["gid"] == meta]
+    assert left and left[0]["status"] == "complete" and left[0]["followedBy"] == [payload], left
+
+    t = T.DownloadTask(magnet, str(tmp_path / "magnet_.bin"))
+    assert torrent.TorrentDownloader(t)._rpc_find_existing(daemon) == ""
+    assert not [r for r in stopped() if r["gid"] == meta], "the record was not cleared"
 
 
 def test_one_with_bytes_in_its_own_folder_goes_on_there(tmp_path, monkeypatch):

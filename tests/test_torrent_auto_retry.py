@@ -188,3 +188,70 @@ def test_the_card_says_the_engine_is_coming_back():
     card = DownloadCardWidget(t, 1)
     card.update_task(t, 0.0)
     assert "Torrent engine restarted — continuing in" in card.sub.toolTip()
+
+
+# ---- a magnet's finished metadata record is not the torrent ---------------------------
+# Reported 2026-10-28 with a recording of the list shaking: six magnets went
+# round about once a second - "already in the daemon, re-attaching", "gid ...
+# lost (daemon replaced)", "queued again in 5s (1 of 3)" - for as long as the
+# app ran. A stall yield had dropped each one's payload from aria2 and left
+# the magnet's finished METADATA download, whose followedBy names that
+# payload. The next start re-attached to the record, followed it to the gone
+# gid, and the record's own poll had set the count back to the start.
+IH = "0123456789abcdef0123456789abcdef01234567"
+MAGNET = "magnet:?xt=urn:btih:%s&dn=Movie" % IH
+
+
+class _Aria2:
+    """A daemon that answers by gid: `stopped` are its finished records,
+    `status` what tellStatus says of the rest; any other gid is gone."""
+
+    def __init__(self, stopped=(), status=None):
+        self.stopped, self.status, self.calls = list(stopped), dict(status or {}), []
+
+    def ensure(self):
+        return True
+
+    def call(self, method, *params, **kw):
+        self.calls.append((method, params))
+        if method == "aria2.tellStopped":
+            return list(self.stopped)
+        if method in ("aria2.tellActive", "aria2.tellWaiting"):
+            return []
+        if method == "aria2.removeDownloadResult":
+            self.stopped = [r for r in self.stopped if r["gid"] != params[0]]
+            return "OK"
+        if method == "aria2.addUri":
+            return "new1"
+        if method == "aria2.tellStatus":
+            st = self.status.get(params[0]) or next(
+                (r for r in self.stopped if r["gid"] == params[0]), None)
+            if st is None:
+                raise aria2d.Aria2Error("GID %s is not found" % params[0])
+            return dict(st)
+        return {}
+
+
+def _metadata(follows, **kw):
+    return dict({"status": "complete", "followedBy": [follows],
+                 "files": [{"path": "[METADATA]" + IH}]}, **kw)
+
+
+def test_a_magnet_whose_payload_was_dropped_is_added_again(tmp_path, monkeypatch):
+    p = _payload(tmp_path)
+    daemon = _Aria2(stopped=[_metadata("gone1", gid="meta1", infoHash=IH, dir=str(tmp_path))],
+                    status={"new1": _metadata("new2"),
+                            "new2": {"status": "complete", "completedLength": "10",
+                                     "totalLength": "10", "files": [{"path": p}]}})
+    t = _drive_with(tmp_path, monkeypatch, daemon, task=_task(tmp_path, MAGNET))
+    assert t.status == T.COMPLETED, (t.status, t.error)
+    assert ("aria2.removeDownloadResult", ("meta1",)) in daemon.calls, "the record stayed"
+
+
+def test_a_poll_that_only_hands_over_does_not_start_the_count_again(tmp_path, monkeypatch):
+    daemon = _Aria2(status={"new1": _metadata("gone1")})
+    t = _task(tmp_path, MAGNET)
+    t.engine_retries = 1
+    t = _drive_with(tmp_path, monkeypatch, daemon, task=t)
+    assert t.status == T.QUEUED and t.yield_reason == "engine", (t.status, t.error)
+    assert t.engine_retries == 2, "back to 1 of 3 on every run: it never stops"
