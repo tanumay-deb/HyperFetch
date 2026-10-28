@@ -1081,13 +1081,34 @@ def list_files(task):
     if not is_torrent_task(task.url, task.filename):
         return []
     save = getattr(task, "save_path", "") or ""
-    # aria2 saves the metadata in its --dir, which is the PARENT of the payload
-    # folder. save_path is that folder once the download finishes and the
-    # placeholder file's directory before then, so try both.
+    # aria2 saves the metadata in its --dir: the payload's folder or the one
+    # above it - or, for a torrent the app filed into a category, the folder
+    # it was filed from (sort_base). Only <infohash>.torrent is looked for.
     parent = os.path.dirname(save) or "."
-    dirs = [parent, os.path.dirname(parent)] if os.path.isdir(save) else [parent]
+    dirs = [parent, os.path.dirname(parent), getattr(task, "sort_base", None) or ""]
     path = metadata_torrent_path(task, *dirs)
-    return parse_torrent_files(path) if path else []
+    rows = parse_torrent_files(path) if path else []
+    if rows:
+        remember_files(task, rows)
+        return rows
+    # The metadata file is gone - removed with another task of this torrent,
+    # never kept by an older version: the list as it was last read.
+    return [tuple(r) for r in (getattr(task, "files", None) or [])]
+
+
+# A torrent's file list is kept with the task (task.files) up to this many
+# files; past it downloads.json would grow by megabytes for one task, and the
+# metadata file is relied on alone.
+FILES_KEPT_MAX = 2000
+
+
+def remember_files(task, rows):
+    """Keep a torrent's [(relative path, size)] with the task, so its Files
+    tab is not empty after a restart that cannot find the metadata file."""
+    if rows and len(rows) <= FILES_KEPT_MAX:
+        kept = [[rel, int(size)] for rel, size in rows]
+        if kept != getattr(task, "files", None):
+            task.files = kept
 
 
 def aria2c_path():
@@ -1141,6 +1162,7 @@ def apply_metadata(task, torrent_path):
     if total and not task.total_size:
         task.total_size = total
     task.file_progress = _file_rows_from_meta(rows)
+    remember_files(task, rows)
     task.meta_failed = False
     return True
 
@@ -1191,7 +1213,10 @@ class MetadataPrefetcher:
                 continue
             if not is_torrent_task(t.url, t.filename):
                 continue
-            if t.total_size:                       # already known
+            # known - unless it is a magnet whose file list is lost (no metadata
+            # file, none kept with the task): fetched again, or its Files tab
+            # stays empty until it runs
+            if t.total_size and not (is_magnet(t.url) and not list_files(t)):
                 continue
             if now < float(getattr(t, "meta_retry_after", 0) or 0):
                 continue
@@ -1419,6 +1444,8 @@ class TorrentDownloader:
         # earlier, says so now; a magnet nobody has resolved says so when its
         # metadata arrives (_hand_over).
         meta = self._known_metadata()
+        if meta:
+            remember_files(self.t, parse_torrent_files(meta))
         sort_into_category(self.t, meta)
         out_dir = os.path.dirname(self.t.save_path) or "."
         try:
@@ -1601,6 +1628,7 @@ class TorrentDownloader:
         # on, also by a later run if this one does not get to finish
         archive_metadata(self.t, out_dir)
         meta = metadata_torrent_path(self.t, out_dir)
+        remember_files(self.t, parse_torrent_files(meta) if meta else [])
         want = dict(opts)
         if sort_into_category(self.t, meta):
             want["dir"] = os.path.dirname(self.t.save_path)

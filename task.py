@@ -238,6 +238,10 @@ class DownloadTask:
         # its own in its tr=): the engine puts them first in the .torrent it
         # gives aria2 (torrent.add_trackers). Persisted.
         self.extra_trackers = []
+        # A torrent's files as [[relative path, size]], last read from its
+        # metadata (torrent.remember_files). Persisted: the Files tab falls back
+        # to it when the metadata file cannot be found after a restart.
+        self.files = []
         # Which files of a torrent to fetch, as aria2's 1-based select-file
         # list ("1,3,5"); "" means all. Persisted, so unticking survives a
         # pause, a restart, and the drawer being closed.
@@ -399,6 +403,7 @@ class DownloadTask:
             "sha256": self.sha256,
             "infohash": self.infohash,
             "extra_trackers": list(self.extra_trackers or []),
+            "files": self.files or [],
             "selected_files": self.selected_files,
             "sort_base": self.sort_base,
             "is_scheduled": getattr(self, "is_scheduled", False),
@@ -458,6 +463,12 @@ class DownloadTask:
         t.infohash = d.get("infohash", "")
         t.extra_trackers = [str(x) for x in (d.get("extra_trackers") or [])
                             if isinstance(x, str) and x.strip()]
+        t.files = []
+        for f in d.get("files") or []:         # a damaged entry is dropped, not fatal
+            try:
+                t.files.append([str(f[0]), int(f[1])])
+            except (TypeError, ValueError, IndexError, KeyError):
+                pass
         t.selected_files = d.get("selected_files", "")
         t.sort_base = d.get("sort_base")
         t.events =[e for e in map(_migrate_event, d.get("events") or []) if e]

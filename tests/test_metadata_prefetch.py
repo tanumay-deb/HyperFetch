@@ -84,9 +84,12 @@ def test_only_queued_and_paused_are_touched(env, monkeypatch):
 
 
 def test_a_torrent_that_already_knows_its_size_is_skipped(env, monkeypatch):
+    """...and its files: a magnet whose file list is lost is fetched again
+    (tests/test_torrent_files_kept.py)."""
     d = _Daemon()
     t = _magnet()
     t.total_size = 1234
+    t.files = [["x.mkv", 1234]]
     _prefetcher([t], d, monkeypatch)._tick()
     assert d.added == []
 
