@@ -766,8 +766,18 @@ class DetailsDrawer(QFrame):
         self.btn_select_none.setIcon(themed_icon("square", "text"))
         self.btn_select_none.setStyleSheet(f"QPushButton {{ padding: 4px 12px; font-weight: 600; background: {COLORS['surface2']}; border: 1px solid {COLORS['border']}; border-radius: 7px; }} QPushButton:hover {{ background: {COLORS['card_hover']}; }}")
         self.btn_select_none.clicked.connect(lambda: self._set_all_files(False))
-        
+
+        # while a search shows some files: keep those, drop the rest - "only
+        # the .jpg" is type .jpg, click this
+        self.btn_only = QPushButton(" Only these")
+        self.btn_only.setIcon(themed_icon("check", "text"))
+        self.btn_only.setStyleSheet(self.btn_select_all.styleSheet())
+        self.btn_only.setToolTip("Download only the files the search shows")
+        self.btn_only.clicked.connect(lambda: self._set_files(lambda shown: shown))
+        self.btn_only.hide()
+
         top_bar.addWidget(self.file_search, 1)
+        top_bar.addWidget(self.btn_only)
         top_bar.addWidget(self.btn_select_all)
         top_bar.addWidget(self.btn_select_none)
         v.addLayout(top_bar)
@@ -984,11 +994,30 @@ class DetailsDrawer(QFrame):
             item = self.files_table.item(row, 0)
             if item:
                 self.files_table.setRowHidden(row, query not in item.data(Qt.UserRole).lower())
+        # with a search, the buttons act on what it shows - and say so
+        self.btn_only.setVisible(bool(query))
+        self.btn_select_all.setText(" Select these" if query else " Select All")
+        self.btn_select_none.setText(" Unselect these" if query else " Select None")
 
     def _set_all_files(self, state):
-        if not hasattr(self, '_file_row_widgets') or not self._file_row_widgets: return
-        for idx, cb, sz in self._file_row_widgets:
-            cb.setChecked(state)
+        """Tick or untick every file shown - all of them, or what a search shows."""
+        self._set_files(lambda shown: state if shown else None)
+
+    def _set_files(self, pick):
+        """Tick or untick many files at once - pick(shown) says what each row
+        gets, None to leave it - and tell aria2 once. Ticked one by one, a
+        hundred files were a hundred changes sent to the engine."""
+        rows = getattr(self, "_file_row_widgets", None)
+        if not rows:
+            return
+        for r, (_idx, cb, _sz) in enumerate(rows):
+            want = pick(not self.files_table.isRowHidden(r))
+            if want is not None and cb.isChecked() != want:
+                cb.blockSignals(True)
+                cb.setChecked(want)
+                cb.blockSignals(False)
+        self._apply_file_selection()
+        self._tally()
 
     def _logs_tab(self):
         w = QWidget(); v = QVBoxLayout(w); v.setContentsMargins(14, 14, 14, 14); v.setSpacing(12)
