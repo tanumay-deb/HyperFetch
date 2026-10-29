@@ -862,7 +862,7 @@ def torrent_top_name(path):
     return name.decode("utf-8", "replace") if isinstance(name, bytes) else ""
 
 
-def _picked(selected, count):
+def picked(selected, count):
     """The 1-based file numbers in an aria2 select-file list ("1,3-5"). Every
     file when the list is empty or cannot be read - that is what aria2 fetches
     then."""
@@ -886,7 +886,7 @@ def torrent_category(path, selected=""):
     of samples, subtitles and nfos and the one large file says what it is.
     "Other" when that file is of no known type, or nothing can be read."""
     rows = parse_torrent_files(path)
-    keep = _picked(selected, len(rows))
+    keep = picked(selected, len(rows))
     best_name, best_size = "", -1
     for number, (rel, size) in enumerate(rows, 1):
         if number in keep and size > best_size:

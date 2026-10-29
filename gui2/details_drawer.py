@@ -862,8 +862,12 @@ class DetailsDrawer(QFrame):
         # only while this tab is open, so they can be from long before it ended:
         # a completed torrent read 7-34% a file and "Downloading 95" (2026-10-29).
         done = t.status == T.COMPLETED
+        # ticked as the user chose, not as aria2 last said: that is read once
+        # a minute, a paused torrent's not at all - unticked files came back
+        # ticked when the drawer opened again (2026-10-29)
+        keep = _torrent.picked(getattr(t, "selected_files", ""), len(rows))
         out = []
-        for f in rows:
+        for n, f in enumerate(rows, 1):
             p = (f.get("path") or "").replace("\\", "/")
             try:
                 rel = os.path.relpath(p, base).replace("\\", "/")
@@ -871,7 +875,7 @@ class DetailsDrawer(QFrame):
                 rel = os.path.basename(p)
             if rel.startswith(".."):                 # outside out_dir
                 rel = os.path.basename(p)
-            length, selected = int(f.get("length") or 0), bool(f.get("selected", True))
+            length, selected = int(f.get("length") or 0), n in keep
             out.append((rel, length,
                         length if done and selected else int(f.get("completed") or 0),
                         selected))
@@ -1611,8 +1615,12 @@ class DetailsDrawer(QFrame):
             # files ARE all present, so say so; otherwise completed stays None
             # and the row shows "—" rather than claiming a confident 0%.
             done_all = t.status == T.COMPLETED
-            entries = live or [(rel, size, size if done_all else None, True)
-                               for rel, size in _torrent.list_files(t)]
+            entries = live
+            if not entries:
+                listed = _torrent.list_files(t)
+                keep = _torrent.picked(getattr(t, "selected_files", ""), len(listed))
+                entries = [(rel, size, size if done_all and n in keep else None, n in keep)
+                           for n, (rel, size) in enumerate(listed, 1)]
             if not entries:
                 self.files_table.setRowCount(1)
                 self.files_table.setSpan(0, 0, 1, 3)

@@ -87,12 +87,13 @@ def test_a_skipped_file_reads_skipped_and_is_unticked(tmp_path):
         {"index": 2, "path": f"{base}/skip.nfo", "length": 100, "completed": 0,
          "selected": False},
     ])
+    t.selected_files = "1"                 # what was chosen; aria2's report agrees
 
     drawer.open_for(t)
     app.processEvents()
     bars = _rows(drawer)
     assert bars[1].format() == "Skipped"
-    # aria2's own selection must be reflected, not silently re-enabled
+    # the selection must be reflected, not silently re-enabled
     assert drawer._file_row_widgets[1][1].isChecked() is False
     assert drawer._file_row_widgets[0][1].isChecked() is True
 
@@ -245,6 +246,7 @@ def test_a_completed_torrents_old_numbers_do_not_show(tmp_path):
         {"index": 2, "path": f"{base}/b.mkv", "length": 1000, "completed": 70, "selected": True},
         {"index": 3, "path": f"{base}/c.nfo", "length": 100, "completed": 40, "selected": False},
     ])
+    t.selected_files = "1,2"
     t.status = T.COMPLETED
     drawer.open_for(t)
     app.processEvents()
@@ -263,6 +265,7 @@ def test_the_numbers_come_back_after_a_restart(tmp_path):
         {"index": 1, "path": f"{base}/a.mkv", "length": 1000, "completed": 470, "selected": True},
         {"index": 2, "path": f"{base}/b.mkv", "length": 1000, "completed": 0, "selected": False}])
     t.files = [["Show/a.mkv", 1000], ["Show/b.mkv", 1000]]
+    t.selected_files = "1"
     t.status = T.PAUSED
     t.files_at = 1793266370.5
     back = T.DownloadTask.from_dict(json.loads(json.dumps(t.to_dict())))
