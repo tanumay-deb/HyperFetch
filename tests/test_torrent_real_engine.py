@@ -63,10 +63,21 @@ class _Tracker(http.server.ThreadingHTTPServer):
 
 @pytest.fixture
 def swarm(tmp_path):
+    payload = os.urandom(3 * 1024 * 1024 + 12345)          # not a whole piece
+    yield from _swarm(tmp_path, "Payload.bin", payload)
+
+
+def _swarm(tmp_path, name, payload, files=None):
+    """A seeding aria2c and a tracker for one file, or for a folder of
+    `files` [(name, bytes)] whose bytes make up `payload`."""
     seed_dir = tmp_path / "seed"
     seed_dir.mkdir()
-    payload = os.urandom(3 * 1024 * 1024 + 12345)          # not a whole piece
-    (seed_dir / "Payload.bin").write_bytes(payload)
+    if files:
+        (seed_dir / name).mkdir()
+        for fname, data in files:
+            (seed_dir / name / fname).write_bytes(data)
+    else:
+        (seed_dir / name).write_bytes(payload)
 
     peers = {}
 
@@ -90,11 +101,15 @@ def swarm(tmp_path):
     tracker = _Tracker(("127.0.0.1", 0), Handler)
     threading.Thread(target=tracker.serve_forever, daemon=True).start()
     announce = "http://127.0.0.1:%d/announce" % tracker.server_address[1]
-    info = {"name": "Payload.bin", "length": len(payload), "piece length": PIECE,
+    info = {"name": name, "piece length": PIECE,
             "pieces": b"".join(hashlib.sha1(payload[i:i + PIECE]).digest()
                                for i in range(0, len(payload), PIECE)),
             "private": 1}
-    tpath = tmp_path / "Payload.torrent"
+    if files:
+        info["files"] = [{"length": len(data), "path": [fname]} for fname, data in files]
+    else:
+        info["length"] = len(payload)
+    tpath = tmp_path / (os.path.splitext(name)[0] + ".torrent")
     tpath.write_bytes(_bencode({"announce": announce, "info": info}))
 
     seed_port = _free_port()
@@ -330,3 +345,43 @@ def test_one_with_bytes_in_its_own_folder_goes_on_there(tmp_path, monkeypatch):
     td = torrent.TorrentDownloader(t)
     td._final_dir = str(tmp_path / "dl")
     assert td._work_dir() == str(tmp_path / "dl") and t.unfinished_in == ""
+
+
+# ---- a file unticked while paused (reported 2026-10-29) -------------------------
+# A paused torrent stays in the daemon, and Resume re-attached to it as it was:
+# the choice made while it was paused was saved but never reached aria2, which
+# fetched the unticked file anyway.
+@pytest.fixture
+def pack(tmp_path):
+    first, second = os.urandom(4 * PIECE), os.urandom(4 * PIECE)    # no piece in both
+    yield from _swarm(tmp_path, "Pack", first + second,
+                      [("first.bin", first), ("second.bin", second)])
+
+
+def test_a_file_unticked_while_paused_is_not_fetched(pack, daemon, tmp_path):
+    out = tmp_path / "downloads"
+    out.mkdir()
+    t = T.DownloadTask(pack["torrent"], str(out / "Pack.torrent"))
+
+    def pause_when_started():
+        end = time.monotonic() + 60
+        while time.monotonic() < end and t.downloaded < PIECE:
+            time.sleep(0.05)
+        t.request_pause()
+
+    was = utils.global_limiter.limit_bps
+    utils.global_limiter.set_limit(256 * 1024)
+    try:
+        threading.Thread(target=pause_when_started, daemon=True).start()
+        _run(t)
+    finally:
+        utils.global_limiter.set_limit(was)
+    assert t.status == T.PAUSED, (t.status, t.error)
+
+    t.selected_files = "1"              # what unticking second.bin records while paused
+    t.clear_pause()
+    t.status = T.QUEUED
+    _run(t)
+    assert t.status == T.COMPLETED, (t.status, t.error)
+    assert (out / "Pack" / "first.bin").read_bytes() == pack["payload"][:4 * PIECE]
+    assert t.total_size == 4 * PIECE, "aria2 fetched the unticked file too"

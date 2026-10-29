@@ -1947,6 +1947,14 @@ class TorrentDownloader:
         if existing:
             log.info("torrent already in the daemon, re-attaching: %s",
                      self.t.filename)
+            # the file choice made while it was held: aria2 keeps the one it
+            # was added with, and an unticked file came down anyway (2026-10-29)
+            want = (opts or {}).get("select-file")
+            try:
+                if want and (d.call("aria2.getOption", existing) or {}).get("select-file") != want:
+                    d.call("aria2.changeOption", existing, {"select-file": want})
+            except Exception as e:
+                log.warning("could not give %s its file choice: %s", self.t.filename, e)
             try:
                 d.call("aria2.unpause", existing)
             except Exception:
