@@ -534,6 +534,10 @@ class DetailsDrawer(QFrame):
 
         self.conns_table = QTableWidget(0, 4)
         self.conns_table.setHorizontalHeaderLabels(["Peer", "Progress", "Down", "Up"])
+        # from your side - a seed's upload to you is your Down (asked 2026-10-29)
+        self.conns_table.horizontalHeaderItem(2).setToolTip("How fast you get data from this peer")
+        self.conns_table.horizontalHeaderItem(3).setToolTip(
+            "How fast you send data to this peer - a seed has it all and takes none")
         self.conns_table.verticalHeader().setVisible(False)
         self.conns_table.setShowGrid(False)
         self.conns_table.setSelectionBehavior(QAbstractItemView.SelectRows)
@@ -593,10 +597,13 @@ class DetailsDrawer(QFrame):
             ip = str(p.get("ip", "?"))
             port = p.get("port")
             label = f"{ip}:{port}" if port else ip
-            if str(p.get("seeder", "")).lower() == "true":
+            seed = str(p.get("seeder", "")).lower() == "true"
+            if seed:
                 label += "  · seed"
+            # a seed has every piece; its bitfield is padded to whole bytes,
+            # and counting the padding as missing pieces read 99% (2026-10-29)
             out.append((label,
-                        self._bitfield_pct(p.get("bitfield")),
+                        100 if seed else self._bitfield_pct(p.get("bitfield")),
                         int(p.get("downloadSpeed") or 0),
                         int(p.get("uploadSpeed") or 0)))
         out.sort(key=lambda r: r[2], reverse=True)        # fastest first

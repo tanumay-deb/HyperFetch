@@ -119,3 +119,25 @@ def test_peer_polling_uses_a_short_timeout(monkeypatch):
         f"{seen['timeout']}s on the GUI thread is long enough to look like a "
         "hang; aria2 blocks RPC while it works")
     assert dd.GUI_RPC_TIMEOUT <= 3.0
+
+
+def test_a_seed_reads_100_percent(monkeypatch):
+    """aria2 pads a peer's bitfield to whole bytes: 1001 pieces are 1008 bits,
+    and counting the 7 spare bits as missing pieces put "99%" against every
+    seed (reported 2026-10-29 with a screenshot)."""
+    import aria2d
+
+    class _Daemon:
+        def call(self, method, *a, **kw):
+            return [{"ip": "203.0.113.5", "port": "6881", "seeder": "true",
+                     "bitfield": "ff" * 125 + "80", "downloadSpeed": "2000", "uploadSpeed": "0"},
+                    {"ip": "203.0.113.6", "port": "6881", "seeder": "false",
+                     "bitfield": "ff" * 63 + "00" * 63, "downloadSpeed": "1000", "uploadSpeed": "0"}]
+
+    monkeypatch.setattr(aria2d, "DAEMON", _Daemon())
+    QApplication.instance() or QApplication([])
+    drawer = DetailsDrawer(QWidget())
+    t = T.DownloadTask("magnet:?xt=urn:btih:abc", "C:/dl/x")
+    t.gid = "gid1"
+    rows = drawer._peer_rows(t)
+    assert [(label.endswith("seed"), pct) for label, pct, _d, _u in rows] == [(True, 100), (False, 50)]
