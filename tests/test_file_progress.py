@@ -299,3 +299,44 @@ def test_the_corner_says_how_fresh_the_numbers_are(tmp_path):
         app.processEvents()
         seen.append(drawer.files_fresh.text())
     assert seen == ["Refreshing in 40 s", "Refreshing…", "Updated 5 min ago", ""]
+
+
+# ---- what update_live does each tick (2026-10-29) -------------------------------
+# A block there re-read a downloading torrent's file list and the size of up
+# to 150 files on disk every 500 ms, then wrote to a cell that never exists
+# (every row's progress is a bar widget), so it changed nothing. Its other
+# half was meant to move a plain download's one bar, and did not either.
+def test_a_plain_downloads_bar_follows_it(tmp_path):
+    app = _app()
+    host = QWidget()                       # held: the drawer goes with its parent
+    drawer = DetailsDrawer(host)
+    t = T.DownloadTask("https://example.com/big.iso", str(tmp_path / "big.iso"))
+    t.status, t.total_size, t.downloaded = T.DOWNLOADING, 1000, 100
+    drawer.open_for(t)
+    app.processEvents()
+    bar = _rows(drawer)[0]
+    assert (bar.value(), bar.format()) == (10, "10%")
+    t.downloaded = 600
+    drawer.update_live(t, 1234)
+    assert (bar.value(), bar.format()) == (60, "60%")
+    t.status = T.COMPLETED
+    drawer.update_live(t, 0)
+    assert (bar.value(), bar.format()) == (100, "100%")
+
+
+def test_a_tick_does_not_read_the_torrents_file_list(tmp_path, monkeypatch):
+    app = _app()
+    host = QWidget()
+    drawer = DetailsDrawer(host)
+    base = str(tmp_path / "Show")
+    t = _torrent_task(tmp_path, [
+        {"index": 1, "path": f"{base}/a.mkv", "length": 1000, "completed": 100,
+         "selected": True}])
+    drawer.open_for(t)
+    app.processEvents()
+    import gui2.details_drawer as dd
+
+    def no(_t):
+        raise AssertionError("the file list was read on a tick")
+    monkeypatch.setattr(dd._torrent, "list_files", no)
+    drawer.update_live(t, 1234)

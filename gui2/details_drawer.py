@@ -1574,6 +1574,7 @@ class DetailsDrawer(QFrame):
         self._file_places = []        # (table row, path) per file: folder rows sit between
         self._folder_rows = []        # (table row, path, box) per folder
         self._fold_arrows = {}        # path -> its arrow
+        self._own_bar = None          # a plain download's one bar
         self._collapsed = self._folds.setdefault(t.id, set())
         self.files_table.setRowCount(0)
 
@@ -1708,6 +1709,7 @@ class DetailsDrawer(QFrame):
                 elif t.downloaded:
                     active_files += 1
                 add_file_row(0, t.filename or "file", sz, False, pct, status_str)
+                self._own_bar = self._file_bars[-1]
 
         self._tally()
 
@@ -1855,33 +1857,12 @@ class DetailsDrawer(QFrame):
             self.ov_digest.setToolTip("")
         self.graph.push(bps if t.status == T.DOWNLOADING else 0.0)
 
-        # Update files progress if applicable
-        if hasattr(self, '_file_row_widgets') and self._file_row_widgets and t.status == T.DOWNLOADING:
-            sp = t.save_path
-            if _torrent.is_torrent_task(t.url, t.filename) and sp:
-                entries = _torrent.list_files(t)
-                for i, cb, size in self._file_row_widgets[:150]:
-                    if i < len(entries):
-                        rel, _ = entries[i]
-                        parts = rel.split("/")
-                        base = sp if os.path.isdir(sp) else os.path.dirname(sp) or "."
-                        fp = os.path.join(base, *parts)
-                        if os.path.isfile(fp):
-                            got = os.path.getsize(fp)
-                            pct = int(got * 100 / size) if size else 100
-                            pct = min(100, pct)
-                            status_str = "Completed" if pct >= 100 else "Downloading"
-                            item = self.files_table.item(i, 2)
-                            if item:
-                                item.setText(f"{pct}%" if pct < 100 else status_str)
-                                item.setForeground(QColor(COLORS['accent'] if pct < 100 else COLORS['muted']))
-            elif not _torrent.is_torrent_task(t.url, t.filename) and len(self._file_row_widgets) == 1:
-                pct = t.percent
-                status_str = "Completed" if pct >= 100 else "Downloading"
-                item = self.files_table.item(0, 2)
-                if item:
-                    item.setText(f"{pct}%" if pct < 100 else status_str)
-                    item.setForeground(QColor(COLORS['accent'] if pct < 100 else COLORS['muted']))
+        # a plain download's one row follows it (a torrent's: _refresh_files)
+        own = getattr(self, "_own_bar", None)
+        if own is not None:
+            own.setValue(pct)
+            own.setFormat(f"{pct}%")
+            self._style_file_bar(own, pct)
 
         # (trackers are rendered by _render_trackers from _populate_static)
 
