@@ -102,3 +102,14 @@ def test_the_scan_takes_the_runners_exclusions_off_first():
     assert script.index("Remove-MpPreference -ExclusionPath") < script.index("-Scan")
     assert "exit 1" in script
 
+
+def test_the_scan_waits_for_defender_and_its_signatures():
+    """Updating restarts Defender's service on a fresh runner, and the status
+    call fails for a while after (2.8.1, 2.8.4); and once it answered, 2.8.4's
+    scan passed with no signatures loaded - which passes anything."""
+    script = _read("tools", "defender_scan.ps1")
+    update = script.index("Update-MpSignature")
+    wait = script.index("AntivirusSignatureVersion) {")
+    assert update < wait < script.index("-Scan")
+    assert "never answered with its signatures loaded" in script
+

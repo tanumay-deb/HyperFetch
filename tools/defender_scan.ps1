@@ -28,25 +28,31 @@ foreach ($x in @((Get-MpPreference).ExclusionPath)) {
 }
 # Updating can restart Defender's service: the update then fails with "The
 # remote procedure call failed", and for a while after it so does the status
-# ("Provider load failure") - 2.8.1's release build, and all three of 2.8.4's
-# (2026-10-29: Defender answered before the update and not after it). So
-# update, then wait for it to answer, three minutes at most; one that never
-# answers still fails the release, unscanned.
+# ("Provider load failure") - 2.8.1's release build, and 2.8.4's (2026-10-29:
+# Defender answered before the update and not after it). And once it answers
+# again its signatures may not be loaded: 2.8.4's scan passed reading
+# "signatures  of" - a scan with none passes anything. So update, then wait,
+# three minutes at most, for it to answer WITH signatures; without them the
+# release fails, unscanned.
 try { Update-MpSignature } catch { Write-Host "could not update Defender's signatures: $($_.Exception.Message)" }
 $status = $null
 foreach ($try in 1..18) {
-    try { $status = Get-MpComputerStatus; break }
+    try {
+        $s = Get-MpComputerStatus
+        if ($s.AntivirusSignatureVersion) { $status = $s; break }
+        Write-Host "Defender has no signatures loaded yet ($try of 18)"
+    }
     catch {
         $svc = (Get-Service WinDefend -ErrorAction SilentlyContinue).Status
         Write-Host "Defender is not answering ($try of 18, service: $svc): $($_.Exception.Message)"
         if ($try -eq 3) {
             try { Start-Service WinDefend } catch { Write-Host "could not start it: $($_.Exception.Message)" }
         }
-        Start-Sleep -Seconds 10
     }
+    Start-Sleep -Seconds 10
 }
 if (-not $status) {
-    Write-Host "::error::Defender never answered - nothing was scanned"
+    Write-Host "::error::Defender never answered with its signatures loaded - nothing was scanned"
     exit 1
 }
 Write-Host "Defender $($status.AMProductVersion), signatures $($status.AntivirusSignatureVersion) of $($status.AntivirusSignatureLastUpdated)"
