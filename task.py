@@ -129,10 +129,11 @@ class DownloadTask:
         self.response_status = 0
         self.remote_address = ""
         # per-file torrent progress, refreshed from aria2.getFiles by the RPC
-        # engine: [{index, path, length, completed, selected}, ...]. Transient —
-        # it describes a live download, and the drawer falls back to the static
-        # .torrent listing when it is empty.
+        # engine: [{index, path, length, completed, selected}, ...], and when it
+        # was read. Saved with the file list; the drawer falls back to the
+        # static .torrent listing when it is empty.
         self.file_progress = []
+        self.files_at = 0.0
 
         # queue ordering: lower priority value runs first; seq breaks ties FIFO
         self.priority = priority
@@ -416,6 +417,10 @@ class DownloadTask:
             "infohash": self.infohash,
             "extra_trackers": list(self.extra_trackers or []),
             "files": self.files or [],
+            # the last per-file numbers read, kept with the file list (so under
+            # its cap): the Files tab shows them after a restart (2026-10-29)
+            "file_progress": (self.file_progress or []) if self.files else [],
+            "files_at": self.files_at,
             "unfinished_in": self.unfinished_in or "",
             "selected_files": self.selected_files,
             "sort_base": self.sort_base,
@@ -483,6 +488,15 @@ class DownloadTask:
                 t.files.append([str(f[0]), int(f[1])])
             except (TypeError, ValueError, IndexError, KeyError):
                 pass
+        t.file_progress = []
+        for f in d.get("file_progress") or []:  # a damaged entry is dropped, not fatal
+            try:
+                t.file_progress.append({
+                    "index": int(f["index"]), "path": str(f["path"]), "length": int(f["length"]),
+                    "completed": int(f["completed"]), "selected": bool(f["selected"])})
+            except (TypeError, ValueError, KeyError):
+                pass
+        t.files_at = float(d.get("files_at", 0) or 0)
         t.selected_files = d.get("selected_files", "")
         t.sort_base = d.get("sort_base")
         t.events =[e for e in map(_migrate_event, d.get("events") or []) if e]

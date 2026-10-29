@@ -27,6 +27,8 @@ class _Daemon:
 
     def call(self, method, *a, **kw):
         self.counts[method] = self.counts.get(method, 0) + 1
+        if method == "aria2.pause":
+            self.at_pause = dict(self.counts)      # what the run asked for while it ran
         if method == "aria2.tellStatus":
             return {"status": "active", "completedLength": "1",
                     "totalLength": str(self.total), "connections": "3",
@@ -59,7 +61,7 @@ def _run(tmp_path, monkeypatch, watched, seconds=1.2):
 
 def test_getfiles_is_not_polled_when_nobody_is_watching(tmp_path, monkeypatch):
     d, t = _run(tmp_path, monkeypatch, watched=False)
-    n = d.counts.get("aria2.getFiles", 0)
+    n = d.at_pause.get("aria2.getFiles", 0)
     # one fetch is allowed so the tab is not blank when first opened
     assert n <= 1, (
         f"{n} getFiles calls with the drawer closed — this ran every FILES_POLL "
@@ -69,8 +71,25 @@ def test_getfiles_is_not_polled_when_nobody_is_watching(tmp_path, monkeypatch):
 def test_the_first_fetch_still_happens(tmp_path, monkeypatch):
     """Opening the Files tab must not show an empty table while it waits."""
     d, t = _run(tmp_path, monkeypatch, watched=False)
-    assert d.counts.get("aria2.getFiles", 0) == 1
+    assert d.at_pause.get("aria2.getFiles", 0) == 1
     assert t.file_progress, "no file list at all, so the tab opens blank"
+
+
+def test_a_pause_reads_the_files_once_more(tmp_path, monkeypatch):
+    """Fetched only while the tab is open, a paused torrent's files read as they
+    were when its run began (2026-10-29). Pausing reads them once more."""
+    real = _Daemon.call
+
+    def call(self, method, *a, **kw):          # 10 at the first fetch, 900 by the pause
+        out = real(self, method, *a, **kw)
+        if method == "aria2.getFiles" and self.counts[method] > 1:
+            out[0]["completedLength"] = "900"
+        return out
+
+    monkeypatch.setattr(_Daemon, "call", call)
+    d, t = _run(tmp_path, monkeypatch, watched=False)
+    assert d.counts.get("aria2.getFiles", 0) == 2
+    assert [f["completed"] for f in t.file_progress] == [900]
 
 
 def test_getfiles_keeps_polling_while_the_tab_is_open(tmp_path, monkeypatch):
@@ -118,3 +137,11 @@ def test_the_watch_flag_is_released_when_the_drawer_moves_on():
 
     drawer._watch_files(None, False)      # drawer closed
     assert b.files_watched is False
+
+
+def test_with_nobody_watching_they_are_read_once_a_minute(tmp_path, monkeypatch):
+    """Saved with the task, they are what the Files tab shows after a restart,
+    so they are kept fresh at a slow pace too (asked 2026-10-29)."""
+    monkeypatch.setattr(torrent, "FILES_IDLE_POLL", 0.2)   # a minute, faster
+    d, t = _run(tmp_path, monkeypatch, watched=False)
+    assert d.at_pause.get("aria2.getFiles", 0) >= 3

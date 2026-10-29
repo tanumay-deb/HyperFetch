@@ -753,7 +753,17 @@ class DetailsDrawer(QFrame):
         c4, self.fs_count = self._fstat_card("document", "Files")
         for c in (c1, c2, c3, c4):
             cards.addWidget(c, 1)
-        v.addLayout(cards)
+        # how fresh the numbers are, small in the corner above the tiles
+        # (asked 2026-10-29); its height kept so the tiles do not jump
+        head = QVBoxLayout(); head.setSpacing(2)
+        self.files_fresh = QLabel("")
+        self.files_fresh.setStyleSheet(
+            f"color: {COLORS['muted']}; font-size: {fpx(9)}; background: transparent;")
+        self.files_fresh.setFixedHeight(self.files_fresh.fontMetrics().height())
+        head.addWidget(self.files_fresh, 0, Qt.AlignRight)
+        head.addLayout(cards)
+        v.setContentsMargins(14, 4, 14, 14)
+        v.addLayout(head)
 
         # Top toolbar
         top_bar = QHBoxLayout()
@@ -846,6 +856,10 @@ class DetailsDrawer(QFrame):
         rows = getattr(t, "file_progress", None) or []
         # where aria2 writes it: its folder, or the unfinished-downloads one
         base = (getattr(t, "unfinished_in", "") or os.path.dirname(t.save_path or "")) or "."
+        # Finished, it has every file it was asked for. The numbers are fetched
+        # only while this tab is open, so they can be from long before it ended:
+        # a completed torrent read 7-34% a file and "Downloading 95" (2026-10-29).
+        done = t.status == T.COMPLETED
         out = []
         for f in rows:
             p = (f.get("path") or "").replace("\\", "/")
@@ -855,10 +869,23 @@ class DetailsDrawer(QFrame):
                 rel = os.path.basename(p)
             if rel.startswith(".."):                 # outside out_dir
                 rel = os.path.basename(p)
-            out.append((rel, int(f.get("length") or 0),
-                        int(f.get("completed") or 0),
-                        bool(f.get("selected", True))))
+            length, selected = int(f.get("length") or 0), bool(f.get("selected", True))
+            out.append((rel, length,
+                        length if done and selected else int(f.get("completed") or 0),
+                        selected))
         return out
+
+    def _files_freshness(self, t):
+        """The Files tab's corner: refreshed live while it downloads (the tab
+        being open is what makes the engine read every FILES_POLL), else how
+        old the last numbers are. Nothing for a finished torrent: all done."""
+        if (not _torrent.is_torrent_task(t.url, t.filename) or t.status == T.COMPLETED
+                or not getattr(t, "file_progress", None)):
+            return ""
+        if t.status == T.DOWNLOADING:
+            return "Refreshing every %g s" % _torrent.FILES_POLL
+        at = getattr(t, "files_at", 0)
+        return "Updated " + humanize_age(at) if at else ""
 
     @staticmethod
     def _file_pct(size, completed):
@@ -1595,10 +1622,10 @@ class DetailsDrawer(QFrame):
             # aria2's live file list wins when the engine has reported it; the
             # static .torrent listing is the fallback before metadata arrives.
             live = self._live_file_entries(t)
-            # No live numbers (file_progress is transient, so anything restored
-            # from disk starts without it). A finished torrent's files ARE all
-            # present, so say so; otherwise completed stays None and the row
-            # shows "—" rather than claiming a confident 0%.
+            # No numbers read yet (they are saved with the task since
+            # 2026-10-29; one saved before has none). A finished torrent's
+            # files ARE all present, so say so; otherwise completed stays None
+            # and the row shows "—" rather than claiming a confident 0%.
             done_all = t.status == T.COMPLETED
             entries = live or [(rel, size, size if done_all else None, True)
                                for rel, size in _torrent.list_files(t)]
@@ -1840,6 +1867,7 @@ class DetailsDrawer(QFrame):
         # otherwise, which is a third of all torrent RPC traffic reclaimed.
         self._watch_files(t, self.tabs.currentIndex()
                           == self.tabs.indexOf(self.files_table.parent()))
+        self.files_fresh.setText(self._files_freshness(t))
         if self.tabs.currentIndex() == self.tabs.indexOf(self.conns_table.parent()):
             self._fill_conns(t, is_tor)
 

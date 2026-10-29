@@ -90,6 +90,9 @@ META_RETRY = 900.0        # and leave it alone for this long before retrying
 META_SCAN = 3.0           # how often to look for new candidates
 
 FILES_POLL = 2.0
+# ...and with nobody watching, once a minute: the numbers are saved with the
+# task, and are what the Files tab shows after a restart (asked 2026-10-29)
+FILES_IDLE_POLL = 60.0
 # How often each torrent asks the daemon for its status.
 #
 # NOT the same thing as POLL. POLL is how often the loop checks the task's own
@@ -1383,6 +1386,9 @@ def move_unfinished(task, dest_dir):
         utils.move_with_progress(ctl, dst + ".aria2",
                                  lambda n: setattr(task, "move_done", done + n))
     task.unfinished_in = ""                  # it is written where it now is
+    for f in task.file_progress or []:       # its files' numbers name the new place
+        if os.path.normcase(f.get("path") or "").startswith(os.path.normcase(payload)):
+            f["path"] = dst + f["path"][len(payload):]
     task.log_event("Moved what it has to %s" % dest_dir)
     return True
 
@@ -1575,6 +1581,12 @@ class TorrentDownloader:
             self.t.gid = None
             self._forget_run_state()
         return top
+
+    def _read_files(self, d, gid):
+        """aria2's per-file numbers, and when they were read: the Files tab
+        says how old they are once the torrent stops."""
+        self.t.file_progress = _file_rows(d.call("aria2.getFiles", gid))
+        self.t.files_at = time.time()
 
     def _forget_run_state(self):
         """Clear what a run says about itself: seeding, rechecking.
@@ -2149,6 +2161,11 @@ class TorrentDownloader:
             if self.t.pause_requested:
                 try:
                     d.call("aria2.pause", cur)
+                    if self.t.file_progress:
+                        # read once more: they are fetched only while the Files
+                        # tab is open, so a paused torrent showed its files as
+                        # they were when its run began (2026-10-29)
+                        self._read_files(d, cur)
                 except Exception:
                     pass
                 archive_metadata(self.t, out_dir)
@@ -2311,13 +2328,15 @@ class TorrentDownloader:
             # and the preview action, so polling it every FILES_POLL for every
             # torrent spent a third of all torrent RPC on a panel that is usually
             # closed. Fetch once when the list is first known (so the tab is not
-            # blank on opening) and then only while someone is watching.
+            # blank on opening), then every FILES_POLL while someone is watching
+            # and every FILES_IDLE_POLL while nobody is.
             watching = bool(getattr(self.t, "files_watched", False))
             need_first = bool(total) and not self.t.file_progress
-            if (watching or need_first) and now - last_files >= FILES_POLL:
+            idle = bool(total) and now - last_files >= FILES_IDLE_POLL
+            if idle or ((watching or need_first) and now - last_files >= FILES_POLL):
                 last_files = now
                 try:
-                    self.t.file_progress = _file_rows(d.call("aria2.getFiles", cur))
+                    self._read_files(d, cur)
                 except Exception as e:
                     log.debug("getFiles failed for %s: %s", self.t.filename, e)
 

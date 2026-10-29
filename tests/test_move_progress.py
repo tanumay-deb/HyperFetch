@@ -200,6 +200,8 @@ def _half_done(tmp_path, status):
     t = T.DownloadTask("magnet:?xt=urn:btih:%040d" % 7, str(old / "magnet_.bin"),
                        filename="Pack")
     t.status, t.downloaded = status, len(DATA)
+    t.file_progress = [{"index": 1, "path": str(old / "Pack" / "Season 1" / "e1.mkv"),
+                        "length": len(DATA), "completed": len(DATA), "selected": True}]
     return t, old
 
 
@@ -220,6 +222,8 @@ def test_an_unfinished_torrent_takes_its_bytes_and_goes_on_there(window, tmp_pat
     assert not (old / "Pack").exists() and not (old / "Pack.aria2").exists()
     assert t.save_path == str(window.dest / "magnet_.bin") and t.filename == "Pack"
     assert t.sort_base == "" and not t.moving
+    # its files' numbers name the new place, or the Files tab lost its folders
+    assert t.file_progress[0]["path"] == str(window.dest / "Pack" / "Season 1" / "e1.mkv")
     # it was downloading: it goes on, there; paused, it stays paused
     assert window.resumed == ([t] if status == T.DOWNLOADING else [])
 

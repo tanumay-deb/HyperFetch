@@ -215,7 +215,10 @@ def test_a_completed_torrent_shows_its_files_as_done(tmp_path, monkeypatch):
 
 
 def test_live_numbers_still_win(tmp_path):
-    """When the engine IS reporting, that is the truth — not the fallback."""
+    """When the engine IS reporting, that is the truth — not the fallback.
+    (A COMPLETED torrent was the example here, but those numbers are fetched
+    only while the tab is open and can be from its start: a finished torrent's
+    files read as done - test_a_completed_torrents_old_numbers_do_not_show.)"""
     app = _app()
     host = QWidget()
     drawer = DetailsDrawer(host)
@@ -223,7 +226,71 @@ def test_live_numbers_still_win(tmp_path):
     t = _torrent_task(tmp_path, [
         {"index": 1, "path": f"{base}/a.mkv", "length": 1000, "completed": 250,
          "selected": True}])
-    t.status = T.COMPLETED                    # live data must override this
+    t.status = T.PAUSED                       # the fallback would say "—"
     drawer.open_for(t)
     app.processEvents()
     assert drawer.files_table.cellWidget(0, 2).value() == 25
+
+
+def test_a_completed_torrents_old_numbers_do_not_show(tmp_path):
+    """The numbers are fetched only while the Files tab is open, so a torrent
+    that finished with the tab shut kept the ones from its start: 7-34% a file
+    and "Downloading 95" on a completed torrent (reported 2026-10-29)."""
+    app = _app()
+    host = QWidget()
+    drawer = DetailsDrawer(host)
+    base = str(tmp_path / "Show")
+    t = _torrent_task(tmp_path, [
+        {"index": 1, "path": f"{base}/a.mkv", "length": 1000, "completed": 250, "selected": True},
+        {"index": 2, "path": f"{base}/b.mkv", "length": 1000, "completed": 70, "selected": True},
+        {"index": 3, "path": f"{base}/c.nfo", "length": 100, "completed": 40, "selected": False},
+    ])
+    t.status = T.COMPLETED
+    drawer.open_for(t)
+    app.processEvents()
+    assert [(b.value(), b.format()) for b in _rows(drawer)] == [
+        (100, "100%"), (100, "100%"), (40, "Skipped")]
+    assert drawer.fs_active.text() == "0"
+
+
+def test_the_numbers_come_back_after_a_restart(tmp_path):
+    """Saved with the task: a restarted PC with no internet shows the files as
+    they were, not "—" (asked 2026-10-29)."""
+    import json
+    app = _app()
+    base = str(tmp_path / "Show")
+    t = _torrent_task(tmp_path, [
+        {"index": 1, "path": f"{base}/a.mkv", "length": 1000, "completed": 470, "selected": True},
+        {"index": 2, "path": f"{base}/b.mkv", "length": 1000, "completed": 0, "selected": False}])
+    t.files = [["Show/a.mkv", 1000], ["Show/b.mkv", 1000]]
+    t.status = T.PAUSED
+    t.files_at = 1793266370.5
+    back = T.DownloadTask.from_dict(json.loads(json.dumps(t.to_dict())))
+    assert back.file_progress == t.file_progress and back.files_at == t.files_at
+    host = QWidget()                       # held: the drawer goes with its parent
+    drawer = DetailsDrawer(host)
+    drawer.open_for(back)
+    app.processEvents()
+    assert [b.format() for b in _rows(drawer)] == ["47%", "Skipped"]
+
+    t.files = []                     # past the file list's cap: neither is kept
+    assert T.DownloadTask.from_dict(json.loads(json.dumps(t.to_dict()))).file_progress == []
+
+
+def test_the_corner_says_how_fresh_the_numbers_are(tmp_path):
+    """Live while it downloads; once it stops, how old the last numbers are;
+    nothing once finished (asked 2026-10-29)."""
+    import time
+    app = _app()
+    host = QWidget()
+    drawer = DetailsDrawer(host)
+    base = str(tmp_path / "Show")
+    t = _torrent_task(tmp_path, [
+        {"index": 1, "path": f"{base}/a.mkv", "length": 1000, "completed": 470, "selected": True}])
+    seen = []
+    for status in (T.DOWNLOADING, T.PAUSED, T.COMPLETED):
+        t.status, t.files_at = status, time.time() - 300
+        drawer.open_for(t)
+        app.processEvents()
+        seen.append(drawer.files_fresh.text())
+    assert seen == ["Refreshing every 2 s", "Updated 5 min ago", ""]
