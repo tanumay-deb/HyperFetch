@@ -282,6 +282,47 @@ def test_a_magnets_metadata_record_outlives_its_payload_and_is_not_reattached(
     assert not [r for r in stopped() if r["gid"] == meta], "the record was not cleared"
 
 
+def test_a_torrent_moved_half_way_goes_on_in_its_new_folder(swarm, daemon, tmp_path):
+    """Move to… on a paused torrent (asked 2026-10-29): what it has written,
+    and aria2's control file, go along, and it goes on from them there."""
+    old, new = tmp_path / "old", tmp_path / "new"
+    old.mkdir()
+    t = T.DownloadTask(swarm["torrent"], str(old / "Payload.torrent"))
+    t.sort_base = ""                                  # where the user put it
+    seen = []
+
+    def pause_half_way():
+        _wait(lambda: t.downloaded >= 4 * PIECE)
+        t.request_pause()
+
+    def first_reading():                             # after the move: from 0, or from the bytes?
+        if _wait(lambda: t.downloaded > 0, 60):
+            seen.append(t.downloaded)
+
+    was = utils.global_limiter.limit_bps
+    utils.global_limiter.set_limit(256 * 1024)       # slow enough to catch it half way
+    try:
+        threading.Thread(target=pause_half_way, daemon=True).start()
+        _run(t)
+        assert t.status == T.PAUSED, (t.status, t.error)
+        assert 4 * PIECE <= t.downloaded < len(swarm["payload"])
+
+        assert torrent.move_unfinished(t, str(new))
+        assert sorted(p.name for p in new.iterdir()) == ["Payload.bin", "Payload.bin.aria2"]
+        t.save_path = str(new / os.path.basename(t.save_path))   # what the window does
+        t.downloaded = 0
+        t.clear_pause()
+        t.status = T.QUEUED
+        threading.Thread(target=first_reading, daemon=True).start()
+        _run(t)
+    finally:
+        utils.global_limiter.set_limit(was)
+    assert t.status == T.COMPLETED, (t.status, t.error)
+    assert seen and seen[0] >= 4 * PIECE, "it started over: first read %s" % seen
+    assert (new / "Payload.bin").read_bytes() == swarm["payload"]
+    assert not (old / "Payload.bin").exists()
+
+
 def test_one_with_bytes_in_its_own_folder_goes_on_there(tmp_path, monkeypatch):
     monkeypatch.setattr(utils, "INCOMPLETE_DIR", str(tmp_path / "unfinished"))
     t = T.DownloadTask("magnet:?xt=urn:btih:%040d" % 1, str(tmp_path / "dl" / "x"))

@@ -101,11 +101,21 @@ def window(monkeypatch, tmp_path):
     dest = tmp_path / "elsewhere"
     dest.mkdir()
     monkeypatch.setattr(QFileDialog, "getExistingDirectory", lambda *a: str(dest))
-    toasts = []
+    toasts, resumed = [], []
+
+    def pause(t):                           # the queue, with the worker gone at once
+        t.status = T.PAUSED
+
+    def resume(t):
+        resumed.append(t)
+        t.status = T.QUEUED
+
     win = types.SimpleNamespace(
         save_dir=str(tmp_path), _moves=deque(), refresh=lambda: None,
         _save_state=lambda: None,
-        _toasts=types.SimpleNamespace(show=lambda *a, **k: toasts.append(a)))
+        _toasts=types.SimpleNamespace(show=lambda *a, **k: toasts.append(a)),
+        queue=types.SimpleNamespace(pause_task=pause, resume_task=resume))
+    win.resumed = resumed
     for name in ("_move_task_files", "_finish_moves", "_moved"):
         setattr(win, name, (lambda n: lambda *a: getattr(actions.ActionsMixin, n)(win, *a))(name))
     win.toasts, win.dest = toasts, dest
@@ -175,6 +185,54 @@ def test_a_move_that_fails_says_so_and_changes_nothing(window, tmp_path, monkeyp
     window._finish_moves()
     assert not t.moving and t.save_path == str(f)
     assert window.toasts[-1][1] == "Move failed" and "denied" in window.toasts[-1][2]
+
+
+# ---- a torrent that is not finished (asked 2026-10-29) ---------------------------------
+# "Pause first" refused a running one, and a paused one left its bytes and
+# aria2's control file behind: its save_path is a stand-in until it finishes
+# (magnet_.bin), so "nothing on disk" was read, only the destination changed,
+# the card was renamed magnet_.bin, and it started over in the new folder.
+def _half_done(tmp_path, status):
+    old = tmp_path / "old"
+    (old / "Pack" / "Season 1").mkdir(parents=True)
+    (old / "Pack" / "Season 1" / "e1.mkv").write_bytes(DATA)
+    (old / "Pack.aria2").write_bytes(b"control")
+    t = T.DownloadTask("magnet:?xt=urn:btih:%040d" % 7, str(old / "magnet_.bin"),
+                       filename="Pack")
+    t.status, t.downloaded = status, len(DATA)
+    return t, old
+
+
+def _landed(window):
+    end = time.monotonic() + 10
+    while not window._moves and time.monotonic() < end:
+        time.sleep(0.02)
+    window._finish_moves()
+
+
+@pytest.mark.parametrize("status", [T.DOWNLOADING, T.PAUSED])
+def test_an_unfinished_torrent_takes_its_bytes_and_goes_on_there(window, tmp_path, status):
+    t, old = _half_done(tmp_path, status)
+    window._move_task_files(t)
+    _landed(window)
+    assert window.toasts[-1][1] == "Moved", window.toasts
+    assert _tree(window.dest) == sorted([os.path.join("Pack", "Season 1", "e1.mkv"), "Pack.aria2"])
+    assert not (old / "Pack").exists() and not (old / "Pack.aria2").exists()
+    assert t.save_path == str(window.dest / "magnet_.bin") and t.filename == "Pack"
+    assert t.sort_base == "" and not t.moving
+    # it was downloading: it goes on, there; paused, it stays paused
+    assert window.resumed == ([t] if status == T.DOWNLOADING else [])
+
+
+def test_an_unfinished_torrent_will_not_take_a_name_already_there(window, tmp_path):
+    t, old = _half_done(tmp_path, T.DOWNLOADING)
+    (window.dest / "Pack").mkdir()
+    window._move_task_files(t)
+    _landed(window)
+    assert window.toasts[-1][1] == "Move failed" and "Pack" in window.toasts[-1][2]
+    assert (old / "Pack" / "Season 1" / "e1.mkv").exists() and (old / "Pack.aria2").exists()
+    assert t.save_path == str(old / "magnet_.bin")
+    assert window.resumed == [t], "paused for the move, and left paused"
 
 
 def test_the_card_shows_how_far_the_move_is():

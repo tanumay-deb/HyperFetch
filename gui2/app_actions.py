@@ -133,23 +133,18 @@ class ActionsMixin:
         window took the whole copy on itself and froze for a move to another
         drive. An in-flight HTTP download only needs its destination
         retargeted: the bytes live in an id-keyed .hfdownload temp until
-        finalize, so nothing has to move. A running torrent is the exception —
-        aria2 owns its --dir and cannot be repointed mid-download — so that
-        one asks for a pause first.
+        finalize, so nothing has to move. An unfinished torrent is the
+        exception - aria2 owns its --dir and cannot be repointed mid-download -
+        so it is paused for the move, its bytes and control file go along
+        (torrent.move_unfinished), and it goes on there if it was running.
         """
         import threading
+        import time
         import utils
         from PySide6.QtWidgets import QFileDialog
 
         if getattr(t, "moving", False):
             return
-        is_tor = _torrent.is_torrent_task(t.url, t.filename)
-        if is_tor and t.status in (T.DOWNLOADING, T.QUEUED):
-            self._toasts.show("info", "Pause first",
-                              "Pause this torrent before moving it — the engine "
-                              "cannot change folder while it is running.")
-            return
-
         cur = t.save_path or ""
         start_dir = os.path.dirname(cur) if cur else self.save_dir
         dest_dir = QFileDialog.getExistingDirectory(self, "Move download to…", start_dir)
@@ -158,6 +153,30 @@ class ActionsMixin:
 
         name = os.path.basename(cur) or t.filename
         target = utils.unique_path(dest_dir, name)
+
+        if _torrent.is_torrent_task(t.url, t.filename) and t.status != T.COMPLETED:
+            running = t.status in (T.DOWNLOADING, T.QUEUED)
+            if running:
+                self.queue.pause_task(t)
+            t.moving, t.move_done, t.move_total = True, 0, 0
+
+            def move_torrent():
+                end = time.monotonic() + 60       # its worker lets go of it first
+                while getattr(t, "_worker_alive", False) and time.monotonic() < end:
+                    time.sleep(0.2)
+                try:
+                    if getattr(t, "_worker_alive", False):
+                        raise RuntimeError("the torrent did not stop")
+                    _torrent.move_unfinished(t, dest_dir)
+                    said = ""
+                except Exception as e:
+                    said = str(e) or type(e).__name__
+                # save_path stays a stand-in until it finishes: just its folder
+                self._moves.append((t, os.path.join(dest_dir, name), dest_dir, said, running))
+
+            threading.Thread(target=move_torrent, name="move", daemon=True).start()
+            self.refresh()
+            return
 
         if cur and os.path.exists(cur):
             t.move_total = utils.tree_size(cur)
@@ -171,7 +190,7 @@ class ActionsMixin:
                     said = ""
                 except Exception as e:          # never leave it "Moving…"
                     said = str(e) or type(e).__name__
-                self._moves.append((t, target, dest_dir, said))   # _finish_moves
+                self._moves.append((t, target, dest_dir, said, False))   # _finish_moves
 
             threading.Thread(target=move, name="move", daemon=True).start()
             self.refresh()
@@ -183,16 +202,20 @@ class ActionsMixin:
     def _finish_moves(self):
         """Moves the threads finished, taken up on the window's own thread."""
         while self._moves:
-            t, target, dest_dir, said = self._moves.popleft()
+            t, target, dest_dir, said, resume = self._moves.popleft()
             t.moving = False
             if said:
                 self._toasts.show("error", "Move failed", said)
             else:
                 self._moved(t, target, dest_dir)
+            if resume:                      # paused for the move: on again, where it is
+                self.queue.resume_task(t)
 
     def _moved(self, t, target, dest_dir):
         t.save_path = target
-        t.filename = os.path.basename(target)
+        # an unfinished torrent's name is its own; save_path is a stand-in
+        if not _torrent.is_torrent_task(t.url, t.filename) or t.status == T.COMPLETED:
+            t.filename = os.path.basename(target)
         # the user chose this folder: the app files it nowhere else from now
         # on. Left as it was, a video went back under Video when it was named
         # and a magnet when its metadata came.

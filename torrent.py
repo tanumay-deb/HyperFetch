@@ -1353,6 +1353,69 @@ def _within(folder, name):
     return target == root or target.startswith(root + os.sep)
 
 
+def move_unfinished(task, dest_dir):
+    """Move a torrent that is not running to dest_dir: what it has written,
+    and aria2's control file beside it, so its next run goes on from those
+    bytes there (asked 2026-10-29 - it started over, the bytes left behind).
+    The card shows how far (task.move_done / move_total). False when nothing
+    of it is on disk yet. Raises when the move fails, or when its name is
+    taken in dest_dir: a torrent's files keep the names it gives them."""
+    top = (task.filename or "").strip()
+    src = getattr(task, "unfinished_in", "") or os.path.dirname(task.save_path) or "."
+    payload = os.path.join(src, top)
+    ctl = payload + ".aria2"
+    if top in ("", ".", "..") or not _within(src, top) or not (
+            os.path.exists(payload) or os.path.isfile(ctl)):
+        return False
+    dst = os.path.join(dest_dir, top)
+    if os.path.exists(dst) or os.path.exists(dst + ".aria2"):
+        raise FileExistsError("%s is already in %s" % (top, dest_dir))
+    _let_go(task)
+    has = os.path.exists(payload)
+    task.move_total = (utils.tree_size(payload) if has else 0) + (
+        os.path.getsize(ctl) if os.path.isfile(ctl) else 0)
+    task.move_done = 0
+    os.makedirs(dest_dir, exist_ok=True)
+    if has:
+        utils.move_with_progress(payload, dst, lambda n: setattr(task, "move_done", n))
+    if os.path.isfile(ctl):
+        done = task.move_done
+        utils.move_with_progress(ctl, dst + ".aria2",
+                                 lambda n: setattr(task, "move_done", done + n))
+    task.unfinished_in = ""                  # it is written where it now is
+    task.log_event("Moved what it has to %s" % dest_dir)
+    return True
+
+
+def _let_go(task, wait=15.0):
+    """aria2 lets go of a torrent it holds: stopped - its control file
+    written, its files closed - and forgotten, so the next run adds it
+    afresh where it now is. aria2.pause returns before the download has
+    stopped (it tells the tracker first): a move straight after it took an
+    older control file along, and the torrent went back to that point."""
+    import aria2d
+    d = aria2d.DAEMON
+    if not d.alive():
+        return                               # no daemon of ours: nothing holds it
+    td = TorrentDownloader(task)
+    gid = td._rpc_find_existing(d, live_only=False)
+    if not gid:
+        return
+    try:
+        d.call("aria2.forcePause", gid)
+    except Exception:
+        pass                                 # paused already
+    end = time.monotonic() + wait
+    while time.monotonic() < end:
+        try:
+            if d.call("aria2.tellStatus", gid, ["status"]).get("status") != "active":
+                break
+        except Exception:
+            break
+        time.sleep(0.1)
+    td._rpc_remove(d, gid, force=True)
+
+
 class TorrentDownloader:
     def __init__(self, dtask: "T.DownloadTask"):
         self.t = dtask
