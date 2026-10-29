@@ -26,6 +26,26 @@ $ErrorActionPreference = 'Stop'
 foreach ($x in @((Get-MpPreference).ExclusionPath)) {
     if ($x) { Remove-MpPreference -ExclusionPath $x }
 }
+# On a runner fresh from boot Defender's service may not answer yet - "The
+# remote procedure call failed", then "Provider load failure" here: 2.8.1's
+# release build, and both of 2.8.4's (2026-10-29). Wait for it, three minutes
+# at most; one that never answers still fails the release, unscanned.
+$status = $null
+foreach ($try in 1..18) {
+    try { $status = Get-MpComputerStatus; break }
+    catch {
+        $svc = (Get-Service WinDefend -ErrorAction SilentlyContinue).Status
+        Write-Host "Defender is not answering ($try of 18, service: $svc): $($_.Exception.Message)"
+        if ($try -eq 1) {
+            try { Start-Service WinDefend } catch { Write-Host "could not start it: $($_.Exception.Message)" }
+        }
+        Start-Sleep -Seconds 10
+    }
+}
+if (-not $status) {
+    Write-Host "::error::Defender never answered - nothing was scanned"
+    exit 1
+}
 try { Update-MpSignature } catch { Write-Host "could not update Defender's signatures: $($_.Exception.Message)" }
 $status = Get-MpComputerStatus
 Write-Host "Defender $($status.AMProductVersion), signatures $($status.AntivirusSignatureVersion) of $($status.AntivirusSignatureLastUpdated)"
