@@ -15,9 +15,9 @@ browser extension that sends your downloads straight to the app.
 ## Features
 
 - **Download large files much faster** — splits each file across up to 16 connections at once (auto-detects support; falls back to a single stream otherwise).
-- **Never lose progress** — pause and resume anytime, even across restarts; resume picks up from the bytes already on disk. Organize downloads into named queues with their own limits.
+- **Never lose progress** — pause and resume anytime, even across restarts; resume picks up from the bytes already on disk. Keep unfinished downloads in a folder of your choice; each moves to its own folder when it finishes. Organize downloads into named queues with their own limits; they start in the order of their number.
 - **Save streaming video** — capture HLS (`.m3u8`) streams as one playable file (optionally rewritten as an ordinary MP4, so players can skip around in it), and download from YouTube, Vimeo, Twitch and more with a quality picker.
-- **Torrents & magnets** — built in, no separate app needed. A torrent that stalls is tried again by itself, the same torrent is never added twice (as a magnet, a `.torrent` file or a link), and the list sorts by seeds or peers.
+- **Torrents & magnets** — built in, no separate app needed. Pick which files to fetch, a whole folder at a time, and see how far each has got. A torrent that stalls is tried again by itself, the same torrent is never added twice (as a magnet, a `.torrent` file or a link), and the list sorts by seeds or peers.
 - **Grab downloads from your browser** — right-click a link, click the badge on a video, or auto-capture downloads by file type. The extension for Chrome, Edge and Firefox hands them to the app.
 - **Updates itself** — checks GitHub once a day, downloads the new version, checks it against the SHA-256 GitHub lists, and asks before installing.
 - **Track everything** — every completed download is logged with lifetime totals and stats.
@@ -133,7 +133,7 @@ download only content you have the right to.
 Free code signing provided by SignPath.io, certificate by SignPath Foundation.
 
 The application was made on 6 October 2026 and is waiting for an answer.
-Releases up to and including 2.8.3 are not signed; the first signed release
+Releases up to and including 2.8.4 are not signed; the first signed release
 will say so in its notes.
 
 - **What is signed:** `HyperFetch.exe` and the installer, built by GitHub
