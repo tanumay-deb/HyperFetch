@@ -7,7 +7,8 @@ order (folders first, as Explorer lists them), a folder's row comes before
 what is in it, with its size and a box that ticks or unticks all of it (one
 change for aria2); sorted by size or progress the files are listed flat,
 their folders in their names; and a search keeps the folders of the files
-it shows.
+it shows. A folder's arrow folds it (asked 2026-10-29); a search still
+finds what a folded folder holds, and Select All still reaches it.
 """
 import os
 import types
@@ -15,7 +16,7 @@ import types
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QApplication, QCheckBox, QWidget
+from PySide6.QtWidgets import QApplication, QCheckBox, QToolButton, QWidget
 
 import task as T
 from gui2.details_drawer import DetailsDrawer
@@ -98,3 +99,43 @@ def test_sorted_by_size_the_files_are_flat_with_their_folders(tmp_path):
     d._sort_files(1)
     assert _shown(d) == [(0, "Pack/Season 2/e1.mkv"), (0, "Pack/Season 1/e1.mkv"),
                          (0, "Pack/cover.jpg"), (0, "Pack/Season 1/e2.mkv")]
+
+
+def _arrow(d, name):
+    for r in range(d.files_table.rowCount()):
+        w = d.files_table.cellWidget(r, 0)
+        if w.findChildren(QWidget)[-1].toolTip() == name:
+            return w.findChild(QToolButton)
+    raise AssertionError(name)
+
+
+def test_a_folded_folder_hides_what_is_in_it(tmp_path):
+    d, _ = _drawer(tmp_path)
+    _arrow(d, "Season 1").click()
+    assert _shown(d) == [(0, "Pack"), (1, "Season 1"), (1, "Season 2"), (2, "e1.mkv"),
+                         (1, "cover.jpg")]
+    d._sort_files(1)                       # flat: no folder to unfold, so all of it
+    assert len(_shown(d)) == 4
+    d._sort_files(0)
+    assert (2, "e2.mkv") not in _shown(d), "the fold was lost by a re-sort"
+    _arrow(d, "Season 1").click()
+    assert len(_shown(d)) == 7
+
+
+def test_a_search_finds_what_a_folded_folder_holds(tmp_path):
+    d, _ = _drawer(tmp_path)
+    _arrow(d, "Pack").click()
+    assert _shown(d) == [(0, "Pack")]
+    d.file_search.setText("e2")
+    assert _shown(d) == [(0, "Pack"), (1, "Season 1"), (2, "e2.mkv")]
+    d.file_search.setText("")
+    assert _shown(d) == [(0, "Pack")]
+
+
+def test_select_all_reaches_into_a_folded_folder(tmp_path):
+    d, sent = _drawer(tmp_path)
+    _box(d, "Season 1").click()
+    assert sent == ["1,3"]
+    _arrow(d, "Season 1").click()
+    d.btn_select_all.click()
+    assert sent[-1] == "1,2,3,4", "the folded files were left out"

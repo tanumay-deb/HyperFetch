@@ -237,6 +237,7 @@ class DetailsDrawer(QFrame):
         self._drag_w0 = 0
         self.setMouseTracking(True)
         self._tid = None
+        self._folds = {}               # task id -> folders folded in its Files tab
         self.hide()
 
         lay = QVBoxLayout(self)
@@ -1014,7 +1015,7 @@ class DetailsDrawer(QFrame):
                 status = "Downloading" if getattr(self, "_downloading", False) else "Idle"
             add_row(e["index"], name, size, False, pct, status, depth,
                     selected, partial=bool(completed and pct < 100),
-                    unknown=completed is None, key=rel)
+                    unknown=completed is None, key=rel, in_tree=tree)
 
     def _add_folder_row(self, key, name, depth, size):
         """A folder's row: its name, its size, and one box for all of it
@@ -1023,6 +1024,15 @@ class DetailsDrawer(QFrame):
         self.files_table.insertRow(r)
         w = QWidget()
         h = QHBoxLayout(w); h.setContentsMargins(4 + depth * 16, 2, 4, 2); h.setSpacing(8)
+        arrow = QToolButton()
+        arrow.setAutoRaise(True)
+        arrow.setFixedSize(16, 16)
+        arrow.setIconSize(QSize(12, 12))
+        arrow.setCursor(Qt.PointingHandCursor)
+        arrow.setStyleSheet("QToolButton { border: none; background: transparent; }")
+        arrow.clicked.connect(lambda _=False, k=key: self._fold(k))
+        self._fold_arrows[key] = arrow
+        self._style_arrow(key)
         cb = QCheckBox()
         cb.setTristate(True)
         cb.clicked.connect(lambda _=False, k=key: self._tick_folder(k))
@@ -1030,6 +1040,7 @@ class DetailsDrawer(QFrame):
         from gui2.download_card import ElideLabel
         lbl = ElideLabel(name); lbl.setStyleSheet("background: transparent;")
         lbl.setToolTip(name)
+        h.addWidget(arrow)
         h.addWidget(cb)
         h.addWidget(icon)
         h.addWidget(lbl, 1)
@@ -1042,6 +1053,19 @@ class DetailsDrawer(QFrame):
         sz.setForeground(QColor(COLORS['muted']))
         self.files_table.setItem(r, 1, sz)
         self._folder_rows.append((r, key, cb))
+
+    def _fold(self, folder):
+        """A folder's arrow: hide what is in it, or show it again. Kept for
+        the torrent while the app runs, through re-sorts and reopening."""
+        self._collapsed ^= {folder}
+        self._style_arrow(folder)
+        self._filter_files()
+
+    def _style_arrow(self, folder):
+        folded = folder in self._collapsed
+        arrow = self._fold_arrows[folder]
+        arrow.setIcon(themed_icon("chevron-right" if folded else "chevron-down", "muted"))
+        arrow.setToolTip("Show what is in it" if folded else "Hide what is in it")
 
     def _tick_folder(self, folder):
         """A folder's box: all of it on - or off, when all of it is on - as
@@ -1100,17 +1124,29 @@ class DetailsDrawer(QFrame):
         query = self.file_search.text().lower()
         folders = getattr(self, "_folder_rows", None) or []
         at = {r for r, _k, _b in folders}
+        # folded folders that have a row: sorted flat, nothing could unfold them
+        folded = getattr(self, "_collapsed", set()) & {k for _r, k, _b in folders}
+
+        def tucked(path):
+            parts = path.split("/")
+            return any("/".join(parts[:n]) in folded for n in range(1, len(parts)))
+
         within = set()                         # folders of the files shown
         for row in range(self.files_table.rowCount()):
             item = self.files_table.item(row, 0)
             if item and row not in at:
                 path = item.data(Qt.UserRole) or ""
-                self.files_table.setRowHidden(row, query not in path.lower())
+                # a search shows what it finds, folded or not
+                self.files_table.setRowHidden(
+                    row, query not in path.lower() if query else tucked(path))
                 if query in path.lower():
                     parts = path.split("/")
                     within.update("/".join(parts[:n]) for n in range(1, len(parts)))
         for row, folder, _box in folders:      # a folder shows while something in it does
-            self.files_table.setRowHidden(row, folder not in within)
+            self.files_table.setRowHidden(
+                row, folder not in within if query else tucked(folder))
+        for arrow in getattr(self, "_fold_arrows", {}).values():
+            arrow.setEnabled(not query)
         # with a search, the buttons act on what it shows - and say so
         self.btn_only.setVisible(bool(query))
         self.btn_select_all.setText(" Select these" if query else " Select All")
@@ -1127,8 +1163,11 @@ class DetailsDrawer(QFrame):
         rows = getattr(self, "_file_row_widgets", None)
         if not rows:
             return
-        for (_idx, cb, _sz), (row, path) in zip(rows, self._file_places):
-            want = pick(not self.files_table.isRowHidden(row), path)
+        query = self.file_search.text().lower()
+        for (_idx, cb, _sz), (_row, path) in zip(rows, self._file_places):
+            # what the search shows - not what is on screen: a folded
+            # folder's files are still in "all"
+            want = pick(query in path.lower(), path)
             if want is not None and cb.isChecked() != want:
                 cb.blockSignals(True)
                 cb.setChecked(want)
@@ -1534,6 +1573,8 @@ class DetailsDrawer(QFrame):
         self._file_bars = []
         self._file_places = []        # (table row, path) per file: folder rows sit between
         self._folder_rows = []        # (table row, path, box) per folder
+        self._fold_arrows = {}        # path -> its arrow
+        self._collapsed = self._folds.setdefault(t.id, set())
         self.files_table.setRowCount(0)
 
         sp = t.save_path
@@ -1543,13 +1584,17 @@ class DetailsDrawer(QFrame):
         active_files = 0
         
         def add_file_row(idx, name, size, is_folder, pct, status_str, indent=0,
-                         selected=True, partial=False, unknown=False, key=None):
+                         selected=True, partial=False, unknown=False, key=None,
+                         in_tree=False):
             r = self.files_table.rowCount()
             self.files_table.insertRow(r)
 
             # Col 0: Name (Checkbox + Icon + Label)
             w = QWidget()
             h = QHBoxLayout(w); h.setContentsMargins(4 + indent*16, 2, 4, 2); h.setSpacing(8)
+            if in_tree:
+                gap = QWidget(); gap.setFixedSize(16, 16)    # where a folder has its arrow
+                h.addWidget(gap)
             cb = QCheckBox()
             # set state BEFORE connecting, or restoring aria2's own selection
             # would fire _apply_file_selection and push it straight back
@@ -1640,6 +1685,7 @@ class DetailsDrawer(QFrame):
                 ]
                 self._downloading = (t.status == T.DOWNLOADING)
                 self._add_sorted_file_rows(add_file_row)
+                self._filter_files()      # new rows keep the search and the folds
         else:
             if sp and os.path.isdir(sp):
                 try:
