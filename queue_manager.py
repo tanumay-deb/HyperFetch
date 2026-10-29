@@ -317,6 +317,12 @@ class QueueManager:
                 return
             task.selected_files = indices_str or ""
             gid = getattr(task, "gid", None)
+            if not gid and task.status != T.COMPLETED:
+                # aria2 works these out only while it runs: the card kept the
+                # old size and percent until the next start (2026-10-29)
+                got = _torrent.chosen_totals(task)
+                if got:
+                    task.total_size, task.downloaded = got
         if not gid:
             return                       # applied by _rpc_add when it next runs
         try:

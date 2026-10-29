@@ -139,3 +139,46 @@ def test_the_choice_shows_before_aria2_has_reported_any_file(tmp_path):
     t.selected_files = "2"
     d = _drawer_for(t)
     assert _boxes(d) == [False, True, False]
+
+
+# ---- a paused torrent's size and progress follow the choice (asked 2026-10-29) ---
+# aria2 works them out only while it runs, so after unticking files the card
+# kept the old size and percent until the next start.
+def _two_files(status):
+    t = _task()
+    t.status = status
+    t.file_progress = [{"index": 1, "path": "a", "length": 600, "completed": 300, "selected": True},
+                       {"index": 2, "path": "b", "length": 400, "completed": 100, "selected": True}]
+    t.total_size, t.downloaded = 1000, 400
+    return t
+
+
+def test_a_paused_torrents_size_and_progress_follow_the_choice():
+    t = _two_files(T.PAUSED)
+    q = _q_with(t)
+    q.change_torrent_files(t.id, "1")
+    assert (t.total_size, t.downloaded) == (600, 300)
+    q.change_torrent_files(t.id, "1,2")
+    assert (t.total_size, t.downloaded) == (1000, 400)
+
+
+def test_one_that_never_ran_takes_its_size_from_the_file_list():
+    t = _task()
+    t.status = T.QUEUED
+    t.files = [["Show/a.mkv", 600], ["Show/b.mkv", 400]]
+    t.total_size = 1000
+    _q_with(t).change_torrent_files(t.id, "2")
+    assert (t.total_size, t.downloaded) == (400, 0)
+
+
+def test_a_running_one_is_left_to_aria2(monkeypatch):
+    t = _two_files(T.DOWNLOADING)
+    t.gid = "livegid"
+
+    class _D:
+        def call(self, method, *params, **kw):
+            return {}
+
+    monkeypatch.setattr(aria2d, "DAEMON", _D())
+    _q_with(t).change_torrent_files(t.id, "1")
+    assert (t.total_size, t.downloaded) == (1000, 400)

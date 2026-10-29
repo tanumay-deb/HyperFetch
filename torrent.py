@@ -880,6 +880,23 @@ def picked(selected, count):
     return (picked & every) or every
 
 
+def chosen_totals(task):
+    """(size, done) of the files a torrent is to fetch, from what is known
+    of each: aria2's last per-file numbers, or the file list of one that
+    never ran. None when that is not enough to say."""
+    rows = getattr(task, "file_progress", None) or []
+    if rows:
+        keep = picked(getattr(task, "selected_files", ""), len(rows))
+        mine = [f for n, f in enumerate(rows, 1) if n in keep]
+        return (sum(int(f.get("length") or 0) for f in mine),
+                sum(int(f.get("completed") or 0) for f in mine))
+    files = getattr(task, "files", None) or []
+    if files and not int(getattr(task, "downloaded", 0) or 0):
+        keep = picked(getattr(task, "selected_files", ""), len(files))
+        return sum(int(size) for n, (_rel, size) in enumerate(files, 1) if n in keep), 0
+    return None
+
+
 def torrent_category(path, selected=""):
     """The category a torrent is filed under: that of the biggest file it is
     going to fetch. Biggest rather than most common, because a release is full
