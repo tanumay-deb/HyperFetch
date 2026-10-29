@@ -219,6 +219,7 @@ class DownloadTask:
         self.meta_retry_after = 0.0
         self.tor_upload = 0
         self.tor_uploaded = 0      # total bytes sent for this torrent
+        self.tor_pieces = (0, 0)   # (how many, how long) its pieces are
         # how fast aria2 says this torrent is coming down, bytes a second
         # (transient): the queue shares the download speed limit out by it
         self.tor_download = 0

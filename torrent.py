@@ -2316,6 +2316,8 @@ class TorrentDownloader:
                 self.t.last_seeds_at = time.time()
             self.t.tor_upload = int(st.get("uploadSpeed") or 0)
             self.t.tor_uploaded = int(st.get("uploadLength") or 0)
+            self.t.tor_pieces = (int(st.get("numPieces") or 0),
+                                 int(st.get("pieceLength") or 0))
             self.t.tor_download = int(st.get("downloadSpeed") or 0)
             self._keep_to_limits(d, cur)
 

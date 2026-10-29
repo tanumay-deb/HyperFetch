@@ -566,16 +566,19 @@ class DetailsDrawer(QFrame):
         return w
 
     @staticmethod
-    def _bitfield_pct(bits):
-        """Percentage of pieces a peer holds, from aria2's hex bitfield."""
-        if not bits:
-            return 0
+    def _peer_has(bits, pieces):
+        """(pieces a peer holds, pieces counted) from aria2's hex bitfield.
+        Only the torrent's own `pieces` bits count: the field is padded to
+        whole bytes, and counting the padding as missing pieces read 99% for
+        a peer that has all of it (2026-10-29)."""
         try:
             n = int(bits, 16)
         except (TypeError, ValueError):
-            return 0
-        total = len(bits) * 4                      # 4 bits per hex char
-        return min(100, int(bin(n).count("1") * 100 / total)) if total else 0
+            return 0, 0
+        width = len(bits) * 4                      # 4 bits per hex char
+        if not 0 < pieces <= width:
+            pieces = width                         # not known: the padding counts
+        return bin(n >> (width - pieces)).count("1"), pieces
 
     def _peer_rows(self, t):
         """[(label, pct, down_bps, up_bps)] from the daemon, or [] if the RPC
@@ -595,6 +598,8 @@ class DetailsDrawer(QFrame):
                                        timeout=GUI_RPC_TIMEOUT) or []
         except Exception:
             return []
+        count, plen = getattr(t, "tor_pieces", (0, 0))
+        whole = sum(int(size) for _rel, size in getattr(t, "files", None) or [])
         out = []
         for p in peers:
             ip = str(p.get("ip", "?"))
@@ -603,12 +608,15 @@ class DetailsDrawer(QFrame):
             seed = str(p.get("seeder", "")).lower() == "true"
             if seed:
                 label += "  · seed"
-            # a seed has every piece; its bitfield is padded to whole bytes,
-            # and counting the padding as missing pieces read 99% (2026-10-29)
-            out.append((label,
-                        100 if seed else self._bitfield_pct(p.get("bitfield")),
+            have, of = self._peer_has(p.get("bitfield"), count)
+            if seed:
+                have = of = of or count            # a seed has every piece
+            # what it holds, in bytes (asked 2026-09-30): the last piece is
+            # short, so all of them is the torrent's own size
+            held = min(have * plen, whole) if whole else have * plen
+            out.append((label, 100 if seed else have * 100 // of if of else 0,
                         int(p.get("downloadSpeed") or 0),
-                        int(p.get("uploadSpeed") or 0)))
+                        int(p.get("uploadSpeed") or 0), held))
         out.sort(key=lambda r: r[2], reverse=True)        # fastest first
         return out
 
@@ -619,12 +627,13 @@ class DetailsDrawer(QFrame):
             for s in t.segments:
                 total = (s.end - s.start + 1) if s.end >= s.start else 0
                 pct = int(s.downloaded * 100 / total) if total else (100 if s.complete else 0)
-                rows.append((f"Segment {s.index + 1}", pct, 0, 0))
+                rows.append((f"Segment {s.index + 1}", pct, 0, 0, 0))
 
         self.conns_table.setRowCount(len(rows))
-        for i, (label, pct, down, up) in enumerate(rows):
+        for i, (label, pct, down, up, held) in enumerate(rows):
             self.conns_table.setItem(i, 0, QTableWidgetItem(label))
-            self.conns_table.setItem(i, 1, QTableWidgetItem(f"{pct}%"))
+            self.conns_table.setItem(i, 1, QTableWidgetItem(
+                f"{pct}% · {human_size(held)}" if held else f"{pct}%"))
             self.conns_table.setItem(i, 2, QTableWidgetItem(human_speed(down) if down else "—"))
             self.conns_table.setItem(i, 3, QTableWidgetItem(human_speed(up) if up else "—"))
 

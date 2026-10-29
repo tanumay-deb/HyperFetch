@@ -140,4 +140,33 @@ def test_a_seed_reads_100_percent(monkeypatch):
     t = T.DownloadTask("magnet:?xt=urn:btih:abc", "C:/dl/x")
     t.gid = "gid1"
     rows = drawer._peer_rows(t)
-    assert [(label.endswith("seed"), pct) for label, pct, _d, _u in rows] == [(True, 100), (False, 50)]
+    assert [(label.endswith("seed"), pct) for label, pct, *_ in rows] == [(True, 100), (False, 50)]
+
+
+def test_a_peer_says_how_much_it_has(monkeypatch):
+    """Asked 2026-09-30, how much of a torrent each peer holds - in bytes, and
+    its percent counted over the torrent's own pieces, not the padded field
+    (a peer missing only the last of 1001 pieces read 99% on 1008 bits too,
+    but one with 1001 of 1001 read 99% unless it said it was a seed)."""
+    import aria2d
+    from gui.theme import human_size
+    MB = 1 << 20
+
+    class _Daemon:
+        def call(self, method, *a, **kw):
+            return [{"ip": "203.0.113.5", "port": "6881", "seeder": "false",
+                     "bitfield": "ff" * 125 + "80", "downloadSpeed": "3000", "uploadSpeed": "0"},
+                    {"ip": "203.0.113.6", "port": "6881", "seeder": "false",
+                     "bitfield": "ff" * 125 + "00", "downloadSpeed": "2000", "uploadSpeed": "0"}]
+
+    monkeypatch.setattr(aria2d, "DAEMON", _Daemon())
+    QApplication.instance() or QApplication([])
+    host = QWidget()
+    drawer = DetailsDrawer(host)
+    t = T.DownloadTask("magnet:?xt=urn:btih:abc", "C:/dl/x")
+    t.gid = "gid1"
+    t.tor_pieces = (1001, MB)
+    t.files = [["Show/a.mkv", 1000 * MB + 5]]       # the last piece is 5 bytes
+    drawer._fill_conns(t, True)
+    shown = [drawer.conns_table.item(r, 1).text() for r in range(drawer.conns_table.rowCount())]
+    assert shown == ["100% · " + human_size(1000 * MB + 5), "99% · " + human_size(1000 * MB)]
