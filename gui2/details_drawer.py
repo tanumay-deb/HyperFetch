@@ -9,7 +9,9 @@ Overview layout (mockup redesign): big % + Speed/ETA/Downloaded stat row,
 linear progress bar, live speed graph, quick-action row (Open Folder /
 Copy Link / Delete), then collapsible General / Network / Integrity sections.
 """
+import math
 import os
+import time
 from collections import deque
 
 from PySide6.QtWidgets import (
@@ -876,15 +878,16 @@ class DetailsDrawer(QFrame):
         return out
 
     def _files_freshness(self, t):
-        """The Files tab's corner: refreshed live while it downloads (the tab
-        being open is what makes the engine read every FILES_POLL), else how
-        old the last numbers are. Nothing for a finished torrent: all done."""
+        """The Files tab's corner: while it downloads, when the engine reads
+        the numbers next (every FILES_POLL); once it stops, how old the last
+        ones are. Nothing for a finished torrent: all done."""
         if (not _torrent.is_torrent_task(t.url, t.filename) or t.status == T.COMPLETED
                 or not getattr(t, "file_progress", None)):
             return ""
-        if t.status == T.DOWNLOADING:
-            return "Refreshing every %g s" % _torrent.FILES_POLL
         at = getattr(t, "files_at", 0)
+        if t.status == T.DOWNLOADING:
+            left = math.ceil(_torrent.FILES_POLL - (time.time() - at))
+            return "Refreshing in %d s" % left if left > 0 else "Refreshing…"
         return "Updated " + humanize_age(at) if at else ""
 
     @staticmethod
@@ -1457,26 +1460,7 @@ class DetailsDrawer(QFrame):
             self.op_anim.setEndValue(1.0)
             self.op_anim.start()
 
-    def _watch_files(self, t, on):
-        """Tell the engine whether anyone is looking at this task's file list.
-
-        Only one task can be watched at a time, so the previous one is always
-        released — otherwise closing the drawer would leave a torrent polling
-        getFiles forever for a panel nobody is looking at.
-        """
-        prev = getattr(self, "_files_watched_id", None)
-        if prev and (not on or prev != getattr(t, "id", None)):
-            win = self.parent()
-            old = win.queue.get_task(prev) if win and hasattr(win, "queue") else None
-            if old is not None:
-                old.files_watched = False
-            self._files_watched_id = None
-        if on and t is not None:
-            t.files_watched = True
-            self._files_watched_id = t.id
-
     def close_drawer(self):
-        self._watch_files(None, False)
         self._tid = None
         if self._pinned:
             self._pinned = False
@@ -1859,15 +1843,9 @@ class DetailsDrawer(QFrame):
         else:
             live = [s for s in t.segments if not s.complete]
             self.ov_conns.setText(str(len(live)) if t.status == T.DOWNLOADING else "0")
+        self.files_fresh.setText(self._files_freshness(t))
         # peers/segments only matter while the Connections tab is on screen —
         # getPeers is an RPC round trip and this runs on the 500ms tick
-        # Same idea for the per-file breakdown: aria2.getFiles ran every 2s for
-        # EVERY torrent, and file_progress is read only here and by the preview
-        # action. The engine fetches it while this tab is on screen and skips it
-        # otherwise, which is a third of all torrent RPC traffic reclaimed.
-        self._watch_files(t, self.tabs.currentIndex()
-                          == self.tabs.indexOf(self.files_table.parent()))
-        self.files_fresh.setText(self._files_freshness(t))
         if self.tabs.currentIndex() == self.tabs.indexOf(self.conns_table.parent()):
             self._fill_conns(t, is_tor)
 

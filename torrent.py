@@ -89,10 +89,12 @@ META_TIMEOUT = 60.0       # give up on one torrent after this, then move on
 META_RETRY = 900.0        # and leave it alone for this long before retrying
 META_SCAN = 3.0           # how often to look for new candidates
 
-FILES_POLL = 2.0
-# ...and with nobody watching, once a minute: the numbers are saved with the
-# task, and are what the Files tab shows after a restart (asked 2026-10-29)
-FILES_IDLE_POLL = 60.0
+# How often a running torrent's per-file numbers are read (aria2.getFiles):
+# once a minute, Files tab open or not, and the tab counts down to it (asked
+# 2026-10-29). They were read every 2 s for every torrent - a third of all
+# torrent RPC - then only while the tab was open, and a torrent that finished
+# or paused with it shut kept the numbers of its start.
+FILES_POLL = 60.0
 # How often each torrent asks the daemon for its status.
 #
 # NOT the same thing as POLL. POLL is how often the loop checks the task's own
@@ -2324,16 +2326,8 @@ class TorrentDownloader:
             # were the instant the torrent completed, so a finished, seeding
             # torrent showed a file stuck at 98% and a "Downloading 1" tile.
             now = time.time()
-            # On demand. getFiles is only ever consumed by the drawer's Files tab
-            # and the preview action, so polling it every FILES_POLL for every
-            # torrent spent a third of all torrent RPC on a panel that is usually
-            # closed. Fetch once when the list is first known (so the tab is not
-            # blank on opening), then every FILES_POLL while someone is watching
-            # and every FILES_IDLE_POLL while nobody is.
-            watching = bool(getattr(self.t, "files_watched", False))
-            need_first = bool(total) and not self.t.file_progress
-            idle = bool(total) and now - last_files >= FILES_IDLE_POLL
-            if idle or ((watching or need_first) and now - last_files >= FILES_POLL):
+            # every FILES_POLL, the first as soon as the list is known
+            if total and now - last_files >= FILES_POLL:
                 last_files = now
                 try:
                     self._read_files(d, cur)

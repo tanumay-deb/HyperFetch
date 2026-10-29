@@ -974,13 +974,7 @@ def test_per_file_progress_keeps_updating_while_seeding(tmp_path, monkeypatch):
          "files": [{"path": payload}]},
     ])
     monkeypatch.setattr(torrent, "FILES_POLL", 0)
-    # getFiles is on-demand now, so state what this test always assumed: the
-    # Files tab is open. The regression it guards — seeding freezing the
-    # per-file numbers — is only observable while someone is looking.
-    watched = T.DownloadTask("magnet:?xt=urn:btih:abc&dn=Movie",
-                             str(tmp_path / "download.bin"))
-    watched.files_watched = True
-    t = _drive_with(tmp_path, monkeypatch, daemon, task=watched)
+    t = _drive_with(tmp_path, monkeypatch, daemon)
     assert calls["n"] > 1, "stopped refreshing the file list once seeding"
     assert t.file_progress[0]["completed"] == 1000, "left a file short of 100%"
 

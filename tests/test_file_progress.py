@@ -278,8 +278,9 @@ def test_the_numbers_come_back_after_a_restart(tmp_path):
 
 
 def test_the_corner_says_how_fresh_the_numbers_are(tmp_path):
-    """Live while it downloads; once it stops, how old the last numbers are;
-    nothing once finished (asked 2026-10-29)."""
+    """While it downloads, a countdown to the next read (once a minute);
+    once it stops, how old the last numbers are; nothing once finished
+    (asked 2026-10-29)."""
     import time
     app = _app()
     host = QWidget()
@@ -288,9 +289,10 @@ def test_the_corner_says_how_fresh_the_numbers_are(tmp_path):
     t = _torrent_task(tmp_path, [
         {"index": 1, "path": f"{base}/a.mkv", "length": 1000, "completed": 470, "selected": True}])
     seen = []
-    for status in (T.DOWNLOADING, T.PAUSED, T.COMPLETED):
-        t.status, t.files_at = status, time.time() - 300
+    for status, ago in ((T.DOWNLOADING, 20), (T.DOWNLOADING, 61), (T.PAUSED, 300),
+                        (T.COMPLETED, 300)):
+        t.status, t.files_at = status, time.time() - ago
         drawer.open_for(t)
         app.processEvents()
         seen.append(drawer.files_fresh.text())
-    assert seen == ["Refreshing every 2 s", "Updated 5 min ago", ""]
+    assert seen == ["Refreshing in 40 s", "Refreshing…", "Updated 5 min ago", ""]

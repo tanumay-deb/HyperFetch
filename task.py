@@ -217,10 +217,6 @@ class DownloadTask:
         self.meta_fetching = False
         self.meta_failed = False
         self.meta_retry_after = 0.0
-        # Set by the drawer while its Files tab is showing this task, so the
-        # engine only asks aria2 for the per-file breakdown when it is visible.
-        # engine only asks aria2 for the per-file breakdown when it is visible.
-        self.files_watched = False
         self.tor_upload = 0
         self.tor_uploaded = 0      # total bytes sent for this torrent
         # how fast aria2 says this torrent is coming down, bytes a second
