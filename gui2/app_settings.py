@@ -130,6 +130,14 @@ class SettingsMixin:
         self._save_settings()
         self.refresh()
 
+    def _toggle_theme(self):
+        """The status bar's button: dark <-> light. Like the setting, it
+        restarts the app to re-skin, and the session's totals go along."""
+        self.theme = "light" if palette.active_theme() == "dark" else "dark"
+        self._save_settings()
+        self._toasts.show("info", "Applying theme", "Restarting HyperFetch…")
+        QTimer.singleShot(700, self._restart_app)
+
     def _apply_web_settings(self, v):
         """Web Client page -> web_auth.json.
 

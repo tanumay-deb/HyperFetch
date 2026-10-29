@@ -1521,7 +1521,8 @@ class DetailsDrawer(QFrame):
 
     def reposition(self):
         if self.parent():
-            self.setFixedHeight(self.parent().height())
+            bar = getattr(self.parent(), "status_bar", None)     # stays in sight
+            self.setFixedHeight(self.parent().height() - (bar.height() if bar else 0))
             if not self.isVisible():
                 return
             self.move(self.parent().width() - self.width(), 0)

@@ -103,7 +103,11 @@ class SystemMixin:
         # in tray / minimized" preference and vanishes into the tray even though
         # the user was looking at the window, and (b) can hit the single-instance
         # guard against this still-dying instance's server and exit immediately.
-        args = [a for a in sys.argv[1:] if a != "--restarted"] + ["--restarted"]
+        # and with the session's totals: a theme switch is not a new session
+        import torrent
+        from gui2.status_bar import restart_args
+        args = restart_args(sys.argv, self._session.down,
+                            self._up_before + torrent.sent_this_session())
         if getattr(sys, "frozen", False):
             QProcess.startDetached(sys.executable, args)
         else:

@@ -10,6 +10,7 @@ Run with:  python main.py
 """
 import json
 import os
+import sys
 import time
 import threading
 from collections import deque
@@ -47,6 +48,7 @@ from gui2 import gc_guard, palette
 from gui2.sidebar import Sidebar
 from gui2.download_list import DownloadList
 from gui2.details_drawer import DetailsDrawer
+from gui2.status_bar import SessionCount, StatusBar, carried
 from gui2.dialogs.new_download import NewDownloadDialog
 from gui2.app_settings import SettingsMixin
 from gui2.app_actions import ActionsMixin
@@ -147,6 +149,10 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, Up
         self._yield_notifier = YieldNotifier()   # a torrent gave its slot back
         self._speed = {}              # id -> (last_dl, last_t, bps)
         self._spark = {}              # id -> deque(bps) for the live card sparkline
+        # this session's totals, for the status bar; a restart for a theme
+        # switch hands them on (gui2/status_bar.py)
+        down, self._up_before = carried(sys.argv)
+        self._session = SessionCount(down)
         self._filter = "All"
         self._search = ""
         self._completed_seen = None
@@ -471,9 +477,13 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, Up
     # ------------------------------------------------------------- UI
     def _build_ui(self):
         self.setStyleSheet(palette.qss())
-        root = QHBoxLayout(self)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+        root = QHBoxLayout()
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
+        outer.addLayout(root, 1)
 
         self.sidebar = Sidebar()
         self.sidebar.filterChanged.connect(self._set_filter)
@@ -574,6 +584,11 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, Up
         mlay.addWidget(self.list, 1)
 
         root.addWidget(main, 1)
+
+        # what this session moved, the version, a theme switch (asked 2026-10-29)
+        self.status_bar = StatusBar()
+        self.status_bar.themeClicked.connect(self._toggle_theme)
+        outer.addWidget(self.status_bar)
 
         # details drawer overlays the right edge of the whole window
         self.drawer = DetailsDrawer(self)
@@ -791,6 +806,9 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, Up
                 else:
                     conns += sum(1 for s in t.segments if not s.complete)
 
+        self._session.tick(self.queue.tasks)
+        self.status_bar.set_totals(self._session.down,
+                                   self._up_before + _torrent.sent_this_session())
         speeds = {tid: v[2] for tid, v in self._speed.items()}
         histories = {tid: list(dq) for tid, dq in self._spark.items()}
         self.list.set_tasks(self._visible_tasks(), speeds, histories, self._sl_map())

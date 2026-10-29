@@ -86,7 +86,8 @@ class ToastManager:
 
     def reposition(self, animate_new=None):
         m = 16
-        y = self.parent.height() - m
+        bar = getattr(self.parent, "status_bar", None)            # stays in sight
+        y = self.parent.height() - m - (bar.height() if bar else 0)
         for t in reversed(self.items):
             t.adjustSize()
             y -= t.height()

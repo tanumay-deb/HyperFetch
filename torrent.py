@@ -95,6 +95,16 @@ META_SCAN = 3.0           # how often to look for new candidates
 # torrent RPC - then only while the tab was open, and a torrent that finished
 # or paused with it shut kept the numbers of its start.
 FILES_POLL = 60.0
+# What torrents have sent since the app started, for the status bar (asked
+# 2026-10-29); every running torrent's thread adds to it.
+_sent = [0]
+_sent_lock = threading.Lock()
+
+
+def sent_this_session():
+    return _sent[0]
+
+
 # How often each torrent asks the daemon for its status.
 #
 # NOT the same thing as POLL. POLL is how often the loop checks the task's own
@@ -1445,6 +1455,7 @@ class TorrentDownloader:
     def __init__(self, dtask: "T.DownloadTask"):
         self.t = dtask
         self._gid = None          # aria2 download id, when driven over RPC
+        self._sent_at = (None, 0)  # (gid, uploadLength) at its last poll
         self._stall_since = None  # when this torrent last earned its slot
         self._stall_bytes = -1
         self._noseed_since = None  # when it last had a seeder or new bytes
@@ -2315,7 +2326,15 @@ class TorrentDownloader:
                 self.t.last_seeds = self.t.tor_seeds
                 self.t.last_seeds_at = time.time()
             self.t.tor_upload = int(st.get("uploadSpeed") or 0)
-            self.t.tor_uploaded = int(st.get("uploadLength") or 0)
+            up = int(st.get("uploadLength") or 0)
+            # shortcut: a download is counted from its first poll here, so what
+            # a fresh one sent before it (a second at most) is not
+            was_gid, was_up = self._sent_at
+            if was_gid == cur and up > was_up:
+                with _sent_lock:
+                    _sent[0] += up - was_up
+            self._sent_at = (cur, up)
+            self.t.tor_uploaded = up
             self.t.tor_pieces = (int(st.get("numPieces") or 0),
                                  int(st.get("pieceLength") or 0))
             self.t.tor_download = int(st.get("downloadSpeed") or 0)
