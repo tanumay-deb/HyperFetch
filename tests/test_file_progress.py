@@ -27,8 +27,9 @@ def _torrent_task(tmp_path, files):
 
 
 def _rows(drawer):
-    return [drawer.files_table.cellWidget(r, 2)
-            for r in range(drawer.files_table.rowCount())]
+    """The files' bars, in order - a folder's row has none."""
+    bars = (drawer.files_table.cellWidget(r, 2) for r in range(drawer.files_table.rowCount()))
+    return [b for b in bars if b is not None]
 
 
 def test_bars_show_aria2s_numbers_not_the_size_on_disk(tmp_path):
@@ -131,7 +132,7 @@ def test_static_listing_is_used_before_metadata_arrives(tmp_path, monkeypatch):
     t = _torrent_task(tmp_path, [])
     drawer.open_for(t)
     app.processEvents()
-    assert drawer.files_table.rowCount() == 1
+    assert len(_rows(drawer)) == 1
     assert _rows(drawer)[0].value() == 0
 
 
@@ -192,8 +193,7 @@ def test_a_restored_torrent_does_not_claim_zero_percent(tmp_path, monkeypatch):
     t.status = T.PAUSED
     drawer.open_for(t)
     app.processEvents()
-    fmts = [drawer.files_table.cellWidget(r, 2).format()
-            for r in range(drawer.files_table.rowCount())]
+    fmts = [bar.format() for bar in _rows(drawer)]
     assert fmts == ["—", "—"], f"claimed a progress it does not know: {fmts}"
 
 
@@ -210,8 +210,7 @@ def test_a_completed_torrent_shows_its_files_as_done(tmp_path, monkeypatch):
     t.status = T.COMPLETED
     drawer.open_for(t)
     app.processEvents()
-    vals = [drawer.files_table.cellWidget(r, 2).value()
-            for r in range(drawer.files_table.rowCount())]
+    vals = [bar.value() for bar in _rows(drawer)]
     assert vals == [100, 100]
 
 

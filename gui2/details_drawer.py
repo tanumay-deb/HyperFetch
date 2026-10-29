@@ -773,7 +773,7 @@ class DetailsDrawer(QFrame):
         self.btn_only.setIcon(themed_icon("check", "text"))
         self.btn_only.setStyleSheet(self.btn_select_all.styleSheet())
         self.btn_only.setToolTip("Download only the files the search shows")
-        self.btn_only.clicked.connect(lambda: self._set_files(lambda shown: shown))
+        self.btn_only.clicked.connect(lambda: self._set_files(lambda shown, _path: shown))
         self.btn_only.hide()
 
         top_bar.addWidget(self.file_search, 1)
@@ -886,6 +886,18 @@ class DetailsDrawer(QFrame):
             if cb.isChecked() and bar.property("hf_partial"):
                 active += 1
         self._set_file_cards(size, len(rows), selected, active)
+        # each folder's box as its files are - one pass, so a big torrent stays quick
+        counts = {}
+        for (_r, path), (_i, cb, _s) in zip(getattr(self, "_file_places", []), rows):
+            parts = path.split("/")
+            for n in range(1, len(parts)):
+                c = counts.setdefault("/".join(parts[:n]), [0, 0])
+                c[0] += cb.isChecked()
+                c[1] += 1
+        for _row, folder, box in getattr(self, "_folder_rows", None) or []:
+            on, of = counts.get(folder, (0, 0))
+            box.setCheckState(Qt.Checked if on == of else
+                              Qt.Unchecked if not on else Qt.PartiallyChecked)
 
     def _refresh_files(self, t):
         """Update the per-file bars and the summary tiles in place. Rebuilding
@@ -922,16 +934,32 @@ class DetailsDrawer(QFrame):
         self._tally()
 
     def _add_sorted_file_rows(self, add_row):
-        """Emit the file rows in the current sort order.
+        """Emit the file rows in the current sort order. By path - the
+        default - each folder's row comes before what is in it: a folder had
+        no row at all, its files were only indented (reported 2026-10-29).
+        Sorted by size or progress the files are listed flat, each with its
+        folder in its name.
 
         `add_row` is _populate_static's row builder, passed in so this can be
         reused for a re-sort without rebuilding the whole drawer.
         """
+        tree = getattr(self, "_sort_col", None) in (None, 0)
+        sizes = {}                                 # folder path -> what is in it
+        for e in self._file_entries:
+            parts = e["rel"].split("/")
+            for n in range(1, len(parts)):
+                folder = "/".join(parts[:n])
+                sizes[folder] = sizes.get(folder, 0) + e["size"]
         for e in self._sorted_entries():
             rel, size = e["rel"], e["size"]
             completed, selected = e["completed"], e["selected"]
             parts = rel.split("/")
-            name = parts[-1]
+            if tree:
+                for n in range(1, len(parts)):
+                    folder = "/".join(parts[:n])
+                    if folder in sizes:             # its row once, before its first file
+                        self._add_folder_row(folder, parts[n - 1], n - 1, sizes.pop(folder))
+            name, depth = (parts[-1], len(parts) - 1) if tree else (rel, 0)
             pct = self._file_pct(size, completed)
             if not selected:
                 status = "Skipped"
@@ -943,9 +971,45 @@ class DetailsDrawer(QFrame):
                 status = "Progress unknown until this download runs again"
             else:
                 status = "Downloading" if getattr(self, "_downloading", False) else "Idle"
-            add_row(e["index"], name, size, False, pct, status, len(parts) - 1,
+            add_row(e["index"], name, size, False, pct, status, depth,
                     selected, partial=bool(completed and pct < 100),
-                    unknown=completed is None)
+                    unknown=completed is None, key=rel)
+
+    def _add_folder_row(self, key, name, depth, size):
+        """A folder's row: its name, its size, and one box for all of it
+        (_tick_folder) - ticked, unticked or part, as its files are."""
+        r = self.files_table.rowCount()
+        self.files_table.insertRow(r)
+        w = QWidget()
+        h = QHBoxLayout(w); h.setContentsMargins(4 + depth * 16, 2, 4, 2); h.setSpacing(8)
+        cb = QCheckBox()
+        cb.setTristate(True)
+        cb.clicked.connect(lambda _=False, k=key: self._tick_folder(k))
+        icon = QLabel(); icon.setPixmap(themed_icon("folder", COLORS["warning"]).pixmap(16, 16))
+        from gui2.download_card import ElideLabel
+        lbl = ElideLabel(name); lbl.setStyleSheet("background: transparent;")
+        lbl.setToolTip(name)
+        h.addWidget(cb)
+        h.addWidget(icon)
+        h.addWidget(lbl, 1)
+        item = QTableWidgetItem()
+        item.setData(Qt.UserRole, key)
+        self.files_table.setItem(r, 0, item)
+        self.files_table.setCellWidget(r, 0, w)
+        sz = QTableWidgetItem(human_size(size))
+        sz.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        sz.setForeground(QColor(COLORS['muted']))
+        self.files_table.setItem(r, 1, sz)
+        self._folder_rows.append((r, key, cb))
+
+    def _tick_folder(self, folder):
+        """A folder's box: all of it on - or off, when all of it is on - as
+        one change for aria2 (_set_files)."""
+        inside = folder + "/"
+        boxes = [cb for (_r, path), (_i, cb, _s) in zip(self._file_places, self._file_row_widgets)
+                 if path.startswith(inside)]
+        on = not all(cb.isChecked() for cb in boxes)
+        self._set_files(lambda shown, path: on if path.startswith(inside) else None)
 
     def _sorted_entries(self):
         """File rows in display order.
@@ -955,15 +1019,17 @@ class DetailsDrawer(QFrame):
         """
         rows = list(getattr(self, "_file_entries", []) or [])
         col = getattr(self, "_sort_col", None)
-        if col is None:
-            return rows
         if col == 1:
             key = lambda e: e["size"]
         elif col == 2:
             key = lambda e: (e["selected"],
                              self._file_pct(e["size"], e["completed"]))
         else:
-            key = lambda e: e["rel"].lower()
+            # by path, a part at a time: a folder's files together, its
+            # folders before its files, as Explorer lists them
+            def key(e):
+                parts = e["rel"].split("/")
+                return [(i == len(parts) - 1, p.lower(), p) for i, p in enumerate(parts)]
         return sorted(rows, key=key, reverse=bool(getattr(self, "_sort_desc", False)))
 
     def _sort_files(self, col):
@@ -991,10 +1057,19 @@ class DetailsDrawer(QFrame):
 
     def _filter_files(self):
         query = self.file_search.text().lower()
+        folders = getattr(self, "_folder_rows", None) or []
+        at = {r for r, _k, _b in folders}
+        within = set()                         # folders of the files shown
         for row in range(self.files_table.rowCount()):
             item = self.files_table.item(row, 0)
-            if item:
-                self.files_table.setRowHidden(row, query not in item.data(Qt.UserRole).lower())
+            if item and row not in at:
+                path = item.data(Qt.UserRole) or ""
+                self.files_table.setRowHidden(row, query not in path.lower())
+                if query in path.lower():
+                    parts = path.split("/")
+                    within.update("/".join(parts[:n]) for n in range(1, len(parts)))
+        for row, folder, _box in folders:      # a folder shows while something in it does
+            self.files_table.setRowHidden(row, folder not in within)
         # with a search, the buttons act on what it shows - and say so
         self.btn_only.setVisible(bool(query))
         self.btn_select_all.setText(" Select these" if query else " Select All")
@@ -1002,17 +1077,17 @@ class DetailsDrawer(QFrame):
 
     def _set_all_files(self, state):
         """Tick or untick every file shown - all of them, or what a search shows."""
-        self._set_files(lambda shown: state if shown else None)
+        self._set_files(lambda shown, _path: state if shown else None)
 
     def _set_files(self, pick):
-        """Tick or untick many files at once - pick(shown) says what each row
-        gets, None to leave it - and tell aria2 once. Ticked one by one, a
-        hundred files were a hundred changes sent to the engine."""
+        """Tick or untick many files at once - pick(shown, path) says what
+        each file gets, None to leave it - and tell aria2 once. Ticked one by
+        one, a hundred files were a hundred changes sent to the engine."""
         rows = getattr(self, "_file_row_widgets", None)
         if not rows:
             return
-        for r, (_idx, cb, _sz) in enumerate(rows):
-            want = pick(not self.files_table.isRowHidden(r))
+        for (_idx, cb, _sz), (row, path) in zip(rows, self._file_places):
+            want = pick(not self.files_table.isRowHidden(row), path)
             if want is not None and cb.isChecked() != want:
                 cb.blockSignals(True)
                 cb.setChecked(want)
@@ -1297,7 +1372,8 @@ class DetailsDrawer(QFrame):
         if not getattr(self, "_file_row_widgets", None):
             return
         # aria2 indexes files from 1
-        selected = [str(idx + 1) for idx, cb, _ in self._file_row_widgets if cb.isChecked()]
+        selected = [str(idx + 1) for idx, cb, _ in
+                    sorted(self._file_row_widgets, key=lambda w: w[0]) if cb.isChecked()]
         win = self._window()
         if not win:
             return
@@ -1434,6 +1510,8 @@ class DetailsDrawer(QFrame):
 
         self._file_row_widgets = []
         self._file_bars = []
+        self._file_places = []        # (table row, path) per file: folder rows sit between
+        self._folder_rows = []        # (table row, path, box) per folder
         self.files_table.setRowCount(0)
 
         sp = t.save_path
@@ -1443,7 +1521,7 @@ class DetailsDrawer(QFrame):
         active_files = 0
         
         def add_file_row(idx, name, size, is_folder, pct, status_str, indent=0,
-                         selected=True, partial=False, unknown=False):
+                         selected=True, partial=False, unknown=False, key=None):
             r = self.files_table.rowCount()
             self.files_table.insertRow(r)
 
@@ -1458,7 +1536,7 @@ class DetailsDrawer(QFrame):
             # retally immediately so the size drops the moment it is unticked
             cb.stateChanged.connect(lambda *_: self._tally())
             ic_name = "folder" if is_folder else "document"
-            ic_color = "warning" if is_folder else "muted"
+            ic_color = COLORS["warning"] if is_folder else "muted"   # a name themed_icon does not know paints black
             icon = QLabel(); icon.setPixmap(themed_icon(ic_name, ic_color).pixmap(16, 16))
             # elide rather than clip: the drawer is narrow and a long release
             # name was being cut off mid-character with no ellipsis
@@ -1470,7 +1548,7 @@ class DetailsDrawer(QFrame):
             h.addWidget(lbl, 1)
             
             name_item = QTableWidgetItem()
-            name_item.setData(Qt.UserRole, name)
+            name_item.setData(Qt.UserRole, key or name)      # what a search reads
             self.files_table.setItem(r, 0, name_item)
             self.files_table.setCellWidget(r, 0, w)
             
@@ -1504,6 +1582,7 @@ class DetailsDrawer(QFrame):
 
             self._file_row_widgets.append((idx, cb, size))
             self._file_bars.append(bar)
+            self._file_places.append((r, key or name))
             
         if is_tor:
             # aria2's live file list wins when the engine has reported it; the

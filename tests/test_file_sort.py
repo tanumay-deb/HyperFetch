@@ -56,9 +56,10 @@ FILES = [("c_medium.mkv", 500, 250, True),
          ("b_small.mkv", 100, 100, True)]
 
 
-def test_default_order_is_the_engines(tmp_path):
+def test_default_order_is_by_name(tmp_path):
+    # by path, so a folder's files stay under its row (tests/test_file_tree.py)
     d, _ = _drawer_with(tmp_path, FILES)
-    assert _shown(d) == ["c_medium.mkv", "a_big.mkv", "b_small.mkv"]
+    assert _shown(d) == ["a_big.mkv", "b_small.mkv", "c_medium.mkv"]
 
 
 def test_first_click_sorts_ascending(tmp_path):
