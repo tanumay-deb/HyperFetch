@@ -61,20 +61,31 @@ def _discover(timeout=2.0):
         s.close()
 
 
-def _control_url(location):
-    """From the device description XML, find the WAN(IP|PPP)Connection control
-    URL + service type. Returns (control_url, service_type) or (None, None)."""
+def _control_urls(location):
+    """From the device description XML, every WAN(IP|PPP)Connection control
+    URL + service type, in the order listed: [(control_url, service_type)].
+
+    All of them, as a router can list first one its line does not use:
+    measured 2026-10-29 on the user's router (Airtel, Mediatek, libupnp on
+    :5555), WANIPConnection comes first and answers every action -
+    GetStatusInfo too - with UPnP error 401 "Invalid Action", and
+    WANPPPConnection after it is the connected line. Only the first was ever
+    asked. That router still opens nothing: its PPP service offers no
+    AddPortMapping at all (its SCPD lists 14 actions, none for ports).
+    """
     try:
         xml = urllib.request.urlopen(location, timeout=4).read().decode("utf-8", "ignore")
     except Exception:
-        return None, None
+        return []
+    found = []
     for svc in re.findall(r"<service>(.*?)</service>", xml, re.S):
         if "WANIPConnection" in svc or "WANPPPConnection" in svc:
             t = re.search(r"<serviceType>(.*?)</serviceType>", svc, re.S)
             c = re.search(r"<controlURL>(.*?)</controlURL>", svc, re.S)
             if t and c:
-                return urllib.parse.urljoin(location, c.group(1).strip()), t.group(1).strip()
-    return None, None
+                found.append((urllib.parse.urljoin(location, c.group(1).strip()),
+                              t.group(1).strip()))
+    return found
 
 
 def _local_ip():
@@ -131,21 +142,26 @@ def map_port(port):
     if not loc:
         log.info("UPnP: no router answered; torrent port %s is not opened", port)
         return False
-    control_url, svc_type = _control_url(loc)
-    if not control_url:
+    services = _control_urls(loc)
+    if not services:
         log.info("UPnP: the router offers no port mapping; port %s is not opened", port)
         return False
     ip = _local_ip()
     if not ip:
         return False
-    said = {proto: _add_mapping(control_url, svc_type, int(port), proto, ip)
-            for proto in ("TCP", "UDP")}
-    ok = [p for p, why in said.items() if not why]
-    if ok:
-        log.info("UPnP: the router opened torrent port %s (%s)", port, "+".join(ok))
-    else:
-        # 401/403/606: the router has UPnP control switched off or locked
-        log.info("UPnP: the router refused to open torrent port %s (%s) - switch "
-                 "UPnP on in its settings, or forward the port by hand", port,
-                 ", ".join("%s: %s" % kv for kv in said.items()))
-    return bool(ok)
+    refused = []
+    for control_url, svc_type in services:
+        said = {proto: _add_mapping(control_url, svc_type, int(port), proto, ip)
+                for proto in ("TCP", "UDP")}
+        ok = [p for p, why in said.items() if not why]
+        if ok:
+            log.info("UPnP: the router opened torrent port %s (%s)", port, "+".join(ok))
+            return True
+        refused.append(", ".join("%s: %s" % kv for kv in said.items()))
+    # 606 / HTTP 401-403: control switched off or locked; UPnP error 401
+    # "Invalid Action": not offered there. "UPnP on" in a router's settings
+    # does not always mean it maps ports (the user's does not).
+    log.info("UPnP: the router refused to open torrent port %s (%s) - it does "
+             "not let programs open ports; forward the port by hand", port,
+             "; ".join(refused))
+    return False
