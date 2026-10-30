@@ -406,7 +406,8 @@ class DownloadCardWidget(QFrame):
             # from a hang, which is exactly how it was reported.
             pct = int(getattr(t, "verified_pct", 0) or 0)
             seen = int(getattr(t, "verified_bytes", 0) or 0)
-            total = t.total_size or 0
+            # the whole torrent: a check reads unticked files too
+            total = getattr(t, "verified_of", 0) or t.total_size or 0
             if seen and total:
                 self.sub.setText("Rechecking  •  %s / %s  •  %d%%"
                                  % (human_size(seen), human_size(total), pct))

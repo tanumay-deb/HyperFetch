@@ -235,6 +235,7 @@ class DownloadTask:
         self.verifying = False
         self.verified_pct = 0
         self.verified_bytes = 0
+        self.verified_of = 0          # what the check reads: the whole torrent
         # Torrent infohash, once known. Persisted: it is how a .torrent task
         # finds our archived copy after the user's original file has moved or
         # been deleted.

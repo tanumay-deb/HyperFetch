@@ -52,6 +52,17 @@ def test_recheck_reaches_the_end(app):
     assert "100%" in _sub(app, t).text()
 
 
+def test_a_torrent_with_unticked_files_is_checked_whole(app):
+    """A check reads the whole torrent, ticked files or not; the card divided
+    what it had read by the ticked files' size: "65.61 GB / 16.21 GB • 404%"
+    (reported 2026-10-30)."""
+    gb = 1024 ** 3
+    t = _task(verifying=True, total_size=int(16.21 * gb), verified_bytes=int(65.61 * gb),
+              verified_of=80 * gb, verified_pct=82)
+    txt = _sub(app, t).text()
+    assert "65.61 GB / 80.00 GB" in txt and "82%" in txt, txt
+
+
 def test_recheck_before_any_progress_still_says_what_it_is_doing(app):
     t = _task(verifying=True, total_size=0, verified_bytes=0, verified_pct=0)
     assert "Recheck" in _sub(app, t).text()

@@ -93,6 +93,37 @@ def test_verification_is_reported_while_it_runs(tmp_path, monkeypatch):
     assert t.verifying is False               # cleared once it finished
 
 
+def test_a_check_is_counted_over_the_whole_torrent(tmp_path, monkeypatch):
+    """verifiedLength is how far into the WHOLE torrent the check has read,
+    ticked files or not, while totalLength counts the ticked ones. Measured on
+    aria2 1.37.0 (2026-10-30, 1 MiB pieces): 384 MiB unticked on disk and 96
+    MiB ticked - verifiedLength ran to 379 MiB against a totalLength of 96.
+    The card read 404% (reported 2026-10-30)."""
+    mib = 1 << 20
+    payload = str(tmp_path / "Movie.mkv")
+    open(payload, "w").close()
+    daemon = _FakeDaemon([
+        {"status": "active", "completedLength": "0", "totalLength": str(96 * mib),
+         "verifiedLength": str(379 * mib), "numPieces": "480", "pieceLength": str(mib),
+         "files": [{"path": payload}]},
+        {"status": "complete", "completedLength": str(96 * mib),
+         "totalLength": str(96 * mib), "files": [{"path": payload}]},
+    ])
+    t = T.DownloadTask("magnet:?xt=urn:btih:abc", str(tmp_path / "d.bin"))
+    seen = {}
+    real_sleep = torrent.time.sleep
+
+    def spy(_s):
+        seen.setdefault("pct", t.verified_pct)
+        seen.setdefault("of", getattr(t, "verified_of", None))
+        real_sleep(0)
+
+    monkeypatch.setattr(torrent.time, "sleep", spy)
+    _drive_with(tmp_path, monkeypatch, daemon, task=t)
+    assert seen["pct"] == 78, seen                  # 379 of 480 MiB
+    assert seen["of"] == 480 * mib, seen
+
+
 def test_the_card_says_it_is_rechecking_with_progress():
     """A recheck reads the whole payload, so it has to be seen counting up —
     "verifying" with no numbers looks exactly like a hang."""

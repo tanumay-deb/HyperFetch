@@ -1632,6 +1632,7 @@ class TorrentDownloader:
         self.t.verifying = False
         self.t.verified_pct = 0
         self.t.verified_bytes = 0
+        self.t.verified_of = 0
         self.t.tor_download = 0
 
     def _keep_to_limits(self, d, gid):
@@ -2349,9 +2350,15 @@ class TorrentDownloader:
             # aria2 lists verifiedLength only while it is checking, and the
             # first reading of it is 0: the key says so, not the number
             self.t.verifying = "verifiedLength" in st or pending
-            self.t.verified_pct = (int(verified * 100 / total)
-                                   if (verified and total) else 0)
+            # verifiedLength is how far into the WHOLE torrent the check has
+            # read, ticked files or not, and totalLength counts the ticked
+            # ones: measured on aria2 1.37.0, 379 MiB verified against a
+            # totalLength of 96 - the card read 404% (2026-10-30)
+            whole = self.t.tor_pieces[0] * self.t.tor_pieces[1] or total
+            self.t.verified_pct = (min(100, int(verified * 100 / whole))
+                                   if (verified and whole) else 0)
             self.t.verified_bytes = verified
+            self.t.verified_of = whole
             if self.t.verifying and not was:
                 self.t.log_event("Verifying downloaded data")
                 log.info("verifying: %s", self.t.filename)
