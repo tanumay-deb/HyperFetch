@@ -4,10 +4,9 @@
 that pauses or releases downloads at set times.
 """
 import datetime
-import os
 import sys
 
-from PySide6.QtWidgets import QSystemTrayIcon, QApplication
+from PySide6.QtWidgets import QSystemTrayIcon
 
 import task as T
 import utils
@@ -86,33 +85,6 @@ class SystemMixin:
     def _real_quit(self):
         self._quit_requested = True
         self.close()
-
-    def _restart_app(self):
-        """Relaunch the app (used after a theme change — widgets bake colours at
-        construction, so a clean restart is the reliable re-skin). State is saved
-        first; any in-flight download restores as resumable-paused."""
-        import sys
-        from PySide6.QtCore import QProcess
-        self._quit_requested = True
-        try:
-            self._save_state(); self._save_settings()
-        except Exception:
-            pass
-        # --restarted marks the replacement as a continuation of THIS session, not
-        # a fresh launch. Without it the new process (a) obeys the "Launch: Start
-        # in tray / minimized" preference and vanishes into the tray even though
-        # the user was looking at the window, and (b) can hit the single-instance
-        # guard against this still-dying instance's server and exit immediately.
-        # and with the session's totals: a theme switch is not a new session
-        import torrent
-        from gui2.status_bar import restart_args
-        args = restart_args(sys.argv, self._session.down,
-                            self._up_before + torrent.sent_this_session())
-        if getattr(sys, "frozen", False):
-            QProcess.startDetached(sys.executable, args)
-        else:
-            QProcess.startDetached(sys.executable, [os.path.abspath(sys.argv[0])] + args)
-        QApplication.quit()
 
     # ------------------------------------------------------------- scheduler
     def _check_scheduler(self):

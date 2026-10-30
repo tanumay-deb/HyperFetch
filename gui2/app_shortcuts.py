@@ -13,6 +13,15 @@ import task as T
 class ShortcutsMixin:
     def _setup_shortcuts(self):
         from PySide6.QtGui import QKeySequence, QShortcut
+        self._list_shortcuts()
+        # command palette — application-wide so it opens from anywhere
+        sc_cmd = QShortcut(QKeySequence("Ctrl+K"), self)
+        sc_cmd.activated.connect(self._open_command_palette)
+
+    def _list_shortcuts(self):
+        """The list's keys. They belong to the list, and go with it when the
+        window is built again (_reskin)."""
+        from PySide6.QtGui import QKeySequence, QShortcut
         for seq, fn in (("Delete", self._del_selected),
                         ("Space", self._space_selected),
                         ("Return", self._enter_selected)):
@@ -23,10 +32,6 @@ class ShortcutsMixin:
         sc_all = QShortcut(QKeySequence("Ctrl+A"), self.list)
         sc_all.setContext(Qt.WidgetWithChildrenShortcut)
         sc_all.activated.connect(self._select_all_cards)
-
-        # command palette — application-wide so it opens from anywhere
-        sc_cmd = QShortcut(QKeySequence("Ctrl+K"), self)
-        sc_cmd.activated.connect(self._open_command_palette)
 
     def _select_all_cards(self):
         if not hasattr(self, "list") or not hasattr(self.list, "_cards"):

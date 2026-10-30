@@ -114,23 +114,6 @@ def _claim_installer_mutex(k32):
         pass                                # never let this block startup
 
 
-def _wait_for_exit(timeout=15.0):
-    """Block until the running instance's server stops answering (it is going
-    away), or `timeout` passes. Returns True if it went. Used by the restart
-    path so the replacement does not race its own predecessor."""
-    import time, urllib.request
-    from api_server import PORT              # not hardcoded: the two must agree
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        try:
-            with urllib.request.urlopen(f"http://127.0.0.1:{PORT}/ping", timeout=1):
-                pass
-        except Exception:
-            return True                      # nothing answering -> it is gone
-        time.sleep(0.25)
-    return False
-
-
 def _focus_running():
     """Single-instance guard: if a HyperFetch GUI is already running, ask it to
     come to the front and return True (this launch then exits instead of adding
@@ -166,26 +149,18 @@ def main():
     # (busy instance, transient error), and falling through to a full second
     # window was exactly how duplicates appeared — opening a .torrent by
     # double-click is the common path.
-    restarted = "--restarted" in sys.argv
     # The authoritative check: a kernel mutex, which is true even when the
     # running instance's localhost server never came up. Ask it to surface (and
     # to take the file we were opened with) on a best-effort basis, but exit
     # either way — a duplicate window is what corrupts the shared state.
-    if not restarted and not _claim_single_instance():
+    if not _claim_single_instance():
         _focus_running()
         if target:
             _handoff(target)
         return 0
-    if restarted:
-        # A theme-change restart legitimately expects the outgoing instance to
-        # disappear. Wait for it rather than skipping the check outright — if it
-        # never goes (a failed quit), focusing it beats duplicating it. The
-        # mutex is not consulted here: the predecessor still holds it while it
-        # shuts down, and this launch is its intended replacement.
-        _wait_for_exit(timeout=15.0)
-    # Whatever the launch reason, an instance that is still answering wins: a
-    # duplicate window is worse than a restart that did not take effect, because
-    # the two overwrite each other's downloads.json.
+    # An instance that is still answering wins too: a duplicate window is
+    # worse than anything, because the two overwrite each other's
+    # downloads.json.
     if _focus_running():
         if target:
             # the earlier handoff failed but the instance is demonstrably alive
@@ -193,14 +168,12 @@ def main():
             # the file the user double-clicked
             _handoff(target)
         return 0
-    if restarted:
-        _claim_single_instance()          # predecessor has gone; take ownership
 
     # install BEFORE the GUI so a Qt construction crash is captured too
     crash_reporter.install(APP_VERSION)
 
     from gui2.app import run_v2
-    return run_v2(open_target=target, restarted=restarted)
+    return run_v2(open_target=target)
 
 
 if __name__ == "__main__":

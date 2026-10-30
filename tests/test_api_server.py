@@ -377,23 +377,6 @@ def test_guard_lets_the_first_instance_start(monkeypatch):
     assert started["n"] == 1
 
 
-def test_restart_waits_for_predecessor_then_focuses_if_it_lingers(monkeypatch):
-    """--restarted used to skip the guard entirely, so a restart whose old
-    instance failed to quit produced two windows."""
-    import main
-    monkeypatch.setattr(main, "_wait_for_exit", lambda timeout=15.0: False)
-    monkeypatch.setattr(main, "_claim_single_instance", lambda *a, **k: True)
-    monkeypatch.setattr(main, "_post_running",
-                        lambda p, d: {"status": "focused"} if p == "/focus" else None)
-    monkeypatch.setattr(main.sys, "argv", ["main.py", "--restarted"])
-    monkeypatch.setattr(main.crash_reporter, "install", lambda *a, **k: None)
-    started = {"n": 0}
-    monkeypatch.setitem(__import__("sys").modules, "gui2.app",
-                        type("M", (), {"run_v2": staticmethod(lambda **k: started.__setitem__("n", 1))})())
-    assert main.main() == 0
-    assert started["n"] == 0                # focused the survivor, no duplicate
-
-
 # ---- single-instance mutex: the guard must not depend on the HTTP server ----
 @pytest.mark.skipif(sys.platform != "win32",
                     reason="named mutexes are a Windows facility; elsewhere "
@@ -446,23 +429,6 @@ def test_second_launch_exits_without_opening_a_window(monkeypatch):
                         type("M", (), {"run_v2": staticmethod(lambda **k: started.__setitem__("n", 1))})())
     assert main.main() == 0
     assert started["n"] == 0
-
-
-def test_restart_is_not_blocked_by_its_predecessors_mutex(monkeypatch):
-    """--restarted is the predecessor's intended replacement; it must not be
-    refused by the lock the outgoing instance still holds."""
-    import main
-    monkeypatch.setattr(main, "_claim_single_instance", lambda: False)
-    monkeypatch.setattr(main, "_wait_for_exit", lambda timeout=15.0: True)
-    monkeypatch.setattr(main, "_post_running", lambda *a, **k: None)
-    monkeypatch.setattr(main.sys, "argv", ["main.py", "--restarted"])
-    monkeypatch.setattr(main.crash_reporter, "install", lambda *a, **k: None)
-    started = {"n": 0}
-    monkeypatch.setitem(__import__("sys").modules, "gui2.app",
-                        type("M", (), {"run_v2": staticmethod(
-                            lambda **k: (started.__setitem__("n", 1), 0)[1])})())
-    assert main.main() == 0
-    assert started["n"] == 1                                # replacement DID start
 
 
 # ---- a refused download must not be silent ----

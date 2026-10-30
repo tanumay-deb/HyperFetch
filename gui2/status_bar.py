@@ -1,10 +1,7 @@
 """The thin bar along the bottom of the window (asked 2026-10-29): what this
 session has downloaded and uploaded, the version, and a button that
-switches between dark and light.
-
-The switch restarts the app, as the theme setting does (widgets bake their
-colours in when they are built), so the totals are handed to the new
-process on its command line: a theme switch is not a new session.
+switches between dark and light (the window is built again in the other
+palette, DownloadAppV2._reskin; nothing else stops).
 """
 from PySide6.QtCore import QSize, Qt, Signal
 from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QToolButton
@@ -13,9 +10,6 @@ import task as T
 from gui.icons import themed_icon
 from gui.theme import APP_VERSION, human_size
 from gui2.palette import COLORS, active_theme, fpx
-
-CARRY = "--session-bytes="              # down,up - what a restart hands on
-
 
 class SessionCount:
     """Bytes downloaded since the app opened: what each download gained while
@@ -40,25 +34,6 @@ class SessionCount:
                 self.down += now - was
             seen[t.id] = now
         self._seen, self._checking = seen, checking
-
-
-def carried(argv):
-    """(down, up) a restart handed on, or (0, 0)."""
-    for a in argv:
-        if a.startswith(CARRY):
-            try:
-                down, up = (max(0, int(x)) for x in a[len(CARRY):].split(","))
-                return down, up
-            except ValueError:
-                break
-    return 0, 0
-
-
-def restart_args(argv, down, up):
-    """The arguments the replacement process starts with: these, marked as
-    a restart, with the session's totals."""
-    keep = [a for a in argv[1:] if a != "--restarted" and not a.startswith(CARRY)]
-    return keep + ["--restarted", "%s%d,%d" % (CARRY, down, up)]
 
 
 class StatusBar(QFrame):
@@ -87,7 +62,7 @@ class StatusBar(QFrame):
         self.theme_btn.setCursor(Qt.PointingHandCursor)
         self.theme_btn.setStyleSheet("QToolButton { border: none; background: transparent; }")
         self.theme_btn.setIcon(themed_icon("sun" if to == "light" else "moon", "muted"))
-        self.theme_btn.setToolTip(f"Switch to the {to} theme (HyperFetch restarts)")
+        self.theme_btn.setToolTip(f"Switch to the {to} theme")
         self.theme_btn.clicked.connect(self.themeClicked)
         h.addWidget(self.theme_btn)
         self.set_totals(0, 0)

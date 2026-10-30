@@ -7,7 +7,8 @@ focused on the view/lifecycle.
 import os
 import threading
 
-from PySide6.QtWidgets import QApplication
+import shiboken6
+from PySide6.QtWidgets import QApplication, QWidget
 from PySide6.QtCore import QTimer
 
 import utils
@@ -103,22 +104,17 @@ class SettingsMixin:
         if "throttle_limit" in v:
             v["throttle_limit"] = utils.speed_text(v["throttle_limit"])
         self.global_speed_limit = bps
-        theme_changed = (v["theme"] != self.theme)
+        # what the window looks like: it is built again to show a change
+        looks = (v["theme"] != self.theme
+                 or palette.ACCENTS.get(v["accent"]) != palette.COLORS["accent"]
+                 or v.get("font_size", "Medium") != self._extras.get("font_size", "Medium"))
         self.theme = v["theme"]
         import downloader
         if hasattr(downloader._GLOBAL_CONNS, "set_limit"):
             downloader._GLOBAL_CONNS.set_limit(self.max_concurrent * self.segments)
         apply_theme(self.theme)
-        # A light/dark switch can't be applied live (widgets bake colours at build
-        # time), so persist it (below) and auto-restart for a clean re-skin.
-        if theme_changed:
-            if hasattr(self, "_toasts"):
-                self._toasts.show("info", "Applying theme", "Restarting HyperFetch…")
-            QTimer.singleShot(700, self._restart_app)
-        if palette.ACCENTS.get(v["accent"]) != palette.COLORS["accent"]:
-            palette.set_accent(v["accent"])
-            self.setStyleSheet(palette.qss())        # live accent re-skin (QSS widgets)
-            self.sidebar.set_active(self._filter if self._filter in self.sidebar._rows else "All")
+        palette.set_theme(self.theme)
+        palette.set_accent(v["accent"])
         self.scheduler_enabled = v["sched_en"]
         self.scheduler_start = v["sched_start"]
         self.scheduler_stop = v["sched_stop"]
@@ -128,15 +124,64 @@ class SettingsMixin:
         self._apply_throttle()           # throttle window may override the global limit
         self._apply_appearance()
         self._save_settings()
+        if looks:
+            QTimer.singleShot(0, self._reskin)
         self.refresh()
 
     def _toggle_theme(self):
-        """The status bar's button: dark <-> light. Like the setting, it
-        restarts the app to re-skin, and the session's totals go along."""
+        """The status bar's button: dark <-> light."""
         self.theme = "light" if palette.active_theme() == "dark" else "dark"
+        apply_theme(self.theme)
+        palette.set_theme(self.theme)
         self._save_settings()
-        self._toasts.show("info", "Applying theme", "Restarting HyperFetch…")
-        QTimer.singleShot(700, self._restart_app)
+        # after the click that asked: the button is one of what goes
+        QTimer.singleShot(0, self._reskin)
+
+    def _reskin(self):
+        """Build the window again in the palette now set - theme, accent, font
+        size - since widgets fix their colours and sizes as they are built.
+        Only the widgets go: the queue and its downloads, the engines and the
+        local server run on, and what the window showed comes back. A theme
+        change restarted the app until 2026-10-30, and every download with it."""
+        d, sb = self.drawer, self.sidebar
+        shown = self.queue.get_task(d._tid) if d.isVisible() and d._tid else None
+        tab, pinned, folds = d.tabs.currentIndex(), d._pinned, d._folds
+        update = (sb._update_text, sb.btn_update.isEnabled())
+        graph = (sb.graph._hist, sb.graph._max)
+        pill, sort, sort_at = self.pill_group.checkedId(), self.sort.text(), self._last_sort_idx
+        search, picked = self.search.text(), self.list.selected_ids()
+        scroll = self.list.verticalScrollBar().value()
+        for toast in self._toasts.items:
+            toast.deleteLater()
+        self._toasts.items.clear()
+        shiboken6.delete(self.layout())               # _build_ui makes the next one
+        for part in self._ui_parts:
+            if isinstance(part, QWidget):
+                part.hide()
+            part.deleteLater()
+        self._build_ui()
+        self._list_shortcuts()
+
+        self.sidebar.set_update(*update)
+        self.sidebar.graph._hist, self.sidebar.graph._max = graph
+        if self._sidebar_collapsed:
+            self._sidebar_target = 72
+            self.sidebar.set_collapsed(True)
+            self.sidebar.setFixedWidth(72)
+        if pill >= 0:
+            self.pill_group.button(pill).setChecked(True)
+        self.sort.setText(sort)
+        self._last_sort_idx = sort_at
+        self.search.setText(search)
+        self.drawer._folds = folds
+        self._set_filter(self._filter)                # refreshes: the cards are back
+        self.list.set_selection(picked)
+        if shown:
+            self.drawer.open_for(shown, slide=False)
+            self.drawer.tabs.setCurrentIndex(tab)
+            if pinned:
+                self.drawer._toggle_pin()
+        QTimer.singleShot(0, lambda: self.list.verticalScrollBar().setValue(scroll))
 
     def _apply_web_settings(self, v):
         """Web Client page -> web_auth.json.
@@ -209,8 +254,8 @@ class SettingsMixin:
         and palette.set_font_scale drives every size the stylesheet declares
         (a stylesheet font-size always beats the application font, so setting
         the app font alone had almost no visible effect). Inline widget styles
-        read the scale when they are constructed, so a change applies fully
-        after the restart the settings dialog offers.
+        read the scale when they are constructed, so a change builds the
+        window again (_reskin).
         """
         from gui2 import palette
         name = self._extras.get("font_size", "Medium")

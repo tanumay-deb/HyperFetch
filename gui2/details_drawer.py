@@ -1494,10 +1494,13 @@ class DetailsDrawer(QFrame):
         self._populate_static(t)
         self.update_live(t, 0.0)
 
-    def open_for(self, t):
+    def open_for(self, t, slide=True):
         self._load(t)
         self.reposition()
         self.show(); self.raise_()
+        if not slide:                    # back where it was, after a re-skin
+            self.reposition()
+            return
         start = QPoint(self.parent().width(), 0)
         end = QPoint(self.parent().width() - self.width(), 0)
         self.move(start)

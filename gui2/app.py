@@ -10,7 +10,6 @@ Run with:  python main.py
 """
 import json
 import os
-import sys
 import time
 import threading
 from collections import deque
@@ -18,7 +17,7 @@ from collections import deque
 from PySide6.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QLineEdit, QPushButton, QButtonGroup,
     QComboBox, QMenu, QApplication, QDialog, QInputDialog, QMessageBox,
-    QLabel, QSystemTrayIcon
+    QLabel, QSystemTrayIcon, QLayout
 )
 from PySide6.QtCore import (
     Qt, QTimer, QPropertyAnimation, QParallelAnimationGroup, QEasingCurve, QByteArray, QEvent,
@@ -48,7 +47,7 @@ from gui2 import gc_guard, palette
 from gui2.sidebar import Sidebar
 from gui2.download_list import DownloadList
 from gui2.details_drawer import DetailsDrawer
-from gui2.status_bar import SessionCount, StatusBar, carried
+from gui2.status_bar import SessionCount, StatusBar
 from gui2.dialogs.new_download import NewDownloadDialog
 from gui2.app_settings import SettingsMixin
 from gui2.app_actions import ActionsMixin
@@ -149,10 +148,7 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, Up
         self._yield_notifier = YieldNotifier()   # a torrent gave its slot back
         self._speed = {}              # id -> (last_dl, last_t, bps)
         self._spark = {}              # id -> deque(bps) for the live card sparkline
-        # this session's totals, for the status bar; a restart for a theme
-        # switch hands them on (gui2/status_bar.py)
-        down, self._up_before = carried(sys.argv)
-        self._session = SessionCount(down)
+        self._session = SessionCount()    # this session's totals, for the status bar
         self._filter = "All"
         self._search = ""
         self._completed_seen = None
@@ -476,6 +472,7 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, Up
 
     # ------------------------------------------------------------- UI
     def _build_ui(self):
+        made = set(self.children())          # what is here already is not the UI's
         self.setStyleSheet(palette.qss())
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
@@ -619,6 +616,9 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, Up
             f"border: 2px dashed {palette.COLORS['accent']}; border-radius: 16px;"
             "font-size: 20px; font-weight: 700;")
         self._drag_overlay.hide()
+        # what _reskin takes down and builds again (the layout goes on its own)
+        self._ui_parts = [c for c in self.children()
+                          if c not in made and not isinstance(c, QLayout)]
 
     def _on_show_web(self, on):
         self._extras["show_web_downloads"] = bool(on)
@@ -807,8 +807,7 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, Up
                     conns += sum(1 for s in t.segments if not s.complete)
 
         self._session.tick(self.queue.tasks)
-        self.status_bar.set_totals(self._session.down,
-                                   self._up_before + _torrent.sent_this_session())
+        self.status_bar.set_totals(self._session.down, _torrent.sent_this_session())
         speeds = {tid: v[2] for tid, v in self._speed.items()}
         histories = {tid: list(dq) for tid, dq in self._spark.items()}
         self.list.set_tasks(self._visible_tasks(), speeds, histories, self._sl_map())
@@ -1623,7 +1622,7 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, Up
         QApplication.quit()
 
 
-def run_v2(open_target=None, restarted=False):
+def run_v2(open_target=None):
     import sys
     app = QApplication.instance() or QApplication(sys.argv)
     from PySide6.QtGui import QFont
@@ -1634,10 +1633,9 @@ def run_v2(open_target=None, restarted=False):
     gc_guard.keep_on_gui_thread(win)
     # launch behavior (Settings -> General -> On application launch)
     launch = win._extras.get("launch", "Show main window")
-    if open_target or restarted:
-        # a file open, or a theme-change restart, always surfaces the window:
-        # the user was looking at it, so honouring "Start in tray" here would
-        # make the app appear to vanish
+    if open_target:
+        # a file open always surfaces the window: honouring "Start in tray"
+        # here would make the app appear to vanish
         win.show(); win.raise_(); win.activateWindow()
     elif launch == "Start in tray" and win.tray and win.tray.isVisible():
         pass                                   # stay hidden in the tray

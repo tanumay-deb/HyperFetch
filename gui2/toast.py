@@ -10,18 +10,16 @@ from PySide6.QtCore import Qt, QTimer, QPropertyAnimation, QEasingCurve, QPoint
 from gui2.palette import COLORS, fpx
 from gui.icons import themed_icon
 
-_KIND = {
-    "success": ("check", COLORS["success"]),
-    "error":   ("alert", COLORS["error"]),
-    "info":    ("info", COLORS["info"]),
-}
+_KIND = {"success": "check", "error": "alert", "info": "info"}    # kind -> icon
 
 
 class Toast(QFrame):
     def __init__(self, parent, kind, title, msg, on_close):
         super().__init__(parent)
         self.setFixedWidth(330)
-        icon_name, color = _KIND.get(kind, _KIND["info"])
+        kind = kind if kind in _KIND else "info"
+        # read now, not at import: the theme can change while the app runs
+        icon_name, color = _KIND[kind], COLORS[kind]
         self.setObjectName("toast")
         self.setStyleSheet(
             f"#toast {{ background:{COLORS['surface2']}; border:1px solid {COLORS['border']}; "

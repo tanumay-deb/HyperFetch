@@ -1,7 +1,6 @@
 """The thin bar along the bottom of the window (asked 2026-10-29): what this
 session has downloaded and uploaded, the version, and a button that switches
-between dark and light - which restarts the app, as the setting does, so the
-totals go across the restart."""
+between dark and light (tests/test_reskin.py: the switch itself)."""
 import os
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -12,7 +11,7 @@ import task as T
 import torrent
 from gui.theme import APP_VERSION, human_size
 from gui2 import palette
-from gui2.status_bar import CARRY, SessionCount, StatusBar, carried, restart_args
+from gui2.status_bar import SessionCount, StatusBar
 from test_aria2d import _FakeDaemon, _drive_with
 
 
@@ -77,14 +76,6 @@ def test_what_torrents_send_counts_from_their_first_poll(tmp_path, monkeypatch):
     assert torrent.sent_this_session() - before == 900, "5000 was sent before this run"
 
 
-def test_the_totals_go_across_a_restart():
-    args = restart_args(["main.py", "x.torrent", "--restarted", CARRY + "1,2"], 1234, 56)
-    assert args == ["x.torrent", "--restarted", CARRY + "1234,56"]
-    assert carried(["main.py"] + args) == (1234, 56)
-    assert carried(["main.py"]) == (0, 0)
-    assert carried([CARRY + "x,1"]) == (0, 0)
-
-
 def test_the_bar_says_it_and_offers_the_other_theme():
     QApplication.instance() or QApplication([])
     bar = StatusBar()
@@ -106,6 +97,6 @@ def test_the_details_panel_and_toasts_stay_above_it():
     drawer.reposition()
     assert drawer.height() == 600 - host.status_bar.height()
     toasts = ToastManager(host)
-    toasts.show("info", "Applying theme", "Restarting HyperFetch…")
+    toasts.show("info", "Download added", "x.bin")
     toasts.reposition()
     assert toasts.items[-1].geometry().bottom() < 600 - host.status_bar.height()

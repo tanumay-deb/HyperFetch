@@ -79,8 +79,8 @@ def _system_is_light():
 
 def set_theme(name):
     """Swap the active palette to 'dark' / 'light' (or resolve 'system'). Keeps
-    the current accent. Call BEFORE building the UI; a live switch needs a restart
-    because widgets bake colours into inline styles at construction."""
+    the current accent. Widgets bake colours into inline styles as they are
+    built, so a live switch builds the window again (DownloadAppV2._reskin)."""
     global _THEME
     if name == "system":
         name = "light" if _system_is_light() else "dark"
