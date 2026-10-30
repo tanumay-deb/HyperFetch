@@ -273,15 +273,28 @@ def _mib(n):
 # peers. A fixed default gives UPnP something concrete to map.
 DEFAULT_LISTEN_PORT = 51413
 
-# well-known public trackers appended to every magnet so peers are found via
-# trackers + DHT + PEX + LPD (a hash-only magnet otherwise leans on DHT alone)
+# Public trackers added to every public torrent (aria2d's --bt-tracker), so a
+# hash-only magnet does not lean on DHT alone. aria2 asks them one at a time,
+# in this order, and only once every tracker of the torrent's own has failed.
+# Picked 2026-10-30: on ngosang/trackerslist's trackers_best or newTrackon's
+# stable list (most on both), and each answered a BEP 15 connect from the
+# user's line, most over IPv6 as well.
 PUBLIC_TRACKERS = [
     "udp://tracker.opentrackr.org:1337/announce",
-    "udp://open.tracker.cl:1337/announce",
-    "udp://tracker.openbittorrent.com:6969/announce",
-    "udp://exodus.desync.com:6969/announce",
-    "udp://tracker.torrent.eu.org:451/announce",
     "udp://open.stealth.si:80/announce",
+    "udp://open.demonii.com:1337/announce",
+    "udp://tracker.torrent.eu.org:451/announce",
+    "udp://tracker-udp.gbitt.info:80/announce",
+    "udp://tracker.qu.ax:6969/announce",
+    "udp://tracker.ducks.party:1984/announce",
+    "udp://tracker.nyaa.vc:6969/announce",
+    "udp://open.tracker.cl:1337/announce",
+]
+# Off that list, but in magnet metadata saved while they were on it: a
+# private torrent keeps them excluded as well (tracker_opts).
+RETIRED_TRACKERS = [
+    "udp://tracker.openbittorrent.com:6969/announce",   # domain expired, parked
+    "udp://exodus.desync.com:6969/announce",            # on neither list
 ]
 
 # DHT bootstrap nodes. aria2 ships NO built-in entry point: with a cold routing
@@ -972,7 +985,7 @@ def tracker_opts(task, torrent_path):
         built when the download is added, so it has to be said with the add;
       * the metadata aria2 saves for a magnet has that list baked in, so
         clearing bt-tracker alone leaves it there; bt-exclude-tracker takes it
-        back out.
+        back out - and the list it had then, RETIRED_TRACKERS too.
 
     A public tracker the magnet itself names is the torrent's own and stays.
     """
@@ -980,7 +993,7 @@ def tracker_opts(task, torrent_path):
         return {}
     own = {tr.lower() for tr in magnet_trackers(task.url or "")}
     return {"bt-tracker": "",
-            "bt-exclude-tracker": ",".join(tr for tr in PUBLIC_TRACKERS
+            "bt-exclude-tracker": ",".join(tr for tr in PUBLIC_TRACKERS + RETIRED_TRACKERS
                                            if tr.lower() not in own)}
 
 

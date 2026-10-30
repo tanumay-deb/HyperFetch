@@ -208,7 +208,9 @@ def test_a_private_torrent_gets_only_its_own_trackers(tmp_path):
     t = T.DownloadTask(meta, str(tmp_path / "p"), filename="p.torrent")
     opts = torrent.tracker_opts(t, meta)
     assert opts["bt-tracker"] == ""
-    assert opts["bt-exclude-tracker"].split(",") == torrent.PUBLIC_TRACKERS
+    # the retired ones too: metadata saved while they were public has them
+    assert opts["bt-exclude-tracker"].split(",") == (torrent.PUBLIC_TRACKERS
+                                                     + torrent.RETIRED_TRACKERS)
 
 
 def test_a_public_torrent_keeps_the_daemons_public_trackers(tmp_path):
@@ -229,7 +231,8 @@ def test_a_private_magnets_own_copy_of_a_public_tracker_is_kept(tmp_path):
     t = _magnet_task(tmp_path, trackers=[mine.upper()])
     kept_off = torrent.tracker_opts(t, meta)["bt-exclude-tracker"].split(",")
     assert mine not in kept_off
-    assert kept_off == [p for p in torrent.PUBLIC_TRACKERS if p != mine]
+    assert kept_off == [p for p in torrent.PUBLIC_TRACKERS + torrent.RETIRED_TRACKERS
+                        if p != mine]
 
 
 # ---- where a new download is put, and who chose -------------------------------

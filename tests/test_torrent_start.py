@@ -112,7 +112,7 @@ def test_a_private_torrent_file_is_added_with_only_its_own_trackers(tmp_path, mo
     kind, opts = d.added[0]
     assert kind == "torrent"
     assert opts["bt-tracker"] == ""
-    assert opts["bt-exclude-tracker"].split(",") == torrent.PUBLIC_TRACKERS
+    assert opts["bt-exclude-tracker"].split(",") == torrent.PUBLIC_TRACKERS + torrent.RETIRED_TRACKERS
     assert t.status == T.COMPLETED
 
 
@@ -197,7 +197,7 @@ def test_a_magnet_found_to_be_private_restarts_without_the_public_trackers(tmp_p
     assert [k for k, _ in d.added] == ["magnet", "torrent"]
     opts = d.added[1][1]
     assert opts["dir"] == str(tmp_path)
-    assert opts["bt-tracker"] == "" and opts["bt-exclude-tracker"].split(",") == torrent.PUBLIC_TRACKERS
+    assert opts["bt-tracker"] == "" and opts["bt-exclude-tracker"].split(",") == torrent.PUBLIC_TRACKERS + torrent.RETIRED_TRACKERS
     assert opts["rpc-save-upload-metadata"] == "false"
     assert d.did("aria2.forceRemove", "held") and not d.did("aria2.unpause", "held")
     assert t.status == T.COMPLETED
