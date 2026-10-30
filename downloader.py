@@ -807,7 +807,11 @@ class Downloader:
             # cross-volume-safe atomic finalize (shared helper); on failure leave
             # temp_path in %TEMP% for a retry and never mark COMPLETED.
             try:
-                self._check_disk_space(self.t.save_path, self.t.total_size)
+                # room for a second copy only where finishing is a copy: on one
+                # drive it is a rename, and the file's own bytes already took
+                # the space (an 8 GB file on 10 GB free failed at 100% here)
+                if not utils.same_drive(temp_path, self.t.save_path):
+                    self._check_disk_space(self.t.save_path, self.t.total_size)
                 utils.finalize_download(temp_path, self.t.save_path)
             except OSError as e:
                 self.t.status = T.ERROR

@@ -59,7 +59,7 @@ def temp_download_path(task):
         if where and os.path.exists(where):
             return _remember(task, where)
     folder = temp_dir()
-    if beside and not INCOMPLETE_DIR and not _same_drive(folder, dest_dir):
+    if beside and not INCOMPLETE_DIR and not same_drive(folder, dest_dir):
         try:
             os.makedirs(os.path.dirname(beside), exist_ok=True)
             _hide(os.path.dirname(beside))
@@ -79,7 +79,7 @@ def _remember(task, path):
     return path
 
 
-def _same_drive(a, b):
+def same_drive(a, b):
     """Whether two folders are on one volume (a move between them is a rename).
     Asked of the nearest folder that exists; unknown counts as the same, so
     nothing changes where it cannot be told."""

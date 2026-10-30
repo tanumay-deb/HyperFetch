@@ -178,6 +178,26 @@ def test_html_login_page_detected(tmp_path):
         httpd.shutdown()
 
 
+def test_finishing_on_the_same_drive_needs_no_second_copy_of_room(
+        file_server, tmp_path, monkeypatch):
+    """Finishing on one drive is a rename. It used to ask for the whole file's
+    room again, after the file's own bytes had taken it: an 8 GB download on
+    10 GB free failed at 100% with "not enough disk space"."""
+    import shutil
+    from collections import namedtuple
+    file_server.put("full.bin", n_bytes=1024 * 1024)
+    t = T.DownloadTask(file_server.url("full.bin"), str(tmp_path / "full.bin"))
+    usage = namedtuple("usage", "total used free")
+
+    def disk_usage(path):            # room for the file, until it is written
+        written = t.temp_path and os.path.exists(t.temp_path)
+        return usage(1 << 40, 0, (1 << 20) if written else (66 << 20))
+    monkeypatch.setattr(shutil, "disk_usage", disk_usage)
+    monkeypatch.setattr(utils, "same_drive", lambda a, b: True)
+    Downloader(t, segments=4).run()
+    assert t.status == T.COMPLETED, (t.status, t.error)
+
+
 def test_format_disk_error_includes_free_space_for_enospc(tmp_path):
     """ENOSPC errors get a 'disk full -- X MiB free' message instead of the
     bare OSError dump, so the user knows to pick a different folder."""

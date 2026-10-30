@@ -11,7 +11,7 @@ def _task(dest):
 
 
 def _other_drive(monkeypatch):
-    monkeypatch.setattr(utils, "_same_drive", lambda a, b: False)
+    monkeypatch.setattr(utils, "same_drive", lambda a, b: False)
 
 
 def test_another_drive_puts_it_beside_the_destination(tmp_path, monkeypatch):
@@ -24,8 +24,8 @@ def test_another_drive_puts_it_beside_the_destination(tmp_path, monkeypatch):
     assert T.DownloadTask.from_dict(t.to_dict()).temp_path == p     # saved
 
 
-def test_the_same_drive_keeps_the_temp_folder(tmp_path, monkeypatch):
-    monkeypatch.setattr(utils, "_same_drive", lambda a, b: True)
+def test_thesame_drive_keeps_the_temp_folder(tmp_path, monkeypatch):
+    monkeypatch.setattr(utils, "same_drive", lambda a, b: True)
     t = _task(tmp_path / "dl" / "a.bin")
     assert os.path.dirname(utils.temp_download_path(t)) == utils.temp_dir()
 
