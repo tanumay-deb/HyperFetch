@@ -1574,7 +1574,9 @@ class DetailsDrawer(QFrame):
             have = [True] * count
         if len(have) != count:
             have = [False] * count
-        counts = self._avail_counts(t, count) if t.status == T.DOWNLOADING else None
+        # getPeers is a round trip on the GUI thread: only while it is on screen
+        counts = (self._avail_counts(t, count)
+                  if t.status == T.DOWNLOADING and self.tabs.currentIndex() == 0 else None)
         self.pieces.set_pieces(have, counts)
         self.pieces.show()
 
@@ -1596,7 +1598,7 @@ class DetailsDrawer(QFrame):
         from gui2.pieces_bar import piece_counts
         bits = ["f" * ((count + 3) // 4) if str(p.get("seeder", "")).lower() == "true"
                 else p.get("bitfield", "") for p in peers]
-        counts = piece_counts(bits, count, _torrent.pieces_have)
+        counts = piece_counts(bits, count, _torrent.pieces_bits)
         self._avail = (t.id, now, counts)
         return counts
 

@@ -21,7 +21,7 @@ def test_availability_as_utorrent_counts_it():
     assert availability([0, 0, 0]) == 0.0
     assert availability([2, 3, 3, 2]) == 2.5
     seed, half = "f", "c"                         # 4 pieces each
-    assert piece_counts([seed, half], 4, torrent.pieces_have) == [2, 2, 1, 1]
+    assert piece_counts([seed, half], 4, torrent.pieces_bits) == [2, 2, 1, 1]
 
 
 def _tor(bits, files, selected=""):
@@ -67,11 +67,15 @@ def test_the_head_is_moved_only_at_the_window_edge_and_given_back_when_off():
     t.tor_bitfield = "f800"                       # 20 MiB: not yet the next edge
     e._keep_in_order(d, "g")
     assert len(d.calls) == 2
-    t.in_order = False
-    e._keep_in_order(d, "g")
-    assert d.calls[-1] == ""
-    e._keep_in_order(d, "g")
+    e._keep_in_order(d, "g2")                     # re-added: a new gid, no head set
+    assert len(d.calls) == 3 and d.calls[-1].startswith("head=")
+    e._keep_in_order(d, "g2")
     assert len(d.calls) == 3
+    t.in_order = False
+    e._keep_in_order(d, "g2")
+    assert d.calls[-1] == ""
+    e._keep_in_order(d, "g2")
+    assert len(d.calls) == 4
 
 
 def test_in_order_and_the_pieces_are_saved():

@@ -24,14 +24,14 @@ def availability(counts):
     return low + sum(1 for c in counts if c > low) / len(counts)
 
 
-def piece_counts(peer_bitfields, count, have_fn):
-    """How many of the peers hold each piece; a seed's bitfield is whole."""
-    counts = [0] * count
-    for bits in peer_bitfields:
-        for i, h in enumerate(have_fn(bits, count)[:count]):
-            if h:
-                counts[i] += 1
-    return counts
+def piece_counts(peer_bitfields, count, bits_fn):
+    """How many of the peers hold each piece; a seed's bitfield is whole.
+    Columns of "0"/"1" strings: 16,000 pieces x 80 peers was over a million
+    Python steps every 3 s on the GUI thread as a loop."""
+    rows = [r for r in (bits_fn(b, count) for b in peer_bitfields) if len(r) == count]
+    if not rows:
+        return [0] * count
+    return [col.count("1") for col in zip(*rows)]
 
 
 class PiecesBar(QWidget):

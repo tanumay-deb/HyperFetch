@@ -206,15 +206,20 @@ IN_ORDER_MAX = 256 * 1024 * 1024
 IN_ORDER_TAIL = 8 * 1024 * 1024  # the index of an MP4 can be at the end
 
 
-def pieces_have(bits, count):
-    """[bool] per piece from aria2's hex bitfield (padded to whole bytes)."""
+def pieces_bits(bits, count):
+    """"0"/"1" per piece from aria2's hex bitfield (padded to whole bytes)."""
     try:
         n = int(bits, 16)
     except (TypeError, ValueError):
-        return []
+        return ""
     width = len(bits) * 4
     count = count if 0 < count <= width else width
-    return [c == "1" for c in bin(n >> (width - count))[2:].zfill(count)]
+    return bin(n >> (width - count))[2:].zfill(count)
+
+
+def pieces_have(bits, count):
+    """[bool] per piece from aria2's hex bitfield."""
+    return [c == "1" for c in pieces_bits(bits, count)]
 
 
 def main_file(task):
@@ -1733,11 +1738,15 @@ class TorrentDownloader:
     def _keep_in_order(self, d, gid):
         """Move aria2's head on as the main file fills (IN_ORDER_*), and give
         it back its usual pieces order when "in order" is switched off."""
-        told = getattr(self, "_head", None)
+        # told to this gid: a download re-added in this run (_add_again,
+        # _hand_over) is a new gid with no head set
+        gid_told, told = getattr(self, "_head", (None, None)) or (None, None)
+        if gid_told != gid:
+            told = None
         if not getattr(self.t, "in_order", False):
             if told is not None:
                 self._tell_prio(d, gid, "head,tail" if utils.TORRENT_PREVIEW else "")
-                self._head = None
+            self._head = None
             return
         now = time.monotonic()
         since, then = getattr(self, "_head_from", (now, None))
@@ -1751,7 +1760,7 @@ class TorrentDownloader:
             head = whole + window
             if head != told and self._tell_prio(
                     d, gid, "head=%d,tail=%d" % (head, IN_ORDER_TAIL)):
-                self._head = head
+                self._head = (gid, head)
                 self._head_from = (now, whole)
 
     def _tell_prio(self, d, gid, value):
