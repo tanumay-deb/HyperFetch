@@ -369,6 +369,21 @@ class DetailsDrawer(QFrame):
         self.ov_status.setStyleSheet(f"color: {COLORS['muted']}; font-weight: 700; font-size: {fpx(12)}; background: transparent;")
         v.addWidget(self.ov_status)
 
+        # a torrent's pieces, and how many connected peers have each (uTorrent)
+        from gui2.pieces_bar import PiecesBar
+        self.pieces = PiecesBar(); self.pieces.hide()
+        v.addWidget(self.pieces)
+        self.in_order = QCheckBox("Download in order")
+        self.in_order.setToolTip(
+            "Fetch the biggest file from its start, a block at a time, so a video "
+            "can play before the torrent finishes. Each block costs a moment's "
+            "reconnect, so leave it off when you only want the whole torrent fast.")
+        self.in_order.setStyleSheet(f"color: {COLORS['text']}; background: transparent;")
+        self.in_order.toggled.connect(self._set_in_order)
+        self.in_order.hide()
+        v.addWidget(self.in_order)
+        self._avail = (None, 0.0, None)        # (task id, when, counts) - getPeers is a round trip
+
         self.graph = SpeedGraph(); v.addWidget(self.graph)
 
         # ---- quick actions ----
@@ -1535,6 +1550,56 @@ class DetailsDrawer(QFrame):
             w = w.parent()
         return w
 
+    def _set_in_order(self, on):
+        win = self._window()
+        t = win.queue.get_task(self._tid) if win and self._tid else None
+        if t and bool(getattr(t, "in_order", False)) != on:
+            t.in_order = on                 # the engine reads it on its next poll
+            t.log_event("Download in order " + ("on" if on else "off"))
+            if hasattr(win, "_save_state"):
+                win._save_state()
+
+    def _show_pieces(self, t, is_tor):
+        count, _plen = getattr(t, "tor_pieces", (0, 0))
+        self.in_order.setVisible(is_tor and t.status != T.COMPLETED)
+        if self.in_order.isChecked() != bool(getattr(t, "in_order", False)):
+            self.in_order.blockSignals(True)
+            self.in_order.setChecked(bool(getattr(t, "in_order", False)))
+            self.in_order.blockSignals(False)
+        if not is_tor or not count:
+            self.pieces.hide()
+            return
+        have = _torrent.pieces_have(getattr(t, "tor_bitfield", ""), count)
+        if t.status == T.COMPLETED and not any(have):
+            have = [True] * count
+        if len(have) != count:
+            have = [False] * count
+        counts = self._avail_counts(t, count) if t.status == T.DOWNLOADING else None
+        self.pieces.set_pieces(have, counts)
+        self.pieces.show()
+
+    def _avail_counts(self, t, count):
+        """Copies of each piece among the connected peers, asked of aria2 at
+        most every 3 s (the last answer in between)."""
+        tid, at, counts = self._avail
+        now = time.monotonic()
+        if tid == t.id and now - at < 3:
+            return counts
+        gid = getattr(t, "gid", None)
+        if not gid:
+            return None
+        try:
+            import aria2d
+            peers = aria2d.DAEMON.call("aria2.getPeers", gid, timeout=GUI_RPC_TIMEOUT) or []
+        except Exception:
+            return counts if tid == t.id else None
+        from gui2.pieces_bar import piece_counts
+        bits = ["f" * ((count + 3) // 4) if str(p.get("seeder", "")).lower() == "true"
+                else p.get("bitfield", "") for p in peers]
+        counts = piece_counts(bits, count, _torrent.pieces_have)
+        self._avail = (t.id, now, counts)
+        return counts
+
     def _apply_file_selection(self):
         if not getattr(self, "_file_row_widgets", None):
             return
@@ -1934,6 +1999,7 @@ class DetailsDrawer(QFrame):
         self._style_bar(col)
         self.ov_status.setText(str(t.status))
         self.ov_status.setStyleSheet(f"color: {col}; font-weight: 700; font-size: {fpx(12)}; background: transparent;")
+        self._show_pieces(t, is_tor)
         self.ov_speed.setText(human_speed(bps) or "0 b/s")
         done = human_size(t.downloaded) if t.downloaded > 0 else "0 B"
         self.ov_done.setText(f"{done} / {human_size(t.total_size)}" if t.total_size else done)

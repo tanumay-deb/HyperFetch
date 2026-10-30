@@ -413,3 +413,46 @@ def test_files_ticked_after_it_finished_are_fetched(pack, daemon, tmp_path):
     assert (out / "Pack" / "second.bin").read_bytes() == pack["payload"][4 * PIECE:]
     assert first.read_bytes() == pack["payload"][:4 * PIECE]
     assert t.total_size == 8 * PIECE
+
+
+def test_in_order_fetches_the_file_from_its_start(tmp_path, daemon, monkeypatch):
+    """"Download in order": with the head moved on as the file fills, the
+    pieces come from the start - half of them here means most of the first
+    half."""
+    payload = os.urandom(12 * 1024 * 1024)             # 48 pieces
+    gen = _swarm(tmp_path, "Movie.bin", payload)
+    sw = next(gen)
+    monkeypatch.setattr(torrent, "IN_ORDER_MIN", 2 * 1024 * 1024)        # 8 pieces
+    monkeypatch.setattr(torrent, "IN_ORDER_SECONDS", 4)
+    monkeypatch.setattr(torrent, "IN_ORDER_TAIL", PIECE)
+    out = tmp_path / "downloads"
+    out.mkdir()
+    t = T.DownloadTask(sw["torrent"], str(out / "Movie.torrent"))
+    t.in_order = True
+    seen = {}
+
+    def watch():
+        def half():
+            have = torrent.pieces_have(t.tor_bitfield, 48)
+            for at in (24, 36):
+                if sum(have) >= at and at not in seen:
+                    seen[at] = (have + [False]).index(False)
+            return 36 in seen
+        _wait(half, 60)
+
+    was = utils.global_limiter.limit_bps
+    utils.global_limiter.set_limit(1024 * 1024)
+    try:
+        threading.Thread(target=watch, daemon=True).start()
+        _run(t)
+    finally:
+        utils.global_limiter.set_limit(was)
+        try:
+            next(gen)
+        except StopIteration:
+            pass
+    assert t.status == T.COMPLETED, (t.status, t.error)
+    assert (out / "Movie.bin").read_bytes() == payload
+    # block by block (measured: 16-31 at half, 28-31 at three quarters);
+    # without it the start stayed nearly empty
+    assert seen.get(24, 0) >= 12 and seen.get(36, 0) >= 24, seen

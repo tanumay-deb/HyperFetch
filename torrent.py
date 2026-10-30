@@ -188,6 +188,67 @@ def preference_opts():
 
 _limit_lock = threading.Lock()
 
+# "Download in order" (task.in_order), for watching a video as it comes. aria2
+# has no sequential mode; bt-prioritize-piece=head=SIZE puts the first SIZE
+# bytes of each file first, so the head is moved on as the file fills. Measured
+# on 1.37.0 (loopback seeder, 48 MiB): stepped at the window's edge the pieces
+# came in order at full speed - but every changeOption restarts the download
+# (connections dropped, 1-2 s with nothing), and moving it every second stalled
+# it outright. So it steps rarely, a big window at a time. Within the head
+# aria2 picks in its own order, and once the head is all asked for it goes on
+# to random pieces: the window has to outlast the time to the next step too,
+# so it grows with the speed (a real run at 2 MiB/s with a 1 MiB window came
+# down mostly at random). In order means block by block, a window a block.
+IN_ORDER_MIN = 32 * 1024 * 1024
+IN_ORDER_SHARE = 0.02           # of the file
+IN_ORDER_SECONDS = 10           # of download at the current speed
+IN_ORDER_MAX = 256 * 1024 * 1024
+IN_ORDER_TAIL = 8 * 1024 * 1024  # the index of an MP4 can be at the end
+
+
+def pieces_have(bits, count):
+    """[bool] per piece from aria2's hex bitfield (padded to whole bytes)."""
+    try:
+        n = int(bits, 16)
+    except (TypeError, ValueError):
+        return []
+    width = len(bits) * 4
+    count = count if 0 < count <= width else width
+    return [c == "1" for c in bin(n >> (width - count))[2:].zfill(count)]
+
+
+def main_file(task):
+    """(start byte, length) of the biggest file a torrent fetches, or None."""
+    files = getattr(task, "files", None) or []
+    keep = picked(getattr(task, "selected_files", ""), len(files))
+    best, at = None, 0
+    for n, (_rel, size) in enumerate(files, 1):
+        size = int(size)
+        if n in keep and (best is None or size > best[1]):
+            best = (at, size)
+        at += size
+    return best
+
+
+def in_order_head(task, rate=0):
+    """(bytes of the main file whole from its start, window), or None when
+    that cannot be told. `rate`: bytes a second it came at since the last
+    step - aria2's own speed jumps after each restart (a burst of 19 MB/s
+    against a 1 MB/s limit, measured) and made the window the whole file."""
+    main = main_file(task)
+    count, plen = getattr(task, "tor_pieces", (0, 0))
+    if not main or not plen:
+        return None
+    start, length = main
+    have = pieces_have(getattr(task, "tor_bitfield", ""), count)
+    p = start // plen
+    while p < len(have) and have[p]:
+        p += 1
+    whole = max(0, min(length, p * plen - start))
+    window = int(min(IN_ORDER_MAX, max(IN_ORDER_MIN, length * IN_ORDER_SHARE,
+                                       rate * IN_ORDER_SECONDS)))
+    return whole, window
+
 
 def tell_download_limit(d, bps):
     """Give the daemon its part of the download speed limit, if that is news.
@@ -1669,6 +1730,38 @@ class TorrentDownloader:
         self.t.verified_of = 0
         self.t.tor_download = 0
 
+    def _keep_in_order(self, d, gid):
+        """Move aria2's head on as the main file fills (IN_ORDER_*), and give
+        it back its usual pieces order when "in order" is switched off."""
+        told = getattr(self, "_head", None)
+        if not getattr(self.t, "in_order", False):
+            if told is not None:
+                self._tell_prio(d, gid, "head,tail" if utils.TORRENT_PREVIEW else "")
+                self._head = None
+            return
+        now = time.monotonic()
+        since, then = getattr(self, "_head_from", (now, None))
+        got = in_order_head(self.t)
+        if not got:
+            return
+        whole = got[0]
+        rate = (whole - then) / (now - since) if then is not None and now > since else 0
+        whole, window = in_order_head(self.t, rate)
+        if told is None or whole >= told - window // 2:
+            head = whole + window
+            if head != told and self._tell_prio(
+                    d, gid, "head=%d,tail=%d" % (head, IN_ORDER_TAIL)):
+                self._head = head
+                self._head_from = (now, whole)
+
+    def _tell_prio(self, d, gid, value):
+        try:
+            d.call("aria2.changeOption", gid, {"bt-prioritize-piece": value})
+            return True
+        except Exception as e:
+            log.debug("could not tell aria2 the piece order: %s", e)
+            return False
+
     def _keep_to_limits(self, d, gid):
         """Tell aria2 the limits this torrent downloads under, when they move.
 
@@ -2374,7 +2467,9 @@ class TorrentDownloader:
             self.t.tor_pieces = (int(st.get("numPieces") or 0),
                                  int(st.get("pieceLength") or 0))
             self.t.tor_download = int(st.get("downloadSpeed") or 0)
+            self.t.tor_bitfield = str(st.get("bitfield") or "")
             self._keep_to_limits(d, cur)
+            self._keep_in_order(d, cur)
 
             # Hash checking. aria2 reports it separately from download progress,
             # and it can take minutes on a large torrent — with nothing shown, a

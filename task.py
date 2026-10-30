@@ -220,6 +220,8 @@ class DownloadTask:
         self.tor_upload = 0
         self.tor_uploaded = 0      # total bytes sent for this torrent
         self.tor_pieces = (0, 0)   # (how many, how long) its pieces are
+        self.tor_bitfield = ""     # aria2's hex bitfield: the pieces it has
+        self.in_order = False      # fetch the main file from its start (torrent.IN_ORDER_*)
         # how fast aria2 says this torrent is coming down, bytes a second
         # (transient): the queue shares the download speed limit out by it
         self.tor_download = 0
@@ -416,6 +418,9 @@ class DownloadTask:
             # its cap): the Files tab shows them after a restart (2026-10-29)
             "file_progress": (self.file_progress or []) if self.files else [],
             "files_at": self.files_at,
+            "tor_bitfield": self.tor_bitfield or "",
+            "tor_pieces": list(self.tor_pieces),
+            "in_order": bool(self.in_order),
             "unfinished_in": self.unfinished_in or "",
             "temp_path": self.temp_path or "",
             "selected_files": self.selected_files,
@@ -494,6 +499,13 @@ class DownloadTask:
             except (TypeError, ValueError, KeyError):
                 pass
         t.files_at = float(d.get("files_at", 0) or 0)
+        t.tor_bitfield = str(d.get("tor_bitfield") or "")
+        try:
+            got = tuple(int(x) for x in d.get("tor_pieces") or ())
+            t.tor_pieces = got if len(got) == 2 else (0, 0)
+        except (TypeError, ValueError):
+            t.tor_pieces = (0, 0)
+        t.in_order = bool(d.get("in_order", False))
         t.selected_files = d.get("selected_files", "")
         t.sort_base = d.get("sort_base")
         t.events =[e for e in map(_migrate_event, d.get("events") or []) if e]
