@@ -35,25 +35,106 @@ def _temp_dir_in(base):
     return os.path.join(base, "HyperFetch-%08x" % tag)
 
 
-def temp_download_path(task_id):
+def temp_download_path(task):
     """The in-progress ``.hfdownload`` temp file for a task (one place defines the
-    convention; downloader + HLS both use it): in temp_dir, which is made
-    here. A download begun before there was such a folder has its file
-    straight in the temp folder, and goes on from that."""
+    convention; downloader + HLS both use it). `task` is a DownloadTask, or
+    only its id.
+
+    A download whose file is already somewhere goes on from there: straight
+    in the temp folder (before temp_dir), in the temp folder's own one, in the
+    unfinished-downloads folder, or where it was put last (``task.temp_path``,
+    saved - a paused download moved to another drive still has its bytes on
+    the first). A new one goes in temp_dir, unless that is on another drive
+    than the destination and no unfinished-downloads folder was picked: then
+    in a hidden folder of our own beside the destination, so finishing is a
+    rename and not a copy of the whole file (asked 2026-10-30)."""
+    task_id = getattr(task, "id", task)
     name = f"{task_id}.hfdownload"
     old = os.path.join(tempfile.gettempdir(), name)
-    # a paused download goes on where its bytes are: straight in the temp
-    # folder (before temp_dir), or in the temp folder's own one (before an
-    # unfinished-downloads folder was picked)
-    for where in (old, os.path.join(_temp_dir_in(tempfile.gettempdir()), name)):
-        if os.path.exists(where):
-            return where
+    remembered = getattr(task, "temp_path", "") or ""
+    dest_dir = os.path.dirname(os.path.abspath(getattr(task, "save_path", "") or ""))         if getattr(task, "save_path", "") else ""
+    beside = os.path.join(_temp_dir_in(dest_dir), name) if dest_dir else ""
+    for where in (remembered, old, os.path.join(_temp_dir_in(tempfile.gettempdir()), name),
+                  os.path.join(temp_dir(), name), beside):
+        if where and os.path.exists(where):
+            return _remember(task, where)
     folder = temp_dir()
+    if beside and not INCOMPLETE_DIR and not _same_drive(folder, dest_dir):
+        try:
+            os.makedirs(os.path.dirname(beside), exist_ok=True)
+            _hide(os.path.dirname(beside))
+            return _remember(task, beside)
+        except OSError:
+            pass                    # cannot write there: the temp folder, as before
     try:
         os.makedirs(folder, exist_ok=True)
     except OSError:
-        return old                  # no folder of our own: where they always were
-    return os.path.join(folder, name)
+        return _remember(task, old)  # no folder of our own: where they always were
+    return _remember(task, os.path.join(folder, name))
+
+
+def _remember(task, path):
+    if hasattr(task, "temp_path"):
+        task.temp_path = path
+    return path
+
+
+def _same_drive(a, b):
+    """Whether two folders are on one volume (a move between them is a rename).
+    Asked of the nearest folder that exists; unknown counts as the same, so
+    nothing changes where it cannot be told."""
+    def dev(p):
+        p = os.path.abspath(p)
+        while p and not os.path.exists(p):
+            up = os.path.dirname(p)
+            if up == p:
+                return None
+            p = up
+        try:
+            return os.stat(p).st_dev
+        except OSError:
+            return None
+    da, db = dev(a), dev(b)
+    return da is None or db is None or da == db
+
+
+def _hide(folder):
+    """Hidden in Explorer, as a download's own working folder should be."""
+    if sys.platform == "win32":
+        try:
+            import ctypes
+            FILE_ATTRIBUTE_HIDDEN = 0x2
+            attrs = ctypes.windll.kernel32.GetFileAttributesW(folder)
+            if attrs != -1 and not attrs & FILE_ATTRIBUTE_HIDDEN:
+                ctypes.windll.kernel32.SetFileAttributesW(folder, attrs | FILE_ATTRIBUTE_HIDDEN)
+        except Exception:
+            pass
+
+
+def remove_temp(temp_path):
+    """Remove a download's temp file, and its hidden folder once empty."""
+    if not temp_path:
+        return
+    try:
+        os.remove(temp_path)
+    except OSError:
+        pass
+    drop_empty_temp_home(temp_path)
+
+
+def drop_empty_temp_home(temp_path):
+    """Remove the hidden folder beside a destination once its last temp file
+    is gone (temp_download_path); any other folder is left alone."""
+    folder = os.path.dirname(temp_path)
+    if not os.path.basename(folder).startswith("HyperFetch-"):
+        return
+    if os.path.normcase(folder) in {os.path.normcase(temp_dir()),
+                                    os.path.normcase(_temp_dir_in(tempfile.gettempdir()))}:
+        return
+    try:
+        os.rmdir(folder)            # only when empty
+    except OSError:
+        pass
 
 
 # What a crash left behind is removed once nobody has written it for this long.
@@ -80,6 +161,9 @@ def sweep_orphan_temps(known_ids, now=None):
     import time
     now = time.time() if now is None else now
     removed = []
+    # shortcut: the hidden folders beside destinations are not swept - a
+    # cancel or remove takes its file along (QueueManager.cancel_task), so
+    # only a crash between the two leaves one; sweep the saved paths if seen.
     homes = {temp_dir(), _temp_dir_in(tempfile.gettempdir())}   # ours, picked or not
     for path in [p for h in homes
                  for p in glob.glob(os.path.join(glob.escape(h), "*.hfdownload"))]:
@@ -288,6 +372,7 @@ def finalize_download(temp_path, dest_path):
                 "the temp file %s went while it was being moved; the copy is whole "
                 "and is kept", os.path.basename(temp_path))
         os.replace(staged, dest_path)
+        drop_empty_temp_home(temp_path)
     except OSError:
         try:
             if os.path.exists(staged):

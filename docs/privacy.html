@@ -225,7 +225,13 @@
       torrent waits in the queue, the application also asks its trackers now
       and then how many seeders it has (Settings → Torrents → "Check seeders
       of queued torrents", on by default): they see your IP address and which
-      torrent it is, as they would once it starts.</li>
+      torrent it is, as they would once it starts. The same is asked of
+      running and seeding torrents, for the swarm's size on their cards.
+      Once a day the application also fetches two public lists of working
+      trackers - from GitHub (<code>raw.githubusercontent.com</code>) and
+      <code>newtrackon.com</code> (Settings → Torrents → "Keep the public
+      tracker list up to date", on by default); those requests say nothing
+      about you or your downloads.</li>
       <li><strong>Cloudflare's DNS</strong> (<code>cloudflare-dns.com</code>)
       — when your internet provider's DNS answers a site with a block page,
       the application looks that one site's name up there ("Get past provider

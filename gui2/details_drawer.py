@@ -1652,7 +1652,8 @@ class DetailsDrawer(QFrame):
             if t.url and t.url.startswith("magnet:"):
                 extracted = torrent.magnet_trackers(t.url)
                 self._static_trackers.extend(extracted)
-                for pt in torrent.PUBLIC_TRACKERS:
+                import trackers
+                for pt in trackers.current():
                     if pt not in self._static_trackers:
                         self._static_trackers.append(pt + " (Public)")
             else:

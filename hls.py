@@ -588,7 +588,7 @@ class HlsDownloader:
             self.t.save_path = self.t.save_path[:-5] + ".ts"
             self.t.filename = os.path.basename(self.t.save_path)
         os.makedirs(os.path.dirname(self.t.save_path) or ".", exist_ok=True)
-        temp_path = utils.temp_download_path(self.t.id)
+        temp_path = utils.temp_download_path(self.t)
 
         try:
             text = self._fetch_text(self.t.url)
@@ -770,7 +770,4 @@ class HlsDownloader:
 
     @staticmethod
     def _rm(path):
-        try:
-            os.remove(path)
-        except OSError:
-            pass
+        utils.remove_temp(path)

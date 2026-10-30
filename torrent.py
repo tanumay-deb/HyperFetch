@@ -219,6 +219,23 @@ def tell_download_limit(d, bps):
         _limit_lock.release()
 
 
+def tell_trackers(d):
+    """Give the daemon the public tracker list, if that is news (trackers.py
+    keeps it fresh). aria2 takes it on the running daemon for downloads added
+    after; told per daemon, as tell_download_limit is."""
+    import trackers
+    lst = trackers.current()
+    told = (getattr(d, "port", 0), getattr(d, "secret", ""), tuple(lst))
+    if getattr(d, "_trackers_told", None) == told:
+        return
+    try:
+        d.call("aria2.changeGlobalOption", {"bt-tracker": ",".join(lst)})
+    except Exception as e:
+        log.debug("could not tell aria2 the tracker list: %s", e)
+        return
+    d._trackers_told = told
+
+
 def explain_failure(msg, save_path=""):
     """Turn an aria2 failure into something the user can act on.
 
@@ -991,10 +1008,14 @@ def tracker_opts(task, torrent_path):
     """
     if not torrent_path or not is_private_torrent(torrent_path):
         return {}
+    import trackers
     own = {tr.lower() for tr in magnet_trackers(task.url or "")}
-    return {"bt-tracker": "",
-            "bt-exclude-tracker": ",".join(tr for tr in PUBLIC_TRACKERS + RETIRED_TRACKERS
-                                           if tr.lower() not in own)}
+    every, seen = [], set()
+    for tr in PUBLIC_TRACKERS + RETIRED_TRACKERS + trackers.ever():
+        if tr.lower() not in own and tr.lower() not in seen:
+            seen.add(tr.lower())
+            every.append(tr)
+    return {"bt-tracker": "", "bt-exclude-tracker": ",".join(every)}
 
 
 def listen_port():
@@ -1672,6 +1693,7 @@ class TorrentDownloader:
             log.debug("could not work out the torrents' part of the limit: %s", e)
         else:
             tell_download_limit(d, part)
+        tell_trackers(d)
         own = (gid, int(getattr(self.t, "speed_limit", 0) or 0))
         if own != self._own_limit:
             try:

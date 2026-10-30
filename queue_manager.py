@@ -262,6 +262,10 @@ class QueueManager:
         self._drop_from_heap(task)
         if task.status in (T.QUEUED, T.PAUSED, T.DOWNLOADING):
             task.status = T.CANCELLED
+        if not getattr(task, "_worker_alive", False):
+            # nobody is running to take its partial along (a running worker
+            # does): one beside the destination is not swept as a leftover
+            utils.remove_temp(getattr(task, "temp_path", ""))
 
     def remove_task(self, task: "T.DownloadTask"):
         self.cancel_task(task)

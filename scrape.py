@@ -296,7 +296,8 @@ def trackers_for(task):
     public ones. Only trackers that can be scraped, each once."""
     _, file_trackers, private = _file_facts(task)
     own = torrent.magnet_trackers(task.url) if torrent.is_magnet(task.url) else file_trackers
-    public = [] if private else list(torrent.PUBLIC_TRACKERS)
+    import trackers
+    public = [] if private else trackers.current()
     out, seen = [], set()
     for tr in list(own) + public:
         tr = (tr or "").strip()

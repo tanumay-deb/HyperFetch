@@ -131,10 +131,8 @@ def probe_info(url, headers=None):
 
 def discard_partial(t):
     """Forget a task's partial download: its temp file and its segments."""
-    try:
-        os.remove(utils.temp_download_path(t.id))
-    except OSError:
-        pass
+    utils.remove_temp(utils.temp_download_path(t))
+    t.temp_path = ""
     t.segments = []
     t.downloaded = 0
 
@@ -413,7 +411,7 @@ class Downloader:
 
     def _build_segments(self):
         """Create segments, pre-allocating the file if total size is known."""
-        temp_path = utils.temp_download_path(self.t.id)
+        temp_path = utils.temp_download_path(self.t)
 
         if self.t.total_size > 0:
             self._check_disk_space(temp_path, self.t.total_size)
@@ -448,7 +446,7 @@ class Downloader:
     # ------------------------------------------------------------- workers
     def _worker(self, seg):
         """Stream one segment, writing directly to the pre-allocated .hfdownload file."""
-        temp_path = utils.temp_download_path(self.t.id)
+        temp_path = utils.temp_download_path(self.t)
         attempts = 0
         refusals = 0                    # 403s after the link served us (below)
 
@@ -646,7 +644,7 @@ class Downloader:
         self.t.status = T.DOWNLOADING
         self.t.error = ""
         os.makedirs(os.path.dirname(self.t.save_path) or ".", exist_ok=True)
-        temp_path = utils.temp_download_path(self.t.id)
+        temp_path = utils.temp_download_path(self.t)
 
         try:
             if not self.t.segments:
@@ -704,7 +702,7 @@ class Downloader:
                 pass
 
     def _run_media(self):
-        temp_path = utils.temp_download_path(self.t.id)
+        temp_path = utils.temp_download_path(self.t)
         found = self._probe_range()
         if found is None:
             return False
@@ -794,11 +792,7 @@ class Downloader:
 
         # ---- decide final state ----
         if self.t.cancel_requested:
-            if os.path.exists(temp_path):
-                try:
-                    os.remove(temp_path)
-                except OSError:
-                    pass
+            utils.remove_temp(temp_path)
             self.t.status = T.CANCELLED
             return
         if self.t.status == T.ERROR:

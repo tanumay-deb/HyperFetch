@@ -289,10 +289,15 @@ class PageBuilderMixin:
                   self.torrent_preview)
         self.scrape_trackers = self._toggle(ex.get("scrape_trackers", True))
         self._row(g, "Check seeders of queued torrents",
-                  "Ask the trackers now and then how many seeders each waiting "
-                  "torrent has, so the one with the most starts first. They see "
-                  "this computer's address and which torrents it wants, as they "
-                  "do anyway once a torrent starts.", self.scrape_trackers)
+                  "Ask the trackers now and then how many seeds and peers each "
+                  "torrent has, shown on its card. They see this computer's "
+                  "address and which torrents it wants, as they do anyway once "
+                  "a torrent starts.", self.scrape_trackers)
+        self.fetch_trackers = self._toggle(ex.get("fetch_trackers", True))
+        self._row(g, "Keep the public tracker list up to date",
+                  "Once a day, fetch the maintained lists of working public "
+                  "trackers (GitHub and newTrackon) instead of keeping the list "
+                  "this version came with.", self.fetch_trackers)
         self.seed_enabled = self._toggle(ex.get("seed_enabled", False))
         self._row(g, "Seed after completing",
                   "Keep sharing finished torrents. Off means you never give "

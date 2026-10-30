@@ -253,6 +253,7 @@ class DownloadTask:
         # at its first start, cleared once it is moved home. Persisted: a
         # paused one goes on where its bytes are, whatever the setting says.
         self.unfinished_in = ""
+        self.temp_path = ""         # where its .hfdownload is (utils.temp_download_path)
         # Which files of a torrent to fetch, as aria2's 1-based select-file
         # list ("1,3,5"); "" means all. Persisted, so unticking survives a
         # pause, a restart, and the drawer being closed.
@@ -336,12 +337,8 @@ class DownloadTask:
         self.error = ""
         self.hash_status = ""
         self.sha256 = ""
-        try:
-            tmp = utils.temp_download_path(self.id)
-            if os.path.exists(tmp):
-                os.remove(tmp)
-        except OSError:
-            pass
+        utils.remove_temp(utils.temp_download_path(self))
+        self.temp_path = ""
         self.log_event("Restarted")
 
     # ---- priority queue ordering: lower priority value first, then FIFO ----
@@ -420,6 +417,7 @@ class DownloadTask:
             "file_progress": (self.file_progress or []) if self.files else [],
             "files_at": self.files_at,
             "unfinished_in": self.unfinished_in or "",
+            "temp_path": self.temp_path or "",
             "selected_files": self.selected_files,
             "sort_base": self.sort_base,
             "is_scheduled": getattr(self, "is_scheduled", False),
@@ -480,6 +478,7 @@ class DownloadTask:
         t.extra_trackers = [str(x) for x in (d.get("extra_trackers") or [])
                             if isinstance(x, str) and x.strip()]
         t.unfinished_in = str(d.get("unfinished_in") or "")
+        t.temp_path = str(d.get("temp_path") or "")
         t.files = []
         for f in d.get("files") or []:         # a damaged entry is dropped, not fatal
             try:

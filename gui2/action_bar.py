@@ -61,6 +61,7 @@ class ActionBar(QFrame):
 
     def _btn(self, icon, label, signal, lay, danger=False):
         b = QPushButton("  " + label)
+        b.setProperty("label", label)
         b.setCursor(Qt.PointingHandCursor)
         b.setIcon(themed_icon(icon, "white" if danger else "text"))
         col = COLORS['error'] if danger else COLORS['surface']
@@ -73,7 +74,21 @@ class ActionBar(QFrame):
         return b
 
     def set_count(self, n):
-        self.count.setText(f"{n} selected")
+        self._n = n
+        self.count.setText(f"{n}" if getattr(self, "_compact", False) else f"{n} selected")
+
+    def set_compact(self, on):
+        """Icons only, the words in tooltips: for when the bar does not fit
+        beside the details drawer (Remove and Clear went under it)."""
+        if on == getattr(self, "_compact", False):
+            return
+        self._compact = on
+        for b in (self.btn_pause, self.btn_resume, self.btn_force, self.btn_open,
+                  self.btn_folder, self.move_btn, self.btn_remove):
+            label = b.property("label")
+            b.setText("" if on else "  " + label)
+            b.setToolTip(label if on else "")
+        self.set_count(getattr(self, "_n", 0))
 
     def set_applicable(self, *, open_=False, folder=False, pause=False, resume=False,
                        force=False, move=False):

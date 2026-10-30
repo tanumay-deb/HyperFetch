@@ -397,6 +397,7 @@ class Aria2Daemon:
         """Daemon-wide options. The per-download ones (dir, pause) are passed
         with each add call instead."""
         import torrent
+        import trackers
         opts = [
             "--enable-rpc",
             f"--rpc-listen-port={self.port}",
@@ -425,7 +426,7 @@ class Aria2Daemon:
             "--enable-peer-exchange=true",
             "--bt-enable-lpd=true",
             "--bt-max-peers=0",
-            "--bt-tracker=" + ",".join(torrent.PUBLIC_TRACKERS),
+            "--bt-tracker=" + ",".join(trackers.current()),
             f"--dht-file-path={os.path.join(torrent.dht_dir(), 'dht.dat')}",
             f"--dht-file-path6={os.path.join(torrent.dht_dir(), 'dht6.dat')}",
             f"--listen-port={torrent.listen_port()}",

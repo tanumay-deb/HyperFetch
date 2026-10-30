@@ -116,7 +116,8 @@ class SettingsDialogV2(PageBuilderMixin, QDialog):
         self.stack.addWidget(self._p_network(ex))
         self.stack.addWidget(self._p_torrents(ex))
         self.stack.addWidget(self._p_browser(ex))
-        self.stack.addWidget(self._p_web(ex))
+        self.stack.addWidget(self._p_web(ex))
+
         self.stack.addWidget(self._p_appearance(theme, accent, ex))
         self.stack.addWidget(self._p_advanced(verify_tls, sched_en, sched_start, sched_stop, ex))
         self.stack.addWidget(self._p_about())
@@ -230,6 +231,7 @@ class SettingsDialogV2(PageBuilderMixin, QDialog):
             "preallocate": self.preallocate.isChecked(),
             "torrent_preview": self.torrent_preview.isChecked(),
             "scrape_trackers": self.scrape_trackers.isChecked(),
+            "fetch_trackers": self.fetch_trackers.isChecked(),
             "seed_enabled": self.seed_enabled.isChecked(),
             "seed_ratio": self.seed_ratio.value(),
             "seed_minutes": self.seed_minutes.value(),

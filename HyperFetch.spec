@@ -28,7 +28,7 @@ hidden = (
     # local modules reached via lazy `import` inside functions
     ['hls', 'downloader', 'queue_manager', 'api_server', 'task', 'utils',
      'crash_reporter', 'updater', 'torrent', 'aria2d', 'yt_dl', 'doh', 'unblock', 'upnp',
-     'history',
+     'history', 'trackers', 'scrape', 'swarm',
      'gui2.dialogs.history', 'gui2.dialogs.queues', 'gui2.dialogs.console',
      'gui2.dialogs.host_rules', 'gui2.dialogs.welcome']
     + crypto_hidden + ytdlp_hidden

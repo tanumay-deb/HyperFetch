@@ -129,6 +129,11 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, Up
         self._scout = scrape.SwarmScout(lambda: self.queue.tasks,
                                         enabled_fn=self._scrape_enabled)
         self._scout.start()
+        # Keep the public tracker list fresh from maintained lists (trackers.py).
+        import trackers
+        self._trackers = trackers.Refresher(
+            enabled_fn=lambda: bool(self._extras.get("fetch_trackers", True)))
+        self._trackers.start()
         # Give a waiting video its title and folder, as a waiting magnet gets
         # its name: a row of "watch.bin" says nothing about what is in the list.
         self._names = yt_dl.NameScout(lambda: self.queue.tasks, self.queue.while_waiting,
@@ -1439,12 +1444,16 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, Up
         bar = getattr(self, "action_bar", None)
         if not bar:
             return
-        bh = bar.sizeHint().height()
         tl = self.list.mapTo(self, QPoint(0, 0))
         lw, lh = self.list.width(), self.list.height()
         right_inset = self.drawer.width() if (hasattr(self, "drawer") and self.drawer.isVisible()) else 0
         margin = 16
         avail = lw - right_inset - 2 * margin
+        # words when they fit beside the drawer, icons when they do not
+        bar.set_compact(False)
+        if bar.sizeHint().width() > avail:
+            bar.set_compact(True)
+        bh = bar.sizeHint().height()
         # never narrower than the bar's real content (sizeHint) — a hardcoded
         # floor truncated button labels ("Resum…") when the sidebar + drawer
         # squeezed the list. May overhang the drawer inset on tiny windows;
@@ -1453,6 +1462,7 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, Up
         x = tl.x() + margin + max(0, (avail - bw) // 2)
         y = tl.y() + lh - bh - margin
         bar.setGeometry(x, y, bw, bh)
+        bar.raise_()                    # over the drawer, should it still overhang
 
     def eventFilter(self, obj, e):
         # The bar is placed beside the details drawer: again as that opens,
@@ -1601,6 +1611,7 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, Up
             if t.status in (T.DOWNLOADING, T.QUEUED):
                 t.request_pause()
         self._scout.stop()
+        self._trackers.stop()
         self._names.stop()
         self.queue.shutdown()
         # stop the shared aria2 daemon we own. It outlives its parent if left
