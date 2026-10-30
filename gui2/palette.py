@@ -268,6 +268,7 @@ QTabBar::tab:hover:!selected {{ color: {c['text']}; }}
 QCheckBox {{ spacing: 8px; background: transparent; }}
 QCheckBox::indicator {{ width: 18px; height: 18px; border-radius: 5px; border: 1px solid {c['border2']}; background: {c['surface2']}; }}
 QCheckBox::indicator:checked {{ background: {c['accent']}; border-color: {c['accent']}; }}
+QCheckBox::indicator:indeterminate {{ background: {c['surface2']}; border: 2px solid {c['accent']}; }}
 
 /* ---------- group cards in settings/dialogs ---------- */
 QFrame#panel {{ background: {c['surface2']}; border: 1px solid {c['border']}; border-radius: 10px; }}

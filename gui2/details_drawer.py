@@ -18,9 +18,9 @@ from PySide6.QtWidgets import (
     QFrame, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QProgressBar,
     QTabWidget, QWidget, QScrollArea, QToolButton, QSizePolicy, QApplication,
     QTableWidget, QTableWidgetItem, QHeaderView, QAbstractItemView, QComboBox, QLineEdit, QFileDialog,
-    QCheckBox
+    QCheckBox, QMenu
 )
-from PySide6.QtCore import Qt, Signal, QPropertyAnimation, QEasingCurve, QPoint, QSize, QTimer
+from PySide6.QtCore import Qt, Signal, QPropertyAnimation, QEasingCurve, QPoint, QSize, QTimer, QEvent
 from PySide6.QtGui import QPainter, QPen, QColor, QPainterPath
 
 import task as T
@@ -827,17 +827,30 @@ class DetailsDrawer(QFrame):
         self.files_table.verticalHeader().setVisible(False)
         self.files_table.setShowGrid(False)
         self.files_table.setSelectionBehavior(QAbstractItemView.SelectRows)
-        self.files_table.setSelectionMode(QAbstractItemView.NoSelection)
+        # rows are picked as in a file list - click, Ctrl/Shift+click,
+        # Shift+arrows, Ctrl+A - and Space or the right-click menu ticks or
+        # unticks them (asked 2026-10-30)
+        self.files_table.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.files_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.files_table.installEventFilter(self)
+        self.files_table.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.files_table.customContextMenuRequested.connect(self._files_menu)
+        # a picked row: the accent a quarter of the way over the surface,
+        # worked out - Qt paints its own blue under a see-through colour, and
+        # the app's solid accent hid the ticked boxes
+        acc, base = QColor(COLORS['accent']), QColor(COLORS['surface'])
+        tint = QColor(*(round(b + (a - b) * 0.24) for a, b in
+                        zip(acc.getRgb()[:3], base.getRgb()[:3]))).name()
         # Name stretches, so there is nothing to scroll to sideways — the bar
         # only ever appeared as a stray strip under the last row.
         self.files_table.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.files_table.setStyleSheet(
             f"QTableWidget {{ background: {COLORS['surface']}; border: 1px solid {COLORS['border']}; border-radius: 6px; }}"
             f"QTableWidget::item {{ border-bottom: 1px solid {COLORS['border']}; padding: 4px; }}"
+            f"QTableWidget::item:selected {{ background: {tint}; color: {COLORS['text']}; }}"
             f"QHeaderView::section {{ background: {COLORS['surface2']}; color: {COLORS['muted']}; border: none; padding: 6px; font-weight: bold; border-bottom: 1px solid {COLORS['border']}; }}"
         )
-        
+
         header = self.files_table.horizontalHeader()
         header.setSectionsClickable(True)
         header.setSortIndicatorShown(True)
@@ -1048,10 +1061,12 @@ class DetailsDrawer(QFrame):
         arrow.setIconSize(QSize(12, 12))
         arrow.setCursor(Qt.PointingHandCursor)
         arrow.setStyleSheet("QToolButton { border: none; background: transparent; }")
+        arrow.setFocusPolicy(Qt.NoFocus)
         arrow.clicked.connect(lambda _=False, k=key: self._fold(k))
         self._fold_arrows[key] = arrow
         self._style_arrow(key)
         cb = QCheckBox()
+        cb.setFocusPolicy(Qt.NoFocus)
         cb.setTristate(True)
         cb.clicked.connect(lambda _=False, k=key: self._tick_folder(k))
         icon = QLabel(); icon.setPixmap(themed_icon("folder", COLORS["warning"]).pixmap(16, 16))
@@ -1173,6 +1188,59 @@ class DetailsDrawer(QFrame):
     def _set_all_files(self, state):
         """Tick or untick every file shown - all of them, or what a search shows."""
         self._set_files(lambda shown, _path: state if shown else None)
+
+    def _picked_files(self):
+        """The files the selected rows stand for: a file's row for itself, a
+        folder's for its files - those a search shows, while there is one."""
+        t = self.files_table
+        rows = {i.row() for i in t.selectionModel().selectedRows()
+                if not t.isRowHidden(i.row())}              # Ctrl+A takes hidden rows too
+        folders = tuple(k + "/" for r, k, _b in getattr(self, "_folder_rows", None) or []
+                        if r in rows)
+        query = self.file_search.text().lower()
+        return {path for r, path in getattr(self, "_file_places", None) or []
+                if r in rows or (path.startswith(folders) and query in path.lower())}
+
+    def _tick_picked(self, on=None):
+        """Tick or untick the selected files at once. None (Space): untick
+        them when all are ticked, else tick them all."""
+        picked = self._picked_files()
+        if not picked:
+            return
+        if on is None:
+            on = not all(cb.isChecked() for (_i, cb, _s), (_r, path)
+                         in zip(self._file_row_widgets, self._file_places) if path in picked)
+        self._set_files(lambda _shown, path: on if path in picked else None)
+
+    def _files_menu(self, pos):
+        """Right-click: tick or untick the selected rows - or the row under
+        the mouse, when it is not one of them."""
+        t = self.files_table
+        row = t.rowAt(pos.y())
+        if row < 0:
+            return
+        if not t.selectionModel().isRowSelected(row):
+            t.selectRow(row)
+        win = self._window()
+        menu = win._menu() if hasattr(win, "_menu") else QMenu(t)    # the cards' look
+        menu.addAction("Check selected", lambda: self._tick_picked(True))
+        menu.addAction("Uncheck selected", lambda: self._tick_picked(False))
+        menu.addAction("Check only selected", self._only_picked)
+        menu.exec(t.viewport().mapToGlobal(pos))
+
+    def _only_picked(self):
+        picked = self._picked_files()
+        if picked:
+            self._set_files(lambda _shown, path: path in picked)
+
+    def eventFilter(self, obj, e):
+        # Space ticks or unticks the selected files (Qt's own Space would
+        # only change which row is current)
+        if (obj is getattr(self, "files_table", None) and e.type() == QEvent.KeyPress
+                and e.key() == Qt.Key_Space and not e.modifiers()):
+            self._tick_picked()
+            return True
+        return super().eventFilter(obj, e)
 
     def _set_files(self, pick):
         """Tick or untick many files at once - pick(shown, path) says what
@@ -1619,6 +1687,7 @@ class DetailsDrawer(QFrame):
                 gap = QWidget(); gap.setFixedSize(16, 16)    # where a folder has its arrow
                 h.addWidget(gap)
             cb = QCheckBox()
+            cb.setFocusPolicy(Qt.NoFocus)     # the table keeps the keys: Space, arrows
             # set state BEFORE connecting, or restoring aria2's own selection
             # would fire _apply_file_selection and push it straight back
             cb.setChecked(selected)
