@@ -33,5 +33,17 @@ def known_seeds(task, now):
     return best
 
 
+def counts(task, now):
+    """(seeds, peers, seeds_in_swarm, peers_in_swarm), as uTorrent shows them:
+    peers are the connections that are not seeds; the swarm totals are what
+    its trackers last said (scrape.py), None when nothing fresh is known."""
+    seeds = int(getattr(task, "tor_seeds", 0) or 0)
+    peers = max(0, int(getattr(task, "tor_conns", 0) or 0) - seeds)
+    at = float(getattr(task, "swarm_at", 0.0) or 0.0)
+    if getattr(task, "swarm_seeds", None) is None or not at or now - at > FRESH_FOR:
+        return seeds, peers, None, None
+    return seeds, peers, int(task.swarm_seeds), int(getattr(task, "swarm_peers", 0) or 0)
+
+
 def is_known_dead(task, now):
     return known_seeds(task, now) == 0

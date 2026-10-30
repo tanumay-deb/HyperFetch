@@ -23,7 +23,7 @@ def test_seeders_are_shown_beside_connections():
     _app()
     s = Sidebar()
     s.set_stats(2_000_000, 49, 1)
-    assert s.lbl_conns.text() == "1 / 49"            # seeds / peers, as on the cards
+    assert s.lbl_conns.text() == "1 / 48"            # seeds / peers not seeding, as on the cards
     assert s.cap_conns.text() == "Seeds / Peers"
     assert "seeder" in s.stats.toolTip()
 

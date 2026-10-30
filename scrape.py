@@ -3,7 +3,8 @@
 A torrent waiting in the queue says nothing about its swarm: aria2 counts
 seeders only once it is running. A tracker's scrape reply does - seeders,
 completed downloads and leechers, for up to 70 torrents in one question - so
-SwarmScout asks the trackers about waiting torrents now and then and writes the
+SwarmScout asks the trackers about waiting torrents now and then (and running
+or seeding ones, whose cards show the swarm's size as uTorrent does) and writes the
 answer onto them (swarm_seeds, swarm_peers, swarm_at). The cards and the
 Seeds/Peers sort show it, and a torrent stuck without seeders gives way only
 to one not known to have none (swarm.py). What starts next is the number
@@ -308,7 +309,7 @@ def trackers_for(task):
 # ---- the scout ---------------------------------------------------------------
 
 class SwarmScout:
-    """Asks trackers about waiting torrents in the background.
+    """Asks trackers about waiting, running and seeding torrents in the background.
 
     A torrent never asked about is asked within TICK seconds; after that every
     EVERY seconds. Its infohashes go to its first MAX_TRACKERS trackers that
@@ -353,7 +354,9 @@ class SwarmScout:
             del self._asked[gone]
         due = []
         for t in tasks:
-            if t.status not in WAITING or not torrent.is_torrent_task(t.url, t.filename):
+            # running and seeding ones too: their cards show the swarm's size
+            asked = t.status in WAITING or t.status == T.DOWNLOADING or getattr(t, "seeding", False)
+            if not asked or not torrent.is_torrent_task(t.url, t.filename):
                 continue
             last = max(self._asked.get(t.id, 0.0), float(getattr(t, "swarm_at", 0.0) or 0.0))
             if last and now - last < EVERY:

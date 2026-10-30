@@ -15,6 +15,7 @@ Two modes:
 """
 import os
 import sys
+import time
 import logging
 
 from datetime import timedelta
@@ -27,6 +28,7 @@ import utils
 import torrent as _torrent
 import web_auth
 import plain_errors
+import swarm
 import yt_dl
 
 # The loopback port the extension and the browser page both reach the app on.
@@ -573,8 +575,10 @@ def create_app(queue, save_dir, pending=None, token=None, pair_requests=None):
             # Same buckets the desktop sidebar groups by, decided in one place
             # so the two never disagree about what counts as a Video.
             "category": utils.category_of(t),
-            "peers": int(getattr(t, "tor_conns", 0) or 0),
-            "seeds": int(getattr(t, "tor_seeds", 0) or 0),
+            # as uTorrent counts: peers are the connections that are not seeds,
+            # the swarm totals what the trackers said (null when they have not)
+            **dict(zip(("seeds", "peers", "swarmSeeds", "swarmPeers"),
+                       swarm.counts(t, time.time()))),
             "upSpeed": int(getattr(t, "tor_upload", 0) or 0),
             "seeding": bool(getattr(t, "seeding", False)),
             "verifying": bool(getattr(t, "verifying", False)),

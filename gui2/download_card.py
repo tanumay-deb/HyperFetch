@@ -14,6 +14,7 @@ from PySide6.QtGui import (
 )
 
 import os
+import time
 
 import plain_errors
 import task as T
@@ -25,17 +26,20 @@ from gui2.palette import COLORS, fpx
 from gui2.graphing import moving_avg, smooth_path
 
 
-def _swarm(t):
-    """"M seeds · N peers" for a torrent card - seeds first, as _scraped says it.
+def _swarm(t, now=None):
+    """"3 seeds (120) · 2 peers (400)" for a torrent card, as uTorrent counts:
+    connected seeds, connected peers that are not seeds, and in brackets how
+    many the trackers say the swarm has (left off when they have not said).
 
     Shown whenever the torrent is live — downloading, still fetching metadata,
     or seeding — and shown even at zero. "0 seeds · 0 peers" is the single most
     useful thing a stalled torrent can tell you; hiding it left "Fetching
     metadata…" looking identical whether the swarm was answering or silent.
     """
-    p = int(getattr(t, "tor_conns", 0) or 0)
-    s = int(getattr(t, "tor_seeds", 0) or 0)
-    return f"{s} seed{'' if s == 1 else 's'} · {p} peer{'' if p == 1 else 's'}"
+    import swarm
+    s, p, ts, tp = swarm.counts(t, time.time() if now is None else now)
+    return (f"{s} seed{'' if s == 1 else 's'}{'' if ts is None else f' ({ts})'}"
+            f" · {p} peer{'' if p == 1 else 's'}{'' if tp is None else f' ({tp})'}")
 
 
 def _scraped(t, now):

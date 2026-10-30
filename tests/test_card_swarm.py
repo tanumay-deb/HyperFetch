@@ -43,19 +43,19 @@ def test_metadata_phase_shows_the_swarm(app):
     found-nobody — the exact question asked of a stalled queue."""
     txt = _sub(app, _tor(total=0, peers=5, seeds=2))
     assert "Fetching metadata" in txt
-    assert "5 peers" in txt and "2 seeds" in txt, txt
+    assert "3 peers" in txt and "2 seeds" in txt, txt
 
 
 def test_downloading_shows_the_swarm(app):
     txt = _sub(app, _tor(total=1000, peers=12, seeds=3))
-    assert "12 peers" in txt and "3 seeds" in txt, txt
+    assert "9 peers" in txt and "3 seeds" in txt, txt
 
 
 def test_seeding_shows_peers_and_seeds(app):
     t = _tor(status=T.COMPLETED, total=1000, peers=4, seeds=1, seeding=True)
     txt = _sub(app, t)
     assert "Seeding" in txt
-    assert "4 peers" in txt and "1 seed" in txt, txt
+    assert "3 peers" in txt and "1 seed" in txt, txt
 
 
 def test_zero_is_shown_not_hidden(app):
@@ -65,14 +65,23 @@ def test_zero_is_shown_not_hidden(app):
 
 
 @pytest.mark.parametrize("p,s,expect", [
-    (1, 1, "1 seed · 1 peer"),
+    (2, 1, "1 seed · 1 peer"),
     (2, 0, "0 seeds · 2 peers"),
-    (0, 3, "3 seeds · 0 peers"),
+    (3, 3, "3 seeds · 0 peers"),
 ])
 def test_singular_and_plural(p, s, expect):
     """Seeds first - the order a waiting torrent's scraped counts are in, so
-    every card reads the same way (they were peers-first on some)."""
+    every card reads the same way (they were peers-first on some). Peers are
+    the connections that are not seeds, as uTorrent counts them."""
     assert _swarm(_tor(peers=p, seeds=s)) == expect
+
+
+def test_the_swarm_totals_go_in_brackets_when_the_trackers_have_said():
+    t = _tor(peers=5, seeds=3)
+    assert _swarm(t, 1000.0) == "3 seeds · 2 peers"
+    t.swarm_seeds, t.swarm_peers, t.swarm_at = 120, 400, 900.0
+    assert _swarm(t, 1000.0) == "3 seeds (120) · 2 peers (400)"
+    assert _swarm(t, 900.0 + 2 * 24 * 3600) == "3 seeds · 2 peers"   # a stale count is not shown
 
 
 # ---- sidebar total ---------------------------------------------------------

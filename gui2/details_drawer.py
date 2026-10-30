@@ -641,7 +641,8 @@ class DetailsDrawer(QFrame):
             self.conns_table.show(); self.conn_empty.hide()
             if is_tor:
                 seeds = getattr(t, "tor_seeds", 0)
-                self.conn_summary.setText(f"{len(rows)} peer(s) · {seeds} seed(s)")
+                self.conn_summary.setText(
+                    f"{seeds} seed(s) · {max(0, len(rows) - seeds)} peer(s)")
             else:
                 live = sum(1 for s in t.segments if not s.complete)
                 self.conn_summary.setText(f"{len(rows)} segment(s) · {live} active")

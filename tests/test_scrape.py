@@ -251,16 +251,21 @@ def _scout(tasks, fn, clock, enabled=True, trackers=("udp://a", "udp://b")):
     return s
 
 
-def test_only_waiting_torrents_are_asked_about():
+def test_torrents_not_finished_are_asked_about():
+    """Waiting ones for the queue; running and seeding ones for the swarm's
+    size on their cards. A finished one that is not seeding, and a web
+    download, are nobody's business."""
     clock = _Clock()
     queued, paused, running = _tor(1), _tor(2, T.PAUSED), _tor(3, T.DOWNLOADING)
+    seeding, done = _tor(4, T.COMPLETED), _tor(5, T.COMPLETED)
+    seeding.seeding = True
     web = T.DownloadTask("https://x.example/a.zip", "a")
     web.status = T.QUEUED
     fn = _Answers()
-    _scout([queued, paused, running, web], fn, clock).run_once()
+    _scout([queued, paused, running, seeding, done, web], fn, clock).run_once()
     asked = {h for _, hs in fn.calls for h in hs}
-    assert asked == {scrape.infohash_bytes(queued.url.split(":")[-1]),
-                     scrape.infohash_bytes(paused.url.split(":")[-1])}
+    assert asked == {scrape.infohash_bytes(t.url.split(":")[-1])
+                     for t in (queued, paused, running, seeding)}
 
 
 def test_the_most_seeders_any_tracker_reports_wins_and_is_kept():

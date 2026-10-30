@@ -478,8 +478,11 @@ function build(d) {
 }
 
 function swarm(d) {
+  // as the app shows it: connected (in the swarm, when the trackers have said)
   const p = d.peers, s = d.seeds;
-  return `${s} seed${s === 1 ? "" : "s"} · ${p} peer${p === 1 ? "" : "s"}`;   // seeds first, as in the app
+  const tot = (n) => (n == null ? "" : ` (${n})`);
+  return `${s} seed${s === 1 ? "" : "s"}${tot(d.swarmSeeds)} · ` +
+         `${p} peer${p === 1 ? "" : "s"}${tot(d.swarmPeers)}`;
 }
 
 function subtitle(d, bps) {
