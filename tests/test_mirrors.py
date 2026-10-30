@@ -64,3 +64,38 @@ def test_the_links_are_saved_with_the_download():
     t = T.DownloadTask("https://a.example/f.bin", "C:/dl/f.bin")
     t.mirrors = ["https://b.example/f.bin"]
     assert T.DownloadTask.from_dict(t.to_dict()).mirrors == ["https://b.example/f.bin"]
+
+
+def test_the_menu_adds_a_checked_link_and_refuses_a_wrong_one(media_server, tmp_path, monkeypatch):
+    """"Add another link…": asked on a thread, taken up on the window's."""
+    import collections
+    import time
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication
+    QApplication.instance() or QApplication([])
+    import gui2.app_actions as A
+
+    data = media_server.put("a/file.bin", _data())
+    media_server.put("b/file.bin", data)
+    media_server.put("c/file.bin", data + b"x")
+    t = T.DownloadTask(media_server.url("a/file.bin"), str(tmp_path / "file.bin"))
+    said, saved = [], []
+
+    class Win:
+        _mirror_checks = collections.deque()
+        _toasts = type("Toasts", (), {"show": lambda self, *a: said.append(a)})()
+        _save_state = lambda self: saved.append(1)
+        _add_mirror = A.ActionsMixin._add_mirror
+        _finish_mirror_checks = A.ActionsMixin._finish_mirror_checks
+
+    w = Win()
+    for link in ("b/file.bin", "c/file.bin"):
+        monkeypatch.setattr(A.QInputDialog, "getText",
+                            staticmethod(lambda *a, u=media_server.url(link): (u, True)))
+        w._add_mirror(t)
+        end = time.monotonic() + 15
+        while not w._mirror_checks and time.monotonic() < end:
+            time.sleep(0.02)
+        w._finish_mirror_checks()
+    assert t.mirrors == [media_server.url("b/file.bin")]
+    assert said[-1][0] == "error" and saved == [1]

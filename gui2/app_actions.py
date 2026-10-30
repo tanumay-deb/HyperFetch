@@ -96,8 +96,7 @@ class ActionsMixin:
         one request to each server - and the answer taken up in refresh()."""
         url, ok = QInputDialog.getText(
             self, "Add another link",
-            "Another link to this same file. Its parts are then fetched
-"
+            "Another link to this same file. Its parts are then fetched "
             "from both servers at once:", QLineEdit.Normal, "")
         url = (url or "").strip()
         if not ok or not url:
