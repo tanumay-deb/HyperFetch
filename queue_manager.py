@@ -310,19 +310,40 @@ class QueueManager:
         the drawer closed: nothing had been told to aria2 for a paused torrent,
         and nothing was passed on the next add either. Reopening the Files tab
         showed everything ticked again.
+
+        A finished torrent given more files is not finished: it runs again,
+        added afresh with a hash check (force_recheck) - aria2 dropped its
+        control file as it completed and refuses the files without one - so
+        only what is not on disk is fetched. Ticking them used to record the
+        choice and nothing more, and the Files tab showed them 100% (2026-10-30).
         """
         with self.cond:
             task = self.get_task(task_id)
             if not task:
                 return
+            rows = getattr(task, "file_progress", None) or []
+            count = len(rows) or len(getattr(task, "files", None) or [])
+            had = _torrent.picked(task.selected_files, count)
             task.selected_files = indices_str or ""
+            more = (task.status == T.COMPLETED
+                    and bool(_torrent.picked(task.selected_files, count) - had))
+            if more:
+                # what it finished with is whole, whatever aria2 last said of it
+                for n, f in enumerate(rows, 1):
+                    if n in had:
+                        f["completed"] = int(f.get("length") or 0)
             gid = getattr(task, "gid", None)
-            if not gid and task.status != T.COMPLETED:
+            if more or (not gid and task.status != T.COMPLETED):
                 # aria2 works these out only while it runs: the card kept the
                 # old size and percent until the next start (2026-10-29)
                 got = _torrent.chosen_totals(task)
                 if got:
                     task.total_size, task.downloaded = got
+            if more:
+                task.force_recheck = True
+                task.log_event("More files chosen")
+                self.run_again(task)            # a seeding run is stopped first
+                return
         if not gid:
             return                       # applied by _rpc_add when it next runs
         try:

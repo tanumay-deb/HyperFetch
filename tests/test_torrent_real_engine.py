@@ -385,3 +385,31 @@ def test_a_file_unticked_while_paused_is_not_fetched(pack, daemon, tmp_path):
     assert t.status == T.COMPLETED, (t.status, t.error)
     assert (out / "Pack" / "first.bin").read_bytes() == pack["payload"][:4 * PIECE]
     assert t.total_size == 4 * PIECE, "aria2 fetched the unticked file too"
+
+
+# ---- files ticked after it finished (reported 2026-10-30) -----------------------
+# Five of ten files down and the torrent Completed; ticking the other five
+# recorded the choice and nothing more. aria2 dropped the control file as the
+# torrent completed, so the files on disk are taken back by a hash check and
+# only the rest is fetched, in the folder the rest already is in.
+def test_files_ticked_after_it_finished_are_fetched(pack, daemon, tmp_path):
+    from queue_manager import QueueManager
+    out = tmp_path / "downloads"
+    out.mkdir()
+    t = T.DownloadTask(pack["torrent"], str(out / "Pack.torrent"))
+    t.selected_files = "1"
+    _run(t)
+    assert t.status == T.COMPLETED, (t.status, t.error)
+    first = out / "Pack" / "first.bin"
+    assert first.read_bytes() == pack["payload"][:4 * PIECE]
+
+    q = QueueManager(queues=[{"name": "Main", "max_concurrent": 1}])
+    q.shutdown()
+    q.tasks.append(t)
+    q.change_torrent_files(t.id, "1,2")             # second.bin ticked
+    assert t.status == T.QUEUED, t.status
+    _run(t)
+    assert t.status == T.COMPLETED, (t.status, t.error)
+    assert (out / "Pack" / "second.bin").read_bytes() == pack["payload"][4 * PIECE:]
+    assert first.read_bytes() == pack["payload"][:4 * PIECE]
+    assert t.total_size == 8 * PIECE

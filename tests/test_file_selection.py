@@ -182,3 +182,64 @@ def test_a_running_one_is_left_to_aria2(monkeypatch):
     monkeypatch.setattr(aria2d, "DAEMON", _D())
     _q_with(t).change_torrent_files(t.id, "1")
     assert (t.total_size, t.downloaded) == (1000, 400)
+
+
+# ---- files ticked after it finished (reported 2026-10-30) ------------------------
+# Five of ten files down and the torrent Completed; ticking the other five
+# recorded the choice and nothing more: nothing ran, and the Files tab showed
+# them at 100%, because a finished torrent's ticked files read whole.
+def _finished(selected):
+    t = _task()
+    t.status = T.COMPLETED
+    t.selected_files = selected
+    # aria2's numbers are read once a minute: these are from before the end
+    t.file_progress = [{"index": n, "path": "f%d" % n, "length": 100, "completed": c,
+                        "selected": True} for n, c in ((1, 40), (2, 100), (3, 0), (4, 0))]
+    t.total_size = t.downloaded = 200
+    return t
+
+
+def test_files_ticked_after_it_finished_are_fetched():
+    t = _finished("1,2")
+    q = _q_with(t)
+    q.change_torrent_files(t.id, "1-4")
+    assert t.status == T.QUEUED and t in q._heap
+    # aria2 dropped its control file as it completed, and takes the files
+    # back only through a hash check: without one it refuses them
+    assert t.force_recheck
+    assert (t.total_size, t.downloaded) == (400, 200)
+
+
+def test_the_files_tab_shows_them_at_what_they_have():
+    from gui2.details_drawer import DetailsDrawer
+    t = _finished("1,2")
+    _q_with(t).change_torrent_files(t.id, "1-4")
+    assert [c for _rel, _len, c, _sel in DetailsDrawer._live_file_entries(t)] == [100, 100, 0, 0]
+
+
+def test_unticking_files_of_a_finished_one_fetches_nothing():
+    t = _finished("1,2")
+    q = _q_with(t)
+    q.change_torrent_files(t.id, "2")
+    assert t.status == T.COMPLETED and not getattr(t, "force_recheck", False)
+    assert t not in q._heap
+
+
+def test_a_seeding_one_is_stopped_first(monkeypatch):
+    """Its run still polls aria2: the queue stops it and starts the new one
+    when it has ended (run_again). The old registration is not told the new
+    choice - the new run drops it and adds the torrent afresh."""
+    t = _finished("1,2")
+    t.gid = "seedgid"
+    t._worker_alive = True
+    sent = []
+
+    class _D:
+        def call(self, method, *params, **kw):
+            sent.append(method)
+            return {}
+
+    monkeypatch.setattr(aria2d, "DAEMON", _D())
+    _q_with(t).change_torrent_files(t.id, "1-4")
+    assert t.pause_requested and t._run_again
+    assert sent == []
