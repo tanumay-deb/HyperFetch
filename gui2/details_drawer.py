@@ -657,6 +657,15 @@ class DetailsDrawer(QFrame):
             elif t.status == T.DOWNLOADING:
                 self.conn_summary.setText("")
                 self.conn_empty.setText("Connecting…")
+            elif getattr(t, "seeding", False):
+                # it said "Resume the download" (2026-10-30)
+                self.conn_summary.setText("")
+                self.conn_empty.setText(
+                    "Seeding — nobody is downloading from you right now.\n"
+                    "Peers that still need pieces show here, with how fast you send to them.")
+            elif t.status == T.COMPLETED:
+                self.conn_summary.setText("")
+                self.conn_empty.setText("Finished — not connected to anyone.")
             else:
                 self.conn_summary.setText("")
                 self.conn_empty.setText("Resume the download to see connections.")

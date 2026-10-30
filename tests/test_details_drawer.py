@@ -143,6 +143,29 @@ def test_a_seed_reads_100_percent(monkeypatch):
     assert [(label.endswith("seed"), pct) for label, pct, *_ in rows] == [(True, 100), (False, 50)]
 
 
+def test_a_finished_torrent_with_nobody_connected_says_why(monkeypatch):
+    """Seeding with nobody downloading from it, the tab said "Resume the
+    download to see connections" (asked 2026-10-30: why can't we see whom we
+    seed to?) - and so did a finished torrent that is not seeding."""
+    import aria2d
+
+    class _Daemon:
+        def call(self, method, *a, **kw):
+            return []
+
+    monkeypatch.setattr(aria2d, "DAEMON", _Daemon())
+    QApplication.instance() or QApplication([])
+    host = QWidget()
+    drawer = DetailsDrawer(host)
+    t = T.DownloadTask("magnet:?xt=urn:btih:abc", "C:/dl/x")
+    t.status, t.seeding, t.gid = T.COMPLETED, True, "gid1"
+    drawer._fill_conns(t, True)
+    assert drawer.conn_empty.text().startswith("Seeding"), drawer.conn_empty.text()
+    t.seeding, t.gid = False, None
+    drawer._fill_conns(t, True)
+    assert drawer.conn_empty.text().startswith("Finished"), drawer.conn_empty.text()
+
+
 def test_a_peer_says_how_much_it_has(monkeypatch):
     """Asked 2026-09-30, how much of a torrent each peer holds - in bytes, and
     its percent counted over the torrent's own pieces, not the padded field
