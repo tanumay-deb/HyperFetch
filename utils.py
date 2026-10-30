@@ -407,7 +407,7 @@ SENSITIVE_HEADERS = {"cookie", "authorization", "proxy-authorization"}
 
 # The app version, kept here rather than in gui.theme so the headless server
 # can report it without importing PySide6.
-APP_VERSION = "2.8.5"
+APP_VERSION = "2.8.6"
 
 # The brand line. The About page shows this; the site (docs/index.html), the
 # README and the extension's welcome page say the same words by hand -
