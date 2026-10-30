@@ -115,17 +115,39 @@ class ActionsMixin:
 
     def _finish_mirror_checks(self):
         """Links checked on their threads, taken up on the window's own thread."""
+        import downloader
         while self._mirror_checks:
             t, url, why = self._mirror_checks.popleft()
             if why:
                 self._toasts.show("error", "Link not added", why)
                 continue
-            t.mirrors = list(getattr(t, "mirrors", None) or []) + [url]
+            old = list(getattr(t, "mirrors", None) or [])
+            if url in old:          # the same link pasted twice while both were checked
+                continue
+            if not t.supports_range:
+                self._toasts.show("error", "Link not added",
+                                  "The first link's server sends the file only whole, "
+                                  "so it cannot be shared between links.")
+                continue
+            t.mirrors = old + [url]
             host = urllib.parse.urlsplit(url).hostname or url
-            t.log_event(f"Added a link at {host}: parts now come from "
-                        f"{len(t.mirrors) + 1} servers")
-            self._toasts.show("success", "Link added",
-                              f"Parts of “{t.filename}” now also come from {host}.")
+            if t.segments:
+                one = len(t.segments) == 1
+            elif t.total_size > 0:  # not started: as it will split (Settings' cap too)
+                segs = min(self.queue.segments, utils.MAX_CONNECTIONS or self.queue.segments)
+                one = downloader.parts_for(t.total_size, segs) == 1
+            else:
+                one = False
+            if one:
+                t.log_event(f"Added a link at {host}: kept for if the first link expires "
+                            "(this download uses one connection)")
+                self._toasts.show("success", "Link added",
+                                  f"{host} takes over “{t.filename}” if its first link expires.")
+            else:
+                t.log_event(f"Added a link at {host}: parts now come from "
+                            f"{len(t.mirrors) + 1} servers")
+                self._toasts.show("success", "Link added",
+                                  f"Parts of “{t.filename}” now also come from {host}.")
             self._save_state()
 
     def _rename_task(self, t):

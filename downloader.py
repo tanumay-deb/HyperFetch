@@ -86,6 +86,9 @@ MAX_RETRIES = 5        # per-segment attempts before the task errors
 PUSHBACK_WAIT = 0.25
 PUSHBACK_WINDOW = 1.0
 PUSHBACK_LAG = 0.1
+# an extra link (task.mirrors) that hands back this many parts without having
+# served a byte is dropped: it refuses us or is down, not merely busy
+HANDED_BACK_MAX = 3
 STAGGER = 0.01         # delay between segment thread starts (rate-limit friendly)
 
 # Process-wide cap on concurrent segment connections across ALL downloads.
@@ -128,6 +131,18 @@ def probe_info(url, headers=None):
         except (requests.RequestException, ValueError):
             pass
     return info
+
+
+def parts_for(total, segments):
+    """How many parts a file of `total` bytes is fetched in; `segments` 0 = by its size."""
+    if segments == 0:
+        mb = total / (1024 * 1024)
+        if mb < 10: return 1
+        elif mb < 100: return 4
+        elif mb < 1000: return 8
+        elif mb < 5000: return 16
+        return 32
+    return min(segments, max(1, total // (1024 * 1024) or 1))
 
 
 class MirrorMismatch(Exception):
@@ -216,10 +231,14 @@ class Downloader:
         self._max_conns = max(1, self.num_segments)
         self._conn_cap = self._max_conns
         self._streaming = 0             # connections whose response was accepted
-        self._stream_ended = float("-inf")  # when the last of them ended
-        self._ends = collections.deque(maxlen=64)  # when the latest of them ended
+        self._link_streams = collections.Counter()  # the same, by link
+        self._served = set()            # links that have streamed to us this run
+        self._stream_ended = {}         # link -> when the last of its streams ended
+        self._ends = collections.deque(maxlen=64)  # (link, when) of the latest ends
         self._link_ok = False           # the link has served us in this run
-        self._dead = set()              # extra links dropped in this run
+        self._dead = set()              # links dropped in this run
+        self._to_own = set()            # segments an extra link was too busy for
+        self._handed = collections.Counter()  # parts each extra link handed back
         # one keep-alive session for this download's probe + all segment threads.
         # Auto mode (num_segments==0) can fan out to 32 segments, so size for that.
         self._session = _make_session(max(8, self.num_segments or 32))
@@ -267,16 +286,18 @@ class Downloader:
                 self._max_conns += 1
                 self._conn_cv.notify_all()
 
-    def _streams(self, n):
+    def _streams(self, n, src):
         with self._conn_cv:
             self._streaming += n
+            self._link_streams[src] += n
             if n > 0:
-                self._link_ok = True
+                self._served.add(src)
+                self._link_ok |= src == self.url
             else:
-                self._stream_ended = time.monotonic()
-                self._ends.append(self._stream_ended)
+                self._stream_ended[src] = time.monotonic()
+                self._ends.append((src, self._stream_ended[src]))
 
-    def _pushed_back(self, sent):
+    def _pushed_back(self, sent, src):
         """A request was refused - 403, 429 or a reset - before it got going.
         `sent`: when it went out (time.monotonic()).
 
@@ -303,7 +324,8 @@ class Downloader:
         with a 15.6 ms clock, as on Windows. Now in none of 300.
 
         False when nothing is streaming or just ended: then it is the link's
-        answer.
+        answer. Only `src`'s own streams say so: while an extra link (task.mirrors)
+        streams, an expired first link must still read as expired.
 
         Measured on a stand-in CDN serving two connections, before this:
         refused with a reset, halving and backing off took twice as long as
@@ -311,11 +333,12 @@ class Downloader:
         """
         with self._conn_cv:
             now = time.monotonic()
-            if self._streaming <= 0 and now - self._stream_ended >= PUSHBACK_WINDOW:
+            if (self._link_streams[src] <= 0
+                    and now - self._stream_ended.get(src, float("-inf")) >= PUSHBACK_WINDOW):
                 return False
             held = self._streaming
             if now - sent < PUSHBACK_WINDOW:    # a timeout tells nothing of that
-                held += sum(1 for t in self._ends if t >= sent - PUSHBACK_LAG)
+                held += sum(1 for s, t in self._ends if s == src and t >= sent - PUSHBACK_LAG)
             self._max_conns = max(1, min(self._max_conns, held))
             return True
 
@@ -463,15 +486,7 @@ class Downloader:
             self.t.segments = [seg]
             return
 
-        if self.num_segments == 0:
-            mb = self.t.total_size / (1024 * 1024)
-            if mb < 10: n = 1
-            elif mb < 100: n = 4
-            elif mb < 1000: n = 8
-            elif mb < 5000: n = 16
-            else: n = 32
-        else:
-            n = min(self.num_segments, max(1, self.t.total_size // (1024 * 1024) or 1))
+        n = parts_for(self.t.total_size, self.num_segments)
 
         part = self.t.total_size // n
         segs = []
@@ -490,9 +505,15 @@ class Downloader:
         the next part asked for, and a dropped one is passed over."""
         if self._media or not self.t.supports_range:
             return self.url
-        live = [self.url] + [m for m in getattr(self.t, "mirrors", None) or []
-                             if m not in self._dead]
-        return live[seg.index % len(live)]
+        own = self.url not in self._dead
+        if own and seg.index in self._to_own:
+            return self.url
+        live = [self.url] * own + self._mirrors_left()
+        return live[seg.index % len(live)] if live else self.url
+
+    def _mirrors_left(self, but=None):
+        return [m for m in getattr(self.t, "mirrors", None) or []
+                if m not in self._dead and m != but]
 
     def _drop_mirror(self, url, why):
         if url not in self._dead:
@@ -549,7 +570,7 @@ class Downloader:
                                 or cr.rpartition("/")[2] != str(self.t.total_size)):
                             raise MirrorMismatch(f"answered {r.status_code} {cr or 'without a range'}")
                     accepted = True
-                    self._streams(+1)
+                    self._streams(+1, src)
                     try:
                         self._grow_conns()          # stream accepted -> ramp up one more slot
                         self._capture_response(r)   # for the drawer's Headers tab
@@ -570,17 +591,32 @@ class Downloader:
                                     f.flush()
                                     seg.downloaded += len(chunk)
                     finally:
-                        self._streams(-1)
+                        self._streams(-1, src)
                 return
             except (requests.RequestException, MirrorMismatch) as e:
-                if src != self.url:
-                    # an extra link that fails is dropped, never the download:
-                    # its part goes on from the next link at once
-                    self._drop_mirror(src, e)
-                    continue
                 resp = getattr(e, "response", None)
                 code = resp.status_code if resp is not None else None
-                if not accepted and code in (403, 429, None) and self._pushed_back(sent):
+                if src != self.url:
+                    busy = not isinstance(e, MirrorMismatch) and code in (403, 429, None)
+                    if busy and not self._link_streams[src] and src not in self._served:
+                        self._handed[src] += 1
+                    if self._handed[src] >= HANDED_BACK_MAX:
+                        busy = False        # it never works: refusing us, or down
+                    if busy and self.url not in self._dead:
+                        # most likely the extra link's own cap on connections:
+                        # this part goes to the first link, the extra one keeps
+                        # the others
+                        self._to_own.add(seg.index)
+                        log.debug("seg %d: extra link busy (%s), back to the first link",
+                                  seg.index, code or "reset")
+                        continue
+                    if not busy or self._mirrors_left(but=src):
+                        # an extra link that fails is dropped, never the download:
+                        # its part goes on from the next link at once
+                        self._drop_mirror(src, e)
+                        continue
+                    # the only link left: retried below like the first one
+                if not accepted and code in (403, 429, None) and self._pushed_back(sent, src):
                     # the server's limit, not the link's (see _pushed_back):
                     # the range waits a moment, then for a slot at the gate,
                     # and that is not one of its retries
@@ -597,6 +633,11 @@ class Downloader:
                 # client errors won't succeed on retry — fail fast with an
                 # actionable message (no wasted retry/backoff on a 404/410/403).
                 elif code is not None and 400 <= code < 500 and code not in (408, 429):
+                    if (src == self.url and code in (403, 410) and not self._media
+                            and self.t.supports_range and self._mirrors_left()):
+                        # the first link expired: the extra links serve the rest
+                        self._drop_mirror(self.url, f"HTTP {code}")
+                        continue
                     if not self.t.cancel_requested:
                         self.t.status = T.ERROR
                         if code in (403, 410) and self._media:

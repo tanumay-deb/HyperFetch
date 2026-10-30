@@ -99,3 +99,104 @@ def test_the_menu_adds_a_checked_link_and_refuses_a_wrong_one(media_server, tmp_
         w._finish_mirror_checks()
     assert t.mirrors == [media_server.url("b/file.bin")]
     assert said[-1][0] == "error" and saved == [1]
+
+
+def test_a_busy_extra_link_hands_that_part_back_and_is_kept(media_server, tmp_path):
+    """Mirror sites cap connections a visitor: "too many" is not a dead link."""
+    data = media_server.put("a/file.bin", _data(8 * 1024 * 1024))
+    media_server.put("b/file.bin", data)
+    media_server.limit, media_server.rate = 3, 4 * 1024 * 1024
+    t = T.DownloadTask(media_server.url("a/file.bin"), str(tmp_path / "file.bin"))
+    t.mirrors = [media_server.url("b/file.bin")]
+    Downloader(t, segments=8).run()
+    assert t.status == T.COMPLETED, (t.status, t.error)
+    assert open(t.save_path, "rb").read() == data
+    assert media_server.stats["refused"], "the cap must have been met"
+    assert not any("Stopped using" in e["message"] for e in t.events)
+
+
+def test_when_the_first_link_expires_the_extra_link_serves_the_rest(media_server, tmp_path):
+    data = media_server.put("a/file.bin", _data())
+    media_server.put("b/file.bin", data)
+    media_server.forbid_range.add("a/file.bin")         # every part asked of it: 403
+    t = T.DownloadTask(media_server.url("a/file.bin"), str(tmp_path / "file.bin"))
+    t.mirrors = [media_server.url("b/file.bin")]
+    Downloader(t, segments=8).run()
+    assert t.status == T.COMPLETED, (t.status, t.error)
+    assert open(t.save_path, "rb").read() == data
+
+
+def test_a_link_pasted_twice_is_added_once_and_one_connection_is_said(tmp_path):
+    import collections
+    import gui2.app_actions as A
+    said = []
+
+    class Win:
+        _toasts = type("Toasts", (), {"show": lambda self, *a: said.append(a)})()
+        _save_state = lambda self: None
+        _finish_mirror_checks = A.ActionsMixin._finish_mirror_checks
+
+    t = T.DownloadTask("https://a.example/f.bin", str(tmp_path / "f.bin"))
+    t.segments = [T.Segment(0, 0, 99)]
+    w = Win()
+    w._mirror_checks = collections.deque([(t, "https://b.example/f.bin", None)] * 2)
+    w._finish_mirror_checks()
+    assert t.mirrors == ["https://b.example/f.bin"]
+    assert len(said) == 1 and "expires" in said[0][2]
+    t.supports_range = False
+    w._mirror_checks.append((t, "https://c.example/f.bin", None))
+    w._finish_mirror_checks()
+    assert t.mirrors == ["https://b.example/f.bin"] and said[-1][0] == "error"
+
+
+def test_an_extra_links_streams_do_not_make_the_first_links_403_a_busy_server():
+    """A 403 from the first link while only an extra link streams is the
+    first link's own answer (expired), not its server being full."""
+    import time
+    t = T.DownloadTask("https://a.example/f.bin", "C:/dl/f.bin")
+    t.mirrors = ["https://b.example/f.bin"]
+    d = Downloader(t, segments=8)
+    d._streams(+1, "https://b.example/f.bin")
+    assert not d._pushed_back(time.monotonic(), t.url)
+    assert d._pushed_back(time.monotonic(), "https://b.example/f.bin")
+    d._streams(+1, t.url)
+    assert d._pushed_back(time.monotonic(), t.url)
+
+
+def test_an_extra_link_that_refuses_every_part_is_dropped(media_server, tmp_path):
+    data = media_server.put("a/file.bin", _data(8 * 1024 * 1024))
+    media_server.put("b/file.bin", data)
+    media_server.forbid_range.add("b/file.bin")
+    t = T.DownloadTask(media_server.url("a/file.bin"), str(tmp_path / "file.bin"))
+    t.mirrors = [media_server.url("b/file.bin")]
+    Downloader(t, segments=8).run()
+    assert t.status == T.COMPLETED, (t.status, t.error)
+    assert open(t.save_path, "rb").read() == data
+    assert any("Stopped using" in e["message"] for e in t.events)
+
+
+def test_before_it_starts_the_message_follows_how_the_file_will_split(tmp_path, monkeypatch):
+    import collections
+    import gui2.app_actions as A
+    said = []
+
+    class Win:
+        queue = type("Q", (), {"segments": 8})()
+        _toasts = type("Toasts", (), {"show": lambda self, *a: said.append(a)})()
+        _save_state = lambda self: None
+        _finish_mirror_checks = A.ActionsMixin._finish_mirror_checks
+
+    w = Win()
+    for size, words in ((500 * 1024, "expires"), (100 * 1024 * 1024, "also come from")):
+        t = T.DownloadTask("https://a.example/f.bin", str(tmp_path / "f.bin"))
+        t.total_size = size
+        w._mirror_checks = collections.deque([(t, "https://b.example/f.bin", None)])
+        w._finish_mirror_checks()
+        assert words in said[-1][2]
+    import utils
+    monkeypatch.setattr(utils, "MAX_CONNECTIONS", 1)     # Settings' cap: one connection
+    t = T.DownloadTask("https://a.example/f.bin", str(tmp_path / "f.bin"))
+    t.total_size = 100 * 1024 * 1024
+    w._mirror_checks = collections.deque([(t, "https://b.example/f.bin", None)])
+    w._finish_mirror_checks()
+    assert "expires" in said[-1][2]
