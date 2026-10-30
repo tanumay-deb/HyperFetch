@@ -11,6 +11,7 @@ import logging
 import collections
 import tempfile
 import threading
+import urllib.parse
 
 log = logging.getLogger("hyperfetch.downloader")
 
@@ -129,6 +130,43 @@ def probe_info(url, headers=None):
     return info
 
 
+class MirrorMismatch(Exception):
+    """A second link answered with something other than this file's bytes."""
+
+
+def check_mirror(t, url):
+    """None when `url` can serve this download's file in parts, else why not.
+
+    Asked before a link is added (one ranged GET of one byte): it must take
+    ranges and say the same total size as the download. Same size is not proof
+    of the same bytes; the engine checks every answer's size again, and a
+    .sha256 check (Settings) catches the rest."""
+    if not url.lower().startswith(("http://", "https://")):
+        return "Only http:// and https:// links can be added."
+    if url == t.url or url in (getattr(t, "mirrors", None) or []):
+        return "That link is already used by this download."
+    if not (t.total_size > 0 and t.supports_range):
+        # not started yet, or a server that cannot send parts: ask the first link
+        info = probe_info(t.url, getattr(t, "headers", None))
+        size = info["size"]
+        if not size:
+            return "The download's own link does not say how big the file is."
+    else:
+        size = t.total_size
+    try:
+        with requests.get(url, headers={**HEADERS, "Range": "bytes=0-0"}, stream=True,
+                          allow_redirects=True, timeout=CONNECT_TIMEOUT,
+                          verify=utils.VERIFY_TLS, proxies=utils.PROXIES) as r:
+            total = r.headers.get("Content-Range", "").rpartition("/")[2]
+            if r.status_code != 206:
+                return f"That server cannot send parts of the file (HTTP {r.status_code})."
+    except requests.RequestException as e:
+        return f"That link did not answer: {e.__class__.__name__}."
+    if not total.isdigit() or int(total) != size:
+        return "That link's file is not the same size as this one: not the same file."
+    return None
+
+
 def discard_partial(t):
     """Forget a task's partial download: its temp file and its segments."""
     utils.remove_temp(utils.temp_download_path(t))
@@ -181,6 +219,7 @@ class Downloader:
         self._stream_ended = float("-inf")  # when the last of them ended
         self._ends = collections.deque(maxlen=64)  # when the latest of them ended
         self._link_ok = False           # the link has served us in this run
+        self._dead = set()              # extra links dropped in this run
         # one keep-alive session for this download's probe + all segment threads.
         # Auto mode (num_segments==0) can fan out to 32 segments, so size for that.
         self._session = _make_session(max(8, self.num_segments or 32))
@@ -444,6 +483,24 @@ class Downloader:
         self.t.segments = segs
 
     # ------------------------------------------------------------- workers
+    def _source_for(self, seg):
+        """The link this segment is fetched from: the extra links the user
+        added (task.mirrors) take segments in turn with the download's own
+        one. Read at every request, so a link added while it runs is used for
+        the next part asked for, and a dropped one is passed over."""
+        if self._media or not self.t.supports_range:
+            return self.url
+        live = [self.url] + [m for m in getattr(self.t, "mirrors", None) or []
+                             if m not in self._dead]
+        return live[seg.index % len(live)]
+
+    def _drop_mirror(self, url, why):
+        if url not in self._dead:
+            self._dead.add(url)
+            host = urllib.parse.urlsplit(url).hostname or "?"
+            self.t.log_event(f"Stopped using the link at {host}: {why}", level="WARNING")
+            log.warning("mirror %s dropped for %s: %s", host, self.t.filename, why)
+
     def _worker(self, seg):
         """Stream one segment, writing directly to the pre-allocated .hfdownload file."""
         temp_path = utils.temp_download_path(self.t)
@@ -468,6 +525,10 @@ class Downloader:
                     mode = "wb"
                     seg.downloaded = 0
 
+            src = self._source_for(seg)
+            if src != self.url:
+                # the browser's cookies and referer are for the first link's site
+                headers = {**HEADERS, "Range": headers["Range"]}
             if not self._acquire_conn():
                 return  # paused while waiting for a connection slot
             retry_exc = None
@@ -477,10 +538,16 @@ class Downloader:
             try:
                 # with-block guarantees the response/socket closes on every
                 # path — incl. raise_for_status() failures and mid-stream errors
-                with self._session.get(self.url, headers=headers, stream=True,
+                with self._session.get(src, headers=headers, stream=True,
                                   allow_redirects=True, timeout=CONNECT_TIMEOUT,
                                   verify=utils.VERIFY_TLS, proxies=utils.PROXIES) as r:
                     r.raise_for_status()
+                    if src != self.url:
+                        # only the very bytes asked for, of a file this size
+                        cr = r.headers.get("Content-Range", "")
+                        if (r.status_code != 206 or not cr.startswith(f"bytes {start}-")
+                                or cr.rpartition("/")[2] != str(self.t.total_size)):
+                            raise MirrorMismatch(f"answered {r.status_code} {cr or 'without a range'}")
                     accepted = True
                     self._streams(+1)
                     try:
@@ -505,7 +572,12 @@ class Downloader:
                     finally:
                         self._streams(-1)
                 return
-            except requests.RequestException as e:
+            except (requests.RequestException, MirrorMismatch) as e:
+                if src != self.url:
+                    # an extra link that fails is dropped, never the download:
+                    # its part goes on from the next link at once
+                    self._drop_mirror(src, e)
+                    continue
                 resp = getattr(e, "response", None)
                 code = resp.status_code if resp is not None else None
                 if not accepted and code in (403, 429, None) and self._pushed_back(sent):

@@ -144,6 +144,7 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, Up
         # before anything can refresh(): _restore_window does, for a saved
         # filter (2.8.2 died on start without it)
         self._moves = deque()       # (task, target, folder, error) from move threads
+        self._mirror_checks = deque()   # (task, link, why not) from link checks
         # Firefox installs asking to pair, and the ones allowed (pairing.py).
         # The server records the asking; refresh() puts the question.
         self.pair_requests = pairing.PairRequests(
@@ -766,6 +767,7 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, Up
     def refresh(self):
         self._drain_pending()
         self._finish_moves()
+        self._finish_mirror_checks()
         bar = getattr(self, "action_bar", None)
         if bar is not None and bar.isVisible():   # statuses change under a selection
             self._update_action_bar(self.list.selected_ids())

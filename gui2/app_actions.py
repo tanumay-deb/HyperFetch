@@ -4,6 +4,8 @@
 calls. Mixed into `DownloadAppV2`; runs on the live window via `self`.
 """
 import os
+import threading
+import urllib.parse
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QMenu, QInputDialog, QLineEdit, QApplication
@@ -12,6 +14,7 @@ import task as T
 import utils
 import torrent as _torrent
 import yt_dl
+import hls
 from gui.icons import themed_icon
 from gui2 import palette
 
@@ -86,6 +89,45 @@ class ActionsMixin:
             self.queue.resume_task(t)
             self._save_state()
             self.refresh()
+
+    def _add_mirror(self, t):
+        """Another link to the same file: its parts are then fetched from both
+        (downloader.check_mirror, Downloader._source_for). Checked on a thread -
+        one request to each server - and the answer taken up in refresh()."""
+        url, ok = QInputDialog.getText(
+            self, "Add another link",
+            "Another link to this same file. Its parts are then fetched
+"
+            "from both servers at once:", QLineEdit.Normal, "")
+        url = (url or "").strip()
+        if not ok or not url:
+            return
+        self._toasts.show("info", "Checking the link", "Asking that server for the file's size…")
+
+        def check():
+            import downloader
+            try:
+                why = downloader.check_mirror(t, url)
+            except Exception as e:          # never lose the answer to a crash
+                why = f"Could not check it: {e}"
+            self._mirror_checks.append((t, url, why))
+
+        threading.Thread(target=check, daemon=True, name="check-mirror").start()
+
+    def _finish_mirror_checks(self):
+        """Links checked on their threads, taken up on the window's own thread."""
+        while self._mirror_checks:
+            t, url, why = self._mirror_checks.popleft()
+            if why:
+                self._toasts.show("error", "Link not added", why)
+                continue
+            t.mirrors = list(getattr(t, "mirrors", None) or []) + [url]
+            host = urllib.parse.urlsplit(url).hostname or url
+            t.log_event(f"Added a link at {host}: parts now come from "
+                        f"{len(t.mirrors) + 1} servers")
+            self._toasts.show("success", "Link added",
+                              f"Parts of “{t.filename}” now also come from {host}.")
+            self._save_state()
 
     def _rename_task(self, t):
         """Change the display name — and the file on disk when it's completed.
@@ -419,6 +461,9 @@ class ActionsMixin:
                 m.addAction(ico("link"), "Refresh Address", lambda: self._refresh_address(t))
         if t.status in (T.QUEUED, T.PAUSED, T.SCHEDULED, T.ERROR):
             m.addAction(ico("force"), "Force Download", lambda: self._do(self.queue.force_start, t))
+        if (t.status != T.COMPLETED and not is_tor and not yt_dl.is_ytdlp_task(t)
+                and not hls.is_hls(t.url, t.filename)):
+            m.addAction(ico("link"), "Add another link…", lambda: self._add_mirror(t))
         if t.status != T.COMPLETED:
             sl = m.addMenu("Set Speed Limit")
             for label, bps in (("Unlimited", 0), ("100 Kb/s", 100 * 1000 // 8),

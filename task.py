@@ -256,6 +256,7 @@ class DownloadTask:
         # paused one goes on where its bytes are, whatever the setting says.
         self.unfinished_in = ""
         self.temp_path = ""         # where its .hfdownload is (utils.temp_download_path)
+        self.mirrors = []           # more links to the same file (downloader.check_mirror)
         # Which files of a torrent to fetch, as aria2's 1-based select-file
         # list ("1,3,5"); "" means all. Persisted, so unticking survives a
         # pause, a restart, and the drawer being closed.
@@ -423,6 +424,7 @@ class DownloadTask:
             "in_order": bool(self.in_order),
             "unfinished_in": self.unfinished_in or "",
             "temp_path": self.temp_path or "",
+            "mirrors": list(self.mirrors or []),
             "selected_files": self.selected_files,
             "sort_base": self.sort_base,
             "is_scheduled": getattr(self, "is_scheduled", False),
@@ -484,6 +486,7 @@ class DownloadTask:
                             if isinstance(x, str) and x.strip()]
         t.unfinished_in = str(d.get("unfinished_in") or "")
         t.temp_path = str(d.get("temp_path") or "")
+        t.mirrors = [str(m) for m in d.get("mirrors") or [] if isinstance(m, str)]
         t.files = []
         for f in d.get("files") or []:         # a damaged entry is dropped, not fatal
             try:
