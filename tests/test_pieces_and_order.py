@@ -55,7 +55,10 @@ def _engine(t):
     return e
 
 
-def test_the_head_is_moved_only_at_the_window_edge_and_given_back_when_off():
+def test_the_head_is_moved_only_at_the_window_edge_and_given_back_when_off(monkeypatch):
+    # one instant: back-to-back calls would read 16 MiB in microseconds as a
+    # huge speed on Linux's fine clock (Windows' 15.6 ms one read 0)
+    monkeypatch.setattr(torrent.time, "monotonic", lambda: 1000.0)
     t = _tor("0000", [["movie.mkv", 64 * MiB]])
     t.in_order = True
     e, d = _engine(t), _Daemon()
