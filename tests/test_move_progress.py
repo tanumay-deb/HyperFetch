@@ -92,6 +92,46 @@ def test_a_copy_that_fails_leaves_the_source_whole(tmp_path, monkeypatch):
     assert (src / "e2.mkv").read_bytes() == DATA
 
 
+def test_a_file_that_arrives_while_it_copies_is_not_written_over(tmp_path, monkeypatch):
+    """A download of the same name finished in that folder while the move
+    copied there, and the move's replace wrote over it (2026-11-01)."""
+    _other_drive(monkeypatch)
+    src, dst = tmp_path / "a.bin", tmp_path / "out" / "a.bin"
+    src.write_bytes(DATA)
+    dst.parent.mkdir()
+
+    def meanwhile(n):
+        if not dst.exists():
+            dst.write_bytes(b"finished meanwhile")
+
+    with pytest.raises(FileExistsError):
+        utils.move_with_progress(str(src), str(dst), meanwhile, chunk=1024 * 1024)
+    assert dst.read_bytes() == b"finished meanwhile"
+    assert src.read_bytes() == DATA, "the source went"
+    assert os.listdir(dst.parent) == ["a.bin"], "the staged copy was left"
+
+
+def test_a_folder_that_arrives_while_it_copies_is_left_alone(tmp_path, monkeypatch):
+    """It was copied INTO that folder, and a failure then removed the lot."""
+    _other_drive(monkeypatch)
+    src = tmp_path / "Show"
+    src.mkdir()
+    (src / "e1.mkv").write_bytes(DATA)
+    dst = tmp_path / "out" / "Show"
+    (tmp_path / "out").mkdir()
+
+    def meanwhile(n):
+        if not dst.exists():
+            dst.mkdir()
+            (dst / "theirs.mkv").write_bytes(b"theirs")
+
+    with pytest.raises(FileExistsError):
+        utils.move_with_progress(str(src), str(dst), meanwhile, chunk=1024 * 1024)
+    assert _tree(dst) == ["theirs.mkv"] and (dst / "theirs.mkv").read_bytes() == b"theirs"
+    assert _tree(src) == ["e1.mkv"]
+    assert os.listdir(tmp_path / "out") == ["Show"], "the staged copy was left"
+
+
 # ---- the window ---------------------------------------------------------------------
 @pytest.fixture
 def window(monkeypatch, tmp_path):

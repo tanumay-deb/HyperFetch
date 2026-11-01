@@ -109,9 +109,6 @@ class SettingsMixin:
                  or palette.ACCENTS.get(v["accent"]) != palette.COLORS["accent"]
                  or v.get("font_size", "Medium") != self._extras.get("font_size", "Medium"))
         self.theme = v["theme"]
-        import downloader
-        if hasattr(downloader._GLOBAL_CONNS, "set_limit"):
-            downloader._GLOBAL_CONNS.set_limit(self.max_concurrent * self.segments)
         apply_theme(self.theme)
         palette.set_theme(self.theme)
         palette.set_accent(v["accent"])
@@ -233,12 +230,13 @@ class SettingsMixin:
         web_auth.set_lan(want_lan)
         v["web_lan"] = want_lan
         if want_lan != was_lan:
+            # on needs the server to listen on the network, which it decides
+            # as it starts; off is checked on every request (api_server)
             self._web_toast(
                 "info",
-                "Restart to apply",
-                "Network access turns on when HyperFetch restarts."
-                if want_lan else
-                "The web client goes back to this PC only after a restart.")
+                *(("Restart to apply", "Network access turns on when HyperFetch restarts.")
+                  if want_lan else
+                  ("Network access off", "Only this PC can open the web client now.")))
 
     def _web_toast(self, kind, title, msg):
         try:

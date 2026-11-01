@@ -43,6 +43,7 @@ def env(tmp_path, monkeypatch):
 
     web_auth.set_password(PW, user="admin")
     web_auth.set_enabled(True)
+    web_auth.set_lan(True)                  # signed in from the LAN
     r = c.post("/api/login", json={"username": "admin", "password": PW},
                environ_overrides={"REMOTE_ADDR": LAN})
     assert r.status_code == 200

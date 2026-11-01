@@ -74,6 +74,7 @@ def _enable(user="admin"):
     before any route answers."""
     web_auth.set_password(PW, user=user)
     web_auth.set_enabled(True)
+    web_auth.set_lan(True)                  # these tests call from the LAN
 
 
 def _login(c, user="admin"):

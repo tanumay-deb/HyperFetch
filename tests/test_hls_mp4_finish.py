@@ -162,6 +162,18 @@ def test_another_file_of_the_new_name_is_not_written_over(stream, dl, monkeypatc
     assert (dl / "clip.mp4").read_bytes() == b"somebody's"
 
 
+def test_a_file_of_its_name_that_arrives_meanwhile_is_not_written_over(stream, dl, monkeypatch):
+    """Another download of the name finished during the rewrite: the MP4
+    was put over it (2026-11-01; finalize_download already took a free name)."""
+    _Rewrite(monkeypatch, during=lambda: (dl / "My clip.mp4").write_bytes(b"somebody's"))
+    t = _task(stream, dl, name="My clip.mp4")
+    Downloader(t).run()
+    assert t.status == T.COMPLETED, t.error
+    assert t.filename == "My clip (1).mp4"
+    assert (dl / "My clip.mp4").read_bytes() == b"somebody's"
+    assert open(t.save_path, "rb").read() == b"MP4:" + stream.joined
+
+
 def test_not_asked_for_the_file_is_saved_as_it_came(stream, dl, monkeypatch):
     """The setting is off by default: ffmpeg at hand changes nothing then."""
     monkeypatch.setattr(utils, "HLS_TO_MP4", False)

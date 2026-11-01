@@ -59,13 +59,39 @@ def hls_server(aes_tools):
         routes[f"seg{i}.ts"] = (segs[i], "video/mp2t")
         routes[f"enc{i}.ts"] = (enc_segs[i], "video/mp2t")
 
+    # one file holding the init section and every segment, a byte range of it
+    # each (#EXT-X-BYTERANGE; no "@" = on from the last range). plain.mp4 is
+    # the same file from a server that ignores Range.
+    single = b"I" * 100 + plain_total
+
+    def ranged(name):
+        return ("#EXTM3U\n#EXT-X-VERSION:7\n#EXT-X-TARGETDURATION:4\n"
+                f'#EXT-X-MAP:URI="{name}",BYTERANGE="100@0"\n'
+                f"#EXTINF:4.0,\n#EXT-X-BYTERANGE:4096@100\n{name}\n"
+                + f"#EXTINF:4.0,\n#EXT-X-BYTERANGE:4096\n{name}\n" * 4
+                + "#EXT-X-ENDLIST\n").encode()
+    routes.update({"single.mp4": (single, "video/mp4"), "plain.mp4": (single, "video/mp4"),
+                   "ranges.m3u8": (ranged("single.mp4"), "application/vnd.apple.mpegurl"),
+                   "plainranges.m3u8": (ranged("plain.mp4"), "application/vnd.apple.mpegurl")})
+
     class H(http.server.BaseHTTPRequestHandler):
         def log_message(self, *a):
             pass
 
         def do_GET(self):
             p = self.path.split("?")[0].lstrip("/")
-            if p in routes:
+            rng = self.headers.get("Range")
+            if p in routes and rng and p != "plain.mp4":
+                body, ct = routes[p]
+                a, _, b = rng[len("bytes="):].partition("-")
+                a, b = int(a), min(int(b), len(body) - 1)
+                self.send_response(206)
+                self.send_header("Content-Type", ct)
+                self.send_header("Content-Range", f"bytes {a}-{b}/{len(body)}")
+                self.send_header("Content-Length", str(b - a + 1))
+                self.end_headers()
+                self.wfile.write(body[a:b + 1])
+            elif p in routes:
                 body, ct = routes[p]
                 self.send_response(200)
                 self.send_header("Content-Type", ct)
@@ -82,6 +108,7 @@ def hls_server(aes_tools):
     srv = type("S", (), {})()
     srv.base = f"http://127.0.0.1:{port}"
     srv.plain_total = plain_total
+    srv.single = single
     yield srv
     httpd.shutdown()
 
@@ -229,3 +256,20 @@ def test_a_web_page_where_the_key_was_says_so(hls_server, tmp_path):
     t = T.DownloadTask(f"{hls_server.base}/badkey.m3u8", str(tmp_path / "v.m3u8"))
     hls.HlsDownloader(t).run()
     assert t.status == T.ERROR and "key link sent no key" in t.error, t.error
+
+
+def test_a_playlist_of_byte_ranges_saves_each_part_once(hls_server, tmp_path):
+    """Every line names one file, a byte range of it each (#EXT-X-BYTERANGE),
+    and each was fetched whole: the video saved once a segment, "Completed"
+    (2026-11-01)."""
+    t = T.DownloadTask(f"{hls_server.base}/ranges.m3u8", str(tmp_path / "r.m3u8"))
+    Downloader(t).run()
+    assert t.status == T.COMPLETED, t.error
+    assert open(t.save_path, "rb").read() == hls_server.single
+
+
+def test_a_server_that_ignores_the_ranges_is_refused(hls_server, tmp_path):
+    """It would send the whole file for every part: an error, not that file."""
+    t = T.DownloadTask(f"{hls_server.base}/plainranges.m3u8", str(tmp_path / "p.m3u8"))
+    Downloader(t).run()
+    assert t.status == T.ERROR and "whole file" in t.error, t.error

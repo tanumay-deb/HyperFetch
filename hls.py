@@ -190,6 +190,16 @@ def _get(session, url, headers, stats=None, **kw):
     raise last
 
 
+def _byte_range(text, after):
+    """(start, length) from a playlist's "<length>[@<start>]"; with no start,
+    `after` - where the previous range of the same file ended."""
+    length, _, start = text.strip().strip('"').partition("@")
+    try:
+        return (int(start) if start else after), int(length)
+    except ValueError:
+        raise RuntimeError("the playlist gives a byte range that cannot be read: %r" % text)
+
+
 def _media_sequence(text):
     """The number of a media playlist's first segment: its
     #EXT-X-MEDIA-SEQUENCE, or 0 without one (RFC 8216 4.3.3.2)."""
@@ -296,7 +306,7 @@ class HlsDownloader:
         self._stats = {"retries": 0, "timeouts": 0, "http403": 0}
         # fMP4 (CMAF) playlists name an init segment with #EXT-X-MAP; set by
         # _parse_media, None for a classic MPEG-TS playlist.
-        self._init_map = None
+        self._init_map = self._init_range = None
 
     def _seg_session(self):
         s = getattr(self._tls, "s", None)
@@ -335,7 +345,11 @@ class HlsDownloader:
         return best_url
 
     def _parse_media(self, text, base_url):
-        """Return (segments, endlist). segments = [(url, seq, key)].
+        """Return (segments, endlist). segments = [(url, seq, key, part)]:
+        part is (start, length) for a segment that is a byte range of its
+        file (#EXT-X-BYTERANGE), else None. Such a playlist names one file on
+        every line, and each line was fetched whole: the video saved once a
+        segment (2026-11-01).
         endlist = True only if the playlist contains #EXT-X-ENDLIST — i.e. it is
         finite VOD. Sliding-window live/event playlists return endlist=False so
         the caller can refuse a partial-byte resume (their segment URIs change
@@ -345,17 +359,23 @@ class HlsDownloader:
         key = None  # {"method","uri","iv"}
         seq = 0
         endlist = False
-        self._init_map = None
+        part = None      # the next segment's #EXT-X-BYTERANGE, as written
+        ends = {}        # file -> where the last range of it ended
+        self._init_map = self._init_range = None
         for line in text.splitlines():
             line = line.strip()
             if line == "#EXT-X-ENDLIST":
                 endlist = True
             elif line.startswith("#EXT-X-MAP"):
-                uri = self._attrs(line).get("URI")
+                attrs = self._attrs(line)
+                uri = attrs.get("URI")
                 if uri:
                     where = urllib.parse.urljoin(base_url, uri)
                     if self._init_map is None:
                         self._init_map = where
+                        if attrs.get("BYTERANGE"):
+                            self._init_range = _byte_range(attrs["BYTERANGE"], 0)
+                            ends[where] = sum(self._init_range)
                     elif where != self._init_map:
                         # A second init mid-playlist (after a discontinuity) is
                         # rare; the file stays playable up to that point.
@@ -368,8 +388,16 @@ class HlsDownloader:
                     seq = 0
             elif line.startswith("#EXT-X-KEY"):
                 key = self._parse_key(line, base_url)
+            elif line.startswith("#EXT-X-BYTERANGE:"):
+                part = line.split(":", 1)[1]
             elif line and not line.startswith("#"):
-                segments.append((urllib.parse.urljoin(base_url, line), seq, key))
+                url = urllib.parse.urljoin(base_url, line)
+                if part is not None:
+                    # no "@offset": it goes on where the last range of the file ended
+                    part = _byte_range(part, ends.get(url, 0))
+                    ends[url] = sum(part)
+                segments.append((url, seq, key, part))
+                part = None
                 seq += 1
         return segments, endlist
 
@@ -505,7 +533,7 @@ class HlsDownloader:
     def _prefetch_keys(self, segments):
         """Resolve every distinct AES key once, before parallel downloading."""
         seen = set()
-        for _, _, key in segments:
+        for _, _, key, _ in segments:
             if not key or key["method"] != "AES-128":
                 if key and key["method"] not in ("NONE", "AES-128"):
                     raise RuntimeError(f"unsupported HLS encryption: {key['method']}")
@@ -526,10 +554,18 @@ class HlsDownloader:
                                    " - its link may have expired")
             key["keybytes"] = data
 
-    def _fetch_segment(self, url, seq, key):
-        """Download + decrypt one segment (runs on a worker thread)."""
-        data = _get(self._seg_session(), url, self.headers, self._stats).content
-        return self._decrypt(data, key, seq)
+    def _fetch_segment(self, url, seq, key, part=None):
+        """Download + decrypt one segment (runs on a worker thread); `part`
+        = (start, length) of its file, for a byte-range playlist."""
+        headers = self.headers
+        if part:
+            headers = dict(headers, Range="bytes=%d-%d" % (part[0], sum(part) - 1))
+        r = _get(self._seg_session(), url, headers, self._stats)
+        if part and r.status_code != 206:
+            # the whole file, again for every segment: refused, not saved
+            raise RuntimeError("the server sent the whole file, not the part of "
+                               "it the playlist names (HTTP %d)" % r.status_code)
+        return self._decrypt(r.content, key, seq)
 
     def _stopped(self, temp_path):
         """A cancel or a pause asked for: the status says so - and a cancel
@@ -561,13 +597,17 @@ class HlsDownloader:
         if dest.lower().endswith(".ts"):
             dest = utils.unique_path(os.path.dirname(dest) or ".",
                                      os.path.basename(dest)[:-3] + ".mp4")
-        staged = dest + ".hfmove"
+        staged = "%s.%s.hfmove" % (dest, self.t.id[:12])
         self.t.finishing = True                 # the card: "Saving as MP4…"
         try:
             ok = remux(temp_path, staged, seconds,
                        lambda: self.t.pause_requested or self.t.cancel_requested)
             if ok:
-                os.replace(staged, dest)
+                with utils._finish_lock:        # as finalize_download: never over a file
+                    if os.path.exists(dest):
+                        dest = utils.unique_path(os.path.dirname(dest) or ".",
+                                                 os.path.basename(dest))
+                    os.replace(staged, dest)
                 size = os.path.getsize(dest)
         except OSError as e:
             log.warning("HLS: the MP4 could not be put in its place: %s", e)
@@ -687,7 +727,7 @@ class HlsDownloader:
                 # already has it, and its byte count includes it.
                 if self._init_map and open_mode == "wb":
                     try:
-                        init = self._fetch_segment(self._init_map, -1, None)
+                        init = self._fetch_segment(self._init_map, -1, None, self._init_range)
                     except (requests.RequestException, RuntimeError) as e:
                         self.t.status = T.ERROR
                         self.t.error = f"HLS init segment failed: {e}"
@@ -707,8 +747,7 @@ class HlsDownloader:
                         self.t.status = T.PAUSED
                         return
                     batch = segments[start:start + workers]
-                    futures = [ex.submit(self._fetch_segment, u, seq, key)
-                               for (u, seq, key) in batch]
+                    futures = [ex.submit(self._fetch_segment, *seg) for seg in batch]
                     for i, fut in enumerate(futures):
                         try:
                             data = fut.result()

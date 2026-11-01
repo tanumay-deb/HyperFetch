@@ -135,6 +135,7 @@ def test_the_web_list_says_it_in_words_and_carries_the_details(tmp_path):
     c = app.test_client()
     web_auth.set_password("correct horse battery", user="admin")
     web_auth.set_enabled(True)
+    web_auth.set_lan(True)                  # signed in from the LAN
     lan = {"REMOTE_ADDR": "192.168.1.50"}
     assert c.post("/api/login", json={"username": "admin", "password": "correct horse battery"},
                   environ_overrides=lan).status_code == 200

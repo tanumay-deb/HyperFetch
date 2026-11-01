@@ -649,7 +649,8 @@ function buildCardMenu(d) {
   }
 
   out.push(document.createElement("hr"));
-  out.push(menuItem("Rename…", "i-pencil", () => renameDownload(d)));
+  // a torrent's files keep the names the torrent gives them (the server refuses too)
+  if (!d.isTorrent) out.push(menuItem("Rename…", "i-pencil", () => renameDownload(d)));
   if (d.url) {
     out.push(menuItem("Copy link", "i-link", () => copyText(d.url)));
   }

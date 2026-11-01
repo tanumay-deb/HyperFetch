@@ -1485,6 +1485,12 @@ def _within(folder, name):
     return target == root or target.startswith(root + os.sep)
 
 
+# Why a torrent is not renamed (desktop and web): the engine finds its files
+# by these names - task.filename for one not finished (move_unfinished), the
+# torrent's own for a recheck.
+NAMES_KEPT = "A torrent's files keep the names the torrent gives them."
+
+
 def move_unfinished(task, dest_dir):
     """Move a torrent that is not running to dest_dir: what it has written,
     and aria2's control file beside it, so its next run goes on from those

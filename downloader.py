@@ -15,35 +15,6 @@ import urllib.parse
 
 log = logging.getLogger("hyperfetch.downloader")
 
-class ResizableSemaphore:
-    def __init__(self, value):
-        self.cond = threading.Condition()
-        self.value = value
-        self.active = 0
-    def acquire(self, timeout=None):
-        with self.cond:
-            if timeout is None:
-                while self.active >= self.value:
-                    self.cond.wait()
-            else:
-                end = time.time() + timeout
-                while self.active >= self.value:
-                    rem = end - time.time()
-                    if rem <= 0:
-                        return False
-                    self.cond.wait(rem)
-            self.active += 1
-            return True
-    def release(self):
-        with self.cond:
-            self.active -= 1
-            self.cond.notify()
-    def set_limit(self, value):
-        with self.cond:
-            self.value = value
-            self.cond.notify_all()
-
-
 import requests
 import urllib3
 from requests.adapters import HTTPAdapter
@@ -97,7 +68,9 @@ STAGGER = 0.01         # delay between segment thread starts (rate-limit friendl
 # to roughly a single connection's worth. Bounding the total keeps each live
 # connection fed. 16 saturates a fast link without thrashing.
 GLOBAL_MAX_CONNS = 64
-_GLOBAL_CONNS = ResizableSemaphore(GLOBAL_MAX_CONNS)
+# The same at every start: Settings used to set it to Concurrent x Segments
+# when saved, until the next start (2026-11-01).
+_GLOBAL_CONNS = threading.Semaphore(GLOBAL_MAX_CONNS)
 
 
 def probe_info(url, headers=None):

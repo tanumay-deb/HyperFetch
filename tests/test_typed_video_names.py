@@ -406,6 +406,7 @@ def web(queue, tmp_path):
     c = app.test_client()
     web_auth.set_password(PW, user="admin")
     web_auth.set_enabled(True)
+    web_auth.set_lan(True)                  # signed in from the LAN
     assert c.post("/api/login", json={"username": "admin", "password": PW},
                   environ_overrides={"REMOTE_ADDR": LAN}).status_code == 200
     return lambda t, name: c.post("/api/downloads/%s/rename" % t.id, json={"name": name},

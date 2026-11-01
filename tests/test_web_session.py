@@ -23,6 +23,7 @@ def client(tmp_path, monkeypatch):
         def add_task(self, *a, **k):
             pass
 
+    web_auth.set_lan(True)                  # these tests call from the LAN
     app = create_app(_Q(), str(tmp_path), pending=None, token="tok")
     app.config["TESTING"] = True
     return app.test_client()

@@ -156,8 +156,15 @@ class ActionsMixin:
         .hfdownload temp, so finalize simply lands on the new name. A video
         is renamed while it waits (yt_dl.rename): yt-dlp names its file as it
         starts. The name stays the user's (DownloadTask.name_chosen), so a
-        video's file is called that and not by its title."""
+        video's file is called that and not by its title.
+
+        Not a torrent: its files keep the names the torrent gives them, and
+        the engine finds them by those - renamed, a move left its bytes
+        behind and a recheck fetched it all again (2026-11-01)."""
         import utils
+        if _torrent.is_torrent_task(t.url, t.filename):
+            self._toasts.show("info", "Not renamed", _torrent.NAMES_KEPT)
+            return
         new, ok = QInputDialog.getText(self, "Rename", "New file name:",
                                        QLineEdit.Normal, t.filename)
         new = yt_dl.name_for(t, utils.safe_filename((new or "").strip()))
@@ -504,7 +511,8 @@ class ActionsMixin:
                     act.setEnabled(False)
                 act.triggered.connect(lambda _=False, n=q.name: self._move_task_to_queue(t, n))
         m.addSeparator()
-        m.addAction(ico("document"), "Rename", lambda: self._rename_task(t))
+        if not is_tor:                  # a torrent's files keep its names (_rename_task)
+            m.addAction(ico("document"), "Rename", lambda: self._rename_task(t))
         m.addAction(ico("folder"), "Move to…", lambda: self._move_task_files(t))
         if t.status in (T.PAUSED, T.ERROR, T.CANCELLED, T.COMPLETED) and not is_tor:
             m.addAction(ico("history"), "Restart", lambda: self._restart_task(t))

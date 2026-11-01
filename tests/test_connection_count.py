@@ -36,3 +36,14 @@ def test_what_is_shown_is_what_streams(media_server, tmp_path):
     assert t.http_conns == 0, "a finished download has none open"
     assert 1 <= max(s for s, _ in seen) <= 2
     assert any(p > 2 and s for s, p in seen), "the old count: parts, not connections"
+
+
+def test_saving_settings_leaves_the_connection_cap_alone():
+    """The cap on connections across all downloads was 64 at every start and
+    Concurrent x Segments (24 by default) once Settings had been saved, until
+    the next start: the same settings were slower after a save (2026-11-01)."""
+    import inspect
+    import downloader
+    from gui2.app_settings import SettingsMixin
+    assert "_GLOBAL_CONNS" not in inspect.getsource(SettingsMixin)
+    assert downloader._GLOBAL_CONNS._value == downloader.GLOBAL_MAX_CONNS == 64

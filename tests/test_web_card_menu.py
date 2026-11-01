@@ -46,6 +46,7 @@ def env(tmp_path, monkeypatch):
     c = app.test_client()
     web_auth.set_password(PW, user="admin")
     web_auth.set_enabled(True)
+    web_auth.set_lan(True)                  # signed in from the LAN
     assert c.post("/api/login", json={"username": "admin", "password": PW},
                   environ_overrides={"REMOTE_ADDR": LAN}).status_code == 200
     return c, q, add
@@ -168,6 +169,36 @@ def test_rename_moves_a_finished_file_on_disk(env, tmp_path):
     assert os.path.basename(t.save_path) == "better.bin"
     assert open(t.save_path, "rb").read() == b"payload"
     assert not os.path.exists(str(tmp_path / "a.bin"))
+
+
+def test_a_torrent_is_not_renamed(env, tmp_path):
+    """Its files keep the torrent's names, and the engine finds them by those:
+    renamed, a move left the half-done bytes behind, and a recheck of a
+    finished one fetched it all again beside the renamed copy (2026-11-01)."""
+    c, q, add = env
+    t = add("Pack.torrent", status=T.COMPLETED)
+    os.makedirs(t.save_path)
+    r = _post(c, "/api/downloads/id-Pack.torrent/rename", json={"name": "Mine"})
+    assert r.status_code == 409 and "torrent" in r.get_json()["message"]
+    assert t.filename == "Pack.torrent" and os.path.isdir(str(tmp_path / "Pack.torrent"))
+    # and the page does not offer it
+    page = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                             "web", "app.js"), encoding="utf-8").read()
+    assert 'if (!d.isTorrent) out.push(menuItem("Rename…"' in page
+
+
+def test_the_desktop_does_not_rename_a_torrent(tmp_path, monkeypatch):
+    import types
+    import gui2.app_actions as A
+    from PySide6.QtWidgets import QInputDialog
+    monkeypatch.setattr(QInputDialog, "getText",
+                        lambda *a, **k: pytest.fail("asked for a torrent's new name"))
+    said = []
+    win = types.SimpleNamespace(_toasts=types.SimpleNamespace(show=lambda *a: said.append(a)))
+    t = T.DownloadTask("magnet:?xt=urn:btih:%040d" % 3, str(tmp_path / "magnet_.bin"),
+                       filename="Pack")
+    A.ActionsMixin._rename_task(win, t)
+    assert t.filename == "Pack" and said and "torrent" in said[-1][2]
 
 
 def test_rename_cannot_climb_out_of_the_download_folder(env, tmp_path):

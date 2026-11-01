@@ -125,7 +125,40 @@ def test_turning_it_off_is_reported_too():
     app._apply_web_settings({"web_enabled": True, "web_username": "admin",
                              "web_password": "", "web_lan": False})
     assert web_auth.lan_allowed() is False
-    assert any("Restart" in t[1] for t in app.toasts)
+    assert any("Network access off" in t[1] for t in app.toasts)
+
+
+def test_off_for_the_network_is_off_at_once():
+    """The server listens where bind_host said as it started. Turning network
+    access off, or a password too short for it, waited for the next restart
+    (days, for an app in the tray): a signed-in phone kept going, and the
+    network could sign in with the short password (2026-11-01)."""
+    web_auth.set_password(STRONG, user="admin")
+    web_auth.set_enabled(True)
+    web_auth.set_lan(True)
+
+    class _Q:
+        tasks = []
+
+    c = api_server.create_app(_Q(), ".", pending=None, token="tok").test_client()
+    lan, here = {"REMOTE_ADDR": "192.168.1.77"}, {"REMOTE_ADDR": "127.0.0.1"}
+    login = lambda pw, where: c.post("/api/login", json={"username": "admin", "password": pw},
+                                     environ_overrides=where).status_code
+    assert login(STRONG, lan) == 200
+    assert c.get("/api/downloads", environ_overrides=lan).status_code == 200
+
+    app = _App()
+    app._apply_web_settings({"web_enabled": True, "web_username": "admin",
+                             "web_password": "", "web_lan": False})
+    assert c.get("/api/downloads", environ_overrides=lan).status_code == 403, \
+        "the phone signed in before kept going"
+    assert c.get("/api/session", environ_overrides=lan).get_json()["enabled"] is False
+
+    app._apply_web_settings({"web_enabled": True, "web_username": "admin",
+                             "web_password": WEAK, "web_lan": True})
+    assert login(WEAK, lan) == 403, "the network signed in with a password too short for it"
+    assert login(WEAK, here) == 200 and \
+        c.get("/api/downloads", environ_overrides=here).status_code == 200, "this PC was shut out"
 
 
 def test_the_extension_routes_stay_loopback_only_on_the_lan():

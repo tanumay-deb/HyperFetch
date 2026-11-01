@@ -296,11 +296,13 @@ def move_with_progress(src, dst, progress=lambda n: None, chunk=4 * 1024 * 1024)
                 progress(moved)
         shutil.copystat(a, b)
 
+    # its own staging name: two moves of one name into one folder wrote one
+    # file between them
+    staged = "%s.%s.hfmove" % (dst, secrets.token_hex(4))
     if os.path.isfile(src):
-        staged = dst + ".hfmove"
         try:
             copy_file(src, staged)
-            os.replace(staged, dst)
+            _take_name(staged, dst)
         except BaseException:
             try:
                 os.remove(staged)
@@ -311,14 +313,26 @@ def move_with_progress(src, dst, progress=lambda n: None, chunk=4 * 1024 * 1024)
         return
     try:
         for d, _, files in os.walk(src):
-            to = os.path.join(dst, os.path.relpath(d, src))
+            to = os.path.join(staged, os.path.relpath(d, src))
             os.makedirs(to, exist_ok=True)
             for f in files:
                 copy_file(os.path.join(d, f), os.path.join(to, f))
+        _take_name(staged, dst)
     except BaseException:
-        shutil.rmtree(dst, ignore_errors=True)
+        shutil.rmtree(staged, ignore_errors=True)
         raise
     _drop_moved(src)
+
+
+def _take_name(staged, dst):
+    """Put a whole copy at dst, never over what is there by now: a download
+    of that name can finish there while a move copies (finalize_download
+    takes its name under the same lock)."""
+    with _finish_lock:
+        if os.path.exists(dst):
+            raise FileExistsError("%s is already in %s"
+                                  % (os.path.basename(dst), os.path.dirname(dst) or "."))
+        os.replace(staged, dst)
 
 
 def _drop_moved(src):

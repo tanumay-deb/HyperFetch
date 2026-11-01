@@ -482,6 +482,16 @@ def create_app(queue, save_dir, pending=None, token=None, pair_requests=None):
             return False
         return session.get("pw") == web_auth.password_stamp()
 
+    def lan_refused():
+        """A caller from the network while network access is off. The server
+        listens where bind_host said as it started; turning access off, or a
+        password too short for it, used to wait for the next restart while
+        the network could still sign in with that password."""
+        return not is_loopback(request.remote_addr) and not web_auth.lan_allowed()
+
+    LAN_OFF = {"status": "error", "code": "disabled",
+               "message": "The web client is set to this PC only"}
+
     def require_web_auth():
         """None when the caller may proceed, else a response to return.
 
@@ -494,6 +504,8 @@ def create_app(queue, save_dir, pending=None, token=None, pair_requests=None):
         if not web_auth.has_password():
             return jsonify({"status": "error", "code": "no-password",
                             "message": "Set a web password in Settings first"}), 403
+        if lan_refused():
+            return jsonify(LAN_OFF), 403
         if not web_authed():
             return jsonify({"status": "error", "code": "auth",
                             "message": "not signed in"}), 401
@@ -502,7 +514,9 @@ def create_app(queue, save_dir, pending=None, token=None, pair_requests=None):
     @app.route("/api/session", methods=["GET"])
     def api_session():
         """What the page needs before rendering: is it on, is it set up, am I in?"""
-        return jsonify({"enabled": web_auth.is_enabled(),
+        # off for the network reads as off: the page shows that, rather than
+        # signing in to be refused at once
+        return jsonify({"enabled": web_auth.is_enabled() and not lan_refused(),
                         "hasPassword": web_auth.has_password(),
                         "authed": web_authed()})
 
@@ -516,6 +530,8 @@ def create_app(queue, save_dir, pending=None, token=None, pair_requests=None):
         if not web_auth.has_password():
             return jsonify({"status": "error", "code": "no-password",
                             "message": "Set a web password in Settings first"}), 403
+        if lan_refused():
+            return jsonify(LAN_OFF), 403
         wait = throttle.begin(addr)
         if wait > 0:
             return jsonify({"status": "error", "code": "locked",
@@ -723,6 +739,8 @@ def create_app(queue, save_dir, pending=None, token=None, pair_requests=None):
         t, missing = _task_or_404(task_id)
         if missing:
             return missing
+        if _torrent.is_torrent_task(t.url, t.filename):
+            return jsonify({"status": "error", "message": _torrent.NAMES_KEPT}), 409
         raw = ((request.get_json(silent=True) or {}).get("name") or "").strip()
         # Ask before sanitising, not after: safe_filename never returns empty,
         # it falls back to "download". Checking its output would let a name of
