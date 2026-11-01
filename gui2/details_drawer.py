@@ -609,8 +609,8 @@ class DetailsDrawer(QFrame):
             # freeze the whole window for the full 15s CALL_TIMEOUT — the app
             # went "(Not Responding)" whenever the Connections tab was open and
             # the daemon was working. Missing one refresh costs nothing.
-            peers = aria2d.DAEMON.call("aria2.getPeers", gid,
-                                       timeout=GUI_RPC_TIMEOUT) or []
+            peers = aria2d.DAEMON.quick_call("aria2.getPeers", gid,
+                                             timeout=GUI_RPC_TIMEOUT) or []
         except Exception:
             return []
         count, plen = getattr(t, "tor_pieces", (0, 0))
@@ -1609,9 +1609,13 @@ class DetailsDrawer(QFrame):
             return None
         try:
             import aria2d
-            peers = aria2d.DAEMON.call("aria2.getPeers", gid, timeout=GUI_RPC_TIMEOUT) or []
+            peers = aria2d.DAEMON.quick_call("aria2.getPeers", gid,
+                                             timeout=GUI_RPC_TIMEOUT) or []
         except Exception:
-            return counts if tid == t.id else None
+            # not again before the 3 s are up: asked on every half-second tick,
+            # a busy daemon held the window up each time
+            self._avail = (t.id, now, counts if tid == t.id else None)
+            return self._avail[2]
         from gui2.pieces_bar import piece_counts
         bits = ["f" * ((count + 3) // 4) if str(p.get("seeder", "")).lower() == "true"
                 else p.get("bitfield", "") for p in peers]

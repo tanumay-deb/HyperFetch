@@ -737,16 +737,29 @@ class YtDlpDownloader:
             return
 
         final = {"path": ""}
+        # A video fetched as picture and sound is two files, joined after: the
+        # bar went back to 0% as the second began. The parts of one video
+        # finished so far, and which video that is (a playlist's next starts
+        # its own count).
+        parts = {"video": None, "done": 0}
 
         def hook(d):
             if self.t.cancel_requested or self.t.pause_requested:
                 raise _Abort()
             st = d.get("status")
+            info = d.get("info_dict") or {}
+            if info.get("id") != parts["video"]:
+                parts["video"], parts["done"] = info.get("id"), 0
+            got = d.get("downloaded_bytes") or 0
+            size = d.get("total_bytes") or d.get("total_bytes_estimate") or 0
             if st == "downloading":
-                self.t.downloaded = d.get("downloaded_bytes") or 0
-                self.t.total_size = (d.get("total_bytes")
-                                     or d.get("total_bytes_estimate") or 0)
+                whole = sum(int(f.get("filesize") or f.get("filesize_approx") or 0)
+                            for f in info.get("requested_formats") or [])
+                self.t.downloaded = parts["done"] + got
+                self.t.total_size = max(whole, parts["done"] + size)
             elif st == "finished":
+                parts["done"] += size or got
+                self.t.downloaded = parts["done"]
                 final["path"] = d.get("filename") or final["path"]
 
         opts, ffdir = _choosing_opts(self.t, out_dir)

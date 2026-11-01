@@ -896,7 +896,10 @@ def get_category_dir(base_dir, filename):
     classified goes to Other rather than staying in base_dir, which otherwise
     collects every type the table does not know."""
     cat_dir = os.path.join(base_dir, category_for(filename))
-    os.makedirs(cat_dir, exist_ok=True)
+    try:
+        os.makedirs(cat_dir, exist_ok=True)
+    except OSError:
+        return base_dir         # a drive that is not there: the download says so
     return cat_dir
 
 
@@ -930,7 +933,10 @@ def place_download(base_dir, url, filename, category="Auto", categorize=True):
             and torrent.torrent_top_name(local)):
         return base_dir, base_dir
     folder = os.path.join(base_dir, torrent.torrent_category(local))
-    os.makedirs(folder, exist_ok=True)
+    try:
+        os.makedirs(folder, exist_ok=True)
+    except OSError:
+        folder = base_dir
     return folder, base_dir
 
 import time

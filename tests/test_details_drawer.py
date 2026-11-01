@@ -99,7 +99,7 @@ def test_peer_polling_uses_a_short_timeout(monkeypatch):
     seen = {}
 
     class _Daemon:
-        def call(self, method, *a, **kw):
+        def quick_call(self, method, *a, **kw):
             seen["method"] = method
             seen["timeout"] = kw.get("timeout")
             return []
@@ -128,7 +128,7 @@ def test_a_seed_reads_100_percent(monkeypatch):
     import aria2d
 
     class _Daemon:
-        def call(self, method, *a, **kw):
+        def quick_call(self, method, *a, **kw):
             return [{"ip": "203.0.113.5", "port": "6881", "seeder": "true",
                      "bitfield": "ff" * 125 + "80", "downloadSpeed": "2000", "uploadSpeed": "0"},
                     {"ip": "203.0.113.6", "port": "6881", "seeder": "false",
@@ -150,7 +150,7 @@ def test_a_finished_torrent_with_nobody_connected_says_why(monkeypatch):
     import aria2d
 
     class _Daemon:
-        def call(self, method, *a, **kw):
+        def quick_call(self, method, *a, **kw):
             return []
 
     monkeypatch.setattr(aria2d, "DAEMON", _Daemon())
@@ -176,7 +176,7 @@ def test_a_peer_says_how_much_it_has(monkeypatch):
     MB = 1 << 20
 
     class _Daemon:
-        def call(self, method, *a, **kw):
+        def quick_call(self, method, *a, **kw):
             return [{"ip": "203.0.113.5", "port": "6881", "seeder": "false",
                      "bitfield": "ff" * 125 + "80", "downloadSpeed": "3000", "uploadSpeed": "0"},
                     {"ip": "203.0.113.6", "port": "6881", "seeder": "false",
@@ -193,3 +193,36 @@ def test_a_peer_says_how_much_it_has(monkeypatch):
     drawer._fill_conns(t, True)
     shown = [drawer.conns_table.item(r, 1).text() for r in range(drawer.conns_table.rowCount())]
     assert shown == ["100% · " + human_size(1000 * MB + 5), "99% · " + human_size(1000 * MB)]
+
+
+def test_the_windows_calls_skip_the_slow_liveness_check(monkeypatch):
+    """call() runs ensure(), whose probe waits 10 s on a lock the torrent
+    threads share: the window froze while aria2 was busy, short timeout or not."""
+    import aria2d
+    d = aria2d.Aria2Daemon.__new__(aria2d.Aria2Daemon)
+    d.port, d.secret = 1, "s"
+    monkeypatch.setattr(d, "ensure", lambda: (_ for _ in ()).throw(AssertionError("ensure")),
+                        raising=False)
+    sent = []
+    monkeypatch.setattr(d, "_post", lambda *a: sent.append(a) or [], raising=False)
+    assert d.quick_call("aria2.getPeers", "g", timeout=1.5) == []
+    assert sent and sent[0][2] == "aria2.getPeers" and sent[0][4] == 1.5
+
+
+def test_a_failed_peer_ask_waits_before_the_next(monkeypatch):
+    import aria2d
+    asked = []
+
+    class _Busy:
+        def quick_call(self, *a, **kw):
+            asked.append(1)
+            raise TimeoutError("busy")
+
+    monkeypatch.setattr(aria2d, "DAEMON", _Busy())
+    app = QApplication.instance() or QApplication([])
+    drawer = DetailsDrawer(QWidget())
+    t = T.DownloadTask("magnet:?xt=urn:btih:abc", "C:/dl/x")
+    t.gid = "gid1"
+    for _ in range(5):                     # five half-second ticks
+        drawer._avail_counts(t, 8)
+    assert asked == [1]

@@ -888,7 +888,7 @@ def _bdecode(data):
         return data[j + 1:j + 1 + n], j + 1 + n
     try:
         return parse(0)[0]
-    except (ValueError, IndexError, TypeError) as e:
+    except _BAD_BENCODE as e:           # RecursionError too: lists nested deep
         raise ValueError("malformed bencode") from e
 
 

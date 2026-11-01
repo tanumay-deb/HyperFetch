@@ -1296,6 +1296,16 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, Up
             if box.clickedButton() is not again_btn:
                 return
         base = v["save_dir"] if os.path.isdir(v["save_dir"]) else self.save_dir
+        try:
+            os.makedirs(base, exist_ok=True)
+        except OSError:
+            # its drive is not there (unplugged, a network share that is
+            # down): the download was lost - and one from the browser was
+            # cancelled there already, the server having said "queued"
+            fallback = utils.default_download_dir()
+            self._toasts.show("error", "Download folder not available",
+                              f"{base} cannot be reached; saving to {fallback}.", secs=10)
+            base = fallback
         # The app's own copy of a .torrent, kept now: the original is often
         # deleted once it is added, and a link's is only what was fetched.
         kept = ""

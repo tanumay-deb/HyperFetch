@@ -252,6 +252,16 @@ class Aria2Daemon:
         self.ensure()
         return self._post(self.port, self.secret, method, params, timeout)
 
+    def quick_call(self, method, *params, timeout=1.5):
+        """One RPC call to the daemon already running, for the window's own
+        thread: no ensure(). Its liveness probe waits PROBE_TIMEOUT (10 s) on a
+        lock the torrent threads share, so a 1.5 s call from the window froze
+        it for longer anyway while aria2 was busy. Raises when there is no
+        daemon - the window shows nothing new for a tick."""
+        if not (self.port and self.secret):
+            raise RuntimeError("no aria2 daemon")
+        return self._post(self.port, self.secret, method, params, timeout)
+
     def alive(self):
         if not (self.port and self.secret):
             return False
