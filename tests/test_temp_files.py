@@ -13,6 +13,7 @@ thrown away as a failed move.
 The test suite did the same thing: every test that loads the app's state ran
 that sweep over the machine's real temp folder.
 """
+import glob
 import json
 import os
 import shutil
@@ -188,7 +189,7 @@ def test_a_finished_copy_is_kept_when_its_source_went_from_under_the_move(tmp_pa
     utils.finalize_download(temp, dest)
 
     assert open(dest, "rb").read() == b"x" * 1000
-    assert not os.path.exists(dest + ".hfmove")
+    assert not glob.glob(dest + "*.hfmove")
 
 
 def test_a_copy_cut_short_is_still_a_failed_move(tmp_path, monkeypatch):
@@ -203,7 +204,7 @@ def test_a_copy_cut_short_is_still_a_failed_move(tmp_path, monkeypatch):
     monkeypatch.setattr(shutil, "move", move)
     with pytest.raises(OSError):
         utils.finalize_download(temp, dest)
-    assert not os.path.exists(dest) and not os.path.exists(dest + ".hfmove")
+    assert not os.path.exists(dest) and not glob.glob(dest + "*.hfmove")
 
 
 def test_a_move_that_failed_with_its_source_still_there_can_be_tried_again(tmp_path,
@@ -218,7 +219,7 @@ def test_a_move_that_failed_with_its_source_still_there_can_be_tried_again(tmp_p
     with pytest.raises(OSError):
         utils.finalize_download(temp, dest)
     assert os.path.exists(temp), "nothing left to retry from"
-    assert not os.path.exists(dest) and not os.path.exists(dest + ".hfmove")
+    assert not os.path.exists(dest) and not glob.glob(dest + "*.hfmove")
 
 
 def test_a_temp_file_that_is_not_there_is_still_a_failure(tmp_path):

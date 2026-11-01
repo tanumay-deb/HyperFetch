@@ -1,5 +1,6 @@
 """Downloader: segmented integrity, resume, cancel, edge servers, disk guard.
 All against the in-process file_server fixture — no external network."""
+import glob
 import os
 import time
 import hashlib
@@ -250,7 +251,7 @@ def test_finalize_failure_marks_error_not_completed(file_server, tmp_path, monke
     assert "disk" in t.error.lower() or "space" in t.error.lower() or "folder" in t.error.lower()
     assert not os.path.exists(dst)                 # no half-written destination
     # the staged sibling must be cleaned up, not left behind
-    assert not os.path.exists(dst + ".hfmove")
+    assert not glob.glob(dst + "*.hfmove")
 
 
 # ---- _verify_hash: digest stored for the drawer's Integrity section ----
@@ -298,3 +299,22 @@ def test_verify_hash_no_sidecar_skips_unless_forced(tmp_path, monkeypatch):
     assert dl._verify_hash(always_digest=True) is None
     assert t.hash_status == "nohash"
     assert t.sha256 == hashlib.sha256(b"hello world").hexdigest()
+
+
+def test_two_downloads_of_one_name_both_keep_their_file(media_server, tmp_path):
+    """Both named while neither was on disk: the second to finish took the
+    first's file (os.replace). It gets a free name instead."""
+    one, two = os.urandom(300_000), os.urandom(300_000)
+    media_server.put("a/file.bin", one)
+    media_server.put("b/file.bin", two)
+    dest = str(tmp_path / "file.bin")
+    first = T.DownloadTask(media_server.url("a/file.bin"), dest)
+    second = T.DownloadTask(media_server.url("b/file.bin"), dest)
+    Downloader(first, segments=2).run()
+    Downloader(second, segments=2).run()
+    assert first.status == second.status == T.COMPLETED
+    assert open(dest, "rb").read() == one
+    assert second.save_path == str(tmp_path / "file (1).bin") == os.path.join(
+        str(tmp_path), second.filename)
+    assert open(second.save_path, "rb").read() == two
+    assert not glob.glob(str(tmp_path / "*.hfmove"))

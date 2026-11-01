@@ -174,3 +174,40 @@ def test_more_failures_while_locked_do_not_extend_it():
     time.sleep(0.1)
     t.record_failure(addr)
     assert t.locked_for(addr) <= first
+
+
+def test_logins_sent_all_at_once_are_still_only_the_allowed_guesses():
+    """The lockout was read before any of them had failed: 50 at once = 50 guesses."""
+    t = web_auth.LoginThrottle(max_attempts=5, lockout=60)
+    let_in = [t.begin("192.168.1.9") for _ in range(50)]
+    assert let_in.count(0.0) == 5
+    for _ in range(5):
+        t.end("192.168.1.9", False)
+    assert t.begin("192.168.1.9") > 0                  # locked now
+    assert t.begin("192.168.1.10") == 0.0              # another device is not
+
+
+def test_only_two_password_checks_run_at_once(monkeypatch):
+    """Each takes 32 MB; many at once would take that many times over."""
+    import threading
+    web_auth.set_password("correct horse")
+    real, now, top, lock = web_auth.hashlib.scrypt, [0], [0], threading.Lock()
+
+    def counting(*a, **k):
+        with lock:
+            now[0] += 1
+            top[0] = max(top[0], now[0])
+        try:
+            time.sleep(0.05)
+            return real(*a, **k)
+        finally:
+            with lock:
+                now[0] -= 1
+
+    monkeypatch.setattr(web_auth.hashlib, "scrypt", counting)
+    ts = [threading.Thread(target=web_auth.verify_password, args=("guess",)) for _ in range(8)]
+    for x in ts:
+        x.start()
+    for x in ts:
+        x.join()
+    assert top[0] == 2

@@ -754,7 +754,7 @@ class HlsDownloader:
             # ERROR and keep the temp for retry instead of claiming COMPLETED
             # with no file.
             try:
-                utils.finalize_download(temp_path, self.t.save_path)
+                utils.saved_at(self.t, utils.finalize_download(temp_path, self.t.save_path))
             except OSError as e:
                 self.t.status = T.ERROR
                 self.t.error = f"finalize failed (pick another folder, then Resume): {e}"

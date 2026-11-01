@@ -925,7 +925,7 @@ class Downloader:
                 # the space (an 8 GB file on 10 GB free failed at 100% here)
                 if not utils.same_drive(temp_path, self.t.save_path):
                     self._check_disk_space(self.t.save_path, self.t.total_size)
-                utils.finalize_download(temp_path, self.t.save_path)
+                utils.saved_at(self.t, utils.finalize_download(temp_path, self.t.save_path))
             except OSError as e:
                 self.t.status = T.ERROR
                 self.t.error = self._format_disk_error(e, self.t.save_path)

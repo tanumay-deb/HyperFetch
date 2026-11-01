@@ -31,6 +31,9 @@ _DKLEN = 32
 # an unlimited guess rate would make a weak password worthless.
 MAX_ATTEMPTS = 5
 LOCKOUT = 300.0            # seconds locked out after MAX_ATTEMPTS failures
+# scrypt at these settings takes 32 MB a check; logins sent all at once wait
+# for one of these instead of taking 32 MB each
+_CHECKS = threading.BoundedSemaphore(2)
 
 # Two thresholds, because the risk is not the same in both modes. Bound to
 # 127.0.0.1 the only thing that can reach the page is someone already at this
@@ -219,8 +222,9 @@ def verify_password(password):
         n = int(d.get("n") or _N)
         r = int(d.get("r") or _R)
         p = int(d.get("p") or _P)
-        got = hashlib.scrypt(password.encode("utf-8"), salt=salt, n=n, r=r, p=p,
-                             dklen=len(want), maxmem=64 * 1024 * 1024)
+        with _CHECKS:
+            got = hashlib.scrypt(password.encode("utf-8"), salt=salt, n=n, r=r, p=p,
+                                 dklen=len(want), maxmem=64 * 1024 * 1024)
     except (ValueError, TypeError):
         return False
     return hmac.compare_digest(got, want)
@@ -290,19 +294,47 @@ class LoginThrottle:
         self.max_attempts = max_attempts
         self.lockout = lockout
         self._fails = {}                  # addr -> [count, first_fail_time]
+        self._busy = {}                   # addr -> attempts being checked now
         self._lock = threading.Lock()
 
     def locked_for(self, addr):
         """Seconds remaining before `addr` may try again (0 when it may now)."""
         with self._lock:
-            rec = self._fails.get(addr)
-            if not rec or rec[0] < self.max_attempts:
-                return 0.0
-            left = self.lockout - (time.time() - rec[1])
-            if left <= 0:
-                self._fails.pop(addr, None)
-                return 0.0
-            return left
+            return self._left(addr)
+
+    def _left(self, addr):
+        rec = self._fails.get(addr)
+        if not rec or rec[0] < self.max_attempts:
+            return 0.0
+        left = self.lockout - (time.time() - rec[1])
+        if left <= 0:
+            self._fails.pop(addr, None)
+            return 0.0
+        return left
+
+    def begin(self, addr):
+        """Take one attempt for `addr`: 0 when it may be checked (then end()),
+        else seconds to wait. Attempts being checked count, so logins sent all
+        at once are max_attempts guesses, not one each - the lockout used to be
+        read before any of them had failed."""
+        with self._lock:
+            left = self._left(addr)
+            if left:
+                return left
+            fails = (self._fails.get(addr) or [0])[0]
+            if fails + self._busy.get(addr, 0) >= self.max_attempts:
+                return 1.0                # the others are still being checked
+            self._busy[addr] = self._busy.get(addr, 0) + 1
+            return 0.0
+
+    def end(self, addr, ok):
+        with self._lock:
+            n = self._busy.get(addr, 1) - 1
+            if n > 0:
+                self._busy[addr] = n
+            else:
+                self._busy.pop(addr, None)
+        (self.record_success if ok else self.record_failure)(addr)
 
     def record_failure(self, addr):
         with self._lock:

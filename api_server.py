@@ -510,27 +510,29 @@ def create_app(queue, save_dir, pending=None, token=None, pair_requests=None):
     def api_login():
         data = request.get_json(silent=True) or {}
         addr = request.remote_addr or "?"
-        wait = throttle.locked_for(addr)
-        if wait > 0:
-            return jsonify({"status": "error", "code": "locked",
-                            "message": "Too many attempts. Try again in "
-                                       f"{int(wait) + 1}s.",
-                            "retryAfter": int(wait) + 1}), 429
         if not web_auth.is_enabled():
             return jsonify({"status": "error", "code": "disabled",
                             "message": "The web client is turned off"}), 403
         if not web_auth.has_password():
             return jsonify({"status": "error", "code": "no-password",
                             "message": "Set a web password in Settings first"}), 403
-        if not web_auth.verify(data.get("username") or "",
-                               data.get("password") or ""):
-            throttle.record_failure(addr)
+        wait = throttle.begin(addr)
+        if wait > 0:
+            return jsonify({"status": "error", "code": "locked",
+                            "message": "Too many attempts. Try again in "
+                                       f"{int(wait) + 1}s.",
+                            "retryAfter": int(wait) + 1}), 429
+        ok = False
+        try:
+            ok = web_auth.verify(data.get("username") or "", data.get("password") or "")
+        finally:
+            throttle.end(addr, ok)
+        if not ok:
             log.warning("failed web login from %s", addr)
             # One message for both halves on purpose: saying WHICH was wrong
             # tells an attacker when they have found a real username.
             return jsonify({"status": "error", "code": "bad-login",
                             "message": "Wrong username or password"}), 401
-        throttle.record_success(addr)
         session.clear()                   # new session id on login
         session["web_ok"] = True
         session["pw"] = web_auth.password_stamp()

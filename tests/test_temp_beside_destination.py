@@ -74,3 +74,19 @@ def test_finishing_and_cancelling_leave_no_hidden_folder(tmp_path, monkeypatch):
         assert os.listdir(tmp_path / "dl") == ["a.bin"]
     finally:
         q.shutdown()
+
+
+def test_removing_a_failed_download_takes_its_partial_along(tmp_path, monkeypatch):
+    """What Remove / Clear in the window and the web client do (remove_task)."""
+    _other_drive(monkeypatch)
+    from queue_manager import QueueManager
+    q = QueueManager(queues=[{"name": "Main", "max_concurrent": 1}])
+    try:
+        u = _task(tmp_path / "dl" / "c.bin")
+        open(utils.temp_download_path(u), "wb").write(b"half")
+        u.status = T.ERROR
+        q.add_task(u, start=False)
+        q.remove_task(u)
+        assert os.listdir(tmp_path / "dl") == [] and u not in q.tasks
+    finally:
+        q.shutdown()

@@ -7,6 +7,7 @@ import json
 import logging
 import secrets
 import tempfile
+import threading
 import urllib.parse
 
 # Default request headers shared by the HTTP downloader, HLS grabber, and probe.
@@ -334,6 +335,9 @@ def _drop_moved(src):
             "moved, but the old copy could not all be removed: %s", e)
 
 
+_finish_lock = threading.Lock()
+
+
 def finalize_download(temp_path, dest_path):
     """Atomically move a finished temp file to its destination, cross-volume safe.
 
@@ -352,9 +356,14 @@ def finalize_download(temp_path, dest_path):
     and the remove fails with WinError 2. Measured: 1.5 GB from C: to D:,
     removed 0.17 s into the move - the copy at the other end was whole. It
     was thrown away as a failed move all the same, and the download said
-    "disk error" at 100% (2026-10-09; sweep_orphan_temps has who removed it)."""
+    "disk error" at 100% (2026-10-09; sweep_orphan_temps has who removed it).
+
+    Never over another file: a name taken by the time it finishes - two
+    downloads of one name, both named while neither was on disk - gets a free
+    one (unique_path). Returns the path it was saved at."""
     import shutil
-    staged = dest_path + ".hfmove"
+    # its own staging name: two downloads of one name may finish together
+    staged = "%s.%s.hfmove" % (dest_path, os.path.splitext(os.path.basename(temp_path))[0][:12])
     unsparse(temp_path)
     try:
         size = os.path.getsize(temp_path)
@@ -371,8 +380,13 @@ def finalize_download(temp_path, dest_path):
             logging.getLogger("hyperfetch.downloader").warning(
                 "the temp file %s went while it was being moved; the copy is whole "
                 "and is kept", os.path.basename(temp_path))
-        os.replace(staged, dest_path)
+        with _finish_lock:      # choose and take the name as one step
+            if os.path.exists(dest_path):
+                dest_path = unique_path(os.path.dirname(dest_path) or ".",
+                                        os.path.basename(dest_path))
+            os.replace(staged, dest_path)
         drop_empty_temp_home(temp_path)
+        return dest_path
     except OSError:
         try:
             if os.path.exists(staged):
@@ -380,6 +394,14 @@ def finalize_download(temp_path, dest_path):
         except OSError:
             pass
         raise
+
+def saved_at(task, path):
+    """Point the task at where finalize_download put it (another name if its
+    own was taken)."""
+    if path and path != task.save_path:
+        task.log_event(f"Saved as {os.path.basename(path)}: "
+                       f"{os.path.basename(task.save_path)} was taken")
+        task.save_path, task.filename = path, os.path.basename(path)
 
 # Global TLS-verification flag. Default ON (secure). The GUI may flip it from
 # the saved setting; downloader/hls/probe read it for every request.

@@ -142,21 +142,6 @@ class QueueManager:
         t.start()
         return t
 
-    def remove_finished(self):
-        """Drop completed/cancelled/errored tasks from the visible list."""
-        with self.cond:
-            self.tasks = [t for t in self.tasks
-                          if t.status not in (T.COMPLETED, T.CANCELLED, T.ERROR)]
-
-    def clear_all(self):
-        """Cancel everything (incl. in-flight) and empty the visible list."""
-        with self.cond:
-            for t in self.tasks:
-                t.request_cancel()
-            self._heap.clear()
-            self.tasks = []
-            self.cond.notify_all()
-
     def move(self, task, where):
         """Reorder a QUEUED task within the pending order.
 

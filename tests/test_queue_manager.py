@@ -131,18 +131,6 @@ def test_get_task(fake_worker):
     q.shutdown()
 
 
-def test_remove_finished(fake_worker):
-    q = QueueManager(queues=[{"name": "Main", "max_concurrent": 4}])
-    done = q.add_task(T.DownloadTask("u", "d"))
-    assert _wait(lambda: done.status == T.COMPLETED)
-    paused = T.DownloadTask("u", "p")
-    paused.status = T.PAUSED
-    q.add_task(paused, start=False)
-    q.remove_finished()
-    assert done not in q.tasks and paused in q.tasks
-    q.shutdown()
-
-
 def test_wait_active_drains_paused_workers(fake_worker):
     """closeEvent uses wait_active to block until in-flight workers actually
     return, so the last chunk gets flushed instead of dying with the process."""
