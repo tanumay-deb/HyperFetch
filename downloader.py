@@ -581,13 +581,19 @@ class Downloader:
                         cr = r.headers.get("Content-Range", "")
                         if src != self.url:
                             raise MirrorMismatch(f"answered {r.status_code} {cr or 'without a range'}")
+                        if not self._media and self._mirrors_left():
+                            # as for an expired first link: the extra links go on
+                            self._drop_mirror(self.url, f"answered {r.status_code} to a range")
+                            continue
+                        # an Error, not a pause: a video's run reads a pause as
+                        # the user's and showed "Paused" with no reason. The
+                        # other parts stop as they ask again, answered the same.
                         if not self.t.cancel_requested:
                             self.t.status = T.ERROR
                             self.t.error = ("The server no longer sends this file in parts "
                                             "— Restart to download it again")
                             log.warning("seg %d of %s: asked for a range, got %s %s",
                                         seg.index, self.t.filename, r.status_code, cr or "no range")
-                        self.t.request_pause()      # the other parts stop too
                         return
                     accepted = True
                     self._streams(+1, src)

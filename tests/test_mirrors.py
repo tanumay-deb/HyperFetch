@@ -200,3 +200,28 @@ def test_before_it_starts_the_message_follows_how_the_file_will_split(tmp_path, 
     w._mirror_checks = collections.deque([(t, "https://b.example/f.bin", None)])
     w._finish_mirror_checks()
     assert "expires" in said[-1][2]
+
+
+def test_a_first_link_that_stops_sending_parts_hands_over_to_the_extra_link(media_server, tmp_path):
+    """As an expired first link does (403/410): the extra links go on."""
+    import threading
+    import time
+    data = _data(8 * 1024 * 1024)
+    media_server.put("a/file.bin", data)
+    media_server.put("b/file.bin", data)
+    media_server.rate = 2 * 1024 * 1024
+    t = T.DownloadTask(media_server.url("a/file.bin"), str(tmp_path / "file.bin"))
+    th = threading.Thread(target=Downloader(t, segments=4).run)
+    th.start()
+    end = time.monotonic() + 20
+    while t.downloaded < 1024 * 1024 and time.monotonic() < end:
+        time.sleep(0.05)
+    t.request_pause()
+    th.join()
+    media_server.no_range.add("a/file.bin")            # the whole file to every range
+    media_server.rate = 0
+    t.mirrors = [media_server.url("b/file.bin")]
+    t.clear_pause()
+    Downloader(t, segments=4).run()
+    assert t.status == T.COMPLETED, (t.status, t.error)
+    assert open(t.save_path, "rb").read() == data

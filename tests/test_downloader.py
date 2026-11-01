@@ -357,3 +357,27 @@ def test_a_videos_part_keeps_the_name_ytdlp_gave_it(media_server, tmp_path):
     eng = Downloader(t, segments=4, url=media_server.url("v/part.mp4"))
     assert eng.run_media() and eng.media_done, t.error
     assert t.save_path == str(name) and name.read_bytes() == data
+
+
+def test_a_video_link_that_stops_sending_parts_is_an_error_not_a_pause(media_server, tmp_path):
+    """yt-dlp reads a pause on the task as the user's: the card said "Paused"
+    with no reason when the engine asked for one to stop the other parts."""
+    import threading
+    import time
+    data = os.urandom(8 * 1024 * 1024)
+    media_server.put("v/clip.mp4", data)
+    media_server.rate = 1024 * 1024
+    t = T.DownloadTask(media_server.url("watch/1"), str(tmp_path / "clip.mp4"))
+    eng = Downloader(t, segments=4, url=media_server.url("v/clip.mp4"))
+    th = threading.Thread(target=eng.run_media)
+    th.start()
+    end = time.monotonic() + 20
+    # as soon as the first part is asked for (not the 0-0 probe): the parts
+    # after it are asked for as it is accepted
+    while (not any(r["range"] and r["range"] != "bytes=0-0" for r in media_server.log)
+           and time.monotonic() < end):
+        time.sleep(0.001)
+    media_server.no_range.add("v/clip.mp4")
+    th.join(60)
+    assert t.status == T.ERROR and "no longer sends" in t.error, (t.status, t.error)
+    assert not t.pause_requested and not eng.media_done
