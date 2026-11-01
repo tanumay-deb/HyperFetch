@@ -23,6 +23,15 @@ const ON_FIREFOX = String((chrome.runtime.getURL && chrome.runtime.getURL("")) |
 
 const origins = () => PORTS.map((p) => `http://127.0.0.1:${p}`);
 
+/** Whether a /ping answer is HyperFetch's own. Any server on the old port
+ *  would do otherwise - Flask and ASP.NET development servers listen on 5000
+ *  and answer every path - and it was then remembered, and handed every
+ *  download's link, the page's cookies and the pairing token. */
+function isHyperFetch(r) {
+  if (!r || !r.ok || typeof r.json !== "function") return Promise.resolve(false);
+  return r.json().then((j) => !!j && j.status === "ok" && "needsToken" in j, () => false);
+}
+
 /** Origin of a HyperFetch that answers, preferring the remembered one.
  *  Resolves to the preferred origin even when nothing answers, so callers fail
  *  exactly as they did before and the offline queue still holds the download. */
@@ -36,10 +45,13 @@ function appBase() {
         ? [remembered].concat(origins().filter((o) => o !== remembered))
         : origins();
       const tryAt = (i) => {
-        if (i >= order.length) return resolve(order[0]);
+        // nothing answered: the new port, never a remembered one, which may
+        // be a stranger that answered once
+        if (i >= order.length) return resolve(origins()[0]);
         fetch(`${order[i]}/ping`)
-          .then((r) => {
-            if (!r.ok) throw new Error("not ok");
+          .then(isHyperFetch)
+          .then((ours) => {
+            if (!ours) throw new Error("not HyperFetch");
             cachedBase = order[i];
             chrome.storage.local.set({ [BASE_KEY]: cachedBase }, ignoreErr);
             resolve(cachedBase);

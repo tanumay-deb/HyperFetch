@@ -53,7 +53,7 @@ function loadWorker(kind) {
     fetch: (url, init) => {
       if (/\/ping$/.test(url)) {
         return Number(new URL(url).port) === 21456
-          ? Promise.resolve({ ok: true, status: 200 })
+          ? Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({ status: 'ok', needsToken: true }) })
           : Promise.reject(new Error('nothing on that port'));
       }
       if (/\/pair$/.test(url)) return pair(init);

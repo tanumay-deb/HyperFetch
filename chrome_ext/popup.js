@@ -10,8 +10,12 @@ function resolveApp() {
   const order = PORTS.map((p) => `http://127.0.0.1:${p}`);
   const tryAt = (i) => {
     if (i >= order.length) return Promise.resolve(order[0]);
+    // HyperFetch's own answer only, as in the worker (isHyperFetch there):
+    // a development server on the old port answers every path
     return fetch(`${order[i]}/ping`)
-      .then((r) => (r.ok ? order[i] : Promise.reject(new Error("not ok"))))
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j) => (j && j.status === "ok" && "needsToken" in j
+        ? order[i] : Promise.reject(new Error("not HyperFetch"))))
       .catch(() => tryAt(i + 1));
   };
   return tryAt(0).then((base) => { APP = base; return base; });

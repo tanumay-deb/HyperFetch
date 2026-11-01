@@ -23,7 +23,7 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 function makeEnv({ online = true, port = 21456, reply = 'ok', delayMs = 0,
                    hang = false, patchSource = null, firefox = false,
                    pairRefused = false, requireToken = false,
-                   pairAnswer = 'unavailable' } = {}) {
+                   pairAnswer = 'unavailable', stranger = 0 } = {}) {
   const state = {
     stored: { token: 'tok', enabled: true },
     posts: [],           // download POSTs that reached the "app"
@@ -46,6 +46,7 @@ function makeEnv({ online = true, port = 21456, reply = 'ok', delayMs = 0,
     pairAnswer,          // what the fake app says to /pair/request
     pairAsks: [],        // codes Firefox asked /pair/request with
     cookieQueries: [],   // what each cookies.getAll asked for
+    strangerGot: [],     // requests that reached another program's server
   };
   const ctx = {
     console,
@@ -54,13 +55,19 @@ function makeEnv({ online = true, port = 21456, reply = 'ok', delayMs = 0,
     navigator: { userAgent: 'test' },
     fetch: (url, init) => {
       if (!state.online) return Promise.reject(new Error('offline'));
+      if (stranger && Number(new URL(url).port) === stranger) {
+        // another program's development server: a web page on every path
+        state.strangerGot.push(url);
+        return Promise.resolve({ ok: true, status: 200,
+                                 json: () => Promise.reject(new SyntaxError('not JSON')) });
+      }
       if (/\/ping$/.test(url)) {
         // state.port decides which port this fake app answers on, so the
         // worker's new-port-then-old-port resolution can actually be tested.
         const p = Number(new URL(url).port);
         state.pinged.push(p);
         return p === state.port
-          ? Promise.resolve({ ok: true, status: 200 })
+          ? Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({ status: 'ok', needsToken: true }) })
           : Promise.reject(new Error('nothing on that port'));
       }
       if (/\/pair\/request$/.test(url)) {
@@ -570,6 +577,32 @@ function capture(state, item) {
     assert.strictEqual(state.pinged[0], 21456,
       'the new port must be tried first, or every new install pays for the old');
     console.log('  ok  the new port is tried first');
+  }
+
+  // ---- a stranger on the old port is not the app -------------------------
+  // Flask and ASP.NET development servers listen on 5000 and answer every
+  // path. Taken for the app, one was remembered and sent every download's
+  // link, the page's cookies and the pairing token.
+  {
+    const { ctx, state } = makeEnv({ port: 0, stranger: 5000 });
+    state.stored.appBase = 'http://127.0.0.1:5000';   // remembered from before the fix
+    await wait(10);
+    ctx.sendToApp('https://x/s.zip', 's.zip', '', () => {});
+    await wait(80);
+    assert.deepStrictEqual(state.strangerGot.filter((u) => !/\/ping$/.test(u)), [],
+      'a download went to a server that is not HyperFetch');
+    assert.strictEqual(held(state).length, 1, 'it was not held for the app');
+    console.log('  ok  a server on the old port that is not HyperFetch gets nothing');
+  }
+  {
+    const { ctx, state } = makeEnv({ port: 21456, stranger: 5000 });
+    state.stored.appBase = 'http://127.0.0.1:5000';
+    await wait(10);
+    ctx.sendToApp('https://x/t.zip', 't.zip', '', () => {});
+    await wait(80);
+    assert.deepStrictEqual(state.posts.map((p) => p.url), ['https://x/t.zip'],
+      'the real app on the new port was passed over for the stranger');
+    console.log('  ok  the app is found past a stranger it was mistaken for');
   }
 
   {
