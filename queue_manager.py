@@ -29,6 +29,7 @@ class QueueManager:
     def __init__(self, queues=None, segments=8):
         self._heap = []                  # ready-to-run tasks (priority ordered)
         self.tasks = []                  # every task ever added, for the GUI
+        self.unreadable = []             # saved rows restore could not read, kept as they were
         self.queues = {}
         for q in (queues or [{"name": "Main", "max_concurrent": 3}]):
             self.queues[q["name"]] = Queue(q["name"], q["max_concurrent"])
@@ -90,7 +91,10 @@ class QueueManager:
         for d in rows or []:
             try:
                 t = T_.DownloadTask.from_dict(d)
-            except (KeyError, TypeError, ValueError):
+            except (KeyError, TypeError, ValueError, AttributeError):
+                # written back as it was (the window's _save_state): dropped,
+                # the next two saves took it out of the list and its backup
+                self.unreadable.append(d)
                 skipped += 1
                 continue
             self.add_task(t, start=False)

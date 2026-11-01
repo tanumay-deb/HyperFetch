@@ -382,6 +382,7 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, Up
                 import logging
                 logging.getLogger("hyperfetch.gui").exception(
                     "state save: skipping unserializable task %s", getattr(t, "id", "?"))
+        rows += self.queue.unreadable       # what restore could not read stays on disk
         # THE rule that breaks the empty-list loop, whatever caused it.
         #
         # Once downloads.json became "[]", every later launch read an empty list
