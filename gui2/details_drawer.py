@@ -1123,7 +1123,24 @@ class DetailsDrawer(QFrame):
         boxes = [cb for (_r, path), (_i, cb, _s) in zip(self._file_places, self._file_row_widgets)
                  if path.startswith(inside)]
         on = not all(cb.isChecked() for cb in boxes)
-        self._set_files(lambda shown, path: on if path.startswith(inside) else None)
+        row = next((r for r, k, _b in self._folder_rows if k == folder), -1)
+        picked = self._picked_files() if self._spreads(row) else set()
+        self._set_files(lambda shown, path: on if path.startswith(inside) or path in picked
+                        else None)
+
+    def _spreads(self, row):
+        """A box on one of several selected rows ticks them all (asked
+        2026-10-31), as in a file list; on a row not selected, only its own."""
+        t = self.files_table
+        return (row >= 0 and t.selectionModel().isRowSelected(row)
+                and len(self._picked_files()) > 1)
+
+    def _box_changed(self, row, cb):
+        if self._spreads(row):
+            on, picked = cb.isChecked(), self._picked_files()
+            self._set_files(lambda _shown, path: on if path in picked else None)
+        else:
+            self._apply_file_selection()
 
     def _sorted_entries(self):
         """File rows in display order.
@@ -1619,8 +1636,12 @@ class DetailsDrawer(QFrame):
             # aria2 reads an empty select-file as "everything", so an empty
             # selection would silently re-enable every file. Keep the last file
             # ticked instead of doing the opposite of what the user asked.
-            self._file_row_widgets[0][1].setChecked(True)
-            return
+            first = self._file_row_widgets[0][1]
+            first.blockSignals(True)
+            first.setChecked(True)
+            first.blockSignals(False)
+            selected = [str(self._file_row_widgets[0][0] + 1)]
+            self._tally()
         win.queue.change_torrent_files(self._tid, ",".join(selected))
 
     def _load(self, t):
@@ -1760,7 +1781,7 @@ class DetailsDrawer(QFrame):
             # set state BEFORE connecting, or restoring aria2's own selection
             # would fire _apply_file_selection and push it straight back
             cb.setChecked(selected)
-            cb.stateChanged.connect(self._apply_file_selection)
+            cb.stateChanged.connect(lambda *_, row=r, box=cb: self._box_changed(row, box))
             # retally immediately so the size drops the moment it is unticked
             cb.stateChanged.connect(lambda *_: self._tally())
             ic_name = "folder" if is_folder else "document"

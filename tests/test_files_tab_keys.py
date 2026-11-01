@@ -105,3 +105,22 @@ def test_the_boxes_leave_the_keys_to_the_table(tmp_path):
     assert all(cb.focusPolicy() == Qt.NoFocus for _r, _k, cb in d._folder_rows)
     d._file_row_widgets[0][1].click()                  # a box still ticks its own file
     assert t.selected_files == "2,3,4"
+
+
+def test_a_box_on_one_of_several_selected_rows_ticks_them_all(tmp_path):
+    """Asked 2026-10-31: as in a file list. On a row not selected, only its own."""
+    d, t = _drawer(tmp_path)
+    tbl = d.files_table
+    tbl.setCurrentCell(1, 1)
+    QTest.keyClick(tbl, Qt.Key_Down, Qt.ShiftModifier)
+    QTest.keyClick(tbl, Qt.Key_Down, Qt.ShiftModifier)
+    assert _rows(d) == [1, 2, 3]
+    d._file_row_widgets[1][1].click()                  # e2's box, e1-e3 selected
+    assert t.selected_files == "4"
+    d._file_row_widgets[0][1].click()                  # and back, all three
+    assert t.selected_files == "1,2,3,4"
+    d._file_row_widgets[3][1].click()                  # e4 is not selected: only e4
+    assert t.selected_files == "1,2,3"
+    tbl.setCurrentCell(4, 1)                           # one row selected: only its own
+    d._file_row_widgets[3][1].click()
+    assert t.selected_files == "1,2,3,4"
