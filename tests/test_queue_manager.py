@@ -328,10 +328,33 @@ def test_shared_daemon_honours_the_users_concurrency_setting(fake_worker, monkey
     assert peak[0] <= 5, "must not exceed what the user asked for"
 
 
-def test_torrent_limit_never_exceeds_the_queue_limit(monkeypatch):
-    """A queue set to 2 must not run 3 torrents just because the cap is 3."""
-    assert QueueManager._torrent_limit(2) == 2
-    assert QueueManager._torrent_limit(2) == 2
+def test_a_torrent_in_another_queue_starts_while_one_runs_here(fake_worker, monkeypatch):
+    """Torrents running in any queue were counted against this queue's limit:
+    Main running one kept queue B's waiting with B's slot free (2026-11-01)."""
+    import threading
+    gate = threading.Event()
+
+    class Slow:
+        def __init__(self, t, segments=8):
+            self.t = t
+
+        def run(self):
+            self.t.status = T.DOWNLOADING
+            gate.wait(5)
+            self.t.status = T.COMPLETED
+
+    monkeypatch.setattr(queue_manager, "Downloader", Slow)
+    q = QueueManager(queues=[{"name": "Main", "max_concurrent": 1},
+                             {"name": "B", "max_concurrent": 1}])
+    try:
+        a = q.add_task(T.DownloadTask("magnet:?xt=urn:btih:" + "a" * 40, "a.bin"))
+        b = T.DownloadTask("magnet:?xt=urn:btih:" + "b" * 40, "b.bin")
+        b.queue_name = "B"
+        q.add_task(b)
+        assert _wait(lambda: a.status == b.status == T.DOWNLOADING)
+    finally:
+        gate.set()
+        q.shutdown()
 
 
 # --- a seeding torrent must not hold a download slot ------------------------

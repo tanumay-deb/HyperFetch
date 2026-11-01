@@ -338,7 +338,7 @@ def _drop_moved(src):
 _finish_lock = threading.Lock()
 
 
-def finalize_download(temp_path, dest_path):
+def finalize_download(temp_path, dest_path, free_name=True):
     """Atomically move a finished temp file to its destination, cross-volume safe.
 
     The temp lives in %TEMP% (often a different volume than the destination), so
@@ -360,7 +360,9 @@ def finalize_download(temp_path, dest_path):
 
     Never over another file: a name taken by the time it finishes - two
     downloads of one name, both named while neither was on disk - gets a free
-    one (unique_path). Returns the path it was saved at."""
+    one (unique_path). Returns the path it was saved at. `free_name=False`
+    for a video's part: yt-dlp named it, goes on to merge it by that name,
+    and keeps its own rules for a file that is there."""
     import shutil
     # its own staging name: two downloads of one name may finish together
     staged = "%s.%s.hfmove" % (dest_path, os.path.splitext(os.path.basename(temp_path))[0][:12])
@@ -381,7 +383,7 @@ def finalize_download(temp_path, dest_path):
                 "the temp file %s went while it was being moved; the copy is whole "
                 "and is kept", os.path.basename(temp_path))
         with _finish_lock:      # choose and take the name as one step
-            if os.path.exists(dest_path):
+            if free_name and os.path.exists(dest_path):
                 dest_path = unique_path(os.path.dirname(dest_path) or ".",
                                         os.path.basename(dest_path))
             os.replace(staged, dest_path)

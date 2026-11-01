@@ -78,3 +78,15 @@ def test_removal_handles_a_directory(tmp_path):
     (d / "sub" / "ep.mkv").write_bytes(b"x" * 5)
     assert S._remove_path(str(d)) is True
     assert not d.exists()
+
+
+def test_an_unfinished_download_does_not_take_a_finished_file_of_its_name(tmp_path):
+    """Two of one name were both given file.bin while neither was on disk; the
+    first finished there. Deleting the second "from disk" took the first's."""
+    f = tmp_path / "file.bin"
+    f.write_bytes(b"the first one's")
+    t = T.DownloadTask("https://a.example/file.bin", str(f), filename="file.bin")
+    t.status = T.PAUSED
+    assert S._payload_paths(t) == []
+    t.status = T.COMPLETED                     # its own, once it has finished
+    assert S._payload_paths(t) == [str(f)]

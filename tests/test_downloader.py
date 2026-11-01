@@ -318,3 +318,42 @@ def test_two_downloads_of_one_name_both_keep_their_file(media_server, tmp_path):
         str(tmp_path), second.filename)
     assert open(second.save_path, "rb").read() == two
     assert not glob.glob(str(tmp_path / "*.hfmove"))
+
+
+def test_a_resume_the_server_answers_with_the_whole_file_is_not_written(media_server, tmp_path):
+    """Asked for a range, sent the whole file (or an expired link's page): each
+    part wrote all of it at its own place, and a paused 8 MB download resumed
+    to "Completed" at 15 MB (measured, 2026-11-01)."""
+    import threading
+    import time
+    data = os.urandom(8 * 1024 * 1024)
+    media_server.put("a/f.bin", data)
+    media_server.rate = 2 * 1024 * 1024
+    t = T.DownloadTask(media_server.url("a/f.bin"), str(tmp_path / "f.bin"))
+    th = threading.Thread(target=Downloader(t, segments=4).run)
+    th.start()
+    end = time.monotonic() + 20
+    while t.downloaded < 1024 * 1024 and time.monotonic() < end:
+        time.sleep(0.05)
+    t.request_pause()
+    th.join()
+    assert t.status == T.PAUSED
+    media_server.no_range.add("a/f.bin")
+    media_server.rate = 0
+    t.clear_pause()
+    Downloader(t, segments=4).run()
+    assert t.status == T.ERROR and "no longer sends" in t.error
+    assert not os.path.exists(t.save_path)
+
+
+def test_a_videos_part_keeps_the_name_ytdlp_gave_it(media_server, tmp_path):
+    """yt-dlp merges the parts by the names it chose: a part moved to a free
+    name ("(1)") left the merge working on another task's file."""
+    data = os.urandom(3 * 1024 * 1024)
+    media_server.put("v/part.mp4", data)
+    name = tmp_path / "Title.f137.mp4"
+    name.write_bytes(b"the other copy's part")
+    t = T.DownloadTask(media_server.url("watch/1"), str(name))
+    eng = Downloader(t, segments=4, url=media_server.url("v/part.mp4"))
+    assert eng.run_media() and eng.media_done, t.error
+    assert t.save_path == str(name) and name.read_bytes() == data

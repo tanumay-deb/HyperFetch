@@ -515,6 +515,16 @@ class Downloader:
         return [m for m in getattr(self.t, "mirrors", None) or []
                 if m not in self._dead and m != but]
 
+    def _the_range(self, r, start, seg):
+        """Whether `r` carries the bytes asked for from `start`, of a file of
+        this download's size. A whole-file 200 is that only for a part that
+        is the whole file, asked for from its first byte."""
+        if r.status_code == 200:
+            return start == 0 and seg.start == 0 and seg.end >= self.t.total_size - 1
+        cr = r.headers.get("Content-Range", "")
+        return (r.status_code == 206 and cr.startswith(f"bytes {start}-")
+                and cr.rpartition("/")[2] in (str(self.t.total_size), "*"))
+
     def _drop_mirror(self, url, why):
         if url not in self._dead:
             self._dead.add(url)
@@ -563,12 +573,22 @@ class Downloader:
                                   allow_redirects=True, timeout=CONNECT_TIMEOUT,
                                   verify=utils.VERIFY_TLS, proxies=utils.PROXIES) as r:
                     r.raise_for_status()
-                    if src != self.url:
-                        # only the very bytes asked for, of a file this size
+                    if self.t.supports_range and not self._the_range(r, start, seg):
+                        # not the bytes asked for: written at this part's place,
+                        # a whole file (or an expired link's page) sent in reply
+                        # to a range made a resumed download "Completed" and
+                        # nearly twice its size (measured, 2026-11-01)
                         cr = r.headers.get("Content-Range", "")
-                        if (r.status_code != 206 or not cr.startswith(f"bytes {start}-")
-                                or cr.rpartition("/")[2] != str(self.t.total_size)):
+                        if src != self.url:
                             raise MirrorMismatch(f"answered {r.status_code} {cr or 'without a range'}")
+                        if not self.t.cancel_requested:
+                            self.t.status = T.ERROR
+                            self.t.error = ("The server no longer sends this file in parts "
+                                            "— Restart to download it again")
+                            log.warning("seg %d of %s: asked for a range, got %s %s",
+                                        seg.index, self.t.filename, r.status_code, cr or "no range")
+                        self.t.request_pause()      # the other parts stop too
+                        return
                     accepted = True
                     self._streams(+1, src)
                     try:
@@ -925,7 +945,8 @@ class Downloader:
                 # the space (an 8 GB file on 10 GB free failed at 100% here)
                 if not utils.same_drive(temp_path, self.t.save_path):
                     self._check_disk_space(self.t.save_path, self.t.total_size)
-                utils.saved_at(self.t, utils.finalize_download(temp_path, self.t.save_path))
+                utils.saved_at(self.t, utils.finalize_download(
+                    temp_path, self.t.save_path, free_name=not self._media))
             except OSError as e:
                 self.t.status = T.ERROR
                 self.t.error = self._format_disk_error(e, self.t.save_path)

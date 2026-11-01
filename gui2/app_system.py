@@ -98,7 +98,11 @@ class SystemMixin:
         if active:
             if not self._scheduler_active:        # window just opened: release scheduled
                 for t in self.queue.tasks:
-                    if t.status == T.SCHEDULED:
+                    # one that was running when the window closed was marked
+                    # Scheduled, and its worker wrote Paused over that as it
+                    # stopped: it never came back the next night
+                    if t.status == T.SCHEDULED or (t.status == T.PAUSED
+                                                   and getattr(t, "is_scheduled", False)):
                         t.is_scheduled = False
                         self.queue.resume_task(t)
                 self._scheduler_active = True

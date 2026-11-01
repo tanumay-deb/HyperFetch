@@ -287,8 +287,6 @@ class QueueManager:
             q.active += 1
             self.active += 1
             task._worker_alive = True
-            if self._is_torrent(task):
-                task._torrent_slot_reserved = True
 
             threading.Thread(target=self._execute, args=(task, q.name),
                              daemon=True).start()
@@ -421,25 +419,6 @@ class QueueManager:
     def _is_torrent(task):
         return _torrent.is_torrent_task(task.url, task.filename)
 
-    @staticmethod
-    def _torrent_limit(queue_limit):
-        """How many torrents may run at once in a queue whose limit is
-        ``queue_limit`` — which is simply the queue limit.
-
-        There used to be a second, invisible cap of 3 here, because the old
-        per-torrent engine spawned one aria2 process each and they all fought
-        over the same BitTorrent listen port (measured: three torrents, two
-        listeners, the third outbound-only). The shared daemon is one process
-        with one port and one DHT table, so there is nothing left to protect
-        against, and silently running 3 when the user asked for 16 was just a
-        bug from their side of the screen.
-        """
-        return queue_limit
-
-    def _active_torrent_count(self):
-        return sum(bool(getattr(task, "_torrent_slot_reserved", False))
-                   for task in self.tasks)
-
     def torrent_speed_limit(self):
         """The torrents' part of the download speed limit right now, in bytes
         a second (0: no limit), with the bucket set to let the rest through.
@@ -475,7 +454,6 @@ class QueueManager:
             return None, None
 
         now = time.time()
-        active_torrents = self._active_torrent_count()
         soonest = None                 # when the next backed-off task is due
         order = sorted(self._heap)     # the heap's own order
         ready_task = None
@@ -491,9 +469,10 @@ class QueueManager:
             if not q:
                 q = Queue(task.queue_name, 3)
                 self.queues[task.queue_name] = q
-            torrent_full = (self._is_torrent(task)
-                            and active_torrents >= self._torrent_limit(q.max_concurrent))
-            if q.active < q.max_concurrent and not torrent_full:
+            # the queue's own limit, torrents and all: torrents running in
+            # another queue kept one here waiting with a slot free (counted
+            # against this queue's limit; 2026-11-01)
+            if q.active < q.max_concurrent:
                 ready_task = task
                 break
 
@@ -536,8 +515,6 @@ class QueueManager:
                 q.active += 1
                 self.active += 1
                 task._worker_alive = True
-                if self._is_torrent(task):
-                    task._torrent_slot_reserved = True
             # Bind the slot to the queue we charged it against (q.name), passed
             # explicitly — reading task.queue_name again in _execute would let a
             # mid-download "Move to Queue" decrement a DIFFERENT queue than the
@@ -564,7 +541,6 @@ class QueueManager:
             if getattr(task, "_slot_released", False):
                 return
             task._slot_released = True
-            task._torrent_slot_reserved = False
             q = self.queues.get(started_queue)
             if q:
                 q.active -= 1
@@ -630,7 +606,6 @@ class QueueManager:
                         task.error = task.error or "Download ended unexpectedly — Resume to retry"
                     log.warning("forced terminal status for %s -> %s", task.filename, task.status)
                 task._worker_alive = False
-                task._torrent_slot_reserved = False
                 if stalled or again:
                     self._push(task)
                 # a seeding torrent already handed its slot back; decrementing

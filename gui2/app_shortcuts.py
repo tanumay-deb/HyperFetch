@@ -113,6 +113,14 @@ class ShortcutsMixin:
         The torrent's real entry is its filename, which the engine sets from the
         first non-[METADATA] file it sees.
         """
+        import torrent as _tor
+        import yt_dl
+        if (t.status != T.COMPLETED and not _tor.is_torrent_task(t.url, t.filename)
+                and not yt_dl.is_ytdlp_task(t)):
+            # an unfinished plain download has nothing at its save path - its
+            # bytes are in a temp file, which remove_task takes - so what is
+            # there is another file: one of the same name that finished first
+            return []
         out = []
         save = getattr(t, "save_path", "") or ""
         base = os.path.dirname(save) or "."
