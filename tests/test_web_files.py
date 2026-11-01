@@ -351,3 +351,15 @@ def test_the_error_says_where_it_looked(env):
     body = r.get_json()
     assert "vanished.mkv" in body["message"]
     assert body["lookedIn"].endswith("vanished.mkv")
+
+
+def test_a_page_shown_inline_cannot_run_its_script(env):
+    """A downloaded .html shown in the browser ran as the web client, with the
+    owner's session: it could add, rename or remove downloads."""
+    c, q, dl = env
+    f = dl / "page.html"
+    f.write_bytes(b"<script>fetch('/api/downloads')</script>")
+    t = _task(q, f)
+    r = _get(c, f"/api/downloads/{t.id}/file?inline=1")
+    assert r.headers.get("Content-Security-Policy") == "sandbox"
+    assert r.headers.get("X-Content-Type-Options") == "nosniff"

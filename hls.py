@@ -710,15 +710,15 @@ class HlsDownloader:
                                 self.t.error = "HTTP 403 Forbidden - URL expired"
                                 log.warning("HLS 403 host=%s at segment %d/%d "
                                             "(retries=%d 403=%d timeouts=%d)",
-                                            host, done + i + 1, total, self._stats["retries"],
+                                            host, done + 1, total, self._stats["retries"],
                                             self._stats["http403"], self._stats["timeouts"])
                                 return
                             self.t.status = T.ERROR
-                            # done+i is 0-based within remaining; +1 for human display
-                            self.t.error = f"segment {done + i + 1}/{total} failed: {e}"
+                            # done already counts this batch's earlier ones
+                            self.t.error = f"segment {done + 1}/{total} failed: {e}"
                             log.warning("HLS fail host=%s segment %d/%d: %s "
                                         "(retries=%d 403=%d timeouts=%d)",
-                                        host, done + i + 1, total, e, self._stats["retries"],
+                                        host, done + 1, total, e, self._stats["retries"],
                                         self._stats["http403"], self._stats["timeouts"])
                             return
                         f.write(data)

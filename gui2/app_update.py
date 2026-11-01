@@ -109,14 +109,19 @@ class UpdateMixin:
         info = self._update_info or {}
         version = _plain(info.get("version"))
         sha = info.get("sha256")
-        if sha and not updater.file_matches(task.save_path, sha):
+        # no checksum listed is not a pass: what cannot be checked is not run
+        if not sha or not updater.file_matches(task.save_path, sha):
             # Not the release's file: cut short, or changed on the way. It is
             # not run, and the button asks for it again.
-            log.warning("the downloaded update does not match the release's checksum")
+            if sha:
+                log.warning("the downloaded update does not match the release's checksum")
+                why = "What came down is not the file the release lists. Try again."
+            else:
+                log.warning("the release lists no checksum for the update; not run")
+                why = ("The release lists no checksum to check it against. Install it "
+                       "from the HyperFetch website instead.")
             self._update_url = ""
-            self._toasts.show("error", "Update not installed",
-                              "What came down is not the file the release lists. "
-                              "Try again.", secs=12)
+            self._toasts.show("error", "Update not installed", why, secs=12)
             self.sidebar.set_update("Update to %s" % version)
             return
         self._update_ready = task.save_path

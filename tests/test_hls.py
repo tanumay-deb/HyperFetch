@@ -45,6 +45,11 @@ def hls_server(aes_tools):
         "live.m3u8": (b"#EXTM3U\n#EXT-X-TARGETDURATION:4\n", "application/vnd.apple.mpegurl"),
         "sliding.m3u8": (live_with_segs.encode(), "application/vnd.apple.mpegurl"),
         "key.bin": (key, "application/octet-stream"),
+        # the 4th segment is gone (404)
+        "gap.m3u8": (("#EXTM3U\n#EXT-X-TARGETDURATION:4\n#EXT-X-MEDIA-SEQUENCE:0\n"
+                      + "".join(f"#EXTINF:4.0,\n{n}\n" for n in
+                                ("seg0.ts", "seg1.ts", "seg2.ts", "gone.ts", "seg4.ts"))
+                      + "#EXT-X-ENDLIST\n").encode(), "application/vnd.apple.mpegurl"),
     }
     for i in range(5):
         routes[f"seg{i}.ts"] = (segs[i], "video/mp2t")
@@ -205,3 +210,11 @@ def test_probe_variants_empty_for_media_playlist(hls_server):
     import hls
     # high.m3u8 is a media playlist (no #EXT-X-STREAM-INF) -> nothing to choose
     assert hls.probe_variants(f"{hls_server.base}/high.m3u8") == []
+
+
+def test_a_failed_segment_is_named_by_its_place(hls_server, tmp_path):
+    """The 4th of 5 failed and the message said "segment 7/5": the count
+    of the batch's earlier segments was added twice."""
+    t = T.DownloadTask(f"{hls_server.base}/gap.m3u8", str(tmp_path / "v.m3u8"))
+    hls.HlsDownloader(t).run()
+    assert t.status == T.ERROR and t.error.startswith("segment 4/5 failed"), t.error

@@ -225,12 +225,12 @@ def test_an_installer_that_is_not_the_releases_file_is_not_run(tmp_path):
     assert len(w.added) == 2
 
 
-def test_a_release_with_no_checksum_is_still_offered(tmp_path):
-    """Older releases, or an answer from before the checksum was kept."""
+def test_a_release_with_no_checksum_is_not_run(tmp_path):
+    """What cannot be checked is not run (2026-11-01; it used to be offered)."""
     w = _Window(info={k: v for k, v in INFO.items() if k != "sha256"})
     w._on_update_clicked()
     w._update_finished(_done(tmp_path))
-    assert w.asked == ["2.8.1"]
+    assert w.asked == []
 
 
 # ---- the pieces it is wired to --------------------------------------------------

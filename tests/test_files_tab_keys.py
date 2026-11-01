@@ -17,14 +17,15 @@ from gui2.download_card import ElideLabel                        # noqa: E402
 from queue_manager import QueueManager                           # noqa: E402
 
 
-def _drawer(tmp_path, selected=""):
+def _drawer(tmp_path, selected="", files=None):
     """A paused torrent of four files in Show/: row 0 is the folder, rows
     1-4 its files e1-e4."""
     app = QApplication.instance() or QApplication([])
     t = T.DownloadTask("magnet:?xt=urn:btih:abc&dn=Show", str(tmp_path / "magnet_.bin"),
                        filename="Show")
     t.status = T.PAUSED
-    t.files = [["Show/e%d.mkv" % n, 10] for n in (1, 2, 3, 4)]
+    t.files = [[f, 10] for f in files] if files else [["Show/e%d.mkv" % n, 10]
+                                                       for n in (1, 2, 3, 4)]
     t.selected_files = selected
     host = QWidget()
     host.resize(900, 700)
@@ -37,7 +38,7 @@ def _drawer(tmp_path, selected=""):
     d.open_for(t)
     d.tabs.setCurrentWidget(d.files_table.parentWidget())
     app.processEvents()
-    assert [p for _r, p in d._file_places] == ["Show/e%d.mkv" % n for n in (1, 2, 3, 4)]
+    assert [p for _r, p in d._file_places] == (files or ["Show/e%d.mkv" % n for n in (1, 2, 3, 4)])
     return d, t
 
 
@@ -124,3 +125,17 @@ def test_a_box_on_one_of_several_selected_rows_ticks_them_all(tmp_path):
     tbl.setCurrentCell(4, 1)                           # one row selected: only its own
     d._file_row_widgets[3][1].click()
     assert t.selected_files == "1,2,3,4"
+
+
+def test_a_folder_box_on_one_of_several_selected_rows_ticks_them_all(tmp_path):
+    """Rows: Show 0, A 1, e1 2, e2 3, B 4, e3 5, e4 6."""
+    from PySide6.QtCore import QItemSelectionModel
+    files = ["Show/A/e1.mkv", "Show/A/e2.mkv", "Show/B/e3.mkv", "Show/B/e4.mkv"]
+    d, t = _drawer(tmp_path, files=files)
+    sm = d.files_table.selectionModel()
+    for row in (1, 5):                                 # folder A and the file e3
+        sm.select(d.files_table.model().index(row, 0),
+                  QItemSelectionModel.Select | QItemSelectionModel.Rows)
+    box_a = next(cb for _r, k, cb in d._folder_rows if k == "Show/A")
+    box_a.click()                                      # A's box: A's files and e3
+    assert t.selected_files == "4"

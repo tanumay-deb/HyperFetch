@@ -601,8 +601,9 @@ class Downloader:
                                 if self.t.pause_requested:
                                     return
                                 if chunk:
-                                    utils.global_limiter.wait(len(chunk))
-                                    self.t._limiter.wait(len(chunk))
+                                    stop = lambda: self.t.pause_requested or self.t.cancel_requested
+                                    utils.global_limiter.wait(len(chunk), stop)
+                                    self.t._limiter.wait(len(chunk), stop)
                                     f.write(chunk)
                                     # Flush to the OS BEFORE advancing the counter so a
                                     # later abrupt exit (daemon threads killed mid-write)

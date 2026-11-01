@@ -814,8 +814,15 @@ def create_app(queue, save_dir, pending=None, token=None, pair_requests=None):
         # the whole thing, and a dropped 4 GB download resumes instead of
         # starting over.
         inline = request.args.get("inline") == "1"
-        return send_file(f["path"], as_attachment=not inline,
+        resp = send_file(f["path"], as_attachment=not inline,
                          download_name=f["name"], conditional=True)
+        if inline:
+            # shown in the browser: a downloaded .html or .svg would run its
+            # script as this page, with the owner's session. Sandboxed, a
+            # video or picture still shows; no script runs.
+            resp.headers["Content-Security-Policy"] = "sandbox"
+            resp.headers["X-Content-Type-Options"] = "nosniff"
+        return resp
 
     @app.route("/api/downloads/<task_id>/pause", methods=["POST"])
     def api_pause(task_id):

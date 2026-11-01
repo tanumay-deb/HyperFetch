@@ -973,7 +973,10 @@ class RateLimiter:
             self._share = bps
             self._tokens = min(self._tokens, float(self._share or self.limit_bps))
 
-    def wait(self, amount):
+    def wait(self, amount, stop=lambda: False):
+        """Hold the caller until `amount` bytes may pass. `stop()` is asked
+        between slices: under a low limit one 64 KiB chunk waited many
+        seconds, and a Pause with it (8 KB/s over 8 parts: about a minute)."""
         if self.limit_bps <= 0:
             return
 
@@ -1000,10 +1003,14 @@ class RateLimiter:
                     continue
 
                 # sleep in short slices so pause/limit changes stay responsive
-                sleep_t = min((take - self._tokens) / rate, 0.5)
+                sleep_t = min((take - self._tokens) / rate, 0.2)
                 self._lock.release()
-                time.sleep(sleep_t)
-                self._lock.acquire()
+                try:
+                    time.sleep(sleep_t)
+                    if stop():
+                        return
+                finally:
+                    self._lock.acquire()
 
 global_limiter = RateLimiter()
 
