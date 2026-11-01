@@ -1123,50 +1123,6 @@ try {
   _videoObserver.observe(document.documentElement, { childList: true, subtree: true });
 } catch (e) { /* documentElement not ready yet; the interval below covers it */ }
 
-function sniffRuntimeMedia() {
-  if (!captureEnabled) return;
-
-  const runtimeCandidates = [];
-
-  const hlsUrl = window.hls?.url;
-  if (hlsUrl && !hlsUrl.startsWith('blob:') && !hlsUrl.startsWith('data:')) {
-    runtimeCandidates.push({
-      url: hlsUrl,
-      filename: hlsUrl.split('?')[0].split('/').pop() || 'playlist.m3u8',
-      mime: 'application/x-mpegurl',
-      size: 0,
-      kind: 'hls'
-    });
-  }
-
-  const levelUrls = Array.isArray(window.hls?.levels) ? window.hls.levels : [];
-  levelUrls.forEach((entry) => {
-    const url = Array.isArray(entry) ? entry[0] : entry?.url || entry;
-    if (typeof url === 'string' && url.startsWith('http')) {
-      runtimeCandidates.push({
-        url,
-        filename: url.split('?')[0].split('/').pop() || 'video.m3u8',
-        mime: 'application/x-mpegurl',
-        size: 0,
-        kind: 'hls'
-      });
-    }
-  });
-
-  const playerSrc = window.player?.media?.src || document.querySelector('video.player')?.currentSrc;
-  if (playerSrc && !playerSrc.startsWith('blob:') && !playerSrc.startsWith('data:')) {
-    runtimeCandidates.push({
-      url: playerSrc,
-      filename: playerSrc.split('?')[0].split('/').pop() || 'video.mp4',
-      mime: 'video/mp4',
-      size: 0,
-      kind: 'file'
-    });
-  }
-
-  runtimeCandidates.forEach((candidate) => addSniffedMedia(candidate));
-}
-
 // Also scan the DOM for static media (direct <video>/<audio> src and <source>).
 // Note: streaming sites use Media Source Extensions -> the src is a blob: URL
 // that points at in-memory buffers, NOT a downloadable file. Those can only be
@@ -1202,13 +1158,12 @@ function scanDom() {
   });
 }
 setInterval(scanDom, 500);
-setInterval(sniffRuntimeMedia, 500);
 
 // Run immediately on page load
 if (document.readyState === 'loading') {
   document.addEventListener('DOMContentLoaded', () => {
-    setTimeout(() => { scanDom(); sniffRuntimeMedia(); }, 100);
+    setTimeout(scanDom, 100);
   });
 } else {
-  setTimeout(() => { scanDom(); sniffRuntimeMedia(); }, 100);
+  setTimeout(scanDom, 100);
 }
