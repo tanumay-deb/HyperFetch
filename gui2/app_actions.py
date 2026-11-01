@@ -133,8 +133,8 @@ class ActionsMixin:
             host = urllib.parse.urlsplit(url).hostname or url
             if t.segments:
                 one = len(t.segments) == 1
-            elif t.total_size > 0:  # not started: as it will split (Settings' cap too)
-                segs = min(self.queue.segments, utils.MAX_CONNECTIONS or self.queue.segments)
+            elif t.total_size > 0:  # not started: as the engine will split it
+                segs = downloader.connections_for(t.url, t.connections or self.queue.segments)
                 one = downloader.parts_for(t.total_size, segs) == 1
             else:
                 one = False

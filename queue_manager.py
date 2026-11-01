@@ -559,7 +559,7 @@ class QueueManager:
         try:
             if not task.cancel_requested:
                 log.info("start: %s (%s) queue=%s", task.filename, task.id[:8], started_queue)
-                Downloader(task, segments=self.segments).run()
+                Downloader(task, segments=getattr(task, "connections", 0) or self.segments).run()
                 log.info("end: %s status=%s%s", task.filename, task.status,
                          f" error={task.error}" if task.error else "")
         except Exception:

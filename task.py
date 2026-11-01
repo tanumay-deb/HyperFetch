@@ -165,9 +165,16 @@ class DownloadTask:
         # called this rather than by its title, and yt-dlp still chooses the
         # extension, which is only known once it has read the page. Persisted.
         self.name_chosen = ""
+        # Connections chosen for this download in New Download; 0 = the
+        # setting's, read as it starts. Persisted.
+        self.connections = 0
         # The ETag of the file a video page's link served, so a resume - which
         # gets a fresh link - continues only the same file. Persisted.
         self.etag = ""
+
+        # connections streaming now, set by the HTTP engine (transient): a big
+        # file has 32 unfinished parts and starts on one connection
+        self.http_conns = 0
 
         # live torrent swarm stats (transient; set by TorrentDownloader's reader)
         self.tor_conns = 0          # connected peers
@@ -409,6 +416,7 @@ class DownloadTask:
             "use_ytdlp": bool(self.use_ytdlp),
             "yt_named": bool(self.yt_named),
             "name_chosen": self.name_chosen,
+            "connections": self.connections,
             "etag": self.etag,
             "events": self.events[-self.EVENTS_MAX:],
             "sha256": self.sha256,
@@ -470,6 +478,7 @@ class DownloadTask:
         t.use_ytdlp = bool(d.get("use_ytdlp", False))
         t.yt_named = bool(d.get("yt_named", False))
         t.name_chosen = d.get("name_chosen", "") or ""
+        t.connections = int(d.get("connections", 0) or 0)
         t.etag = d.get("etag", "") or ""
         # Missing on every task written before accounts existed, which is why
         # it defaults to "" rather than raising — those belong to admin.

@@ -145,6 +145,26 @@ def parts_for(total, segments):
     return min(segments, max(1, total // (1024 * 1024) or 1))
 
 
+def connections_for(url, segments):
+    """The connections a download of `url` asked to run on `segments` gets
+    (0 = Auto, by its size). One rule for the engine and for what the window
+    says about it beforehand (_finish_mirror_checks)."""
+    n = max(0, segments)
+    # global ceiling from Settings -> Network -> Max Connections (0 = off).
+    # Only clamps an explicit count; Auto mode (0) is left untouched.
+    if utils.MAX_CONNECTIONS > 0 and n > 0:
+        n = min(n, utils.MAX_CONNECTIONS)
+    # per-host rule may force a segment count (some servers reject many
+    # parallel connections) — still capped by the global Max Connections.
+    rule = utils.host_rule(url).get("segments")
+    if rule:
+        n = int(rule)
+        if utils.MAX_CONNECTIONS > 0:
+            n = min(n, utils.MAX_CONNECTIONS)
+        log.debug("host rule: %s -> %d segments", url, n)
+    return n
+
+
 class MirrorMismatch(Exception):
     """A second link answered with something other than this file's bytes."""
 
@@ -199,19 +219,7 @@ class Downloader:
         URL with its own headers."""
         self.t = dtask
         self.url = url or dtask.url
-        self.num_segments = max(0, segments)
-        # global ceiling from Settings -> Network -> Max Connections (0 = off).
-        # Only clamps an explicit count; Auto mode (0) is left untouched.
-        if utils.MAX_CONNECTIONS > 0 and self.num_segments > 0:
-            self.num_segments = min(self.num_segments, utils.MAX_CONNECTIONS)
-        # per-host rule may force a segment count (some servers reject many
-        # parallel connections) — still capped by the global Max Connections.
-        _rule_segs = utils.host_rule(self.url).get("segments")
-        if _rule_segs:
-            self.num_segments = int(_rule_segs)
-            if utils.MAX_CONNECTIONS > 0:
-                self.num_segments = min(self.num_segments, utils.MAX_CONNECTIONS)
-            log.debug("host rule: %s -> %d segments", self.url, self.num_segments)
+        self.num_segments = connections_for(self.url, segments)
         # browser-supplied headers (Cookie/Referer/UA) merged into every request
         if headers is None:
             headers = getattr(dtask, "headers", None) or {}
@@ -289,6 +297,7 @@ class Downloader:
     def _streams(self, n, src):
         with self._conn_cv:
             self._streaming += n
+            self.t.http_conns = self._streaming     # what the window shows
             self._link_streams[src] += n
             if n > 0:
                 self._served.add(src)

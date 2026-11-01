@@ -45,6 +45,10 @@ def hls_server(aes_tools):
         "live.m3u8": (b"#EXTM3U\n#EXT-X-TARGETDURATION:4\n", "application/vnd.apple.mpegurl"),
         "sliding.m3u8": (live_with_segs.encode(), "application/vnd.apple.mpegurl"),
         "key.bin": (key, "application/octet-stream"),
+        # an expired key link: a web page where the key was
+        "badkey.m3u8": (media("enc", True).replace("key.bin", "expired").encode(),
+                        "application/vnd.apple.mpegurl"),
+        "expired": (b"<html><body>Session expired</body></html>", "text/html"),
         # the 4th segment is gone (404)
         "gap.m3u8": (("#EXTM3U\n#EXT-X-TARGETDURATION:4\n#EXT-X-MEDIA-SEQUENCE:0\n"
                       + "".join(f"#EXTINF:4.0,\n{n}\n" for n in
@@ -218,3 +222,10 @@ def test_a_failed_segment_is_named_by_its_place(hls_server, tmp_path):
     t = T.DownloadTask(f"{hls_server.base}/gap.m3u8", str(tmp_path / "v.m3u8"))
     hls.HlsDownloader(t).run()
     assert t.status == T.ERROR and t.error.startswith("segment 4/5 failed"), t.error
+
+
+def test_a_web_page_where_the_key_was_says_so(hls_server, tmp_path):
+    """AES raised ValueError on it, which ended as "Download ended unexpectedly"."""
+    t = T.DownloadTask(f"{hls_server.base}/badkey.m3u8", str(tmp_path / "v.m3u8"))
+    hls.HlsDownloader(t).run()
+    assert t.status == T.ERROR and "key link sent no key" in t.error, t.error

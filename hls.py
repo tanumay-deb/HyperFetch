@@ -486,8 +486,7 @@ class HlsDownloader:
                 raise RuntimeError(f"unsupported HLS encryption: {key['method']}")
             return data
         from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
-        if key["keybytes"] is None:
-            key["keybytes"] = _get(self.session, key["uri"], self.headers).content
+        self._load_key(key)
         if key.get("iv"):
             iv_hex = key["iv"][2:] if key["iv"].lower().startswith("0x") else key["iv"]
             iv = bytes.fromhex(iv_hex.rjust(32, "0"))
@@ -514,8 +513,18 @@ class HlsDownloader:
             if id(key) in seen:
                 continue
             seen.add(id(key))
-            if key.get("keybytes") is None:
-                key["keybytes"] = _get(self.session, key["uri"], self.headers).content
+            self._load_key(key)
+
+    def _load_key(self, key):
+        """key's 16 bytes, fetched the first time. An expired key link often
+        answers 200 with a web page, and AES raised ValueError on it - which
+        nothing caught: "Download ended unexpectedly"."""
+        if key.get("keybytes") is None:
+            data = _get(self.session, key["uri"], self.headers).content
+            if len(data) != 16:
+                raise RuntimeError(f"the stream's key link sent no key ({len(data)} bytes)"
+                                   " - its link may have expired")
+            key["keybytes"] = data
 
     def _fetch_segment(self, url, seq, key):
         """Download + decrypt one segment (runs on a worker thread)."""

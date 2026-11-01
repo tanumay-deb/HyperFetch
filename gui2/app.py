@@ -812,7 +812,7 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, Up
                         conns += getattr(t, "tor_conns", 0)
                         seeds += getattr(t, "tor_seeds", 0)
                 else:
-                    conns += sum(1 for s in t.segments if not s.complete)
+                    conns += getattr(t, "http_conns", 0)
 
         self._session.tick(self.queue.tasks)
         self.status_bar.set_totals(self._session.down, _torrent.sent_this_session())
@@ -1335,13 +1335,13 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, Up
         t.yt_format = v.get("yt_format", "")        # chosen quality/format string
         if typed:                                   # a video's file keeps it, not its title
             t.name_chosen = yt_dl.stem(os.path.basename(save_path))
-        self.queue.segments = v["connections"]      # active per-download connections
+        if v["connections"] != self.segments:       # this download's, not every later one's
+            t.connections = v["connections"]
         if v["start_now"]:
             self.queue.add_task(t)
         else:
             t.status = T.PAUSED
             self.queue.add_task(t, start=False)
-        self.segments = v["connections"]
         self._save_state()
         self.refresh()
 

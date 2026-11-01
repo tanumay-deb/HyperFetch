@@ -200,6 +200,22 @@ def test_before_it_starts_the_message_follows_how_the_file_will_split(tmp_path, 
     w._mirror_checks = collections.deque([(t, "https://b.example/f.bin", None)])
     w._finish_mirror_checks()
     assert "expires" in said[-1][2]
+    # a per-host rule decides it as it does for the engine (it was left out,
+    # and the message said "also come from" for a file fetched in one part)
+    monkeypatch.setattr(utils, "MAX_CONNECTIONS", 0)
+    monkeypatch.setattr(utils, "HOST_RULES", {"a.example": {"segments": 1}})
+    t = T.DownloadTask("https://a.example/f.bin", str(tmp_path / "f.bin"))
+    t.total_size = 100 * 1024 * 1024
+    w._mirror_checks = collections.deque([(t, "https://b.example/f.bin", None)])
+    w._finish_mirror_checks()
+    assert "expires" in said[-1][2]
+    # ...and so does the count chosen for this download in New Download
+    monkeypatch.setattr(utils, "HOST_RULES", {})
+    t = T.DownloadTask("https://a.example/f.bin", str(tmp_path / "f.bin"))
+    t.total_size, t.connections = 100 * 1024 * 1024, 1
+    w._mirror_checks = collections.deque([(t, "https://b.example/f.bin", None)])
+    w._finish_mirror_checks()
+    assert "expires" in said[-1][2]
 
 
 def test_a_first_link_that_stops_sending_parts_hands_over_to_the_extra_link(media_server, tmp_path):

@@ -659,8 +659,7 @@ class DetailsDrawer(QFrame):
                 self.conn_summary.setText(
                     f"{seeds} seed(s) · {max(0, len(rows) - seeds)} peer(s)")
             else:
-                live = sum(1 for s in t.segments if not s.complete)
-                self.conn_summary.setText(f"{len(rows)} segment(s) · {live} active")
+                self.conn_summary.setText(f"{len(rows)} segment(s) · {getattr(t, 'http_conns', 0)} active")
         else:
             self.conns_table.hide(); self.conn_empty.show()
             if is_tor and t.status == T.DOWNLOADING and not getattr(t, "gid", None):
@@ -2062,8 +2061,7 @@ class DetailsDrawer(QFrame):
         if is_tor:
             self.ov_conns.setText(str(getattr(t, "tor_conns", 0)))
         else:
-            live = [s for s in t.segments if not s.complete]
-            self.ov_conns.setText(str(len(live)) if t.status == T.DOWNLOADING else "0")
+            self.ov_conns.setText(str(getattr(t, "http_conns", 0)) if t.status == T.DOWNLOADING else "0")
         self.files_fresh.setText(self._files_freshness(t))
         # peers/segments only matter while the Connections tab is on screen —
         # getPeers is an RPC round trip and this runs on the 500ms tick

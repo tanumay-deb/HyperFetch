@@ -51,7 +51,7 @@ def test_each_says_which_package_version_and_kind_it_is():
         assert _field(text, "PackageIdentifier") == "HyperFetch.HyperFetch", name
         assert _field(text, "PackageVersion") == "2.8.0", name
         assert _field(text, "ManifestType") == kinds[name], name
-        assert _field(text, "ManifestVersion") == "1.12.0", name
+        assert _field(text, "ManifestVersion") == "1.28.0", name
         assert text.startswith("# yaml-language-server: $schema="), name
         assert text.endswith("\n") and "\t" not in text, name
 

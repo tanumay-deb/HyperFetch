@@ -21,7 +21,7 @@ import urllib.request
 
 REPO = "tanumay-deb/HyperFetch"
 IDENTIFIER = "HyperFetch.HyperFetch"
-SCHEMA = "1.12.0"
+SCHEMA = "1.28.0"
 SITE = "https://tanumay-deb.github.io/HyperFetch/"
 # installer.iss: AppId, with Inno Setup's "_is1" on the end
 PRODUCT_CODE = "{8F3C1A92-5D44-4E27-9C61-2B7A0E5F1D33}_is1"
