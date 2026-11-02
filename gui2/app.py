@@ -1010,6 +1010,11 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, Up
                     self._unfiled.add(t.id)
                 else:
                     self._maybe_categorize(t)  # re-home late-resolved files (yt-dlp etc.)
+                if not self._is_update(t):
+                    # as a browser marks a download - not the app's own update,
+                    # checked against GitHub's SHA-256 (it would read "unknown
+                    # publisher" at every install: HyperFetch is not signed)
+                    utils.mark_from_internet(t.save_path)
                 try:
                     import history
                     history.record(t)
@@ -1032,7 +1037,12 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, Up
                         self.tray.showMessage("Download Complete", t.filename or "download",
                                               QSystemTrayIcon.Information, 4000)
                 if wc == "Open file" or self._extras.get("open_on_complete"):
-                    self._open_file(t)
+                    if utils.runs_code(t.save_path):
+                        # a program, a script, a shortcut: shown, never run
+                        # by the app itself (utils.RUNS_CODE)
+                        self._open_folder(t)
+                    else:
+                        self._open_file(t)
                 elif wc == "Open folder":
                     self._open_folder(t)
                 if wc != "Do nothing" and not self._extras.get("skip_complete_popup"):

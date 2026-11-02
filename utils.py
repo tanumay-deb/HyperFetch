@@ -814,6 +814,49 @@ def unique_path(directory, filename):
     return candidate
 
 
+# What Windows RUNS rather than opens: programs, scripts, installers and
+# shortcuts. "Open file when it finishes" started one of these as it came
+# off the internet - the dialog off, a web page could have it run unasked
+# (2026-11-02). PATHEXT's types count too (runs_code).
+RUNS_CODE = {".exe", ".msi", ".msp", ".com", ".bat", ".cmd", ".scr", ".pif", ".cpl",
+             ".msc", ".jar", ".js", ".jse", ".vbs", ".vbe", ".wsf", ".wsh", ".ps1",
+             ".hta", ".lnk", ".url", ".reg", ".inf", ".scf", ".chm", ".gadget",
+             ".appref-ms", ".application", ".appx", ".appxbundle", ".msix",
+             ".msixbundle"}
+
+
+def runs_code(path):
+    """Whether Windows would run this file, rather than open it, when it is
+    started: a program, a script, an installer, a shortcut."""
+    ext = os.path.splitext(path or "")[1].lower()
+    pathext = {e.strip().lower() for e in os.environ.get("PATHEXT", "").split(";")}
+    return bool(ext) and (ext in RUNS_CODE or ext in pathext)
+
+
+def mark_from_internet(path, cap=2000):
+    """Give a finished download the "from the internet" mark a browser gives
+    one (its Zone.Identifier stream, zone 3): SmartScreen then asks before a
+    program from it runs, and Office opens a document in Protected View.
+    HyperFetch takes over the browser's downloads, programs among them, and
+    they came without it (2026-11-02). A folder: each file in it, up to
+    `cap`. Best-effort: only on Windows, and a drive without streams (FAT,
+    exFAT) takes none."""
+    if sys.platform != "win32" or not path:
+        return
+    files = ((os.path.join(d, f) for d, _, fs in os.walk(path) for f in fs)
+             if os.path.isdir(path) else iter([path]))
+    for n, f in enumerate(files):
+        if n >= cap:
+            break
+        try:
+            with open(f + ":Zone.Identifier", "wb") as z:
+                z.write(b"[ZoneTransfer]\r\nZoneId=3\r\n")
+        except OSError as e:
+            logging.getLogger("hyperfetch.utils").debug(
+                "no internet mark on %s: %s", f, e)
+            return              # the drive takes none, or the file is gone
+
+
 CATEGORIES = {
     "Video": {".mp4", ".mkv", ".webm", ".avi", ".mov", ".ts", ".m3u8", ".m4v", ".flv"},
     "Music": {".mp3", ".m4a", ".flac", ".wav", ".ogg"},
