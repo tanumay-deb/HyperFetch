@@ -69,6 +69,9 @@ class ShortcutsMixin:
         delete_disk = dlg.deleteDisk.isChecked()
         failed = []
         for t in ts:
+            # read first: an unfinished torrent's files are known by aria2's
+            # control file, which the removal and cleanup below take away
+            targets = self._payload_paths(t) if delete_disk else []
             self.queue.remove_task(t)
             # always clear the engine's leftovers (aria2 .aria2 control file
             # + our saved metadata) — they are useless once the task is gone
@@ -78,13 +81,9 @@ class ShortcutsMixin:
                     _tor.cleanup_artifacts(t)
             except Exception:
                 pass
-            if delete_disk:
-                targets = self._payload_paths(t)
-                if not targets:
-                    continue
-                for path in targets:
-                    if not self._remove_path(path):
-                        failed.append(os.path.basename(path) or path)
+            for path in targets:
+                if not self._remove_path(path):
+                    failed.append(os.path.basename(path) or path)
 
         # the user asked for this, so an empty result is legitimate
         self._allow_empty_save = True
@@ -115,16 +114,27 @@ class ShortcutsMixin:
         """
         import torrent as _tor
         import yt_dl
-        if (t.status != T.COMPLETED and not _tor.is_torrent_task(t.url, t.filename)
-                and not yt_dl.is_ytdlp_task(t)):
+        tor = _tor.is_torrent_task(t.url, t.filename)
+        if t.status != T.COMPLETED and not tor and not yt_dl.is_ytdlp_task(t):
             # an unfinished plain download has nothing at its save path - its
             # bytes are in a temp file, which remove_task takes - so what is
             # there is another file: one of the same name that finished first
             return []
+        # An unfinished torrent's files have aria2's control file beside them
+        # (<name>.aria2) until it finishes. One of its name without that is
+        # somebody else's - the file aria2 refused to start over, say - and was
+        # deleted with it (2026-11-01).
+        # One that finished once (completed_at) points at its own files, also
+        # while a Force Recheck or more ticked files queue it again.
+        unproven = tor and t.status != T.COMPLETED and not t.completed_at
+
+        def ours(p):
+            return not unproven or os.path.isfile(p + ".aria2")
+
         out = []
         save = getattr(t, "save_path", "") or ""
         base = os.path.dirname(save) or "."
-        if save and os.path.exists(save):
+        if save and os.path.exists(save) and ours(save):
             out.append(save)
 
         name = (getattr(t, "filename", "") or "").strip()
@@ -137,7 +147,7 @@ class ShortcutsMixin:
             payload = os.path.join(work, name)
             real = os.path.abspath(payload)
             if (real.startswith(os.path.abspath(work) + os.sep) and os.path.exists(real)
-                    and real not in map(os.path.abspath, out)):
+                    and ours(payload) and real not in map(os.path.abspath, out)):
                 out.append(payload)
         if name and name.lower() not in ("torrent", "download", "download.bin"):
             payload = os.path.join(base, name)
@@ -146,7 +156,8 @@ class ShortcutsMixin:
             # folder itself — one bad join here would take the lot
             if (os.path.abspath(base) != real
                     and real.startswith(os.path.abspath(base) + os.sep)
-                    and os.path.exists(real) and real not in map(os.path.abspath, out)):
+                    and os.path.exists(real) and ours(payload)
+                    and real not in map(os.path.abspath, out)):
                 out.append(payload)
         return out
 

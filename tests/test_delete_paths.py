@@ -24,6 +24,7 @@ def test_the_torrent_payload_folder_is_found(tmp_path):
     payload = tmp_path / "Hannibal.S01.1080p"
     payload.mkdir()
     (payload / "ep1.mkv").write_bytes(b"x" * 10)
+    (tmp_path / "Hannibal.S01.1080p.aria2").write_bytes(b"ctl")   # aria2's, while unfinished
     t = _task(str(tmp_path / "download.bin"), "Hannibal.S01.1080p")
     assert S._payload_paths(t) == [str(payload)]
 
@@ -32,6 +33,7 @@ def test_a_plain_file_download_is_found(tmp_path):
     f = tmp_path / "a.zip"
     f.write_bytes(b"x")
     t = _task(str(f), "a.zip")
+    t.status = T.COMPLETED
     assert S._payload_paths(t) == [str(f)]
 
 
@@ -66,10 +68,60 @@ def test_a_name_escaping_the_folder_is_refused(tmp_path):
 def test_both_are_returned_when_both_exist(tmp_path):
     f = tmp_path / "download.bin"
     f.write_bytes(b"x")
+    (tmp_path / "download.bin.aria2").write_bytes(b"ctl")
     payload = tmp_path / "Show.S01"
     payload.mkdir()
+    (tmp_path / "Show.S01.aria2").write_bytes(b"ctl")
     t = _task(str(f), "Show.S01")
     assert sorted(S._payload_paths(t)) == sorted([str(f), str(payload)])
+
+
+def test_an_unfinished_torrent_does_not_take_another_file_of_its_name(tmp_path):
+    """An earlier movie.mkv where a torrent of that name was to go: aria2
+    refused to start over it, and "delete from disk" on the torrent then
+    deleted it (2026-11-01). The torrent's own files have aria2's control
+    file beside them until it finishes."""
+    theirs = tmp_path / "movie.mkv"
+    theirs.write_bytes(b"an earlier download")
+    t = _task(str(tmp_path / "movie.mkv"), "movie.mkv")
+    t.status = T.ERROR
+    assert S._payload_paths(t) == []
+    (tmp_path / "movie.mkv.aria2").write_bytes(b"ctl")      # now aria2's own
+    assert S._payload_paths(t) == [str(theirs)]
+    t.status = T.COMPLETED                                  # finished: its own, control file or not
+    (tmp_path / "movie.mkv.aria2").unlink()
+    assert S._payload_paths(t) == [str(theirs)]
+    t.status = T.QUEUED                                     # queued again by a Force Recheck
+    assert S._payload_paths(t) == [str(theirs)], "a finished one's files were left on disk"
+
+
+def test_its_files_are_read_before_the_control_file_goes(tmp_path, monkeypatch):
+    """remove_task and cleanup_artifacts take aria2's control file away, and
+    the files were looked up after them: a half-done torrent was left on disk."""
+    import types
+    import gui2.dialogs.delete as D
+    payload = tmp_path / "Pack"
+    payload.mkdir()
+    (payload / "e1.mkv").write_bytes(b"x")
+    (tmp_path / "Pack.aria2").write_bytes(b"ctl")
+    t = _task(str(tmp_path / "magnet_.bin"), "Pack")
+    t.status = T.PAUSED
+
+    class Asked:
+        def __init__(self, **k):
+            self.deleteDisk = types.SimpleNamespace(isChecked=lambda: True)
+
+        def exec(self):
+            return True
+
+    monkeypatch.setattr(D, "DeleteDialog", Asked)
+    win = types.SimpleNamespace(
+        queue=types.SimpleNamespace(remove_task=lambda t: None),
+        _toasts=types.SimpleNamespace(show=lambda *a, **k: None),
+        _save_state=lambda: None, refresh=lambda: None,
+        _payload_paths=S._payload_paths, _remove_path=S._remove_path)
+    S._delete_tasks(win, [t])
+    assert not payload.exists() and not (tmp_path / "Pack.aria2").exists()
 
 
 def test_removal_handles_a_directory(tmp_path):

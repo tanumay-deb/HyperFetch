@@ -384,12 +384,37 @@ def test_a_missing_control_file_is_repaired_with_an_integrity_check(tmp_path, mo
         {"status": "complete", "completedLength": "1000", "totalLength": "1000",
          "files": [{"path": payload}]},
     ])
-    t = _drive_with(tmp_path, monkeypatch, daemon)
+    t = _task(tmp_path)
+    t.downloaded = 500                     # it had written these before aria2 died
+    t = _drive_with(tmp_path, monkeypatch, daemon, task=t)
     adds = [p for m, p in daemon.calls if m in ("aria2.addUri", "aria2.addTorrent")]
     assert len(adds) == 2                                   # it retried
     assert adds[1][-1].get("check-integrity") == "true"     # ...with a recheck
     assert t.status == T.COMPLETED
     assert t.error == ""
+
+
+def test_a_file_this_download_did_not_write_is_not_taken(tmp_path, monkeypatch):
+    """An earlier download's Movie.mkv where a new torrent of that name was to
+    go: aria2 refused, and the integrity check added after it kept the pieces
+    that matched (none) and wrote the torrent into that file (2026-11-01).
+    Now the user is asked; Force Recheck takes a file that really is the
+    torrent's."""
+    payload = str(tmp_path / "Movie.mkv")
+    open(payload, "wb").write(b"an earlier download")
+    ctl_err = ("File /d/Movie exists, but a control file(*.aria2) does not "
+               "exist. Download was canceled in order to prevent your file "
+               "from being truncated to 0.")
+    daemon = _FakeDaemon([
+        {"status": "error", "errorMessage": ctl_err, "completedLength": "0",
+         "totalLength": "1000", "files": [{"path": payload}]},
+    ])
+    t = _drive_with(tmp_path, monkeypatch, daemon)          # a new one: no bytes yet
+    adds = [p for m, p in daemon.calls if m in ("aria2.addUri", "aria2.addTorrent")]
+    assert len(adds) == 1, "it was added again to write over the file"
+    assert t.status == T.ERROR
+    assert "did not write it" in t.error and "Force Recheck" in t.error, t.error
+    assert open(payload, "rb").read() == b"an earlier download"
 
 
 def test_an_ordinary_torrent_error_is_not_retried(tmp_path, monkeypatch):

@@ -1637,6 +1637,9 @@ class TorrentDownloader:
 
         self._started = time.time()
         self._forget_run_state()
+        # whether this download has bytes of its own on disk, said before this
+        # run's polls overwrite it (aria2 refusing an add reports 0)
+        had_bytes = int(self.t.downloaded or 0) > 0
 
         # display name, same rules as the subprocess path
         if is_magnet(self.t.url):
@@ -1688,9 +1691,21 @@ class TorrentDownloader:
         top = ""
         try:
             top = self._poll_rpc(d, gid, out_dir)
-            if (self.t.status == T.ERROR
-                    and _CTL_MISSING.search(self.t.error or "")
-                    and not (self.t.cancel_requested or self.t.pause_requested)):
+            refused = (self.t.status == T.ERROR
+                       and _CTL_MISSING.search(self.t.error or "")
+                       and not (self.t.cancel_requested or self.t.pause_requested))
+            if refused and not had_bytes:
+                # A file of its name was there before this download wrote a
+                # byte - another download's, as a rule. The integrity check
+                # below would keep the pieces that match (none) and write the
+                # torrent into it (2026-11-01). Asked, not done: Force Recheck
+                # takes it for a torrent whose files are really there already.
+                self.t.error = (
+                    "%s is already in %s, and this download did not write it. If it "
+                    "is this torrent's, use Force Recheck to take it as it is; if "
+                    "not, move it away first."
+                    % (top or self.t.filename, self._opts.get("dir") or out_dir))
+            elif refused:
                 # The payload is on disk but its .aria2 control file is gone —
                 # typically because aria2 was hard-killed before it could flush
                 # one. aria2 then refuses the torrent outright and the download
