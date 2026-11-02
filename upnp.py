@@ -12,11 +12,23 @@ No external dependency; call map_port() from a daemon thread (it does network I/
 import logging
 import re
 import socket
+import threading
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
 
 log = logging.getLogger("hyperfetch.upnp")
+
+# A mapping lasts an hour unless renewed - every half of that while it is the
+# port wanted. They were asked for with no end (lease 0), and nothing took
+# one away: UPnP switched off, the port changed, the app gone, the router
+# went on sending that port to this PC (2026-11-02).
+LEASE = 3600
+_lock = threading.Lock()
+_held = []                  # (control_url, service_type, port, proto) this run opened
+_wanted = 0                 # the port kept open; 0 = none
+_renewer = None
 
 _SSDP_ADDR = ("239.255.255.250", 1900)
 _ST = "urn:schemas-upnp-org:device:InternetGatewayDevice:1"
@@ -99,43 +111,119 @@ def _local_ip():
         s.close()
 
 
-def _add_mapping(control_url, svc_type, port, proto, internal_ip):
-    """"" when the router took the mapping, else what it said."""
+def _soap(control_url, svc_type, action, args):
+    """"" when the router did it, else what it said."""
     body = (
         '<?xml version="1.0"?>'
         '<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/" '
         's:encodingStyle="http://schemas.xmlsoap.org/soap/encoding/"><s:Body>'
-        '<u:AddPortMapping xmlns:u="%s">'
-        '<NewRemoteHost></NewRemoteHost>'
-        '<NewExternalPort>%d</NewExternalPort>'
-        '<NewProtocol>%s</NewProtocol>'
-        '<NewInternalPort>%d</NewInternalPort>'
-        '<NewInternalClient>%s</NewInternalClient>'
-        '<NewEnabled>1</NewEnabled>'
-        '<NewPortMappingDescription>HyperFetch</NewPortMappingDescription>'
-        '<NewLeaseDuration>0</NewLeaseDuration>'
-        '</u:AddPortMapping></s:Body></s:Envelope>'
-    ) % (svc_type, port, proto, port, internal_ip)
+        '<u:%s xmlns:u="%s">%s</u:%s></s:Body></s:Envelope>'
+    ) % (action, svc_type, args, action)
     req = urllib.request.Request(
         control_url, data=body.encode(),
         headers={"Content-Type": 'text/xml; charset="utf-8"',
-                 "SOAPAction": '"%s#AddPortMapping"' % svc_type})
+                 "SOAPAction": '"%s#%s"' % (svc_type, action)})
     try:
         urllib.request.urlopen(req, timeout=4).read()
         return ""
     except urllib.error.HTTPError as e:
         try:
-            m = re.search(r"<errorDescription>([^<]*)<", e.read().decode("utf-8", "ignore"))
+            text = e.read().decode("utf-8", "ignore")
         except Exception:
-            m = None
-        return "HTTP %d%s" % (e.code, (" " + m.group(1).strip()) if m else "")
+            text = ""
+        code = re.search(r"<errorCode>\s*(\d+)\s*<", text)
+        m = re.search(r"<errorDescription>([^<]*)<", text)
+        return "HTTP %d%s%s" % (e.code, (" %s" % code.group(1)) if code else "",
+                                (" " + m.group(1).strip()) if m else "")
     except Exception as e:
         return type(e).__name__
 
 
+def _add_mapping(control_url, svc_type, port, proto, internal_ip, lease=LEASE):
+    """"" when the router took the mapping, else what it said. A lease it
+    refuses is asked for again without one: a router that takes only
+    permanent mappings says so with error 725 - or with another error, and
+    such a router did map before leases were asked for."""
+    said = _soap(control_url, svc_type, "AddPortMapping",
+                 '<NewRemoteHost></NewRemoteHost>'
+                 '<NewExternalPort>%d</NewExternalPort>'
+                 '<NewProtocol>%s</NewProtocol>'
+                 '<NewInternalPort>%d</NewInternalPort>'
+                 '<NewInternalClient>%s</NewInternalClient>'
+                 '<NewEnabled>1</NewEnabled>'
+                 '<NewPortMappingDescription>HyperFetch</NewPortMappingDescription>'
+                 '<NewLeaseDuration>%d</NewLeaseDuration>'
+                 % (port, proto, port, internal_ip, lease))
+    if lease and said:
+        return _add_mapping(control_url, svc_type, port, proto, internal_ip, 0)
+    return said
+
+
+def _delete_mapping(control_url, svc_type, port, proto):
+    return _soap(control_url, svc_type, "DeletePortMapping",
+                 '<NewRemoteHost></NewRemoteHost>'
+                 '<NewExternalPort>%d</NewExternalPort>'
+                 '<NewProtocol>%s</NewProtocol>' % (port, proto))
+
+
 def map_port(port):
     """Map external:port -> this host:port (TCP+UDP) on the IGD. Returns True if
-    at least one protocol mapped. Best-effort; safe to call from a daemon thread."""
+    at least one protocol mapped. Best-effort; safe to call from a daemon thread.
+
+    Kept open while it is the port wanted (renewed every LEASE / 2); another
+    port asked for first closes the one this run opened."""
+    global _wanted
+    port = int(port or 0)
+    with _lock:
+        _wanted = port
+        _close(lambda p: p != port)
+        ok = _map(port)
+    _keep_renewing()
+    return ok
+
+
+def unmap():
+    """Close what this run opened: UPnP switched off. Only what this run
+    opened - a mapping of the same port may be another PC's (the user runs
+    HyperFetch on a laptop on the same network too)."""
+    global _wanted
+    with _lock:
+        _wanted = 0
+        _close(lambda p: True)
+
+
+def _close(which):
+    """DeletePortMapping for the held mappings whose port `which` picks."""
+    for entry in [h for h in _held if which(h[2])]:
+        control_url, svc_type, port, proto = entry
+        said = _delete_mapping(control_url, svc_type, port, proto)
+        log.info("UPnP: closed torrent port %s/%s%s", port, proto,
+                 (" (the router said: %s)" % said) if said else "")
+        _held.remove(entry)
+
+
+def _keep_renewing():
+    global _renewer
+    with _lock:
+        if _renewer is None:
+            _renewer = threading.Thread(target=_renew, name="upnp-renew", daemon=True)
+            _renewer.start()
+
+
+def _renew():
+    while True:
+        time.sleep(LEASE / 2)
+        _renew_once()
+
+
+def _renew_once():
+    with _lock:
+        if _wanted:
+            _map(_wanted)
+
+
+def _map(port):
+    """map_port's work, with _lock held: what the router opened is held."""
     if not port:
         return False
     loc = _discover()
@@ -155,6 +243,10 @@ def map_port(port):
                 for proto in ("TCP", "UDP")}
         ok = [p for p, why in said.items() if not why]
         if ok:
+            for proto in ok:
+                entry = (control_url, svc_type, int(port), proto)
+                if entry not in _held:
+                    _held.append(entry)
             log.info("UPnP: the router opened torrent port %s (%s)", port, "+".join(ok))
             return True
         refused.append(", ".join("%s: %s" % kv for kv in said.items()))

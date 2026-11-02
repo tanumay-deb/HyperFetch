@@ -1636,15 +1636,22 @@ class DetailsDrawer(QFrame):
         if not t or not _torrent.is_torrent_task(t.url, t.filename):
             return
         if not selected:
-            # aria2 reads an empty select-file as "everything", so an empty
-            # selection would silently re-enable every file. Keep the last file
-            # ticked instead of doing the opposite of what the user asked.
-            first = self._file_row_widgets[0][1]
-            first.blockSignals(True)
-            first.setChecked(True)
-            first.blockSignals(False)
-            selected = [str(self._file_row_widgets[0][0] + 1)]
-            self._tally()
+            # aria2 reads an empty select-file as "everything", so nothing is
+            # sent: the choice stays as it was until a file is ticked again -
+            # Select None, then the one wanted, works - and a running torrent
+            # is paused, for "none of these" means stop. The first file in the
+            # list used to be ticked again - one just unticked - and fetched
+            # (2026-11-02).
+            running = t.status in (T.DOWNLOADING, T.QUEUED)
+            if running:
+                win.queue.pause_task(t)
+            toasts = getattr(win, "_toasts", None)
+            if toasts:
+                toasts.show("info", "Paused" if running else "Nothing ticked",
+                            ("No file is ticked, so the torrent is paused. " if running
+                             else "")
+                            + "Tick the files to fetch; nothing changes until one is.")
+            return
         win.queue.change_torrent_files(self._tid, ",".join(selected))
 
     def _load(self, t):

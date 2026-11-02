@@ -301,10 +301,14 @@ class SettingsMixin:
         # Uses the effective port — the user's setting OR the engine default —
         # because gating on a non-zero LISTEN_PORT meant the mapping never ran
         # for anyone who had not manually picked a port, so no inbound peers.
+        import upnp
         if bool(ex.get("upnp", True)):
-            import upnp, torrent as _tor
+            import torrent as _tor
             threading.Thread(target=upnp.map_port, args=(_tor.listen_port(),),
                              daemon=True).start()
+        else:
+            # what this run opened is closed again (it used to stay open)
+            threading.Thread(target=upnp.unmap, daemon=True).start()
         ctype = ex.get("connection_type", "Default (Auto)")
         purl = (ex.get("proxy") or "").strip()
         if ctype == "Direct":

@@ -612,6 +612,7 @@ class YtDlpDownloader:
         if self.t.unfinished_in:
             # written in the unfinished-downloads folder, moved home when it
             # is done: the task names its destination, filed as ever
+            name = self._free_name(ydl, info, name)
             self._final_dir = _category_folder(self.t, name) or self._final_dir
             take_name(self.t, os.path.join(self._final_dir, os.path.basename(name)),
                       info.get("filesize") or info.get("filesize_approx") or 0)
@@ -622,8 +623,33 @@ class YtDlpDownloader:
             here, name = os.path.dirname(name), ydl.prepare_filename(info)
             self._moved = True
             _leave(here, self.t.sort_base)
+        name = self._free_name(ydl, info, name)
         take_name(self.t, name, info.get("filesize") or info.get("filesize_approx") or 0)
         log.info("yt-dlp named it: %s", self.t.filename)
+
+    @staticmethod
+    def _free_name(ydl, info, name):
+        """`name`, or the first free one beside it when a file of that name is
+        there already: another video of the same title, which yt-dlp takes for
+        this one ("has already been downloaded") - the download finished at
+        once, fetched nothing, and pointed at the other video's file
+        (2026-11-02). Not a playlist's entry: re-running one skips what is
+        there on purpose. yt-dlp is given the free name as the field
+        hyperfetch_name (CHOSEN), never as template text."""
+        if not os.path.exists(name) or info.get("playlist_index") is not None:
+            return name
+        import utils
+        templates = (getattr(ydl, "params", None) or {}).get("outtmpl")
+        if not isinstance(templates, dict) or "default" not in templates:
+            return name
+        free = utils.unique_path(os.path.dirname(name) or ".", os.path.basename(name))
+        templates["default"] = os.path.join(os.path.dirname(templates["default"]), CHOSEN)
+        info["hyperfetch_name"] = os.path.splitext(os.path.basename(free))[0]
+        try:
+            return ydl.prepare_filename(info) or name
+        except Exception as e:
+            log.debug("yt-dlp: no free name for %s: %s", name, e)
+            return name
 
     def _work_dir(self):
         """The folder yt-dlp writes this video in: the unfinished-downloads
@@ -1034,6 +1060,11 @@ class NameScout:
             except OSError as e:
                 log.debug("cannot use %s: %s", there, e)
                 there = ""
+        if name and os.path.exists(name):
+            # another video's file of its title: the run takes a free name
+            # (YtDlpDownloader._free_name), and so does the name it waits under
+            import utils
+            name = utils.unique_path(os.path.dirname(name) or ".", os.path.basename(name))
         taken = []
 
         def take():

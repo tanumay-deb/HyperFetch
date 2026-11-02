@@ -64,7 +64,8 @@ def test_without_a_search_the_buttons_mean_everything(tmp_path):
     d.file_search.setText("")
     assert d.btn_select_all.text().strip() == "Select All" and d.btn_only.isHidden()
     d.btn_select_none.click()
-    # aria2 reads an empty selection as "all": one file stays ticked
-    assert len(_ticked(d)) == 1
+    # aria2 reads an empty selection as "all": nothing is sent until a file
+    # is ticked again (it kept the first file ticked, and fetched it)
+    assert _ticked(d) == []
     d.btn_select_all.click()
     assert _ticked(d) == FILES

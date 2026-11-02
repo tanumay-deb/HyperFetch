@@ -102,6 +102,18 @@ _INVALID_ACTION = ("<s:Envelope xmlns:s=\"http://schemas.xmlsoap.org/soap/envelo
                    "</detail></s:Fault></s:Body></s:Envelope>")
 
 
+_ONLY_PERMANENT = _INVALID_ACTION.replace("401", "725").replace(
+    "Invalid Action", "OnlyPermanentLeasesSupported")
+
+
+@pytest.fixture(autouse=True)
+def fresh(monkeypatch):
+    """No mapping held from another test, and no renewing thread."""
+    monkeypatch.setattr(upnp, "_held", [])
+    monkeypatch.setattr(upnp, "_wanted", 0)
+    monkeypatch.setattr(upnp, "_renewer", object())
+
+
 @pytest.fixture
 def router():
     mapped = []
@@ -120,10 +132,18 @@ def router():
         def do_POST(self):
             data = self.rfile.read(int(self.headers["Content-Length"])).decode()
             action = self.headers["SOAPAction"]
+            field = lambda name: data.split("<%s>" % name)[1].split("<")[0]
             if self.path == "/ctrl?12" and "WANPPPConnection:1#AddPortMapping" in action:
-                proto = data.split("<NewProtocol>")[1].split("<")[0]
-                mapped.append((proto, data.split("<NewExternalPort>")[1].split("<")[0],
-                               data.split("<NewInternalClient>")[1].split("<")[0]))
+                lease = int(field("NewLeaseDuration"))
+                if self.server.permanent_only and lease:
+                    body, code = _ONLY_PERMANENT.encode(), 500
+                else:
+                    mapped.append((field("NewProtocol"), field("NewExternalPort"),
+                                   field("NewInternalClient")))
+                    self.server.leases.append(lease)
+                    body, code = b"<ok/>", 200
+            elif self.path == "/ctrl?12" and "WANPPPConnection:1#DeletePortMapping" in action:
+                self.server.deleted.append((field("NewProtocol"), field("NewExternalPort")))
                 body, code = b"<ok/>", 200
             else:
                 body, code = _INVALID_ACTION.encode(), 500
@@ -133,6 +153,7 @@ def router():
             self.wfile.write(body)
 
     srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Router)
+    srv.leases, srv.deleted, srv.permanent_only = [], [], False
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     srv.mapped = mapped
     yield srv
@@ -148,3 +169,60 @@ def test_the_port_is_mapped_on_the_service_the_line_uses(monkeypatch, caplog, ro
         assert upnp.map_port(56666)
     assert router.mapped == [("TCP", "56666", "192.168.1.20"), ("UDP", "56666", "192.168.1.20")]
     assert "opened torrent port 56666 (TCP+UDP)" in caplog.text
+
+
+# ---- what is opened is closed again (2026-11-02) ------------------------------------
+# A mapping was asked for with no end (lease 0) and nothing took one away:
+# UPnP switched off, the port changed, the app gone - the router went on
+# sending that port to this PC.
+def _at(monkeypatch, router):
+    monkeypatch.setattr(upnp, "_discover",
+                        lambda: "http://127.0.0.1:%d/DeviceDescription.xml" % router.server_port)
+    monkeypatch.setattr(upnp, "_local_ip", lambda: "192.168.1.20")
+
+
+def test_a_mapping_lasts_an_hour_and_is_closed_when_upnp_goes_off(monkeypatch, router):
+    _at(monkeypatch, router)
+    assert upnp.map_port(56666)
+    assert router.leases == [upnp.LEASE, upnp.LEASE] == [3600, 3600]
+    upnp.unmap()
+    assert sorted(router.deleted) == [("TCP", "56666"), ("UDP", "56666")]
+    upnp._renew_once()                          # off: nothing is opened again
+    assert len(router.mapped) == 2
+
+
+def test_it_is_renewed_while_wanted(monkeypatch, router):
+    _at(monkeypatch, router)
+    upnp.map_port(56666)
+    upnp._renew_once()
+    assert router.mapped[2:] == [("TCP", "56666", "192.168.1.20"),
+                                 ("UDP", "56666", "192.168.1.20")]
+
+
+def test_another_port_closes_the_one_this_run_opened(monkeypatch, router):
+    _at(monkeypatch, router)
+    upnp.map_port(56666)
+    upnp.map_port(51413)
+    assert sorted(router.deleted) == [("TCP", "56666"), ("UDP", "56666")]
+    assert router.mapped[2:] == [("TCP", "51413", "192.168.1.20"),
+                                 ("UDP", "51413", "192.168.1.20")]
+
+
+def test_nothing_this_run_did_not_open_is_closed(monkeypatch, router):
+    """A mapping of that port may be another PC's on the same network."""
+    _at(monkeypatch, router)
+    upnp.unmap()
+    assert router.deleted == []
+
+
+def test_a_router_that_keeps_only_permanent_mappings_gets_one(monkeypatch, router):
+    _at(monkeypatch, router)
+    router.permanent_only = True
+    assert upnp.map_port(56666)
+    assert router.leases == [0, 0]
+
+
+def test_settings_closes_it_when_upnp_is_switched_off():
+    import inspect
+    from gui2.app_settings import SettingsMixin
+    assert "upnp.unmap" in inspect.getsource(SettingsMixin)

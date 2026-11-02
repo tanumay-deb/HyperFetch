@@ -67,7 +67,10 @@ def test_ctrl_a_and_a_folder_row(tmp_path):
     assert t.selected_files == "1,2,3,4"
     tbl.setCurrentCell(0, 1)                           # the folder's row: all of it
     d._tick_picked(False)
-    assert t.selected_files == "1", "the last file stays ticked, as with Select None"
+    # none ticked: nothing is sent, the choice stays as it was until one is
+    # ticked (a running one is paused - test_unticking_every_file_pauses_it...)
+    assert t.selected_files == "1,2,3,4"
+    assert not any(cb.isChecked() for _i, cb, _s in d._file_row_widgets)
 
 
 def test_a_search_narrows_what_a_folder_row_stands_for(tmp_path):
@@ -138,4 +141,22 @@ def test_a_folder_box_on_one_of_several_selected_rows_ticks_them_all(tmp_path):
                   QItemSelectionModel.Select | QItemSelectionModel.Rows)
     box_a = next(cb for _r, k, cb in d._folder_rows if k == "Show/A")
     box_a.click()                                      # A's box: A's files and e3
+    assert t.selected_files == "4"
+
+
+def test_unticking_every_file_pauses_it_and_keeps_its_files(tmp_path):
+    """aria2 reads "no files" as every file, so one was kept ticked: the
+    first in the list - one just unticked - and it was fetched (2026-11-02).
+    None ticked says stop: the torrent is paused, its choice as it was."""
+    import types
+    d, t = _drawer(tmp_path, selected="2,3")
+    t.status = T.DOWNLOADING
+    said = []
+    d._host_ref._toasts = types.SimpleNamespace(show=lambda *a, **k: said.append(a))
+    d._set_files(lambda _shown, _path: False)          # Uncheck on every row
+    assert t.selected_files == "2,3", "the choice was changed"
+    assert t.pause_requested
+    assert said and said[-1][1] == "Paused"
+    # ...and then the one wanted: that is the choice
+    d._set_files(lambda _shown, path: path == "Show/e4.mkv")
     assert t.selected_files == "4"

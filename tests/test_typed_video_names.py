@@ -536,3 +536,27 @@ def test_with_the_real_ytdlp_a_name_typed_for_a_playlist_does_not_break_its_run(
     got = sorted(os.listdir(out))
     assert len(got) == 2 and all(n.startswith(TITLE) and n.endswith(".mp4") for n in got), got
     assert sorted(open(out / n, "rb").read() for n in got) == sorted([one, two])
+
+
+def test_with_the_real_ytdlp_a_second_video_of_one_title_is_its_own(
+        real_ytdlp, video_page, media_server, make_payload, tmp_path, queue):
+    """Two videos, one title, one folder: the second finished at once - yt-dlp
+    took the first one's file for it ("has already been downloaded") - fetched
+    nothing, and pointed at that file, so Open played the other video and
+    Delete from disk removed it (2026-11-02). The name it waits under too."""
+    out = tmp_path / "dl"
+    a = media_server.put("media/a.mp4", make_payload(SIZE), etag='"a"')
+    b = media_server.put("media/b.mp4", make_payload(SIZE)[::-1], etag='"b"')
+    ta = _page_task(video_page("/watch/a", media_server.url("media/a.mp4")), out, queue)
+    Downloader(ta, segments=4).run()
+    assert ta.status == T.COMPLETED, ta.error
+
+    tb = _page_task(video_page("/watch/b", media_server.url("media/b.mp4")), out, queue)
+    assert _scout(queue).run_once() is tb
+    assert tb.save_path != ta.save_path, "waits under the other video's file name"
+    Downloader(tb, segments=4).run()
+
+    assert tb.status == T.COMPLETED, tb.error
+    assert tb.save_path != ta.save_path
+    assert open(ta.save_path, "rb").read() == a
+    assert open(tb.save_path, "rb").read() == b

@@ -440,7 +440,12 @@ def test_a_link_the_engine_cannot_start_is_left_to_ytdlp(site, media_server, tmp
         "the engine went past its one look"
 
 
-def test_a_file_already_there_is_yt_dlps_to_report(site, media_server, tmp_path):
+def test_a_file_already_there_is_left_alone_and_the_video_gets_its_own_name(
+        site, media_server, tmp_path):
+    """A file of the video's name is, as a rule, another video of the same
+    title, and yt-dlp took it for this one: "already downloaded", nothing
+    fetched, the task pointing at that file (2026-11-02). It stays as it is,
+    and the video comes down under a free name, as any download does."""
     existing = tmp_path / (TITLE + ".mp4")
     existing.write_bytes(b"mine")
     t = _task(media_server, tmp_path)
@@ -448,7 +453,8 @@ def test_a_file_already_there_is_yt_dlps_to_report(site, media_server, tmp_path)
 
     assert t.status == T.COMPLETED, t.error
     assert existing.read_bytes() == b"mine"
-    assert _ranged(media_server) == [] and site.own == []
+    assert t.save_path == str(tmp_path / (TITLE + " (1).mp4"))
+    assert open(t.save_path, "rb").read() == site.data
 
 
 def test_yt_dlps_own_partial_is_left_to_it(site, media_server, tmp_path):
