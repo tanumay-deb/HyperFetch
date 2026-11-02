@@ -294,3 +294,18 @@ def test_the_card_shows_how_far_the_move_is():
     t.moving = False
     card.update_task(t, 0.0)
     assert card.sub._full.startswith("Completed") and card.bar.isHidden()
+
+
+def test_the_internet_mark_goes_with_a_file_to_another_drive(tmp_path, monkeypatch):
+    """A copy to another drive takes a file's contents only, and the "from the
+    internet" mark (utils.mark_from_internet) stayed behind (2026-11-02)."""
+    import sys
+    if sys.platform != "win32":
+        pytest.skip("Windows' own mark")
+    _other_drive(monkeypatch)
+    src, dst = tmp_path / "setup.exe", tmp_path / "out" / "setup.exe"
+    src.write_bytes(DATA)
+    dst.parent.mkdir()
+    utils.mark_from_internet(str(src))
+    utils.move_with_progress(str(src), str(dst))
+    assert open(str(dst) + ":Zone.Identifier", "rb").read() == b"[ZoneTransfer]\r\nZoneId=3\r\n"

@@ -97,9 +97,13 @@ class QueueManager:
                 self.unreadable.append(d)
                 skipped += 1
                 continue
-            self.add_task(t, start=False)
+            local = not (getattr(t, "owner", "") or "")
+            # One waiting for a slot waits in line again. It came back listed
+            # as Queued and never started (2026-11-02) - and Resume passes
+            # over one that reads Queued.
+            self.add_task(t, start=t.status == T_.QUEUED and local)
             restored += 1
-            if getattr(t, "_auto_resume", False) and not (getattr(t, "owner", "") or ""):
+            if getattr(t, "_auto_resume", False) and local:
                 self.force_start(t)
         if skipped:
             log.warning("%d saved download(s) could not be restored", skipped)

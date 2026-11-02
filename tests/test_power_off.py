@@ -213,3 +213,32 @@ def test_it_does_not_stack_two_countdowns(monkeypatch):
                         lambda *a, **k: armed.append(True))
     cls._maybe_power_off(stub, "Shut down PC")
     assert armed == []
+
+
+def test_a_queue_whose_last_download_fails_still_powers_off():
+    """Armed only when a download newly COMPLETED: an overnight queue whose
+    last download failed left the PC on (2026-11-02)."""
+    import types
+    import task as T
+    from gui2.app import DownloadAppV2 as A
+    a = T.DownloadTask("https://e.test/a.bin", "C:/dl/a.bin", filename="a.bin")
+    b = T.DownloadTask("https://e.test/b.bin", "C:/dl/b.bin", filename="b.bin")
+    asked = []
+    app = types.SimpleNamespace(
+        queue=types.SimpleNamespace(tasks=[a, b]),
+        _completed_seen=None, _errored_seen=None, _unfiled=set(),
+        _extras={"categorize": False, "when_complete": "Shut down PC",
+                 "skip_complete_popup": True},
+        _save_state=lambda: None, _is_update=lambda t: False,
+        _update_finished=lambda t: None, _maybe_categorize=lambda t: None,
+        _toasts=types.SimpleNamespace(show=lambda *a, **k: None),
+        _flash_taskbar=lambda: None, tray=None,
+        _open_file=lambda t: None, _open_folder=lambda t: None,
+        _maybe_power_off=lambda wc: asked.append(wc))
+    a.status = b.status = T.DOWNLOADING
+    A._check_completions(app)                  # the first tick takes stock
+    a.status = T.COMPLETED
+    A._check_completions(app)
+    b.status, b.error = T.ERROR, "segment 3/5 failed"
+    A._check_completions(app)
+    assert asked == ["Shut down PC", "Shut down PC"], "not asked after the last one failed"

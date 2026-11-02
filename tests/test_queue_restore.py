@@ -172,3 +172,32 @@ def test_the_desktop_window_does_not_start_retention():
     src = _io.open(_os.path.join(root, "gui2", "app.py"), encoding="utf-8").read()
     assert "start_housekeeping" not in src, (
         "gui2/app.py still starts the retention sweep")
+
+
+def test_one_waiting_for_a_slot_starts_after_a_restart(monkeypatch):
+    """It came back as Queued and never started (2026-11-02): restore listed
+    every download and put only the running ones back to work - and Resume
+    passes over one that reads Queued. A site user's still waits for them."""
+    import queue_manager
+    started = []
+
+    class Fake:
+        def __init__(self, t, segments=8):
+            self.t = t
+
+        def run(self):
+            started.append(self.t.filename)
+            self.t.status = T.COMPLETED
+
+    monkeypatch.setattr(queue_manager, "Downloader", Fake)
+    q = QueueManager()
+    try:
+        q.restore([_row("waits.bin", T.QUEUED), _row("parked.bin", T.PAUSED),
+                   _row("theirs.bin", T.QUEUED, owner="tanumay")])
+        end = time.time() + 10
+        while not started and time.time() < end:
+            time.sleep(0.02)
+        time.sleep(0.3)
+    finally:
+        q.shutdown()
+    assert started == ["waits.bin"]

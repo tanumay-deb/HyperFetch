@@ -91,3 +91,37 @@ def test_missing_file_is_a_fresh_install_not_a_failure(tmp_path, monkeypatch):
     assert loaded == []
     assert not getattr(app, "_state_load_failed", False), \
         "a first run must not disable saving for the session"
+
+
+def _session(tmp_path, monkeypatch, rows, load=True):
+    _state_file(tmp_path, monkeypatch, rows)
+    app = DownloadAppV2.__new__(DownloadAppV2)
+    app._state_path = str(tmp_path / "downloads.json")
+    from queue_manager import QueueManager
+    app.queue = QueueManager()
+    if load:
+        app._load_state()
+    return app
+
+
+def _on_disk(tmp_path):
+    return json.loads((tmp_path / "downloads.json").read_text(encoding="utf-8"))
+
+
+def test_a_list_emptied_any_way_stays_empty(tmp_path, monkeypatch):
+    """The command palette's Clear completed and the web page's Remove empty
+    the list without the window's one-shot permission, and that save was
+    refused as a load failure: the list was back at the next start
+    (2026-11-02). A session that held downloads may empty its list."""
+    app = _session(tmp_path, monkeypatch, [_task_row(1, "a.mkv"), _task_row(2, "b.mkv")])
+    for t in list(app.queue.tasks):
+        app.queue.remove_task(t)                # as Clear completed / the web page do
+    app._save_state()
+    assert _on_disk(tmp_path) == []
+
+
+def test_a_session_that_held_nothing_does_not_empty_the_file(tmp_path, monkeypatch):
+    rows = [_task_row(1, "a.mkv")]
+    app = _session(tmp_path, monkeypatch, rows, load=False)   # nothing restored
+    app._save_state()
+    assert _on_disk(tmp_path) == rows

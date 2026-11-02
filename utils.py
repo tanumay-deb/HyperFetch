@@ -295,6 +295,7 @@ def move_with_progress(src, dst, progress=lambda n: None, chunk=4 * 1024 * 1024)
                 moved += len(block)
                 progress(moved)
         shutil.copystat(a, b)
+        _copy_mark(a, b)
 
     # its own staging name: two moves of one name into one folder wrote one
     # file between them
@@ -855,6 +856,24 @@ def mark_from_internet(path, cap=2000):
             logging.getLogger("hyperfetch.utils").debug(
                 "no internet mark on %s: %s", f, e)
             return              # the drive takes none, or the file is gone
+
+
+def _copy_mark(src, dst):
+    """The "from the internet" mark goes with a copy (move_with_progress to
+    another drive): a copy takes a file's contents only, and a program moved
+    there lost it (2026-11-02)."""
+    if sys.platform != "win32":
+        return
+    try:
+        with open(src + ":Zone.Identifier", "rb") as f:
+            mark = f.read()
+    except OSError:
+        return                  # none to take
+    try:
+        with open(dst + ":Zone.Identifier", "wb") as f:
+            f.write(mark)
+    except OSError:
+        pass                    # the other drive takes no streams (FAT, exFAT)
 
 
 CATEGORIES = {

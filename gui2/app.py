@@ -343,6 +343,7 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, Up
         # Restore lives in QueueManager so a headless server does the same
         # thing. The window only reports what happened.
         _restored, skipped = self.queue.restore(rows)
+        self._held_rows = bool(self.queue.tasks)   # see _save_state
         # One line that says where the list came from and how much of it
         # survived. Without it, "the app opened with an empty list" and "the
         # user has no downloads" look identical — which is exactly what made a
@@ -383,6 +384,8 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, Up
                 logging.getLogger("hyperfetch.gui").exception(
                     "state save: skipping unserializable task %s", getattr(t, "id", "?"))
         rows += self.queue.unreadable       # what restore could not read stays on disk
+        if rows:
+            self._held_rows = True          # emptied later, that is the user's doing
         # THE rule that breaks the empty-list loop, whatever caused it.
         #
         # Once downloads.json became "[]", every later launch read an empty list
@@ -390,8 +393,13 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, Up
         # the CURRENT file, that empty list poisoned the .bak too, destroying the
         # only recovery copy. So: an empty list may never replace a non-empty
         # one on disk. Clearing the list is always the result of a user action
-        # (Remove / Clear), and those set _allow_empty_save explicitly.
-        if not rows and not getattr(self, "_allow_empty_save", False):
+        # (Remove / Clear): those in the window set _allow_empty_save, and a
+        # session that held downloads (_held_rows) emptied its own list - by
+        # the command palette's Clear completed or the web page's Remove too,
+        # which set nothing, and the list was back at the next start
+        # (2026-11-02). Refused: a session that never held one.
+        if (not rows and not getattr(self, "_allow_empty_save", False)
+                and not getattr(self, "_held_rows", False)):
             try:
                 with open(self._state_path, "r", encoding="utf-8") as f:
                     on_disk = json.loads(f.read() or "[]")
@@ -1073,9 +1081,11 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, Up
         # disk — kill/crash the app there and it resurrected as Paused.
         if done != self._completed_seen or errd != self._errored_seen:
             self._save_state()
-        newly_done = bool(done - self._completed_seen)
+        # a failure ends a download too: armed only on a completion, an
+        # overnight queue whose last download failed left the PC on (2026-11-02)
+        newly_ended = bool(done - self._completed_seen) or bool(errd - self._errored_seen)
         self._completed_seen, self._errored_seen = done, errd
-        if newly_done and wc in ("Shut down PC", "Sleep"):
+        if newly_ended and wc in ("Shut down PC", "Sleep"):
             self._maybe_power_off(wc)
 
     def _remember_skip_complete(self, dlg):
