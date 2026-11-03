@@ -34,7 +34,11 @@ def test_what_is_shown_is_what_streams(media_server, tmp_path):
         w.join()
     assert t.status == T.COMPLETED and len(t.segments) == 8
     assert t.http_conns == 0, "a finished download has none open"
-    assert 1 <= max(s for s, _ in seen) <= 2
+    # two served at once, and for an instant a third: the server frees a
+    # slot as it sends its last byte, the next range is accepted, and this
+    # side counts the finished stream closed a moment later (seen on CI,
+    # Windows / Python 3.10, whose clock skips the pacing sleep after it)
+    assert 1 <= max(s for s, _ in seen) <= 3
     assert any(p > 2 and s for s, p in seen), "the old count: parts, not connections"
 
 
