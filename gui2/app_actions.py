@@ -38,6 +38,9 @@ class ActionsMixin:
         elif action == "resume":
             for x in self._targets(t):
                 self.queue.resume_task(x)
+        elif action == "start":                 # a waiting one's ▶: Start now
+            for x in self._targets(t):
+                self.queue.force_start(x)
         elif action == "cancel":
             for x in self._targets(t):
                 self.queue.cancel_task(x)

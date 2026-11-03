@@ -351,6 +351,9 @@ def test_guard_runs_even_when_a_target_was_given(monkeypatch):
         return None
 
     monkeypatch.setattr(main, "_post_running", fake_post)
+    # the lock is ours: an instance answering /focus is what stops this launch
+    # (it depended on whether HyperFetch was running on the machine)
+    monkeypatch.setattr(main, "_claim_single_instance", lambda *a: True)
     monkeypatch.setattr(main.sys, "argv", ["main.py", "C:/x/a.torrent"])
     monkeypatch.setattr(main.crash_reporter, "install", lambda *a, **k: None)
     started = {"n": 0}

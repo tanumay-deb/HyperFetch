@@ -815,6 +815,46 @@ def unique_path(directory, filename):
     return candidate
 
 
+# Query parameters that only sign a link or say when it runs out. A site
+# signs a fresh link on every click - GitHub release files, Amazon S3, Google
+# Cloud Storage, CloudFront, Azure - so two links to one file differ in these
+# alone, and duplicate detection never matched them (2026-11-03: the same
+# zip from a GitHub release added twice, nothing asked).
+_SIGNED_BY = {"sig", "signature", "x-amz-signature", "x-goog-signature", "jwt"}
+_SIGNING = {"sig", "signature", "jwt", "expires", "key-pair-id", "policy",
+            "awsaccesskeyid", "googleaccessid",
+            # Azure shared access signatures, which GitHub's release files use
+            "sv", "ss", "srt", "sp", "se", "st", "spr", "sr", "si", "sdd", "ses",
+            "skoid", "sktid", "skt", "ske", "sks", "skv"}
+
+
+def _signed_key(url):
+    """A signed link without its signing parts; None for one that is not
+    signed (no signature among its parameters)."""
+    try:
+        p = urllib.parse.urlsplit((url or "").strip())
+        pairs = urllib.parse.parse_qsl(p.query, keep_blank_values=True)
+        if p.scheme.lower() not in ("http", "https") or not (
+                {k.lower() for k, _ in pairs} & _SIGNED_BY):
+            return None
+        kept = sorted((k, v) for k, v in pairs
+                      if k.lower() not in _SIGNING
+                      and not k.lower().startswith(("x-amz-", "x-goog-")))
+        return p.scheme.lower(), (p.hostname or "").lower(), p.port, p.path, tuple(kept)
+    except ValueError:
+        return None
+
+
+def same_link(a, b):
+    """Whether two links fetch the same download: equal, or two signings of
+    one signed link. A link that is not signed is compared as it is -
+    download.php?id=1 and ?id=2 are two files."""
+    if a == b:
+        return True
+    key = _signed_key(a)
+    return key is not None and key == _signed_key(b)
+
+
 # What Windows RUNS rather than opens: programs, scripts, installers and
 # shortcuts. "Open file when it finishes" started one of these as it came
 # off the internet - the dialog off, a web page could have it run unasked

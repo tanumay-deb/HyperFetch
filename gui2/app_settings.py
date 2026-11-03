@@ -80,20 +80,28 @@ class SettingsMixin:
         utils.save_json(self._settings_path, data)
 
     # ------------------------------------------------------------- apply
+    def _sync_concurrency(self):
+        """Keep the aria2 daemon's own limit wider than the app's - else
+        raising a limit appears to do nothing while aria2 holds the extras -
+        counting EVERY queue. It was set only when Settings were saved, from
+        the Main queue alone: after a restart aria2 ran 8 whatever was chosen,
+        and the torrents past that waited inside it, read as Downloading
+        (2026-11-03)."""
+        utils.MAX_CONCURRENT_DOWNLOADS = sum(
+            int(q.max_concurrent) for q in self.queue.queues.values())
+        try:
+            import aria2d
+            aria2d.DAEMON.apply_concurrency()
+        except Exception:
+            pass
+
     def _apply_settings(self, v):
         if os.path.isdir(v["save_dir"]):
             self.save_dir = v["save_dir"]
         self.max_concurrent = v["max_concurrent"]
         self.segments = v["segments"]
         self.queue.set_max_concurrent("Main", v["max_concurrent"])
-        # keep the aria2 daemon's own queue wider than the app's, live — else
-        # raising the limit appears to do nothing while aria2 holds the extras
-        utils.MAX_CONCURRENT_DOWNLOADS = v["max_concurrent"]
-        try:
-            import aria2d
-            aria2d.DAEMON.apply_concurrency()
-        except Exception:
-            pass
+        self._sync_concurrency()
         self.queue.segments = v["segments"]
         self.verify_tls = v["verify_tls"]
         utils.VERIFY_TLS = v["verify_tls"]

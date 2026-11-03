@@ -44,6 +44,8 @@ BLOCK_PAGES = {
     "13.127.247.216",   # Airtel, seen 2026-10-03 (static.eporner.com and its HLS hosts)
 }
 
+MISS_TTL = 60                               # seconds a lookup with no answer is not asked again
+
 _real_getaddrinfo = socket.getaddrinfo
 _enabled = False
 _auto = False
@@ -80,19 +82,18 @@ def _query(host, rtype):
         r = requests.get(_DOH_URL, params={"name": host, "type": rtype},
                          headers={"accept": "application/dns-json"},
                          timeout=5)
-        if not r.ok:
-            return None
-        for ans in r.json().get("Answer", []):
-            if ans.get("type") == _RECORD[rtype] and ans.get("data"):
-                ips.append(ans["data"])
-                ttl = min(ttl, max(30, int(ans.get("TTL", 300))))
+        if r.ok:
+            for ans in r.json().get("Answer", []):
+                if ans.get("type") == _RECORD[rtype] and ans.get("data"):
+                    ips.append(ans["data"])
+                    ttl = min(ttl, max(30, int(ans.get("TTL", 300))))
     except Exception:
-        return None
-    if not ips:
-        return None
+        pass
+    # No answer is remembered too, for a minute: with DoH on and Cloudflare out
+    # of reach, every new connection waited the whole 5 s again (2026-11-03).
     with _lock:
-        _cache[key] = (ips, now + ttl)
-    return ips
+        _cache[key] = (ips or None, now + (ttl if ips else MISS_TTL))
+    return ips or None
 
 
 def _resolve(host):

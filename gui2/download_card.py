@@ -489,6 +489,12 @@ class DownloadCardWidget(QFrame):
         if t.status == T.DOWNLOADING:
             self._primary_action = "pause"
             self.btn_primary.setIcon(themed_icon("pause", "text")); self.btn_primary.setToolTip("Pause"); self.btn_primary.show()
+        elif (t.status == T.QUEUED
+              and float(getattr(t, "retry_after", 0) or 0) <= time.time()):
+            # waiting its turn: Resume did nothing for it - it is not stopped
+            # (2026-11-03). One waiting out a retry keeps Resume, which ends it.
+            self._primary_action = "start"
+            self.btn_primary.setIcon(themed_icon("play", "text")); self.btn_primary.setToolTip("Start now"); self.btn_primary.show()
         elif t.status in (T.PAUSED, T.ERROR, T.QUEUED, T.SCHEDULED):
             self._primary_action = "resume"
             self.btn_primary.setIcon(themed_icon("play", "text")); self.btn_primary.setToolTip("Resume"); self.btn_primary.show()

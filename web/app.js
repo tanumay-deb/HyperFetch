@@ -53,10 +53,12 @@ const speed = (bps) => bytes(bps) + "/s";
 
 function eta(sec) {
   if (!isFinite(sec) || sec <= 0) return "";
-  if (sec < 60) return Math.round(sec) + "s";
-  if (sec < 3600) return Math.floor(sec / 60) + "m " + Math.round(sec % 60) + "s";
-  const h = Math.floor(sec / 3600);
-  return h + "h " + Math.round((sec % 3600) / 60) + "m";
+  /* rounded before it is split: 119.6 s read "1m 60s" */
+  sec = Math.round(sec);
+  if (sec < 60) return sec + "s";
+  if (sec < 3600) return Math.floor(sec / 60) + "m " + (sec % 60) + "s";
+  const m = Math.round(sec / 60);
+  return Math.floor(m / 60) + "h " + (m % 60) + "m";
 }
 
 function rateFor(d) {
@@ -297,10 +299,12 @@ function keep(d) {
   if (cat !== "All" && d.category !== cat) return false;
   if (query && !(d.name || "").toLowerCase().includes(query)) return false;
   switch (state) {
-    case "active": return d.status === "Downloading" || d.status === "Queued";
+    /* the desktop's groups (gui2/download_list.py _GROUPS): a scheduled one is
+       waiting to run, and a cancelled one has failed */
+    case "active": return ["Downloading", "Queued", "Scheduled"].includes(d.status);
     case "paused": return d.status === "Paused";
     case "done": return d.status === "Completed";
-    case "failed": return d.status === "Error";
+    case "failed": return d.status === "Error" || d.status === "Cancelled";
     default: return true;
   }
 }

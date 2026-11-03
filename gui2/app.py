@@ -120,6 +120,7 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, Up
         self._load_settings()
 
         self.queue = QueueManager(queues=self.queues_config, segments=self.segments)
+        self._sync_concurrency()             # aria2's limit, before it starts
         # Resolve magnet names/sizes for tasks that are only queued or paused,
         # so a queue of magnets is not a list of identical placeholders.
         self._meta = _torrent.MetadataPrefetcher(lambda: self.queue.tasks)
@@ -793,6 +794,7 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, Up
                               self._server_error, secs=12)
         now = time.time()
         conns = 0
+        peer_conns = 0
         seeds = 0
         any_torrent = False
         total_bps = 0.0
@@ -817,7 +819,7 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, Up
                     # (Seeding also flips the task to COMPLETED, so this is
                     # belt and braces — but the intent should not be implicit.)
                     if not getattr(t, "seeding", False):
-                        conns += getattr(t, "tor_conns", 0)
+                        peer_conns += getattr(t, "tor_conns", 0)
                         seeds += getattr(t, "tor_seeds", 0)
                 else:
                     conns += getattr(t, "http_conns", 0)
@@ -826,11 +828,17 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, Up
         self.status_bar.set_totals(self._session.down, _torrent.sent_this_session())
         speeds = {tid: v[2] for tid, v in self._speed.items()}
         histories = {tid: list(dq) for tid, dq in self._spark.items()}
-        self.list.set_tasks(self._visible_tasks(), speeds, histories, self._sl_map())
+        self.list.set_tasks(self._visible_tasks(), speeds, histories, self._sl_map(),
+                            listed=len(self.queue.tasks))
         self.sidebar.set_counts(self._counts())
         # seeders only mean something when a torrent is running; an HTTP-only
-        # list would just show a permanent 0 that explains nothing
-        self.sidebar.set_stats(total_bps, conns, seeds if any_torrent else None)
+        # list would just show a permanent 0 that explains nothing. Seeds /
+        # Peers counts the torrents' connections only: an ordinary download's
+        # were counted as peers ("2 / 11" for 2 seeds, 3 peers; 2026-11-03).
+        if any_torrent:
+            self.sidebar.set_stats(total_bps, peer_conns, seeds)
+        else:
+            self.sidebar.set_stats(total_bps, conns, None)
         self._update_live_title(total_bps)
         if getattr(self, "_active_settings_dlg", None):
             self._active_settings_dlg.update_live(total_bps, conns)
@@ -1022,7 +1030,14 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, Up
                     # as a browser marks a download - not the app's own update,
                     # checked against GitHub's SHA-256 (it would read "unknown
                     # publisher" at every install: HyperFetch is not signed)
-                    utils.mark_from_internet(t.save_path)
+                    if os.path.isdir(t.save_path or ""):
+                        # a torrent's folder may hold thousands of files: not
+                        # on the window's thread (a file is marked here, before
+                        # "Open file" below can start it)
+                        threading.Thread(target=utils.mark_from_internet,
+                                         args=(t.save_path,), daemon=True).start()
+                    else:
+                        utils.mark_from_internet(t.save_path)
                 try:
                     import history
                     history.record(t)
@@ -1053,11 +1068,17 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, Up
                         self._open_file(t)
                 elif wc == "Open folder":
                     self._open_folder(t)
-                if wc != "Do nothing" and not self._extras.get("skip_complete_popup"):
+                # One at a time: twenty files finishing one after another
+                # opened twenty windows (2026-11-03). The rest are told by the
+                # toast above while one is open.
+                if (wc != "Do nothing" and not self._extras.get("skip_complete_popup")
+                        and getattr(self, "_complete_dlg", None) is None):
                     dlg = CompleteDialog(self, t)
+                    self._complete_dlg = dlg
                     dlg.viewInList.connect(lambda *_: self._set_filter("All"))
                     dlg.finished.connect(
                         lambda *_, d=dlg: self._remember_skip_complete(d))
+                    dlg.finished.connect(lambda *_: setattr(self, "_complete_dlg", None))
                     dlg.show()
             elif t.status == T.ERROR and t.id not in self._errored_seen:
                 if wc != "Do nothing":
@@ -1187,6 +1208,10 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, Up
     def _open_queues(self):
         from gui2.dialogs.queues import QueueManagerDialog
         QueueManagerDialog(self, self.queue).exec()
+        # Main's limit is Settings' "Concurrent Downloads" too: changed here
+        # and not there, the next Settings save put the old one back
+        self.max_concurrent = self.queue.queues["Main"].max_concurrent
+        self._sync_concurrency()
         self._save_settings()        # persist queue list + concurrencies
         self.refresh()
 
@@ -1298,7 +1323,8 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, Up
         # not a duplicate: the user threw it away, and re-adding it is the normal
         # way to start over.
         existing = next((x for x in self.queue.tasks
-                         if x.url == v["url"] and x.status != T.CANCELLED), None)
+                         if utils.same_link(x.url, v["url"]) and x.status != T.CANCELLED),
+                        None)
         if existing:
             box = QMessageBox(self)
             box.setIcon(QMessageBox.Question)
@@ -1315,7 +1341,10 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, Up
                 return
             if box.clickedButton() is not again_btn:
                 return
-        base = v["save_dir"] if os.path.isdir(v["save_dir"]) else self.save_dir
+        # A folder typed in New Download that is not there yet is made below;
+        # it was swapped for the default folder without a word (2026-11-03).
+        # Only a full path: a relative one would land beside the app.
+        base = v["save_dir"] if os.path.isabs(v["save_dir"] or "") else self.save_dir
         try:
             os.makedirs(base, exist_ok=True)
         except OSError:
@@ -1534,7 +1563,7 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, Up
         txt = QApplication.clipboard().text().strip()
         if txt and txt != self._clip_last and self._looks_like_url(txt):
             self._clip_last = txt
-            if not any(x.url == txt for x in self.queue.tasks):
+            if not any(utils.same_link(x.url, txt) for x in self.queue.tasks):
                 self._toasts.show("info", "Link detected", "Use + New Download to add it.")
 
     # ------------------------------------------------------------- sidebar collapse

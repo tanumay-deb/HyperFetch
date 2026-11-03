@@ -118,6 +118,7 @@ class DownloadList(QScrollArea):
         title = QLabel("No downloads yet"); title.setAlignment(Qt.AlignCenter)
         title.setStyleSheet(f"font-size: {fpx(19)};font-weight:800;color:{COLORS['text']};background:transparent;")
         sub = QLabel("Paste a link, drop a file, or start one below."); sub.setAlignment(Qt.AlignCenter)
+        self._empty_title, self._empty_sub = title, sub
         sub.setStyleSheet(f"font-size: {fpx(13)};color:{COLORS['muted']};background:transparent;")
         v.addWidget(title); v.addWidget(sub)
         v.addSpacing(14)
@@ -198,7 +199,9 @@ class DownloadList(QScrollArea):
                 card.chk.blockSignals(False)
 
     # ---- data ----
-    def set_tasks(self, tasks, speeds, histories=None, sl_map=None):
+    def set_tasks(self, tasks, speeds, histories=None, sl_map=None, listed=None):
+        """`tasks` are the ones shown; `listed` how many the list holds in all
+        (None: the same)."""
         histories = histories or {}
         # serial numbers come from the caller's stable added-order ranking, so a
         # card keeps its number when the list is re-sorted or filtered
@@ -227,6 +230,13 @@ class DownloadList(QScrollArea):
             self.selectionChanged.emit(set(self._selected))
         self._apply_selection()
         self._empty.setVisible(not tasks)
+        if not tasks:
+            # a filter or a search that matches nothing is not an empty list:
+            # it said "No downloads yet" over a list of downloads (2026-11-03)
+            hidden = bool(listed)
+            self._empty_title.setText("Nothing here" if hidden else "No downloads yet")
+            self._empty_sub.setText("No download matches this view." if hidden
+                                    else "Paste a link, drop a file, or start one below.")
 
     def _rebuild(self, buckets):
         while self._lay.count():
@@ -269,12 +279,3 @@ class DownloadList(QScrollArea):
                 card.set_serial(sl_counter)
                 self._lay.addWidget(card)
         self._lay.addStretch()
-
-    def _on_chk_toggled(self, tid, checked):
-        if checked:
-            self._selected.add(tid)
-        else:
-            self._selected.discard(tid)
-        self._anchor = tid
-        self._apply_selection()
-        self.selectionChanged.emit(set(self._selected))

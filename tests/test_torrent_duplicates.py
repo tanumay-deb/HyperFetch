@@ -65,7 +65,7 @@ def _file(tmp_path, data, name="Movie.torrent"):
 class _Box:
     """QMessageBox: records what it says and presses the button named in
     `press` (None: closes it)."""
-    Question = Information = AcceptRole = RejectRole = ActionRole = 0
+    Question = Information = AcceptRole = RejectRole = ActionRole = DestructiveRole = 0
     press = None
     shown = []
 

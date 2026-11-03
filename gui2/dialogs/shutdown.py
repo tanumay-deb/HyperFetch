@@ -34,10 +34,14 @@ def power_command(action):
         # otherwise add a second, redundant delay on top.
         return ["shutdown", "/s", "/t", "0"]
     if action == "Sleep":
-        # SetSuspendState's first argument is Hibernate: 0 = sleep. Note this
-        # hibernates instead if hibernation is enabled on the machine — a
-        # Windows quirk, not something the app can override.
-        return ["rundll32.exe", "powrprof.dll,SetSuspendState", "0,1,0"]
+        # SetSuspendState(hibernate=False) through .NET. Through rundll32 -
+        # as it was - it hibernated whenever hibernation was on: rundll32
+        # hands the function its own window handle where the hibernate flag
+        # goes, and that is never 0 (2026-11-03).
+        return ["powershell", "-NoProfile", "-NonInteractive", "-Command",
+                "Add-Type -AssemblyName System.Windows.Forms; "
+                "[System.Windows.Forms.Application]::SetSuspendState("
+                "[System.Windows.Forms.PowerState]::Suspend, $false, $false)"]
     return None
 
 

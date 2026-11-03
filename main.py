@@ -46,6 +46,21 @@ def _handoff(target):
     return _post_running("/open", {"target": target}) is not None
 
 
+def _hand_over_soon(target, wait=15.0, step=0.5):
+    """_handoff, tried again while the instance that holds the lock starts:
+    it takes the lock at once and answers a few seconds later, and a file
+    opened meanwhile was dropped - several .torrent files opened at once
+    from Explorer added only the first (2026-11-03). True when taken."""
+    import time
+    end = time.monotonic() + wait
+    while True:
+        if _handoff(target):
+            return True
+        if time.monotonic() >= end:
+            return False
+        time.sleep(step)
+
+
 _MUTEX_NAME = "Local\\HyperFetch.SingleInstance"
 _mutex_handle = None
 
@@ -156,7 +171,7 @@ def main():
     if not _claim_single_instance():
         _focus_running()
         if target:
-            _handoff(target)
+            _hand_over_soon(target)
         return 0
     # An instance that is still answering wins too: a duplicate window is
     # worse than anything, because the two overwrite each other's

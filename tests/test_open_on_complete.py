@@ -95,3 +95,23 @@ def test_the_apps_own_update_is_not_marked(tmp_path):
     _finish(_app([t], when="Do nothing", update=t), t)
     with pytest.raises(FileNotFoundError):
         open(t.save_path + ":Zone.Identifier", "rb")
+
+
+@windows
+def test_a_finished_folder_is_marked_off_the_windows_thread(tmp_path):
+    """A torrent's folder can hold thousands of files: marked on a thread."""
+    import time
+    pack = tmp_path / "Pack"
+    pack.mkdir()
+    (pack / "a.exe").write_bytes(b"x")
+    t = T.DownloadTask("magnet:?xt=urn:btih:%040d" % 5, str(pack), filename="Pack")
+    _finish(_app([t], when="Do nothing"), t)
+    end = time.monotonic() + 5
+    while time.monotonic() < end:
+        try:
+            if open(str(pack / "a.exe") + ":Zone.Identifier", "rb").read() == MARK:
+                break
+        except OSError:
+            pass
+        time.sleep(0.02)
+    assert open(str(pack / "a.exe") + ":Zone.Identifier", "rb").read() == MARK

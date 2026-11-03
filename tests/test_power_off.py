@@ -55,7 +55,9 @@ def test_the_cap_applies_even_without_seeding(monkeypatch):
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows power commands")
 def test_the_power_commands_are_what_they_claim():
     assert power_command("Shut down")[:2] == ["shutdown", "/s"]
-    assert "SetSuspendState" in " ".join(power_command("Sleep"))
+    sleep = " ".join(power_command("Sleep"))
+    assert "SetSuspendState" in sleep and "PowerState]::Suspend" in sleep
+    assert "rundll32" not in sleep, "rundll32 hibernates where hibernation is on"
     assert power_command("Do nothing") is None
 
 
