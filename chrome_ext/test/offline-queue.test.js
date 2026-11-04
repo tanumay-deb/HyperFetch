@@ -415,7 +415,42 @@ function capture(state, item) {
     assert.strictEqual(sent.auto, true, 'a capture must let the app apply its list');
     assert.strictEqual(sent.referrer, 'https://github.com/o/r/releases',
       'the page the download came from was not passed on');
+    // the signed link runs out within the hour; the app goes on from this one
+    assert.strictEqual(sent.origUrl,
+      'https://github.com/o/r/releases/download/v1.9.27/Salad-1.9.27.exe',
+      'the link the download started at was not sent with it');
     console.log('  ok  a capture is judged by the filename Chrome resolved');
+  }
+
+  // ---- no second link when there was no redirect -----------------------------
+  {
+    const { state } = makeEnv({ online: true, reply: 'queued' });
+    await wait(10);
+    capture(state, { id: 12, url: 'https://x/a.zip', finalUrl: 'https://x/a.zip',
+                     filename: 'a.zip' });
+    capture(state, { id: 13, url: 'https://x/b.zip', filename: 'b.zip' });
+    await wait(40);
+    assert.strictEqual(state.posts.length, 2);
+    assert.ok(state.posts.every((p) => !('origUrl' in p)), 'sent the same link twice');
+    console.log('  ok  a capture that was not redirected sends one link');
+  }
+
+  // ---- the master playlist a stream's quality came from goes along ----------
+  // The app reads there whether the stream's sound is a playlist of its own:
+  // the quality's playlist alone was saved without sound (2026-11-03).
+  {
+    const { state } = makeEnv({ online: true });
+    await wait(10);
+    state.msgHandler({ type: 'DOWNLOAD_URL', url: 'https://x/720/idx.m3u8', filename: 'v.m3u8',
+                       hlsMaster: 'https://x/master.m3u8' }, { tab: { url: 'https://x/' } },
+                     () => {});
+    state.msgHandler({ type: 'DOWNLOAD_URL', url: 'https://x/a.m3u8', filename: 'a.m3u8',
+                       hlsMaster: 'javascript:alert(1)' }, { tab: { url: 'https://x/' } },
+                     () => {});
+    await wait(60);
+    assert.strictEqual(state.posts[0].hlsMaster, 'https://x/master.m3u8');
+    assert.ok(!('hlsMaster' in state.posts[1]), 'passed on a link that is not a web address');
+    console.log('  ok  the master a stream was picked from reaches the app');
   }
 
   // ---- a slow app never holds a download for long --------------------------

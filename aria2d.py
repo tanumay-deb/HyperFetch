@@ -463,6 +463,10 @@ class Aria2Daemon:
             if self._attach():
                 self._purge()
                 self._reap_others()
+                # started by an earlier run - one that crashed, say - with that
+                # run's limit and torrent settings on its command line
+                self.apply_concurrency()
+                self.apply_preferences()
                 return True
             ok = self._spawn()
             self._purge()
@@ -505,6 +509,19 @@ class Aria2Daemon:
                        timeout=3)
         except Exception as e:
             log.debug("could not update daemon concurrency: %s", e)
+
+    def apply_preferences(self):
+        """What Settings say of torrents - upload cap, seeding, preview -
+        told to a daemon that is already running (torrent.live_preferences):
+        its command line had them only as it started."""
+        if not (self.port and self.secret):
+            return
+        import torrent
+        try:
+            self._post(self.port, self.secret, "aria2.changeGlobalOption",
+                       [torrent.live_preferences()], timeout=3)
+        except Exception as e:
+            log.debug("could not update the daemon's torrent settings: %s", e)
 
     def stop_recorded(self):
         """Stop whatever daemon aria2d.json points at, even from a fresh object.

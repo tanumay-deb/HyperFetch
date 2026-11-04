@@ -180,6 +180,14 @@ async function test(name, fn) {
     const btn = badges(win)[0].shadowRoot.querySelector('button');
     btn.dispatchEvent(new win.MouseEvent('click', { bubbles: true }));
     assert.strictEqual(state.sent.url, 'https://cdn.x/1080/idx.m3u8', 'sends the top variant');
+    // with the master it came from: there the app reads whether the sound is a
+    // playlist of its own, which the variant alone does not say (2026-11-03)
+    assert.strictEqual(state.sent.hlsMaster, 'https://cdn.x/master.m3u8');
+    const items = badges(win)[0].shadowRoot.querySelectorAll('.menu-item');
+    items[1].dispatchEvent(new win.MouseEvent('click', { bubbles: true }));
+    assert.strictEqual(state.sent.url, 'https://cdn.x/480/idx.m3u8');
+    assert.strictEqual(state.sent.hlsMaster, 'https://cdn.x/master.m3u8',
+      'a quality picked from the menu lost its master');
   });
 
   await test('clicking a plain file link is NOT auto-captured (manual only)', async () => {

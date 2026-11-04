@@ -201,3 +201,44 @@ def test_one_waiting_for_a_slot_starts_after_a_restart(monkeypatch):
     finally:
         q.shutdown()
     assert started == ["waits.bin"]
+
+
+def test_the_ones_that_were_running_have_their_slots_first(monkeypatch):
+    """Put back in line as it was read, a waiting one earlier in the list
+    started while the slots were free, and the ones that had been running were
+    started on top of it - past the limit (2026-11-03): a torrent that had
+    given its slot back (its wait is not saved) and the running ones after it.
+    The restore is held between the rows, as a long list or a slow disk holds it."""
+    import queue_manager
+    started, go = [], threading.Event()
+
+    class Fake:
+        def __init__(self, t, segments=8):
+            self.t = t
+
+        def run(self):
+            started.append(self.t.filename)
+            go.wait(10)
+            self.t.status = T.COMPLETED
+
+    monkeypatch.setattr(queue_manager, "Downloader", Fake)
+    real = T.DownloadTask.from_dict
+
+    def slow(d):
+        time.sleep(0.3)
+        return real(d)
+
+    monkeypatch.setattr(T.DownloadTask, "from_dict", staticmethod(slow))
+    q = QueueManager(queues=[{"name": "Main", "max_concurrent": 1}])
+    try:
+        q.restore([_row("waited.bin", T.QUEUED), _row("was-running.bin", T.DOWNLOADING)])
+        time.sleep(0.5)
+        assert started == ["was-running.bin"], "the limit of 1 was run over"
+        go.set()
+        end = time.time() + 10
+        while len(started) < 2 and time.time() < end:
+            time.sleep(0.02)
+        assert started == ["was-running.bin", "waited.bin"]
+    finally:
+        go.set()
+        q.shutdown()

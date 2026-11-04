@@ -350,9 +350,27 @@ class Downloader:
             pass                        # diagnostics must never break a download
 
     def _probe(self):
-        """One request to learn total size + range support, following redirects."""
+        """One request to learn total size + range support, following redirects.
+
+        A first link refused (403/410) even the ranged look - a signed link
+        that ran out while it waited its turn - is dropped for an extra link
+        (task.mirrors) when there is one, which is asked instead: only the
+        first was asked, and the download failed "URL expired" with a link
+        that works beside it (2026-11-03)."""
+        size, accept, refused = self._probe_at(self.url, self._base_headers)
+        left = self._mirrors_left()
+        if refused and left:
+            self._drop_mirror(self.url, "HTTP %d" % refused)
+            size, accept, _ = self._probe_at(left[0], HEADERS)
+        self.t.total_size = size
+        self.t.supports_range = accept != "none" and size > 0
+
+    def _probe_at(self, url, headers):
+        """(size, accept-ranges, refused) of one link: refused is the 403 or
+        410 its ranged look was answered with, else 0."""
+        refused = 0
         try:
-            r = self._session.head(self.url, headers=self._base_headers,
+            r = self._session.head(url, headers=headers,
                               allow_redirects=True,
                               timeout=CONNECT_TIMEOUT, verify=utils.VERIFY_TLS, proxies=utils.PROXIES)
             size = int(r.headers.get("Content-Length", 0))
@@ -364,10 +382,12 @@ class Downloader:
         # Some servers lie on HEAD; confirm with a tiny ranged GET.
         if size == 0 or accept == "none":
             try:
-                r = self._session.get(self.url,
-                                 headers={**self._base_headers, "Range": "bytes=0-0"},
+                r = self._session.get(url,
+                                 headers={**headers, "Range": "bytes=0-0"},
                                  stream=True, allow_redirects=True,
                                  timeout=CONNECT_TIMEOUT, verify=utils.VERIFY_TLS, proxies=utils.PROXIES)
+                if r.status_code in (403, 410):
+                    refused = r.status_code
                 if r.status_code == 206:
                     accept = "bytes"
                     cr = r.headers.get("Content-Range", "")
@@ -384,9 +404,7 @@ class Downloader:
                 r.close()
             except requests.RequestException:
                 pass
-
-        self.t.total_size = size
-        self.t.supports_range = accept != "none" and size > 0
+        return size, accept, refused
 
     def _web_page(self):
         """The server answered with a web page where a file was expected.
@@ -548,6 +566,7 @@ class Downloader:
             wait_attempt = attempts
             accepted = False
             sent = time.monotonic()
+            before = seg.downloaded
             try:
                 # with-block guarantees the response/socket closes on every
                 # path — incl. raise_for_status() failures and mid-stream errors
@@ -601,6 +620,21 @@ class Downloader:
                                     seg.downloaded += len(chunk)
                     finally:
                         self._streams(-1, src)
+                if self.t.supports_range and not seg.complete:
+                    # A server may answer a range with less than was asked:
+                    # the rest is asked for. The part stopped there, and the
+                    # download read "Paused" with no reason (2026-11-03).
+                    if seg.downloaded == before:
+                        attempts += 1           # nothing came: that is a retry
+                        if attempts > MAX_RETRIES:
+                            if not self.t.cancel_requested:
+                                self.t.status = T.ERROR
+                                self.t.error = "Connection lost — Resume to retry"
+                                log.error("seg %d of %s: the server sent nothing "
+                                          "for the range, %d times",
+                                          seg.index, self.t.filename, attempts)
+                            return
+                    continue
                 return
             except (requests.RequestException, MirrorMismatch) as e:
                 resp = getattr(e, "response", None)

@@ -221,3 +221,11 @@ def test_the_web_page_groups_and_times_as_the_desktop_does():
     assert '["Downloading", "Queued", "Scheduled"].includes(d.status)' in page
     assert 'd.status === "Error" || d.status === "Cancelled"' in page
     assert "sec = Math.round(sec);" in page, '119.6 s read "1m 60s"'
+
+
+def test_the_web_page_counts_seeds_and_peers_of_running_torrents_only():
+    """As the desktop does: a paused torrent made it read "0 / 0 Seeds / Peers"
+    over a list whose one running download was not a torrent (2026-11-03)."""
+    page = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                             "web", "app.js"), encoding="utf-8").read()
+    assert 'd.isTorrent && !d.seeding && d.status === "Downloading"' in page

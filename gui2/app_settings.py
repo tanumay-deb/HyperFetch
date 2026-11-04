@@ -126,6 +126,11 @@ class SettingsMixin:
         self._apply_web_settings(v)      # must run BEFORE the line below
         self._extras.update(v)
         self._apply_network_settings()
+        # the torrent engine that is running, too: it read these only as it
+        # started (off this thread - a busy daemon answers late)
+        import aria2d
+        threading.Thread(target=aria2d.DAEMON.apply_preferences, daemon=True,
+                         name="aria2-prefs").start()
         self._apply_throttle()           # throttle window may override the global limit
         self._apply_appearance()
         self._save_settings()

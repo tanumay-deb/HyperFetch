@@ -1038,8 +1038,10 @@ async function tick() {
     if (d.status === "Downloading") { down += bps; swarm.active++; }
     /* Seeding torrents are left out of the swarm totals: their peers are
        people taking from you, and counting them makes the number describe
-       something other than what is being fetched. */
-    if (d.isTorrent && !d.seeding && d.status !== "Completed") {
+       something other than what is being fetched. Running ones only, as the
+       desktop counts: a paused torrent made it read "0 / 0 Seeds / Peers"
+       over a list whose one running download was not a torrent. */
+    if (d.isTorrent && !d.seeding && d.status === "Downloading") {
       swarm.torrents++;
       swarm.peers += d.peers;
       swarm.seeds += d.seeds;

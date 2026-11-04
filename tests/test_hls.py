@@ -37,7 +37,27 @@ def hls_server(aes_tools):
         live_with_segs += f"#EXTINF:4.0,\nseg{i}.ts\n"
     # NOTE: no #EXT-X-ENDLIST -> sliding window
 
+    # masters naming the sound: a playlist of its own (URI), or in the
+    # picture's stream (no URI)
+    def with_sound(uri):
+        return ("#EXTM3U\n"
+                '#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="aud",NAME="English",DEFAULT=YES'
+                + (f',URI="{uri}"' if uri else "") + "\n"
+                '#EXT-X-STREAM-INF:BANDWIDTH=2400000,RESOLUTION=1280x720,AUDIO="aud"\n'
+                "high.m3u8\n").encode()
+
+    # its own sound in the picture's stream (the default), and a dub beside it
+    dubbed = ("#EXTM3U\n"
+              '#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="aud",NAME="English",DEFAULT=YES\n'
+              '#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="aud",NAME="French",DEFAULT=NO,'
+              'URI="fr.m3u8"\n'
+              '#EXT-X-STREAM-INF:BANDWIDTH=2400000,RESOLUTION=1280x720,AUDIO="aud"\n'
+              "high.m3u8\n").encode()
+
     routes = {
+        "sep.m3u8": (with_sound("audio.m3u8"), "application/vnd.apple.mpegurl"),
+        "muxed.m3u8": (with_sound(""), "application/vnd.apple.mpegurl"),
+        "dubbed.m3u8": (dubbed, "application/vnd.apple.mpegurl"),
         "master.m3u8": (master.encode(), "application/vnd.apple.mpegurl"),
         "high.m3u8": (media("seg").encode(), "application/vnd.apple.mpegurl"),
         "low.m3u8": (media("seg").encode(), "application/vnd.apple.mpegurl"),
@@ -74,12 +94,15 @@ def hls_server(aes_tools):
                    "ranges.m3u8": (ranged("single.mp4"), "application/vnd.apple.mpegurl"),
                    "plainranges.m3u8": (ranged("plain.mp4"), "application/vnd.apple.mpegurl")})
 
+    asked = []
+
     class H(http.server.BaseHTTPRequestHandler):
         def log_message(self, *a):
             pass
 
         def do_GET(self):
             p = self.path.split("?")[0].lstrip("/")
+            asked.append(p)
             rng = self.headers.get("Range")
             if p in routes and rng and p != "plain.mp4":
                 body, ct = routes[p]
@@ -109,6 +132,7 @@ def hls_server(aes_tools):
     srv.base = f"http://127.0.0.1:{port}"
     srv.plain_total = plain_total
     srv.single = single
+    srv.asked = asked
     yield srv
     httpd.shutdown()
 
@@ -273,3 +297,79 @@ def test_a_server_that_ignores_the_ranges_is_refused(hls_server, tmp_path):
     t = T.DownloadTask(f"{hls_server.base}/plainranges.m3u8", str(tmp_path / "p.m3u8"))
     Downloader(t).run()
     assert t.status == T.ERROR and "whole file" in t.error, t.error
+
+
+# ---- a stream whose sound is a playlist of its own ---------------------------------
+@pytest.fixture
+def to_ytdlp(monkeypatch):
+    """yt-dlp, as what it was handed: the task's state when it started."""
+    import yt_dl
+    handed = []
+
+    class Fake:
+        def __init__(self, t, segments=None):
+            self.t = t
+
+        def run(self):
+            handed.append({k: getattr(self.t, k) for k in
+                           ("url", "use_ytdlp", "yt_format", "name_chosen", "seg_total")})
+            self.t.status = T.COMPLETED
+
+    monkeypatch.setattr(yt_dl, "YtDlpDownloader", Fake)
+    return handed
+
+
+def test_picked_from_a_master_whose_sound_is_apart_it_goes_to_ytdlp(hls_server, tmp_path,
+                                                                    to_ytdlp):
+    """The badge sends the quality's own playlist, which holds picture only
+    when the master gives the sound one of its own: saved silent, and
+    "Completed" (2026-11-03). yt-dlp fetches both and joins them."""
+    t = T.DownloadTask(f"{hls_server.base}/high.m3u8", str(tmp_path / "Clip.m3u8"),
+                       filename="Clip.m3u8")
+    t.hls_master = f"{hls_server.base}/sep.m3u8"
+    Downloader(t).run()
+    assert to_ytdlp == [{"url": f"{hls_server.base}/sep.m3u8", "use_ytdlp": True,
+                         "yt_format": "bv*[height<=720]+ba/b[height<=720]",
+                         "name_chosen": "Clip", "seg_total": 0}]
+    assert not any(p.startswith("seg") for p in hls_server.asked), "the picture was fetched alone"
+
+
+def test_a_master_given_as_it_is_goes_there_too(hls_server, tmp_path, to_ytdlp):
+    t = T.DownloadTask(f"{hls_server.base}/sep.m3u8", str(tmp_path / "Clip.m3u8"),
+                       filename="Clip.m3u8")
+    Downloader(t).run()
+    assert [h["url"] for h in to_ytdlp] == [f"{hls_server.base}/sep.m3u8"]
+
+
+def test_sound_in_the_picture_s_own_stream_stays_here(hls_server, tmp_path, to_ytdlp):
+    t = T.DownloadTask(f"{hls_server.base}/high.m3u8", str(tmp_path / "Clip.m3u8"),
+                       filename="Clip.m3u8")
+    t.hls_master = f"{hls_server.base}/muxed.m3u8"
+    Downloader(t).run()
+    assert to_ytdlp == [] and t.status == T.COMPLETED, t.error
+    assert open(t.save_path, "rb").read() == hls_server.plain_total
+
+
+def test_a_dub_beside_the_picture_s_own_sound_is_not_missed_sound(hls_server, tmp_path,
+                                                                  to_ytdlp):
+    """The default sound is in the picture's stream; a French dub has a
+    playlist of its own. Handed to yt-dlp, its "best audio" could be the dub."""
+    t = T.DownloadTask(f"{hls_server.base}/high.m3u8", str(tmp_path / "Clip.m3u8"),
+                       filename="Clip.m3u8")
+    t.hls_master = f"{hls_server.base}/dubbed.m3u8"
+    Downloader(t).run()
+    assert to_ytdlp == [] and t.status == T.COMPLETED, t.error
+
+
+def test_a_master_the_stream_is_not_in_changes_nothing(hls_server, tmp_path, to_ytdlp):
+    t = T.DownloadTask(f"{hls_server.base}/low.m3u8", str(tmp_path / "Clip.m3u8"),
+                       filename="Clip.m3u8")
+    t.hls_master = f"{hls_server.base}/sep.m3u8"           # names high.m3u8 only
+    Downloader(t).run()
+    assert to_ytdlp == [] and t.status == T.COMPLETED, t.error
+
+
+def test_the_master_is_kept_with_the_download():
+    t = T.DownloadTask("https://e.test/high.m3u8", "C:/dl/v.m3u8")
+    t.hls_master = "https://e.test/master.m3u8"
+    assert T.DownloadTask.from_dict(t.to_dict()).hls_master == "https://e.test/master.m3u8"

@@ -187,3 +187,26 @@ def test_the_download_folder_itself_is_never_removed(tmp_path):
     A._maybe_categorize(_stub(), _done_task(f, "thing.mkv", str(base)))
     assert (base / "Video" / "thing.mkv").is_file()
     assert base.is_dir()
+
+
+def test_one_that_cannot_be_renamed_stays_whole_where_it_is(tmp_path, monkeypatch):
+    """A player holding a file in the folder: the rename fails. shutil.move
+    then copied the folder on the window's thread and deleted the originals
+    until it reached the open one, the task left on what remained
+    (2026-11-03). Now it stays where it is, whole, and is not copied."""
+    d = tmp_path / "Show.S01.1080p"
+    _mk(str(d), "Show.S01E01.mkv", 5000)
+    _mk(str(d), "Show.S01E02.mkv", 5000)
+    t = T.DownloadTask("magnet:?xt=urn:btih:abc", str(d), filename="Show.S01.1080p")
+    t.status = T.COMPLETED
+
+    def held(src, dst):
+        raise PermissionError(32, "The process cannot access the file")
+
+    monkeypatch.setattr(os, "replace", held)
+    monkeypatch.setattr(os, "rename", held)
+    A._maybe_categorize(_stub(), t)
+    assert t.save_path == str(d)
+    assert sorted(os.listdir(d)) == ["Show.S01E01.mkv", "Show.S01E02.mkv"], "files were deleted"
+    video = tmp_path / utils.category_for("x.mkv")
+    assert not (video / "Show.S01.1080p").exists(), "it was copied anyway"

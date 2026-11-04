@@ -73,8 +73,13 @@ function sendToApp(url, suggestedName = null, opts = {}) {
   const fallBack = !opts.quiet && !opts.noNavigate && !manifest;
   // route via the background worker so the browser's cookies for this URL
   // are attached (needed for Google Drive and other login-gated downloads)
+  // hlsMaster: the playlist a stream's quality was picked from. The app reads
+  // there whether the stream's sound is a playlist of its own, which the
+  // picked one does not carry: alone it was saved without sound.
+  const msg = Object.assign({ type: "DOWNLOAD_URL", url, filename, hold: !fallBack },
+                            opts.hlsMaster ? { hlsMaster: opts.hlsMaster } : {});
   try {
-    chrome.runtime.sendMessage({ type: "DOWNLOAD_URL", url, filename, hold: !fallBack }, (res) => {
+    chrome.runtime.sendMessage(msg, (res) => {
       if (res && res.unpaired) {
         showToast("Pair the extension first — open the HyperFetch popup");
         return;
@@ -615,7 +620,7 @@ function renderMasterItem(item, media) {
     btn.textContent = "Download " + v.label;
     btn.onclick = (e) => {
       e.preventDefault();
-      sendToApp(v.url, media.title + ' ' + v.label + '.m3u8');
+      sendToApp(v.url, media.title + ' ' + v.label + '.m3u8', { hlsMaster: media.master });
     };
 
     row.appendChild(meta);
@@ -658,6 +663,7 @@ function addHlsMaster(msg) {
   const best = variants[0];
   sniffedMedia.set(msg.url, {
     url: best ? best.url : msg.url,
+    master: msg.url,             // sent with the quality picked (sendToApp)
     kind: 'hls',
     isMaster: true,
     title: title,
@@ -871,12 +877,13 @@ function getVideoDownload(video) {
       const held = interruptedStream(video, u);
       if (held) {
         return { url: held.url, kind: held.kind, filename: buildName(title, held.url, held.kind),
-                 variants: held.variants || [] };
+                 variants: held.variants || [], master: held.master || '' };
       }
       const kind = /\.m3u8(\?.*)?$/i.test(u) ? 'hls' : 'file';
       const m = sniffedMedia.get(u);
       const variants = m && m.variants ? m.variants : [];
-      return { url: u, kind, filename: buildName(title, u, kind), variants };
+      return { url: u, kind, filename: buildName(title, u, kind), variants,
+               master: (m && m.master) || '' };
     }
   }
   // MSE / blob element with no direct file -> fall back to a sniffed stream.
@@ -890,7 +897,8 @@ function getVideoDownload(video) {
     const s = bestSniffedStream(video);
     if (s) {
       lastStreamOf.set(video, { stream: s, page: location.href });
-      return { url: s.url, kind: s.kind, filename: buildName(title, s.url, s.kind), variants: s.variants || [] };
+      return { url: s.url, kind: s.kind, filename: buildName(title, s.url, s.kind),
+               variants: s.variants || [], master: s.master || '' };
     }
   }
   return null;
@@ -1000,7 +1008,7 @@ function createOverlay(video) {
     // element, and the badge was last drawn up to half a second ago
     updateState(getVideoDownload(video));
     if (!currentDl) return;
-    sendToApp(currentDl.url, currentDl.filename);
+    sendToApp(currentDl.url, currentDl.filename, { hlsMaster: currentDl.master });
     menu.classList.remove('open');
     const lbl = btnMain.querySelector('.lbl');
     if (lbl) { lbl.textContent = 'Sent ✓'; setTimeout(() => { lbl.textContent = 'Download'; }, 2000); }
@@ -1044,7 +1052,7 @@ function createOverlay(video) {
           e.preventDefault();
           e.stopPropagation();
           const name = currentDl.filename.replace(/\.m3u8$/i, '') + ' ' + v.label + '.m3u8';
-          sendToApp(v.url, name);
+          sendToApp(v.url, name, { hlsMaster: currentDl.master });
           menu.classList.remove('open');
           const lbl = btnMain.querySelector('.lbl');
           if (lbl) { lbl.textContent = 'Sent ✓'; setTimeout(() => { lbl.textContent = 'Download'; }, 2000); }

@@ -88,6 +88,7 @@ class QueueManager:
         """
         import task as T_
         restored = skipped = 0
+        waiting = []
         for d in rows or []:
             try:
                 t = T_.DownloadTask.from_dict(d)
@@ -98,13 +99,19 @@ class QueueManager:
                 skipped += 1
                 continue
             local = not (getattr(t, "owner", "") or "")
-            # One waiting for a slot waits in line again. It came back listed
-            # as Queued and never started (2026-11-02) - and Resume passes
-            # over one that reads Queued.
-            self.add_task(t, start=t.status == T_.QUEUED and local)
+            self.add_task(t, start=False)
             restored += 1
             if getattr(t, "_auto_resume", False) and local:
                 self.force_start(t)
+            elif t.status == T_.QUEUED and local:
+                waiting.append(t)
+        # One waiting for a slot waits in line again. It came back listed as
+        # Queued and never started (2026-11-02) - and Resume passes over one
+        # that reads Queued. In line once the ones that were running have their
+        # slots: put in as it was read, one earlier in the list started first
+        # and those were started on top of it, past the limit (2026-11-03).
+        for t in waiting:
+            self.add_task(t)
         if skipped:
             log.warning("%d saved download(s) could not be restored", skipped)
         log.info("restored %d download(s), %d skipped", restored, skipped)

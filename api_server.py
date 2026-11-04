@@ -396,10 +396,20 @@ def create_app(queue, save_dir, pending=None, token=None, pair_requests=None):
         if data.get("referrer"):
             headers["Referer"] = data["referrer"]
 
+        def link(key):
+            """A second web link the extension sends with the download: the
+            master playlist a stream's quality came from (hlsMaster), the link
+            the browser started at before a signed one (origUrl)."""
+            v = data.get(key)
+            v = v.strip() if isinstance(v, str) else ""
+            return v if v.lower().startswith(("http://", "https://")) else ""
+
+        hls_master, orig_url = link("hlsMaster"), link("origUrl")
+
         if pending is not None:
             # GUI decides via the file-info dialog
-            pending.append({"url": url, "filename": suggested,
-                            "headers": headers})
+            pending.append({"url": url, "filename": suggested, "headers": headers,
+                            "hls_master": hls_master, "orig_url": orig_url})
             return jsonify({"status": "queued"})
 
         filename = utils.filename_from_url(url, suggested)
@@ -407,6 +417,9 @@ def create_app(queue, save_dir, pending=None, token=None, pair_requests=None):
         save_path = utils.unique_path(folder, filename)
         task = T.DownloadTask(url, save_path, filename=filename, headers=headers)
         task.sort_base = sort_base
+        task.hls_master = hls_master
+        if orig_url and orig_url != url and utils.is_signed(url):
+            task.mirrors = [orig_url]           # as the window keeps it (_add_download)
         queue.add_task(task)
         return jsonify({"status": "queued", "id": task.id, "filename": filename})
 
@@ -665,7 +678,9 @@ def create_app(queue, save_dir, pending=None, token=None, pair_requests=None):
         if not url.lower().startswith(("http://", "https://", "magnet:")):
             return jsonify({"status": "error", "message": "invalid url"}), 400
         if pending is not None:
-            pending.append({"url": url, "filename": "", "headers": {}})
+            # ask=False: the New Download dialog opened at the PC and the add
+            # waited for a click there - from a phone, nobody to give it
+            pending.append({"url": url, "filename": "", "headers": {}, "ask": False})
             return jsonify({"status": "queued"})
         fn = utils.filename_from_url(url) or "download"
         folder, sort_base = utils.place_download(save_dir, url, fn)

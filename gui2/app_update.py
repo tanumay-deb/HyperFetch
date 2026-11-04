@@ -15,6 +15,7 @@ import os
 import threading
 import time
 
+import task as T
 import updater
 from gui.theme import APP_VERSION
 
@@ -93,10 +94,29 @@ class UpdateMixin:
             return
         if url == self._update_url:
             return                      # already on its way
+        # Fetched in an earlier session and "Later" pressed: the app forgets it
+        # was checked, and adding it again asked "Already added" - its default
+        # button added nothing, and this one stayed on "Downloading the
+        # update…" (2026-11-03). One finished is checked again and offered; one
+        # that stopped part way goes on.
+        old = next((t for t in self.queue.tasks
+                    if t.url == url and t.status != T.CANCELLED), None)
+        if old is not None and old.status == T.COMPLETED:
+            if os.path.isfile(old.save_path or ""):
+                if self._update_finished(old):
+                    self._update_url = url    # offered; Install is in the sidebar
+                    return
+                if not info.get("sha256"):
+                    return                    # nothing to check it against: said so
+            self.queue.remove_task(old)       # gone, or not the release's file
+            old = None
         self._update_url = url
-        # into this app's own list, and without the New Download dialog: there
-        # is nothing to choose about it
-        self._add_download(url, url.split("?")[0].rsplit("/", 1)[-1], None, ask=False)
+        if old is not None:
+            self.queue.resume_task(old)
+        else:
+            # into this app's own list, and without the New Download dialog:
+            # there is nothing to choose about it
+            self._add_download(url, url.split("?")[0].rsplit("/", 1)[-1], None, ask=False)
         self.sidebar.set_update("Downloading the update…", enabled=False)
 
     def _is_update(self, task):
@@ -105,7 +125,8 @@ class UpdateMixin:
     # ---- installing it ---------------------------------------------------------
     def _update_finished(self, task):
         """The installer is down. Check it is the file the release lists, then
-        offer to run it."""
+        offer to run it. False when it is not offered: it does not match, or
+        the release lists nothing to check it against."""
         info = self._update_info or {}
         version = _plain(info.get("version"))
         sha = info.get("sha256")
@@ -123,11 +144,12 @@ class UpdateMixin:
             self._update_url = ""
             self._toasts.show("error", "Update not installed", why, secs=12)
             self.sidebar.set_update("Update to %s" % version)
-            return
+            return False
         self._update_ready = task.save_path
         self.sidebar.set_update("Install %s" % version)
         if self._ask_install(version):
             self._install_update(task.save_path)
+        return True
 
     def _ask_install(self, version):
         from PySide6.QtWidgets import QMessageBox

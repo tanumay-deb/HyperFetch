@@ -100,6 +100,10 @@ class _Window(UpdateMixin):
         self.answer, self.quits = True, 0
         self._toasts = types.SimpleNamespace(
             show=lambda kind, title, msg="", **k: self.toasts.append((kind, title)))
+        self.resumed, self.removed = [], []
+        self.queue = types.SimpleNamespace(
+            tasks=[], resume_task=self.resumed.append,
+            remove_task=lambda t: (self.removed.append(t), self.queue.tasks.remove(t)))
         self._init_update()
         self._update_info = info
 
@@ -231,6 +235,38 @@ def test_a_release_with_no_checksum_is_not_run(tmp_path):
     w._on_update_clicked()
     w._update_finished(_done(tmp_path))
     assert w.asked == []
+
+
+def test_later_then_a_restart_offers_the_one_already_fetched(tmp_path):
+    """The next session forgot it was checked, the button added the same link
+    again, "Already added" came up - its default button added nothing - and
+    the button stayed on "Downloading the update…" (2026-11-03)."""
+    w = _Window(info=INFO)                       # a new session
+    w.queue.tasks.append(_done(tmp_path))        # what the last one fetched
+    w._on_update_clicked()
+    assert w.added == [], "fetched a second time"
+    assert w.asked == ["2.8.1"] and w.ran == [w.queue.tasks[0].save_path]
+
+
+def test_one_left_part_way_goes_on(tmp_path):
+    w = _Window(info=INFO)
+    t = _done(tmp_path)
+    t.status = T.PAUSED
+    w.queue.tasks.append(t)
+    w._on_update_clicked()
+    assert w.resumed == [t] and w.added == []
+    assert w.sidebar.said[-1] == ("Downloading the update…", False)
+    assert w._is_update(t), "its finish would not be taken for the update"
+
+
+def test_one_fetched_before_that_is_not_the_release_s_file_is_fetched_again(tmp_path):
+    w = _Window(info=INFO)
+    old = _done(tmp_path, body=b"cut short")
+    w.queue.tasks.append(old)
+    w._on_update_clicked()
+    assert w.removed == [old] and w.ran == []
+    assert w.added == [(URL, "HyperFetch-2.8.1-setup.exe", False)]
+    assert w._is_update(T.DownloadTask(URL, "x.exe")), "the new one is not known as the update"
 
 
 # ---- the pieces it is wired to --------------------------------------------------

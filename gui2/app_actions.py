@@ -251,7 +251,12 @@ class ActionsMixin:
             self.refresh()
             return
 
-        if cur and os.path.exists(cur):
+        # An unfinished plain download has nothing of its own at its save
+        # path - its bytes are in a temp file - so what is there is another
+        # download's, one of its name that finished first: it was moved, and
+        # recorded as this one's (2026-11-03; _payload_paths has the same rule).
+        own = t.status == T.COMPLETED or yt_dl.is_ytdlp_task(t)
+        if own and cur and os.path.exists(cur):
             t.move_total = utils.tree_size(cur)
             t.move_done = 0
             t.moving = True                    # the card: "Moving…", Resume waits
@@ -484,7 +489,7 @@ class ActionsMixin:
             m.addAction(ico("video"), "Play preview", lambda: self._play_partial(t))
             m.addAction(ico("folder"), "Open Folder", lambda: self._open_folder(t))
             m.addSeparator()
-        if t.status == T.DOWNLOADING:
+        if t.status in (T.DOWNLOADING, T.QUEUED):      # pause_task takes a waiting one too
             m.addAction(ico("pause"), "Pause", lambda: self._do(self.queue.pause_task, t))
         if t.status in (T.PAUSED, T.ERROR, T.SCHEDULED):
             m.addAction(ico("play"), "Resume", lambda: self._do(self.queue.resume_task, t))

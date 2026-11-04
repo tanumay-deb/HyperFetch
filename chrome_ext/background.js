@@ -358,6 +358,9 @@ function sendToApp(url, filename, referrer, done, extra) {
 // no such field, and there the default store is the right one.
 const storeOf = (tab) => (tab && tab.cookieStoreId ? { storeId: tab.cookieStoreId } : {});
 
+// A second link sent with a download (hlsMaster, origUrl): a web address or nothing.
+const webLink = (u) => typeof u === "string" && /^https?:\/\//i.test(u);
+
 // The right-click menu. One of three ways a download reaches the app; the other
 // two are the in-page video badges (content.js) and the browser-download
 // capture further down.
@@ -505,9 +508,12 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     // hold:false is the page saying it will open the file in the browser itself
     // if this fails. Holding it as well is how one click became two copies: the
     // browser's straight away, and the app's when the queue replayed.
+    // hlsMaster: the playlist a stream's quality was picked from (content.js)
     sendToApp(msg.url, msg.filename, ref,
       (ok, status) => sendResponse({ ok, unpaired: status === 401 }),
-      Object.assign(msg.hold === false ? { noHold: true } : {}, storeOf(sender && sender.tab)));
+      Object.assign(msg.hold === false ? { noHold: true } : {},
+                    webLink(msg.hlsMaster) ? { hlsMaster: msg.hlsMaster } : {},
+                    storeOf(sender && sender.tab)));
     return true; // keep the message channel open for the async response
   }
 });
@@ -562,6 +568,12 @@ if (chrome.downloads && chrome.downloads.onDeterminingFilename) {
         if (!enabled) { release(); settle(); return; }
         // auto=true lets the app apply its file-type list; it answers "ignored"
         // for anything not on it, and the download goes back to Chrome.
+        // origUrl: the link the download started at. The one it was sent on
+        // to is often signed and runs out - GitHub's within the hour, measured
+        // 2026-11-03 - and the app keeps this one to go on from.
+        const orig = item.url || "";
+        const extra = Object.assign({ auto: true },
+                                    orig !== url && webLink(orig) ? { origUrl: orig } : {});
         sendToApp(url, name, item.referrer || "", (ok, status, body) => {
           if (ok && body && body.status === "queued") {
             // Cancel before letting go. Releasing first would let Chrome start
@@ -575,7 +587,7 @@ if (chrome.downloads && chrome.downloads.onDeterminingFilename) {
             release();
             settle();
           }
-        }, { auto: true });
+        }, extra);
       });
     } catch (e) {
       release();

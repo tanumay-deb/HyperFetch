@@ -34,6 +34,25 @@ def test_attach_reuses_a_reachable_daemon(tmp_path, monkeypatch):
     assert spawned["n"] == 0                       # nothing new started
 
 
+def test_a_daemon_left_by_an_earlier_run_is_told_this_run_s_settings(tmp_path, monkeypatch):
+    """Started by an earlier run - one that crashed, say - it kept that run's
+    limit and torrent settings: re-attached, nobody told it this one's
+    (2026-11-03)."""
+    monkeypatch.setattr(utils, "app_data_dir", lambda: str(tmp_path))
+    (tmp_path / "aria2d.json").write_text(json.dumps(
+        {"pid": 4321, "port": 6800, "secret": "s"}), encoding="utf-8")
+    monkeypatch.setattr(utils, "MAX_UPLOAD_BPS", 50 * 1024, raising=False)
+    d = aria2d.Aria2Daemon()
+    sent = []
+    monkeypatch.setattr(d, "_post", lambda p, s, m, params=(), **k: sent.append((m, params))
+                        or {"ok": 1})
+    monkeypatch.setattr(d, "_spawn", lambda: pytest.fail("a second daemon was started"))
+    assert d.ensure() is True
+    told = [p[0] for m, p in sent if m == "aria2.changeGlobalOption"]
+    assert {"max-concurrent-downloads": str(aria2d.max_concurrent())} in told
+    assert torrent.live_preferences() in told
+
+
 def _silent_daemon(tmp_path, monkeypatch, pid=9999):
     """A recorded daemon whose process is alive but never answers RPC."""
     monkeypatch.setattr(utils, "app_data_dir", lambda: str(tmp_path))

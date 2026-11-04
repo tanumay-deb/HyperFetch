@@ -12,6 +12,7 @@ import json
 import os
 import time
 import threading
+import urllib.parse
 from collections import deque
 
 from PySide6.QtWidgets import (
@@ -855,8 +856,10 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, Up
         sel = self._sel_tasks if hasattr(self, "_sel_tasks") else (lambda: [])
 
         def pause_all():
+            # the waiting ones too: each pause freed a slot, and the next one
+            # waiting started in it (2026-11-03)
             for t in self.queue.tasks:
-                if t.status == T.DOWNLOADING:
+                if t.status in (T.DOWNLOADING, T.QUEUED):
                     self.queue.pause_task(t)
             self._save_state(); self.refresh()
 
@@ -979,10 +982,13 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, Up
                 return                              # already inside its category folder
             dest_dir = os.path.join(cur_dir, cat)
         try:
-            import shutil
             os.makedirs(dest_dir, exist_ok=True)
             dest = utils.unique_path(dest_dir, os.path.basename(path))
-            shutil.move(path, dest)
+            # A rename, and nothing else: it stays where it is if that fails.
+            # shutil.move copied instead - on this thread, a player holding the
+            # file - and for a folder then deleted the originals until it hit
+            # the open one, the task left on what remained (2026-11-03).
+            utils._take_name(path, dest)
             t.save_path = dest
             t.filename = os.path.basename(dest)
             self._save_state()
@@ -1197,7 +1203,10 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, Up
             url = item.get("url", "")
             if not url:
                 continue
-            self._add_download(url, item.get("filename", ""), item.get("headers"), flash=True)
+            # ask=False for the web page: nobody may be at this PC to answer
+            self._add_download(url, item.get("filename", ""), item.get("headers"), flash=True,
+                               ask=item.get("ask", True), hls_master=item.get("hls_master", ""),
+                               orig_url=item.get("orig_url", ""))
 
     # ------------------------------------------------------------- actions
     @staticmethod
@@ -1262,10 +1271,16 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, Up
             "skip_dialog": True,
         }
 
-    def _add_download(self, url, suggested, headers, flash=False, ask=True):
+    def _add_download(self, url, suggested, headers, flash=False, ask=True,
+                      hls_master="", orig_url=""):
         """Add a download, through the New Download dialog unless the user has
         switched that off - or `ask` is False: the app's own update, which
-        there is nothing to choose about (Settings -> About)."""
+        there is nothing to choose about (Settings -> About), and a link from
+        the web page, which nobody at this PC may be there to answer.
+
+        From the browser: `hls_master`, the playlist a stream's quality was
+        picked from (hls.py), and `orig_url`, the link a download started at
+        before it was sent to a signed one (kept as a second link)."""
         queues = list(self.queue.queues.keys()) or ["Main"]
         if url and (not ask or self._extras.get("skip_new_download_dialog")):
             v = self._quick_values(url, suggested, headers)
@@ -1317,6 +1332,9 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, Up
                  if _torrent.task_infohash(x) == incoming_hash
                  and x.status != T.CANCELLED), None)
             if existing_torrent:
+                if not ask:                    # nobody to put the question to
+                    self._toasts.show("info", "Already in the list", existing_torrent.filename)
+                    return
                 self._torrent_again(existing_torrent, v["url"], torrent_data)
                 return
         # duplicate detection — same URL already in the list. A cancelled task is
@@ -1325,6 +1343,11 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, Up
         existing = next((x for x in self.queue.tasks
                          if utils.same_link(x.url, v["url"]) and x.status != T.CANCELLED),
                         None)
+        if existing and not ask:
+            # the web page's add waited on this box at the PC (2026-11-03);
+            # the one in the list is what was asked for
+            self._toasts.show("info", "Already in the list", existing.filename)
+            return
         if existing:
             box = QMessageBox(self)
             box.setIcon(QMessageBox.Question)
@@ -1386,6 +1409,16 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, Up
             t.name_chosen = yt_dl.stem(os.path.basename(save_path))
         if v["connections"] != self.segments:       # this download's, not every later one's
             t.connections = v["connections"]
+        if v["url"] == url:                         # the browser's link, not one typed over it
+            t.hls_master = hls_master
+            if orig_url and orig_url != url and utils.is_signed(url):
+                # The browser was sent on to a signed link, and those run out
+                # (GitHub's within the hour): a paused one could not go on. The
+                # link it started at signs a new one, so it is kept as a second
+                # link, which takes over when the first is refused (downloader).
+                t.mirrors = [orig_url]
+                t.log_event("Kept the page's own link too (%s): the browser's is signed "
+                            "and runs out" % (urllib.parse.urlsplit(orig_url).hostname or "?"))
         if v["start_now"]:
             self.queue.add_task(t)
         else:

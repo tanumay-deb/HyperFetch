@@ -845,6 +845,11 @@ def _signed_key(url):
         return None
 
 
+def is_signed(url):
+    """Whether a link carries a signature (_SIGNED_BY): one that runs out."""
+    return _signed_key(url) is not None
+
+
 def same_link(a, b):
     """Whether two links fetch the same download: equal, or two signings of
     one signed link. A link that is not signed is compared as it is -

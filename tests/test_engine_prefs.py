@@ -131,3 +131,75 @@ def test_the_daemon_uses_the_allocation_setting(monkeypatch):
     d.port, d.secret = 6800, "s"
     assert torrent.allocation_opt() in d._options()
 
+
+
+# ---- told to the engine that is running (2026-11-03) ---------------------------
+# They went in on aria2's command line only, so a cap or a switch changed in
+# Settings did nothing until HyperFetch restarted.
+def _live(monkeypatch, **settings):
+    for k, v in settings.items():
+        monkeypatch.setattr(utils, k, v, raising=False)
+    return torrent.live_preferences()
+
+
+def test_each_setting_is_said_outright_so_one_switched_off_goes_off(monkeypatch):
+    on = _live(monkeypatch, MAX_UPLOAD_BPS=100 * 1024, TORRENT_PREVIEW=True,
+               SEED_ENABLED=True, SEED_RATIO=2.0, SEED_MINUTES=30)
+    assert on == {"max-overall-upload-limit": str(100 * 1024),
+                  "bt-prioritize-piece": "head,tail", "seed-ratio": "2", "seed-time": "30"}
+    off = _live(monkeypatch, MAX_UPLOAD_BPS=0, TORRENT_PREVIEW=False, SEED_ENABLED=False)
+    assert off == {"max-overall-upload-limit": "0", "bt-prioritize-piece": "",
+                   "seed-time": "0"}
+
+
+def test_no_time_limit_is_said_as_one_too_long_to_reach(monkeypatch):
+    """A running daemon cannot forget a seed-time it has (0, if seeding was off
+    as it started); as at a start, the ratio then ends the seeding."""
+    o = _live(monkeypatch, SEED_ENABLED=True, SEED_RATIO=1.5, SEED_MINUTES=0)
+    assert o["seed-time"] == torrent.SEED_TIME_NONE and o["seed-ratio"] == "1.5"
+    o = _live(monkeypatch, SEED_ENABLED=True, SEED_RATIO=0.0, SEED_MINUTES=0)
+    assert o["seed-ratio"] == "1.0", "as preference_opts: two cleared boxes are not forever"
+
+
+def test_a_running_daemon_is_sent_them(monkeypatch):
+    sent = []
+    d = aria2d.Aria2Daemon()
+    d.port, d.secret = 6800, "s"
+    monkeypatch.setattr(d, "_post", lambda port, secret, method, params, timeout=0:
+                        sent.append((method, params)))
+    monkeypatch.setattr(utils, "MAX_UPLOAD_BPS", 250 * 1024)
+    d.apply_preferences()
+    assert sent == [("aria2.changeGlobalOption", [torrent.live_preferences()])]
+    assert sent[0][1][0]["max-overall-upload-limit"] == str(250 * 1024)
+    sent.clear()
+    aria2d.Aria2Daemon().apply_preferences()          # none running: nothing to tell
+    assert sent == []
+
+
+def test_saving_settings_tells_the_running_engine(monkeypatch):
+    import threading
+    import types
+    from gui2 import palette
+    from gui2 import app_settings
+    told = threading.Event()
+    monkeypatch.setattr(aria2d, "DAEMON", types.SimpleNamespace(apply_preferences=told.set))
+    monkeypatch.setattr(app_settings, "apply_theme", lambda name: None)
+    monkeypatch.setattr(palette, "set_theme", lambda name: name)
+    monkeypatch.setattr(palette, "set_accent", lambda key: key)
+    accent = next(k for k, v in palette.ACCENTS.items() if v == palette.COLORS["accent"])
+
+    class Win(app_settings.SettingsMixin):
+        theme, save_dir, _extras = "dark", "", {}
+        queue = types.SimpleNamespace(set_max_concurrent=lambda q, n: None, segments=8)
+
+        def _nothing(self, *a, **k):          # the rest of the window: not this test's
+            pass
+
+        _sync_concurrency = _apply_web_settings = _apply_network_settings = _nothing
+        _apply_throttle = _apply_appearance = _save_settings = refresh = _nothing
+
+    Win()._apply_settings({"save_dir": "", "max_concurrent": 3, "segments": 8,
+                           "verify_tls": True, "speed_limit": "Unlimited", "theme": "dark",
+                           "accent": accent, "sched_en": False, "sched_start": "02:00",
+                           "sched_stop": "08:00"})
+    assert told.wait(5), "the running engine was not told"

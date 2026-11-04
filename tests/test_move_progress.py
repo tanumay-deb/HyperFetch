@@ -174,7 +174,9 @@ def test_a_move_runs_beside_the_window_and_lands(window, tmp_path, monkeypatch):
     f = tmp_path / "film.mkv"
     f.write_bytes(DATA)
     t = _finished(T.DownloadTask("https://a.example/film.mkv", str(f)), f)
-    t.status = T.PAUSED                     # a paused torrent's payload, say
+    # not finished, so Resume has something to wait for; a video's, as an
+    # unfinished plain download's save path holds another's file (2026-11-03)
+    t.status, t.use_ytdlp = T.PAUSED, True
     gate = threading.Event()
     real = utils.move_with_progress
 
@@ -309,3 +311,19 @@ def test_the_internet_mark_goes_with_a_file_to_another_drive(tmp_path, monkeypat
     utils.mark_from_internet(str(src))
     utils.move_with_progress(str(src), str(dst))
     assert open(str(dst) + ":Zone.Identifier", "rb").read() == b"[ZoneTransfer]\r\nZoneId=3\r\n"
+
+
+def test_an_unfinished_download_never_takes_another_one_s_file(window, tmp_path):
+    """Its bytes are in its temp file; what is at its save path is another
+    download's - one of its name that finished first. That file was moved and
+    recorded as this one's, and the finished download pointed at nothing
+    (2026-11-03)."""
+    theirs = tmp_path / "setup.exe"
+    theirs.write_bytes(b"the one that finished first")
+    t = T.DownloadTask("https://a.example/setup.exe", str(theirs), filename="setup.exe")
+    t.status = T.PAUSED
+    window._move_task_files(t)
+    assert theirs.read_bytes() == b"the one that finished first", "the other file was moved"
+    assert not (window.dest / "setup.exe").exists()
+    assert t.save_path == str(window.dest / "setup.exe"), "this one was not sent there"
+    assert not t.moving

@@ -344,6 +344,64 @@ class HlsDownloader:
                         break
         return best_url
 
+    def _sound_apart(self, master, master_url, variant_url):
+        """The height of `variant_url`'s picture when the master playlist
+        `master` gives its sound a playlist of its own - the #EXT-X-MEDIA
+        TYPE=AUDIO a player plays in the variant's AUDIO group (DEFAULT=YES,
+        else the group's first) has a URI: then the variant's segments hold no
+        sound. None when they do - a default with no URI is sound in the
+        variant (RFC 8216 4.3.4.1.1), other languages beside it are not missed
+        sound - or when the variant is not in that master (0: apart, no
+        height given)."""
+        lines = [line.strip() for line in master.splitlines()]
+        played = {}               # AUDIO group -> the rendition a player plays
+        for line in lines:
+            if line.startswith("#EXT-X-MEDIA:"):
+                a = self._attrs(line)
+                if a.get("TYPE", "").upper() != "AUDIO":
+                    continue
+                gid = a.get("GROUP-ID", "")
+                default = a.get("DEFAULT", "").upper() == "YES"
+                if gid not in played or (default and
+                                         played[gid].get("DEFAULT", "").upper() != "YES"):
+                    played[gid] = a
+        groups = {g for g, a in played.items() if a.get("URI")}
+        if not groups:
+            return None
+        same = lambda u: urllib.parse.unquote(u) == urllib.parse.unquote(variant_url)
+        for i, line in enumerate(lines):
+            if not line.startswith("#EXT-X-STREAM-INF"):
+                continue
+            uri = next((x for x in lines[i + 1:] if x and not x.startswith("#")), "")
+            if not uri or not same(urllib.parse.urljoin(master_url, uri)):
+                continue
+            a = self._attrs(line)
+            if a.get("AUDIO") not in groups:
+                return None
+            m = re.match(r"\d+x(\d+)", a.get("RESOLUTION", ""))
+            return int(m.group(1)) if m else 0
+        return None
+
+    def _to_ytdlp(self, master_url, height):
+        """A stream whose sound is a playlist of its own, to yt-dlp, which
+        fetches that too and joins the two (ffmpeg): this engine fetched the
+        picture alone and finished a video with no sound (2026-11-03). The
+        master and the height picked are what it is given; the name stays the
+        page's (name_chosen), not yt-dlp's "master"."""
+        import yt_dl
+        log.info("HLS %s: its sound is a stream of its own; handing it to yt-dlp",
+                 self.t.filename)
+        self.t.log_event("Its sound is a stream of its own: yt-dlp fetches both and joins them")
+        self.t.url = master_url
+        self.t.use_ytdlp = True                 # a resume goes straight to yt-dlp
+        if height:
+            self.t.yt_format = "bv*[height<=%d]+ba/b[height<=%d]" % (height, height)
+        if not self.t.name_chosen:
+            self.t.name_chosen = yt_dl.stem(os.path.basename(self.t.save_path))
+        self.t.seg_total = self.t.seg_done = 0
+        self.t.total_size = self.t.downloaded = 0
+        yt_dl.YtDlpDownloader(self.t).run()
+
     def _parse_media(self, text, base_url):
         """Return (segments, endlist). segments = [(url, seq, key, part)]:
         part is (start, length) for a segment that is a byte range of its
@@ -639,15 +697,25 @@ class HlsDownloader:
         os.makedirs(os.path.dirname(self.t.save_path) or ".", exist_ok=True)
         temp_path = utils.temp_download_path(self.t)
 
+        master = master_url = ""     # where the quality was picked, if known
         try:
             text = self._fetch_text(self.t.url)
             base = self.t.url
             if self._is_master(text):
+                master, master_url = text, self.t.url
                 variant = self._pick_variant(text, base)
                 if not variant:
                     raise RuntimeError("no playable variant in master playlist")
                 base = variant
                 text = self._fetch_text(variant)
+            elif getattr(self.t, "hls_master", ""):
+                # the browser picked this quality from it (task.hls_master)
+                master_url = self.t.hls_master
+                try:
+                    master = self._fetch_text(master_url)
+                except requests.RequestException as e:
+                    log.info("HLS: the master playlist would not come (%s); the "
+                             "stream as it was picked", type(e).__name__)
             segments, endlist = self._parse_media(text, base)
         except (requests.RequestException, RuntimeError) as e:
             self.t.status = T.ERROR
@@ -662,6 +730,11 @@ class HlsDownloader:
         if not endlist and self._is_live_window(base, text):
             self.t.status = T.ERROR
             self.t.error = LIVE_STREAM
+            return
+
+        height = self._sound_apart(master, master_url, base) if master else None
+        if height is not None:
+            self._to_ytdlp(master_url, height)
             return
 
         total = len(segments)

@@ -186,6 +186,33 @@ def preference_opts():
     return opts
 
 
+# A running daemon cannot be told to forget a seed-time it has: "no time
+# limit" is said as this many minutes (19 years). Measured on 1.37.0.
+SEED_TIME_NONE = "10000000"
+
+
+def live_preferences():
+    """preference_opts as a running daemon takes them (changeGlobalOption),
+    each key said outright: one switched off has to be switched off there
+    too, where a flag left out kept what the daemon was started with. They
+    went in on its command line only - an upload cap set in Settings did
+    nothing until HyperFetch restarted (2026-11-03). New downloads take them;
+    the upload cap holds for the running ones at once. Measured on 1.37.0:
+    each value here is taken, "" included, and read back."""
+    up = int(getattr(utils, "MAX_UPLOAD_BPS", 0) or 0)
+    opts = {"max-overall-upload-limit": str(max(0, up)),
+            "bt-prioritize-piece": ("head,tail" if getattr(utils, "TORRENT_PREVIEW", False)
+                                    else "")}
+    if not getattr(utils, "SEED_ENABLED", False):
+        opts["seed-time"] = "0"
+    else:
+        ratio = float(getattr(utils, "SEED_RATIO", 0) or 0)
+        minutes = float(getattr(utils, "SEED_MINUTES", 0) or 0)
+        opts["seed-ratio"] = f"{ratio:g}" if ratio > 0 else "1.0"   # as preference_opts
+        opts["seed-time"] = f"{minutes:g}" if minutes > 0 else SEED_TIME_NONE
+    return opts
+
+
 _limit_lock = threading.Lock()
 
 # "Download in order" (task.in_order), for watching a video as it comes. aria2

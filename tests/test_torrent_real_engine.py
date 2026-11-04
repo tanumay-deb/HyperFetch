@@ -456,3 +456,24 @@ def test_in_order_fetches_the_file_from_its_start(tmp_path, daemon, monkeypatch)
     # block by block (measured: 16-31 at half, 28-31 at three quarters);
     # without it the start stayed nearly empty
     assert seen.get(24, 0) >= 12 and seen.get(36, 0) >= 24, seen
+
+
+def test_settings_saved_while_it_runs_reach_the_real_engine(daemon, monkeypatch):
+    """aria2 took the upload cap, seeding and preview only on its command line,
+    as it started: changed in Settings, they did nothing until a restart
+    (2026-11-03). Read back from the running daemon."""
+    daemon.ensure()
+    for k, v in (("MAX_UPLOAD_BPS", 100 * 1024), ("SEED_ENABLED", True),
+                 ("SEED_RATIO", 2.0), ("SEED_MINUTES", 0), ("TORRENT_PREVIEW", True)):
+        monkeypatch.setattr(utils, k, v)
+    daemon.apply_preferences()
+    got = daemon.call("aria2.getGlobalOption")
+    assert (got["max-overall-upload-limit"], got["seed-ratio"], got["seed-time"],
+            got["bt-prioritize-piece"]) == (str(100 * 1024), "2", torrent.SEED_TIME_NONE,
+                                            "head,tail")
+    for k, v in (("MAX_UPLOAD_BPS", 0), ("SEED_ENABLED", False), ("TORRENT_PREVIEW", False)):
+        monkeypatch.setattr(utils, k, v)
+    daemon.apply_preferences()
+    got = daemon.call("aria2.getGlobalOption")
+    assert (got["max-overall-upload-limit"], got["seed-time"],
+            got.get("bt-prioritize-piece")) == ("0", "0", "")

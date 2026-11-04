@@ -92,3 +92,11 @@ def test_no_play_entry_when_nothing_has_data(tmp_path):
     m = _Host([])._build_card_menu(t)   # hold it: an unparented menu is collected
     labels = [a.text() for a in m.actions()]
     assert "Play preview" not in labels
+
+
+def test_a_waiting_download_can_be_paused_from_its_menu():
+    """Its button is Start now; the bulk bar and the web page's menu pause one
+    that waits, and this menu did not (2026-11-03)."""
+    _app()
+    m = _Host([])._build_card_menu(_task(T.QUEUED))
+    assert "Pause" in [a.text() for a in m.actions()]
