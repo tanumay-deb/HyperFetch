@@ -50,6 +50,31 @@ def test_checking_for_updates_leaves_the_window_free(app, monkeypatch):
     assert asked == [True], "asked twice"
 
 
+def test_a_page_let_go_after_checking_does_not_take_the_app_down(app, monkeypatch):
+    """The answer was taken by a closure over the page and its timer: that
+    cycle, collected, tore the page down under Qt, and the next event loop
+    aborted the interpreter (CI, 2026-11-06)."""
+    import gc
+    import updater
+    monkeypatch.setattr(updater, "check_for_update", lambda v, force=False: {"available": False})
+
+    def check_and_let_go():
+        page = _About()
+        page._check_updates()
+        end = time.monotonic() + 10
+        while page.upd_lbl.text() == "Checking…" and time.monotonic() < end:
+            app.processEvents()
+            time.sleep(0.02)
+
+    check_and_let_go()
+    gc.collect()
+    from gui2.download_card import DownloadCardWidget
+    import task as T
+    t = T.DownloadTask("magnet:?xt=urn:btih:" + "a" * 40, "C:/dl/Show")
+    DownloadCardWidget(t, 1).update_task(t, 0.0)
+    app.processEvents()                         # where it aborted
+
+
 @pytest.mark.parametrize("button,says", [("License", "MIT License"), ("Credits", "aria2")])
 def test_license_and_credits_show_what_they_say(app, monkeypatch, button, says):
     """Both buttons were there, connected to nothing."""

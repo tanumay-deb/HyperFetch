@@ -774,30 +774,32 @@ class PageBuilderMixin:
         on this one, the Settings window froze until GitHub answered (up to
         6 s, longer offline; 2026-11-04)."""
         self.upd_lbl.setText("Checking…"); self.upd_btn.setVisible(False)
-        if getattr(self, "_upd_asking", False):
+        if getattr(self, "_upd_answer", None) is not None:
             return                              # pressed again while it asks
-        self._upd_asking = True
         import threading
+        self._upd_answer = []
+        if getattr(self, "_upd_timer", None) is None:
+            # a bound method, not a closure over the page and the timer: that
+            # cycle, collected, tore the page down under Qt and crashed
+            self._upd_timer = QTimer(self)
+            self._upd_timer.timeout.connect(self._take_update_answer)
+        self._upd_timer.start(100)
+        threading.Thread(target=self._ask_for_update, args=(self._upd_answer,),
+                         name="update-check", daemon=True).start()
+
+    @staticmethod
+    def _ask_for_update(answer):
         import updater
-        answer = []
+        try:
+            answer.append(updater.check_for_update(APP_VERSION, force=True))
+        except Exception:
+            answer.append(None)
 
-        def ask():
-            try:
-                answer.append(updater.check_for_update(APP_VERSION, force=True))
-            except Exception:
-                answer.append(None)
-
-        def take():
-            if answer:
-                timer.stop()
-                timer.deleteLater()
-                self._upd_asking = False
-                self._show_update(answer[0])
-
-        timer = QTimer(self)
-        timer.timeout.connect(take)
-        timer.start(100)
-        threading.Thread(target=ask, name="update-check", daemon=True).start()
+    def _take_update_answer(self):
+        if self._upd_answer:
+            self._upd_timer.stop()
+            info, self._upd_answer = self._upd_answer[0], None
+            self._show_update(info)
 
     def _show_update(self, info):
         if not info:

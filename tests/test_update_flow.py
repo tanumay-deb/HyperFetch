@@ -316,7 +316,8 @@ def test_settings_has_the_switch_and_about_uses_the_same_look():
     general = inspect.getsource(settings_pages.PageBuilderMixin._p_general)
     assert "auto_update_check" in general and "Check for updates automatically" in general
     assert '"auto_update_check"' in inspect.getsource(settings.SettingsDialogV2.values)
-    check = inspect.getsource(settings_pages.PageBuilderMixin._check_updates)
+    check = "".join(inspect.getsource(getattr(settings_pages.PageBuilderMixin, f))
+                    for f in ("_check_updates", "_ask_for_update"))   # asked on a thread
     assert "updater.check_for_update" in check and "api.github.com" not in check
 
 
