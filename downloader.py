@@ -48,6 +48,7 @@ DEFAULT_SEGMENTS = 8   # parallel connections when the server supports ranges
 HEADERS = utils.DEFAULT_HEADERS
 CONNECT_TIMEOUT = 15
 MAX_RETRIES = 5        # per-segment attempts before the task errors
+SIDECAR_MAX = 8192     # bytes of a .sha256 answer read: the line, never a file
 # A server pushing back on one connection too many (see _pushed_back): the
 # refused range waits this long, then for a free slot at the gate; a refusal
 # this soon after one of ours ended is taken as push-back too; and a
@@ -988,18 +989,29 @@ class Downloader:
             self.t.status = T.PAUSED
 
     def _fetch_expected_hash(self):
-        """Look for a <url>.sha256 / .sha256sum sidecar; return the 64-hex digest
-        or None if absent/unreachable."""
+        """Look for a <file>.sha256 / .sha256sum sidecar; return the 64-hex digest
+        or None if absent/unreachable.
+
+        The suffix goes on the link's path, before its query: on the end of
+        download.php?id=5 it asked for "?id=5.sha256", which a site reads as
+        id=5 - the file itself, read whole into memory (2026-11-04). And only
+        the start of the answer is read: a checksum file is a line."""
         import re as _re
+        parts = urllib.parse.urlsplit(self.url)
         for suffix in (".sha256", ".sha256sum"):
+            link = urllib.parse.urlunsplit(parts._replace(path=parts.path + suffix,
+                                                          fragment=""))
             try:
-                r = self._session.get(self.url + suffix, headers=self._base_headers,
-                                 timeout=10, verify=utils.VERIFY_TLS, proxies=utils.PROXIES)
-                if r.status_code == 200:
-                    m = _re.search(r"\b([a-fA-F0-9]{64})\b", r.text)
-                    if m:
-                        return m.group(1)
-            except requests.RequestException:
+                with self._session.get(link, headers=self._base_headers, stream=True,
+                                       timeout=10, verify=utils.VERIFY_TLS,
+                                       proxies=utils.PROXIES) as r:
+                    if r.status_code != 200:
+                        continue
+                    head = r.raw.read(SIDECAR_MAX, decode_content=True) or b""
+                m = _re.search(r"\b([a-fA-F0-9]{64})\b", head.decode("utf-8", "replace"))
+                if m:
+                    return m.group(1)
+            except (requests.RequestException, urllib3.exceptions.HTTPError, OSError):
                 pass
         return None
 
