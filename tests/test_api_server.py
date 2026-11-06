@@ -505,3 +505,13 @@ def test_headless_files_what_it_can_name_and_remembers_it_chose(tmp_path):
     assert os.path.dirname(unknown.save_path) == str(tmp_path / "Other")
     assert os.path.dirname(waiting.save_path) == str(tmp_path)
     assert unknown.sort_base == waiting.sort_base == str(tmp_path)
+
+
+def test_probe_refuses_a_wrong_token_before_it_reads_the_link(tmp_path):
+    """The extension's popup tells a stale token by this (2026-11-04): /probe
+    with no link answers 401 to a wrong token and 400 to the right one. Keep
+    the token check first, or the popup reads every token as good."""
+    c = create_app(_FakeQueue(), str(tmp_path), pending=deque(), token="tok").test_client()
+    ask = lambda tok: c.post("/probe", json={"url": ""},
+                             headers={"X-HyperFetch-Token": tok}).status_code
+    assert (ask("stale"), ask("tok")) == (401, 400)

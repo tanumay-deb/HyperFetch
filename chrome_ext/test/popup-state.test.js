@@ -23,8 +23,10 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
  *  (0 = nothing listening anywhere). */
 // firefox: a moz-extension address, and pairAnswers the background's replies to
 // PAIR_REQUEST in turn (the last one repeats).
+// answer(path, init): the app's own answer to that request, { status, body },
+// or nothing for the usual /ping one.
 function makeEnv({ port = 21456, token = '', needsToken = true,
-                   firefox = false, pairAnswers = [] } = {}) {
+                   firefox = false, pairAnswers = [], answer = null } = {}) {
   const dom = new JSDOM(HTML, { url: 'chrome-extension://abc/popup.html',
                                 runScripts: 'outside-only' });
   const win = dom.window;
@@ -61,9 +63,14 @@ function makeEnv({ port = 21456, token = '', needsToken = true,
     tabs: { create: () => {}, query: (_q, cb) => cb && cb([]) },
   };
 
-  win.fetch = (url) => {
+  win.fetch = (url, init) => {
     const p = Number(new URL(url).port);
     if (p !== port) return Promise.reject(new Error('nothing on that port'));
+    const own = answer && answer(new URL(url).pathname, init || {});
+    if (own) {
+      return Promise.resolve({ ok: own.status < 300, status: own.status,
+                               json: () => Promise.resolve(own.body || {}) });
+    }
     return Promise.resolve({
       ok: true, status: 200,
       json: () => Promise.resolve({ status: 'ok', needsToken }),
@@ -115,6 +122,44 @@ const statusText = (doc) => doc.getElementById('status').textContent.trim();
     assert.ok(/paired/.test(pairText(doc)) && !/not paired/.test(pairText(doc)),
       `got: ${pairText(doc)}`);
     console.log('  ok  reachable and paired reads "paired"');
+  }
+
+  // ---- a token the app no longer knows (2026-11-04) -----------------------
+  // It read "paired ✓" until a download was refused: the app reinstalled, or
+  // its pairing reset. /probe refuses a wrong token (401) before it reads the
+  // link, and answers a right one 400 for none.
+  const probeWith = (good, pair) => (path, init) => {
+    if (path === '/probe') {
+      const tok = (init.headers || {})['X-HyperFetch-Token'];
+      return { status: tok === good ? 400 : 401 };
+    }
+    if (path === '/pair') return pair;
+    return null;
+  };
+  {
+    const { doc, stored } = makeEnv({ token: 'old', answer: probeWith('fresh',
+      { status: 200, body: { token: 'fresh' } }) });
+    await wait(150);
+    assert.strictEqual(stored.token, 'fresh', 'the stale token was kept');
+    assert.strictEqual(pairText(doc), 'paired ✓');
+    console.log('  ok  a stale token is dropped and the popup pairs again');
+  }
+
+  {
+    const { doc, stored } = makeEnv({ token: 'old', answer: probeWith('fresh',
+      { status: 403, body: {} }) });
+    await wait(150);
+    assert.ok(!stored.token, 'the stale token was kept');
+    assert.strictEqual(pairText(doc), 'not paired');
+    console.log('  ok  a stale token the app will not replace reads "not paired"');
+  }
+
+  {
+    const { doc, stored } = makeEnv({ token: 'fresh', answer: probeWith('fresh', null) });
+    await wait(150);
+    assert.strictEqual(stored.token, 'fresh');
+    assert.strictEqual(pairText(doc), 'paired ✓');
+    console.log('  ok  a token the app takes reads "paired"');
   }
 
   // ---- only a reachable app may say a token is not needed ----------------

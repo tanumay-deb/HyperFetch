@@ -33,6 +33,24 @@ const pairStateEl = document.getElementById("pairState");
 // one of them invented.
 let needsToken = null;
 
+// Whether the saved token has been shown to the app (checkToken). One the
+// app no longer knows - it was reinstalled, or its pairing reset - read
+// "paired ✓" until a download was refused (2026-11-04).
+let tokenChecked = false;
+
+/** Whether the app still takes `token`: /probe refuses a wrong one (401)
+ *  before it reads the link, and answers a right one 400 for no link. null
+ *  when it cannot say (an app from before /probe, say). */
+function checkToken(token) {
+  return fetch(`${APP}/probe`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-HyperFetch-Token": token },
+    body: JSON.stringify({ url: "" }),
+  })
+    .then((r) => (r.status === 401 ? false : r.status === 400 ? true : null))
+    .catch(() => null);
+}
+
 function setStatus(ok) {
   statusEl.innerHTML =
     `<span class="dot ${ok ? "on" : "off"}"></span>${ok ? "connected" : "app not running"}`;
@@ -51,8 +69,8 @@ function refreshPairState() {
       pairStateEl.textContent = "not required";
       pairStateEl.className = "muted";
     } else if (have) {
-      pairStateEl.textContent = "paired ✓";
-      pairStateEl.className = "paired-ok";
+      pairStateEl.textContent = tokenChecked ? "paired ✓" : "checking…";
+      pairStateEl.className = tokenChecked ? "paired-ok" : "muted";
     } else {
       pairStateEl.textContent = "not paired";
       pairStateEl.className = "paired-no";
@@ -103,7 +121,12 @@ function autoPair() {
     .then((r) => (r.status === 405 ? fetch(`${APP}/pair`) : r))
     .then((r) => (r.ok ? r.json() : null))
     .then((j) => {
-      if (j && j.token) chrome.storage.local.set({ token: j.token }, refreshPairState);
+      if (j && j.token) {
+        chrome.storage.local.set({ token: j.token }, () => {
+          tokenChecked = true;              // the app's own answer
+          refreshPairState();
+        });
+      }
     })
     .catch(() => {});
 }
@@ -140,7 +163,18 @@ resolveApp()
     needsToken = !!(j && j.needsToken);
     refreshPairState();
     if (ok && needsToken) {
-      chrome.storage.local.get({ token: "" }, ({ token }) => { if (!token) autoPair(); });
+      chrome.storage.local.get({ token: "" }, ({ token }) => {
+        if (!token) { autoPair(); return; }
+        checkToken(token).then((good) => {
+          tokenChecked = true;
+          if (good === false) {
+            // as the worker does at a refused download: dropped, paired again
+            chrome.storage.local.remove("token", () => { refreshPairState(); autoPair(); });
+          } else {
+            refreshPairState();
+          }
+        });
+      });
     }
     // mirror the app's "Download button position" setting (Settings → Browser
     // Integration) into storage — the content script repositions live
@@ -190,7 +224,18 @@ saveTokenBtn.addEventListener("click", () => {
     tokenEl.value = "";
     tokenEl.placeholder = "•••••••• (saved)";
     msgEl.textContent = "Token saved";
+    tokenChecked = false;
     refreshPairState();
+    checkToken(tok).then((good) => {
+      tokenChecked = true;
+      if (good === false) {
+        msgEl.textContent = "HyperFetch does not know that token";
+        tokenEl.placeholder = "";
+        chrome.storage.local.remove("token", refreshPairState);
+      } else {
+        refreshPairState();
+      }
+    });
   });
 });
 
