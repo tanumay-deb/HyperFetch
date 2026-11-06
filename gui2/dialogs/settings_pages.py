@@ -765,9 +765,18 @@ class PageBuilderMixin:
         text, ok = QInputDialog.getText(
             self, "Proxy", "Proxy URL (e.g. http://host:port) — leave blank for none:",
             text=self._proxy_url)
-        if ok:
-            self._proxy_url = text.strip()
-            self.proxy_btn.setText("Edit" if self._proxy_url else "Configure")
+        if not ok:
+            return
+        text = text.strip()
+        if "://" in text and not text.lower().startswith(("http://", "https://")):
+            # neither engine can use one: requests has no SOCKS support in the
+            # build, and aria2 does not even start with it (2026-11-06)
+            from PySide6.QtWidgets import QMessageBox
+            QMessageBox.warning(self, "Proxy", "HyperFetch can use http:// and "
+                                "https:// proxies only. That one was not saved.")
+            return
+        self._proxy_url = text
+        self.proxy_btn.setText("Edit" if self._proxy_url else "Configure")
 
     def _check_updates(self):
         """Ask GitHub on a thread, the answer taken up here by a timer: asked

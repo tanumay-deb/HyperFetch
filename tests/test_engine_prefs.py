@@ -235,3 +235,13 @@ def test_upnp_is_given_the_port_the_running_engine_listens_on(monkeypatch):
     assert torrent.wanted_listen_port() == 6000
     d.port = 0                                       # none running: the setting's
     assert torrent.listen_port() == 6000
+
+
+def test_a_proxy_aria2_cannot_use_is_not_handed_to_it(monkeypatch):
+    """aria2 takes http proxies only: started with a socks5:// one it exits
+    at once (28), and every torrent failed (2026-11-06)."""
+    monkeypatch.setattr(utils, "PROXY_TORRENTS", True)
+    for given, handed in (("socks5://127.0.0.1:1080", ""), ("http://127.0.0.1:3128",
+                          "http://127.0.0.1:3128"), ("127.0.0.1:3128", "127.0.0.1:3128")):
+        monkeypatch.setattr(utils, "PROXIES", {"http": given, "https": given})
+        assert torrent.proxy_url() == handed, given

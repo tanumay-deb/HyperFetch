@@ -155,9 +155,14 @@ def allocation():
 
 
 def proxy_url():
-    """The proxy torrents go through (Settings -> Network), or ""."""
+    """The proxy torrents go through (Settings -> Network), or "". aria2
+    takes http ones only: given a socks5:// one it does not start at all
+    (exit 28, measured on 1.37.0) and every torrent failed, so one of
+    another kind is not handed to it."""
     if utils.PROXIES and utils.PROXY_TORRENTS:
-        return utils.PROXIES.get("https") or utils.PROXIES.get("http") or ""
+        url = utils.PROXIES.get("https") or utils.PROXIES.get("http") or ""
+        if "://" not in url or url.lower().startswith(("http://", "https://")):
+            return url
     return ""
 
 

@@ -527,3 +527,13 @@ def test_a_real_control_file_names_its_torrent(swarm, daemon, tmp_path):
     assert t.status == T.PAUSED, (t.status, t.error)
     ctl = out / "Payload.bin.aria2"
     assert torrent.control_infohash(str(ctl)) == torrent.task_infohash(t) != ""
+
+
+def test_the_engine_starts_with_a_socks_proxy_set(daemon, monkeypatch):
+    """aria2c --all-proxy=socks5://... exits 28: no daemon, every torrent
+    failed. It starts, without the proxy it cannot use (2026-11-06)."""
+    monkeypatch.setattr(utils, "PROXY_TORRENTS", True)
+    monkeypatch.setattr(utils, "PROXIES", {"http": "socks5://127.0.0.1:9",
+                                           "https": "socks5://127.0.0.1:9"})
+    assert daemon.ensure() is True
+    assert daemon.call("aria2.getGlobalOption").get("all-proxy", "") == ""
