@@ -715,12 +715,36 @@ class PageBuilderMixin:
             self.proxy_btn.setText("Edit" if self._proxy_url else "Configure")
 
     def _check_updates(self):
-        self.upd_lbl.setText("Checking…"); self.upd_btn.setVisible(False); QApplication.processEvents()
+        """Ask GitHub on a thread, the answer taken up here by a timer: asked
+        on this one, the Settings window froze until GitHub answered (up to
+        6 s, longer offline; 2026-11-04)."""
+        self.upd_lbl.setText("Checking…"); self.upd_btn.setVisible(False)
+        if getattr(self, "_upd_asking", False):
+            return                              # pressed again while it asks
+        self._upd_asking = True
+        import threading
         import updater
-        try:
-            info = updater.check_for_update(APP_VERSION, force=True)
-        except Exception:
-            info = None
+        answer = []
+
+        def ask():
+            try:
+                answer.append(updater.check_for_update(APP_VERSION, force=True))
+            except Exception:
+                answer.append(None)
+
+        def take():
+            if answer:
+                timer.stop()
+                timer.deleteLater()
+                self._upd_asking = False
+                self._show_update(answer[0])
+
+        timer = QTimer(self)
+        timer.timeout.connect(take)
+        timer.start(100)
+        threading.Thread(target=ask, name="update-check", daemon=True).start()
+
+    def _show_update(self, info):
         if not info:
             self.upd_lbl.setText("Failed to check for updates.")
         elif info.get("available"):
