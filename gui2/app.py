@@ -1342,9 +1342,17 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, Up
         # duplicate detection — same URL already in the list. A cancelled task is
         # not a duplicate: the user threw it away, and re-adding it is the normal
         # way to start over.
+        def same(x):
+            if utils.same_link(x.url, v["url"]):
+                return True
+            # A stream whose sound is a playlist of its own went to yt-dlp from
+            # its master (hls._to_ytdlp): its link is the master now, and the
+            # page's button sends one quality of it again (2026-11-04)
+            return bool(hls_master and v["url"] == url and getattr(x, "use_ytdlp", False)
+                        and utils.same_link(x.url, hls_master))
+
         existing = next((x for x in self.queue.tasks
-                         if utils.same_link(x.url, v["url"]) and x.status != T.CANCELLED),
-                        None)
+                         if same(x) and x.status != T.CANCELLED), None)
         if existing and not ask:
             # the web page's add waited on this box at the PC (2026-11-03);
             # the one in the list is what was asked for

@@ -79,3 +79,24 @@ def test_a_torrent_already_in_the_list_is_said_not_asked(window, tmp_path):
                                 ask=False)
     assert _Box.shown == [] and len(window.added) == 1
     assert window.toasts[-1][1] == "Already in the list"
+
+
+def test_a_stream_handed_to_ytdlp_from_its_master_is_not_added_again(window, tmp_path):
+    """Its sound a playlist of its own, it went to yt-dlp from its master, and
+    its link is the master now. The page's button sends the quality again,
+    with the master beside it: that was added a second time (list #3)."""
+    window.save_dir = str(tmp_path)
+    master = "https://cdn.example.test/v/master.m3u8"
+    quality = "https://cdn.example.test/v/720p.m3u8"
+    t = T.DownloadTask(master, str(tmp_path / "Film.mp4"), filename="Film.mp4")
+    t.use_ytdlp = True                          # as hls._to_ytdlp leaves it
+    window.queue.tasks.append(t)
+    from gui2.app import DownloadAppV2
+    DownloadAppV2._add_download(window, quality, "Film.mp4", None, ask=False,
+                                hls_master=master)
+    assert window.added == [], "added twice"
+    assert window.toasts[-1][1] == "Already in the list"
+    # a stream of another master is a download of its own
+    DownloadAppV2._add_download(window, "https://cdn.example.test/w/720p.m3u8", "", None,
+                                ask=False, hls_master="https://cdn.example.test/w/master.m3u8")
+    assert len(window.added) == 1
