@@ -266,6 +266,9 @@ class QueueManager:
             # nobody is running to take its partial along (a running worker
             # does): one beside the destination is not swept as a leftover
             utils.remove_temp(getattr(task, "temp_path", ""))
+            if task.status != T.COMPLETED:
+                import yt_dl                # a video's partial is yt-dlp's own
+                yt_dl.discard_left(task, tries=1)
 
     def remove_task(self, task: "T.DownloadTask"):
         self.cancel_task(task)

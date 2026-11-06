@@ -751,3 +751,29 @@ def test_with_the_real_ytdlp_the_video_is_named_and_filed_first(real_ytdlp, vide
     assert open(t.save_path, "rb").read() == data
     assert not os.path.exists(os.path.join(base, "Other"))
 
+
+
+def test_with_the_real_ytdlp_a_video_cancelled_as_it_downloads_leaves_nothing(
+        real_ytdlp, video_page, media_server, make_payload, tmp_path):
+    """yt-dlp fetching the file itself (the server takes no ranges): the
+    cancel stops it, and its .part goes with it (list #1, 2026-11-04)."""
+    media_server.put("media/clip.mp4", make_payload(SIZE))
+    media_server.no_range.add("media/clip.mp4")
+    page = video_page("/watch/3", media_server.url("media/clip.mp4"))
+    out = tmp_path / "out"
+    out.mkdir()
+    (out / (TITLE + ".fr.srt")).write_bytes(b"the user's")
+    t = T.DownloadTask(page, str(out / "download.bin"))
+    t.use_ytdlp = True
+    media_server.rate = 256 * 1024
+    th = _start(t)
+    try:
+        assert _wait_for(lambda: any(n.endswith(".part") for n in os.listdir(out))
+                         and t.downloaded > 0), os.listdir(out)
+        t.request_cancel()
+        th.join(15)
+    finally:
+        media_server.rate = 0
+    assert not th.is_alive()
+    assert t.status == T.CANCELLED, t.error
+    assert os.listdir(out) == [TITLE + ".fr.srt"]

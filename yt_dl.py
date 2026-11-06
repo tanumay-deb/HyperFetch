@@ -513,6 +513,32 @@ def _left(path):
         return []
 
 
+def discard_left(t, tries=10, wait=0.5):
+    """Delete what yt-dlp left of a video given up (cancelled, removed): its
+    .part, .ytdl, fragments, the parts of a merge (_left). Only for a video
+    yt-dlp has named (task.yt_named): a name it never gave may be another
+    download's. `tries` > 1 is for the run itself, as it stops: a fragment
+    download's file can still be open for a moment, until the collector
+    frees what held it."""
+    if not getattr(t, "yt_named", False) or not getattr(t, "save_path", ""):
+        return
+    path = _where_written(t, t.save_path)
+    here = os.path.dirname(path) or "."
+    for n in _left(path):
+        p = os.path.join(here, n)
+        for i in range(tries):
+            try:
+                os.remove(p)
+                break
+            except FileNotFoundError:
+                break
+            except OSError as e:
+                if i == tries - 1:
+                    log.warning("could not delete %s: %s", p, e)
+                else:
+                    time.sleep(wait)
+
+
 def _carry(old, new):
     """Rename what yt-dlp left of the video it named `old` (_left) to go with
     `new`, in the same folder. Never over a file that is there."""
@@ -878,6 +904,9 @@ class YtDlpDownloader:
             else:
                 self.t.error = "yt-dlp: " + msg[:200]
             log.error("yt-dlp failed: %s — %s", self.t.url, str(e)[:200])
+        # out of the except blocks: what yt-dlp held is let go by now
+        if self.t.cancel_requested and self.t.status != T.COMPLETED:
+            discard_left(self.t)
 
     @staticmethod
     def _newest(out_dir, pre_existing=None):
