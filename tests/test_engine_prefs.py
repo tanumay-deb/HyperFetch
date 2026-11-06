@@ -245,3 +245,13 @@ def test_a_proxy_aria2_cannot_use_is_not_handed_to_it(monkeypatch):
                           "http://127.0.0.1:3128"), ("127.0.0.1:3128", "127.0.0.1:3128")):
         monkeypatch.setattr(utils, "PROXIES", {"http": given, "https": given})
         assert torrent.proxy_url() == handed, given
+
+
+def test_no_ratio_limit_with_a_time_seeds_for_the_time(monkeypatch):
+    """Settings: "0 = no ratio limit". Left unsaid, aria2's ratio is 1.0, so
+    with 30 minutes set seeding stopped at 1.0 before the time was up (list #8):
+    0.0 is said, at the start and to a running daemon."""
+    o = _opts(monkeypatch, SEED_ENABLED=True, SEED_RATIO=0, SEED_MINUTES=30)
+    assert "--seed-ratio=0.0" in o and "--seed-time=30" in o
+    live = _live(monkeypatch, SEED_ENABLED=True, SEED_RATIO=0.0, SEED_MINUTES=30)
+    assert (live["seed-ratio"], live["seed-time"]) == ("0.0", "30")

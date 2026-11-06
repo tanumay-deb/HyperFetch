@@ -179,15 +179,9 @@ def preference_opts():
     else:
         ratio = float(getattr(utils, "SEED_RATIO", 0) or 0)
         minutes = float(getattr(utils, "SEED_MINUTES", 0) or 0)
-        if ratio > 0:
-            opts.append(f"--seed-ratio={ratio:g}")
+        opts.append("--seed-ratio=" + seed_ratio(ratio, minutes))
         if minutes > 0:
             opts.append(f"--seed-time={minutes:g}")
-        if ratio <= 0 and minutes <= 0:
-            # aria2 reads --seed-ratio=0 as "seed forever"; make that a choice
-            # the user has to opt into rather than something they land on by
-            # clearing two boxes
-            opts.append("--seed-ratio=1.0")
     up = int(getattr(utils, "MAX_UPLOAD_BPS", 0) or 0)
     if up > 0:
         # Applies whether or not seeding is on: a torrent uploads to its peers
@@ -199,6 +193,17 @@ def preference_opts():
         # the other, so this is what lets a partial file play and seek
         opts.append("--bt-prioritize-piece=head,tail")
     return opts
+
+
+def seed_ratio(ratio, minutes):
+    """aria2's --seed-ratio for Settings' two boxes. 0 is "no ratio limit"
+    there; to aria2 a ratio left unsaid is 1.0, so with a time set seeding
+    stopped at 1.0 before the time was up (2026-11-04): 0.0 is said, and the
+    time ends it. Both cleared is not "forever" - aria2 reads 0.0 with no
+    time as that - so 1.0, a choice nobody lands on by clearing two boxes."""
+    if ratio > 0:
+        return f"{ratio:g}"
+    return "0.0" if minutes > 0 else "1.0"
 
 
 # A running daemon cannot be told to forget a seed-time it has: "no time
@@ -228,7 +233,7 @@ def live_preferences():
     else:
         ratio = float(getattr(utils, "SEED_RATIO", 0) or 0)
         minutes = float(getattr(utils, "SEED_MINUTES", 0) or 0)
-        opts["seed-ratio"] = f"{ratio:g}" if ratio > 0 else "1.0"   # as preference_opts
+        opts["seed-ratio"] = seed_ratio(ratio, minutes)
         opts["seed-time"] = f"{minutes:g}" if minutes > 0 else SEED_TIME_NONE
     return opts
 
