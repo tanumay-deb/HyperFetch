@@ -133,7 +133,11 @@ PEER_SPEED_TARGET = "50M"
 
 
 def allocation_opt():
-    """aria2's --file-allocation for the current Pre-allocate setting.
+    return "--file-allocation=" + allocation()
+
+
+def allocation():
+    """aria2's file-allocation for the current Pre-allocate setting.
 
     falloc, never prealloc. "prealloc" makes aria2 WRITE ZERO BYTES across the
     whole file, and aria2 is single-threaded — so a 7 GB torrent blocks every
@@ -147,8 +151,14 @@ def allocation_opt():
     On a legacy filesystem it degrades to prealloc's behaviour — no worse than
     what it replaces.
     """
-    return "--file-allocation=" + ("falloc" if getattr(utils, "PREALLOCATE", False)
-                                   else "none")
+    return "falloc" if getattr(utils, "PREALLOCATE", False) else "none"
+
+
+def proxy_url():
+    """The proxy torrents go through (Settings -> Network), or ""."""
+    if utils.PROXIES and utils.PROXY_TORRENTS:
+        return utils.PROXIES.get("https") or utils.PROXIES.get("http") or ""
+    return ""
 
 
 def preference_opts():
@@ -198,11 +208,16 @@ def live_preferences():
     went in on its command line only - an upload cap set in Settings did
     nothing until HyperFetch restarted (2026-11-03). New downloads take them;
     the upload cap holds for the running ones at once. Measured on 1.37.0:
-    each value here is taken, "" included, and read back."""
+    each value here is taken, "" included, and read back; Pre-allocate and
+    the proxy reach new downloads, "" clears the proxy (2026-11-04). Not the
+    listen port nor the disk cache: aria2 answers OK to both and keeps what
+    it started with, so they wait for the next daemon (Settings says so)."""
     up = int(getattr(utils, "MAX_UPLOAD_BPS", 0) or 0)
     opts = {"max-overall-upload-limit": str(max(0, up)),
             "bt-prioritize-piece": ("head,tail" if getattr(utils, "TORRENT_PREVIEW", False)
-                                    else "")}
+                                    else ""),
+            "file-allocation": allocation(),
+            "all-proxy": proxy_url()}
     if not getattr(utils, "SEED_ENABLED", False):
         opts["seed-time"] = "0"
     else:
@@ -1112,8 +1127,16 @@ def tracker_opts(task, torrent_path):
 
 
 def listen_port():
-    """The BitTorrent listen port actually in use: the user's setting, else the
-    default. UPnP maps this, and aria2 binds it."""
+    """The BitTorrent listen port in use: the running daemon's, else the one
+    the next daemon binds (wanted_listen_port). UPnP maps this. A daemon
+    keeps the port it started with: a changed setting waits for the next
+    one, and UPnP opening it at once cut incoming peers off (2026-11-04)."""
+    import aria2d
+    return aria2d.DAEMON.peer_port() or wanted_listen_port()
+
+
+def wanted_listen_port():
+    """The port a daemon is started with: the user's setting, else the default."""
     return int(getattr(utils, "LISTEN_PORT", 0) or DEFAULT_LISTEN_PORT)
 
 

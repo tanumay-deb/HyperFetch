@@ -439,8 +439,8 @@ class Aria2Daemon:
             "--bt-tracker=" + ",".join(trackers.current()),
             f"--dht-file-path={os.path.join(torrent.dht_dir(), 'dht.dat')}",
             f"--dht-file-path6={os.path.join(torrent.dht_dir(), 'dht6.dat')}",
-            f"--listen-port={torrent.listen_port()}",
-            f"--dht-listen-port={torrent.listen_port()}",
+            f"--listen-port={torrent.wanted_listen_port()}",
+            f"--dht-listen-port={torrent.wanted_listen_port()}",
         ]
         for host, port in torrent.DHT_ENTRY_POINTS:
             opts.append(f"--dht-entry-point={host}:{port}")
@@ -449,10 +449,8 @@ class Aria2Daemon:
         if not utils.DISK_CACHE:
             opts.append("--disk-cache=0")
         opts.append(torrent.allocation_opt())
-        if utils.PROXIES and utils.PROXY_TORRENTS:
-            purl = utils.PROXIES.get("https") or utils.PROXIES.get("http")
-            if purl:
-                opts.append(f"--all-proxy={purl}")
+        if torrent.proxy_url():
+            opts.append(f"--all-proxy={torrent.proxy_url()}")
         return opts
 
     def ensure(self):
@@ -510,18 +508,36 @@ class Aria2Daemon:
         except Exception as e:
             log.debug("could not update daemon concurrency: %s", e)
 
+    def peer_port(self):
+        """The port the running daemon listens on for peers, 0 when none
+        answers. It is the one it started with: changeGlobalOption of
+        listen-port is answered OK and changes nothing (1.37.0)."""
+        if not (self.port and self.secret):
+            return 0
+        try:
+            got = self._post(self.port, self.secret, "aria2.getGlobalOption", [],
+                             timeout=3) or {}
+            return int(got.get("listen-port") or 0)
+        except Exception:
+            return 0
+
     def apply_preferences(self):
-        """What Settings say of torrents - upload cap, seeding, preview -
-        told to a daemon that is already running (torrent.live_preferences):
-        its command line had them only as it started."""
+        """What Settings say of torrents - upload cap, seeding, preview,
+        pre-allocation, proxy - told to a daemon that is already running
+        (torrent.live_preferences): its command line had them only as it
+        started. The proxy goes in a call of its own: aria2 takes http ones
+        only, and one it refuses (socks5://) fails the whole call."""
         if not (self.port and self.secret):
             return
         import torrent
-        try:
-            self._post(self.port, self.secret, "aria2.changeGlobalOption",
-                       [torrent.live_preferences()], timeout=3)
-        except Exception as e:
-            log.debug("could not update the daemon's torrent settings: %s", e)
+        prefs = torrent.live_preferences()
+        proxy = {"all-proxy": prefs.pop("all-proxy", "")}
+        for opts in (prefs, proxy):
+            try:
+                self._post(self.port, self.secret, "aria2.changeGlobalOption",
+                           [opts], timeout=3)
+            except Exception as e:
+                log.info("the torrent engine did not take %s: %s", ", ".join(opts), e)
 
     def stop_recorded(self):
         """Stop whatever daemon aria2d.json points at, even from a fresh object.

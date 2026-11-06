@@ -477,3 +477,30 @@ def test_settings_saved_while_it_runs_reach_the_real_engine(daemon, monkeypatch)
     got = daemon.call("aria2.getGlobalOption")
     assert (got["max-overall-upload-limit"], got["seed-time"],
             got.get("bt-prioritize-piece")) == ("0", "0", "")
+
+
+def test_pre_allocation_and_the_proxy_reach_the_real_engine_and_a_bad_proxy_stops_nothing(
+        daemon, monkeypatch):
+    """Measured on 1.37.0 (2026-11-04): file-allocation and all-proxy are
+    taken by a running daemon; a socks5:// proxy is refused, and it used to
+    take the upload cap down with it, sent in one call."""
+    daemon.ensure()
+    proxy = "http://127.0.0.1:9"
+    monkeypatch.setattr(utils, "PREALLOCATE", True)
+    monkeypatch.setattr(utils, "PROXY_TORRENTS", True)
+    monkeypatch.setattr(utils, "PROXIES", {"http": proxy, "https": proxy})
+    daemon.apply_preferences()
+    got = daemon.call("aria2.getGlobalOption")
+    assert (got["file-allocation"], got["all-proxy"].rstrip("/")) == ("falloc", proxy)
+    monkeypatch.setattr(utils, "PROXIES", {"http": "socks5://127.0.0.1:9",
+                                           "https": "socks5://127.0.0.1:9"})
+    monkeypatch.setattr(utils, "MAX_UPLOAD_BPS", 77 * 1024)
+    daemon.apply_preferences()
+    assert daemon.call("aria2.getGlobalOption")["max-overall-upload-limit"] == str(77 * 1024)
+
+
+def test_the_listen_port_in_use_is_the_running_engines(daemon, monkeypatch):
+    daemon.ensure()
+    started = utils.LISTEN_PORT
+    monkeypatch.setattr(utils, "LISTEN_PORT", _free_port())
+    assert torrent.listen_port() == started, "aria2 does not move to a new port"

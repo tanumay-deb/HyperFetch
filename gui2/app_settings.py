@@ -317,7 +317,9 @@ class SettingsMixin:
         import upnp
         if bool(ex.get("upnp", True)):
             import torrent as _tor
-            threading.Thread(target=upnp.map_port, args=(_tor.listen_port(),),
+            # the port aria2 listens on, asked of it on the thread: a changed
+            # setting waits for its next start
+            threading.Thread(target=lambda: upnp.map_port(_tor.listen_port()),
                              daemon=True).start()
         else:
             # what this run opened is closed again (it used to stay open)

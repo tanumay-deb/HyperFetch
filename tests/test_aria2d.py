@@ -50,7 +50,9 @@ def test_a_daemon_left_by_an_earlier_run_is_told_this_run_s_settings(tmp_path, m
     assert d.ensure() is True
     told = [p[0] for m, p in sent if m == "aria2.changeGlobalOption"]
     assert {"max-concurrent-downloads": str(aria2d.max_concurrent())} in told
-    assert torrent.live_preferences() in told
+    live = torrent.live_preferences()
+    proxy = {"all-proxy": live.pop("all-proxy")}
+    assert live in told and proxy in told
 
 
 def _silent_daemon(tmp_path, monkeypatch, pid=9999):
@@ -170,6 +172,9 @@ class _FakeDaemon:
 
     def ensure(self):
         return True
+
+    def peer_port(self):
+        return 0                    # the port it was started with: the setting's
 
     def call(self, method, *params, **kw):
         self.calls.append((method, params))

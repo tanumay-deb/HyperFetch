@@ -137,6 +137,7 @@ def test_the_daemon_uses_the_allocation_setting(monkeypatch):
 # They went in on aria2's command line only, so a cap or a switch changed in
 # Settings did nothing until HyperFetch restarted.
 def _live(monkeypatch, **settings):
+    settings = {"PREALLOCATE": False, "PROXIES": None, **settings}
     for k, v in settings.items():
         monkeypatch.setattr(utils, k, v, raising=False)
     return torrent.live_preferences()
@@ -146,10 +147,21 @@ def test_each_setting_is_said_outright_so_one_switched_off_goes_off(monkeypatch)
     on = _live(monkeypatch, MAX_UPLOAD_BPS=100 * 1024, TORRENT_PREVIEW=True,
                SEED_ENABLED=True, SEED_RATIO=2.0, SEED_MINUTES=30)
     assert on == {"max-overall-upload-limit": str(100 * 1024),
-                  "bt-prioritize-piece": "head,tail", "seed-ratio": "2", "seed-time": "30"}
+                  "bt-prioritize-piece": "head,tail", "seed-ratio": "2", "seed-time": "30",
+                  "file-allocation": "none", "all-proxy": ""}
     off = _live(monkeypatch, MAX_UPLOAD_BPS=0, TORRENT_PREVIEW=False, SEED_ENABLED=False)
     assert off == {"max-overall-upload-limit": "0", "bt-prioritize-piece": "",
-                   "seed-time": "0"}
+                   "seed-time": "0", "file-allocation": "none", "all-proxy": ""}
+
+
+def test_pre_allocation_and_the_proxy_are_said_too(monkeypatch):
+    """They went in on aria2's command line only, as Listen Port and Disk
+    cache still do (2026-11-04, list #7)."""
+    proxy = {"http": "http://127.0.0.1:3128", "https": "http://127.0.0.1:3128"}
+    o = _live(monkeypatch, PREALLOCATE=True, PROXIES=proxy, PROXY_TORRENTS=True)
+    assert (o["file-allocation"], o["all-proxy"]) == ("falloc", "http://127.0.0.1:3128")
+    o = _live(monkeypatch, PREALLOCATE=True, PROXIES=proxy, PROXY_TORRENTS=False)
+    assert o["all-proxy"] == "", "kept off the proxy: it is cleared, not left as it was"
 
 
 def test_no_time_limit_is_said_as_one_too_long_to_reach(monkeypatch):
@@ -169,7 +181,11 @@ def test_a_running_daemon_is_sent_them(monkeypatch):
                         sent.append((method, params)))
     monkeypatch.setattr(utils, "MAX_UPLOAD_BPS", 250 * 1024)
     d.apply_preferences()
-    assert sent == [("aria2.changeGlobalOption", [torrent.live_preferences()])]
+    live = torrent.live_preferences()
+    proxy = {"all-proxy": live.pop("all-proxy")}
+    # the proxy on its own: one aria2 refuses fails the call it is in
+    assert sent == [("aria2.changeGlobalOption", [live]),
+                    ("aria2.changeGlobalOption", [proxy])]
     assert sent[0][1][0]["max-overall-upload-limit"] == str(250 * 1024)
     sent.clear()
     aria2d.Aria2Daemon().apply_preferences()          # none running: nothing to tell
@@ -203,3 +219,19 @@ def test_saving_settings_tells_the_running_engine(monkeypatch):
                            "accent": accent, "sched_en": False, "sched_start": "02:00",
                            "sched_stop": "08:00"})
     assert told.wait(5), "the running engine was not told"
+
+
+def test_upnp_is_given_the_port_the_running_engine_listens_on(monkeypatch):
+    """aria2 keeps the port it started with; Settings' new one waits for its
+    next start. UPnP opened the new one at once and closed the old (list #7)."""
+    d = aria2d.Aria2Daemon()
+    d.port, d.secret = 6800, "s"
+    monkeypatch.setattr(d, "_post", lambda port, secret, method, params, timeout=0:
+                        {"listen-port": "51990"} if method == "aria2.getGlobalOption"
+                        else pytest.fail(method))
+    monkeypatch.setattr(aria2d, "DAEMON", d)
+    monkeypatch.setattr(utils, "LISTEN_PORT", 6000)
+    assert torrent.listen_port() == 51990
+    assert torrent.wanted_listen_port() == 6000
+    d.port = 0                                       # none running: the setting's
+    assert torrent.listen_port() == 6000
