@@ -614,16 +614,36 @@ class HlsDownloader:
 
     def _fetch_segment(self, url, seq, key, part=None):
         """Download + decrypt one segment (runs on a worker thread); `part`
-        = (start, length) of its file, for a byte-range playlist."""
-        headers = self.headers
-        if part:
-            headers = dict(headers, Range="bytes=%d-%d" % (part[0], sum(part) - 1))
-        r = _get(self._seg_session(), url, headers, self._stats)
-        if part and r.status_code != 206:
-            # the whole file, again for every segment: refused, not saved
-            raise RuntimeError("the server sent the whole file, not the part of "
-                               "it the playlist names (HTTP %d)" % r.status_code)
-        return self._decrypt(r.content, key, seq)
+        = (start, length) of its file, for a byte-range playlist. HTTP lets a
+        server answer a range with less than asked: the rest is asked for
+        again, as the HTTP engine does - a short part was saved as it came,
+        and the video finished "Completed" broken (2026-11-04)."""
+        if not part:
+            r = _get(self._seg_session(), url, self.headers, self._stats)
+            return self._decrypt(r.content, key, seq)
+        start, length = part
+        data, empty = b"", 0
+        while len(data) < length:
+            at = start + len(data)
+            r = _get(self._seg_session(), url,
+                     dict(self.headers, Range="bytes=%d-%d" % (at, start + length - 1)),
+                     self._stats)
+            if r.status_code != 206:
+                # the whole file, again for every segment: refused, not saved
+                raise RuntimeError("the server sent the whole file, not the part of "
+                                   "it the playlist names (HTTP %d)" % r.status_code)
+            m = re.match(r"\s*bytes\s+(\d+)-", r.headers.get("Content-Range", ""))
+            if m and int(m.group(1)) != at:
+                raise RuntimeError("the server sent another part of the file than "
+                                   "the playlist names")
+            got = r.content[:length - len(data)]
+            if not got:
+                empty += 1
+                if empty >= SEG_RETRIES:
+                    raise RuntimeError("the server sent %d of the %d bytes of a "
+                                       "segment" % (len(data), length))
+            data += got
+        return self._decrypt(data, key, seq)
 
     def _stopped(self, temp_path):
         """A cancel or a pause asked for: the status says so - and a cancel

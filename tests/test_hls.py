@@ -90,9 +90,15 @@ def hls_server(aes_tools):
                 f"#EXTINF:4.0,\n#EXT-X-BYTERANGE:4096@100\n{name}\n"
                 + f"#EXTINF:4.0,\n#EXT-X-BYTERANGE:4096\n{name}\n" * 4
                 + "#EXT-X-ENDLIST\n").encode()
+    # capped.mp4 answers at most 1000 bytes a range (HTTP lets it), shifted.mp4
+    # a part one byte on from the one asked for
     routes.update({"single.mp4": (single, "video/mp4"), "plain.mp4": (single, "video/mp4"),
+                   "capped.mp4": (single, "video/mp4"), "shifted.mp4": (single, "video/mp4"),
                    "ranges.m3u8": (ranged("single.mp4"), "application/vnd.apple.mpegurl"),
-                   "plainranges.m3u8": (ranged("plain.mp4"), "application/vnd.apple.mpegurl")})
+                   "plainranges.m3u8": (ranged("plain.mp4"), "application/vnd.apple.mpegurl"),
+                   "cappedranges.m3u8": (ranged("capped.mp4"), "application/vnd.apple.mpegurl"),
+                   "shiftedranges.m3u8": (ranged("shifted.mp4"),
+                                          "application/vnd.apple.mpegurl")})
 
     asked = []
 
@@ -108,6 +114,10 @@ def hls_server(aes_tools):
                 body, ct = routes[p]
                 a, _, b = rng[len("bytes="):].partition("-")
                 a, b = int(a), min(int(b), len(body) - 1)
+                if p == "capped.mp4":
+                    b = min(b, a + 999)
+                elif p == "shifted.mp4":
+                    a += 1
                 self.send_response(206)
                 self.send_header("Content-Type", ct)
                 self.send_header("Content-Range", f"bytes {a}-{b}/{len(body)}")
@@ -290,6 +300,21 @@ def test_a_playlist_of_byte_ranges_saves_each_part_once(hls_server, tmp_path):
     Downloader(t).run()
     assert t.status == T.COMPLETED, t.error
     assert open(t.save_path, "rb").read() == hls_server.single
+
+
+def test_a_part_answered_short_is_asked_for_again(hls_server, tmp_path):
+    """HTTP lets a server send less of a range than asked. The short part was
+    saved as it came, and the video read "Completed", broken (2026-11-04)."""
+    t = T.DownloadTask(f"{hls_server.base}/cappedranges.m3u8", str(tmp_path / "c.m3u8"))
+    Downloader(t).run()
+    assert t.status == T.COMPLETED, t.error
+    assert open(t.save_path, "rb").read() == hls_server.single
+
+
+def test_a_part_from_elsewhere_in_the_file_is_refused(hls_server, tmp_path):
+    t = T.DownloadTask(f"{hls_server.base}/shiftedranges.m3u8", str(tmp_path / "s.m3u8"))
+    Downloader(t).run()
+    assert t.status == T.ERROR and "another part" in t.error, t.error
 
 
 def test_a_server_that_ignores_the_ranges_is_refused(hls_server, tmp_path):
