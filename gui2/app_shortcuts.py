@@ -67,7 +67,7 @@ class ShortcutsMixin:
             return
 
         delete_disk = dlg.deleteDisk.isChecked()
-        failed = []
+        jobs = []
         for t in ts:
             # read first: an unfinished torrent's files are known by aria2's
             # control file, which the removal and cleanup below take away
@@ -81,22 +81,59 @@ class ShortcutsMixin:
                     _tor.cleanup_artifacts(t)
             except Exception:
                 pass
-            for path in targets:
-                if not self._remove_path(path):
-                    failed.append(os.path.basename(path) or path)
+            if targets:
+                jobs.append((t, targets))
 
         # the user asked for this, so an empty result is legitimate
         self._allow_empty_save = True
         self._save_state()
         self.refresh()
-        if failed:
-            # Never silent: "delete from disk" that quietly did nothing is
-            # worse than an error, because the files are still taking up space
-            # and the user believes they are gone.
-            self._toasts.show(
-                "error", "Could not delete some files",
-                ", ".join(failed[:3]) + ("…" if len(failed) > 3 else "")
-                + " — still in use. Try again in a moment.")
+        if jobs:
+            # A running download's files are still open: deleted once its
+            # engine lets go, off this thread (it froze the window, 2026-11-04)
+            import threading
+            threading.Thread(target=self._delete_files, args=(jobs,),
+                             name="delete", daemon=True).start()
+
+    def _delete_files(self, jobs):
+        """[(task, paths)] of downloads just removed: wait for each one's
+        worker to end and, for a torrent, for aria2 to close its files and
+        forget it (torrent._let_go), then delete. On a thread; what could not
+        be deleted goes to _finish_deletes."""
+        import time
+        import torrent as _tor
+        failed = []
+        for t, targets in jobs:
+            end = time.monotonic() + 60
+            while getattr(t, "_worker_alive", False) and time.monotonic() < end:
+                time.sleep(0.2)
+            if _tor.is_torrent_task(t.url, t.filename):
+                ih = _tor.task_infohash(t)
+                if ih and any(x is not t and _tor.task_infohash(x) == ih
+                              for x in list(self.queue.tasks)):
+                    continue                # added again meanwhile: its files now
+                try:
+                    _tor._let_go(t)
+                    _tor.cleanup_artifacts(t)   # aria2 writes its control file as it stops
+                except Exception:
+                    pass
+            for path in targets:
+                if not self._remove_path(path, attempts=10, delay=0.5):
+                    failed.append(os.path.basename(path) or path)
+        self._deletes.append(failed)
+
+    def _finish_deletes(self):
+        """What delete threads could not delete, said on the window's thread."""
+        while self._deletes:
+            failed = self._deletes.popleft()
+            if failed:
+                # Never silent: "delete from disk" that quietly did nothing is
+                # worse than an error, because the files are still taking up
+                # space and the user believes they are gone.
+                self._toasts.show(
+                    "error", "Could not delete some files",
+                    ", ".join(failed[:3]) + ("…" if len(failed) > 3 else "")
+                    + " — another program has them open. They are still on disk.")
 
     @staticmethod
     def _payload_paths(t):

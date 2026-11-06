@@ -115,13 +115,95 @@ def test_its_files_are_read_before_the_control_file_goes(tmp_path, monkeypatch):
             return True
 
     monkeypatch.setattr(D, "DeleteDialog", Asked)
+    win = _window()
+    S._delete_tasks(win, [t])
+    assert _gone(payload) and not (tmp_path / "Pack.aria2").exists()
+
+
+class _Asked:
+    def __init__(self, **k):
+        import types
+        self.deleteDisk = types.SimpleNamespace(isChecked=lambda: True)
+
+    def exec(self):
+        return True
+
+
+def _window(remove_task=lambda t: None):
+    """What _delete_tasks needs of the window."""
+    import collections
+    import types
     win = types.SimpleNamespace(
-        queue=types.SimpleNamespace(remove_task=lambda t: None),
-        _toasts=types.SimpleNamespace(show=lambda *a, **k: None),
+        queue=types.SimpleNamespace(remove_task=remove_task, tasks=[]),
+        _toasts=types.SimpleNamespace(said=[]), _deletes=collections.deque(),
         _save_state=lambda: None, refresh=lambda: None,
         _payload_paths=S._payload_paths, _remove_path=S._remove_path)
+    win._toasts.show = lambda *a, **k: win._toasts.said.append(a)
+    win._delete_files = lambda jobs: S._delete_files(win, jobs)
+    win._finish_deletes = lambda: S._finish_deletes(win)
+    return win
+
+
+def _wait_for(cond, timeout=10):
+    import time
+    end = time.monotonic() + timeout
+    while not cond() and time.monotonic() < end:
+        time.sleep(0.05)
+    return cond()
+
+
+def _gone(path):
+    return _wait_for(lambda: not os.path.exists(path))
+
+
+def test_a_running_torrents_files_are_deleted_once_its_engine_lets_go(tmp_path, monkeypatch):
+    """Its engine had the files open: the window retried for 2 s, frozen, then
+    said "Try again in a moment" of an entry already gone from the list
+    (2026-11-04, list #2). Now the delete waits for the worker, off the
+    window's thread."""
+    import threading
+    import time
+    import gui2.dialogs.delete as D
+    payload = tmp_path / "Pack"
+    payload.mkdir()
+    (tmp_path / "Pack.aria2").write_bytes(b"ctl")
+    held = open(payload / "e1.mkv", "wb")       # as aria2 holds it while it runs
+    t = _task(str(tmp_path / "magnet_.bin"), "Pack")
+    t.status, t._worker_alive = T.DOWNLOADING, True
+
+    def worker_stops():                         # the run ends a while after the cancel
+        time.sleep(3)
+        held.close()
+        t._worker_alive = False
+
+    monkeypatch.setattr(D, "DeleteDialog", _Asked)
+    win = _window(remove_task=lambda t: threading.Thread(target=worker_stops).start())
+    t0 = time.monotonic()
     S._delete_tasks(win, [t])
-    assert not payload.exists() and not (tmp_path / "Pack.aria2").exists()
+    assert time.monotonic() - t0 < 0.5, "the window waited for the files"
+    assert _gone(payload), "the files were left on disk"
+    assert _gone(tmp_path / "Pack.aria2")
+    assert _wait_for(lambda: win._deletes)         # the thread's last step
+    S._finish_deletes(win)
+    assert win._toasts.said == []
+
+
+def test_files_that_will_not_go_are_said_once_and_not_as_try_again(tmp_path, monkeypatch):
+    import gui2.dialogs.delete as D
+    f = tmp_path / "a.zip"
+    f.write_bytes(b"x")
+    t = T.DownloadTask("https://a.example/a.zip", str(f), filename="a.zip")
+    t.status = T.COMPLETED
+    monkeypatch.setattr(D, "DeleteDialog", _Asked)
+    monkeypatch.setattr(S, "_remove_path", staticmethod(lambda p, **k: False))
+    win = _window()
+    win._remove_path = S._remove_path
+    S._delete_tasks(win, [t])
+    assert _wait_for(lambda: win._deletes)
+    S._finish_deletes(win)
+    assert len(win._toasts.said) == 1
+    kind, title, body = win._toasts.said[0]
+    assert kind == "error" and "a.zip" in body and "Try again" not in body
 
 
 def test_removal_handles_a_directory(tmp_path):
@@ -142,3 +224,26 @@ def test_an_unfinished_download_does_not_take_a_finished_file_of_its_name(tmp_pa
     assert S._payload_paths(t) == []
     t.status = T.COMPLETED                     # its own, once it has finished
     assert S._payload_paths(t) == [str(f)]
+
+
+def test_a_torrent_added_again_while_its_delete_waits_keeps_its_files(tmp_path, monkeypatch):
+    """The same magnet added again as the removed one's run ends: the files
+    are the new one's, and aria2's registration too."""
+    import time
+    import torrent
+    import gui2.dialogs.delete as D
+    payload = tmp_path / "Pack"
+    payload.mkdir()
+    (payload / "e1.mkv").write_bytes(b"x")
+    (tmp_path / "Pack.aria2").write_bytes(b"ctl")
+    t = _task(str(tmp_path / "magnet_.bin"), "Pack")
+    t.status, t._worker_alive = T.DOWNLOADING, True
+    let_go = []
+    monkeypatch.setattr(torrent, "_let_go", let_go.append)
+    monkeypatch.setattr(D, "DeleteDialog", _Asked)
+    win = _window()
+    S._delete_tasks(win, [t])
+    win.queue.tasks.append(_task(str(tmp_path / "magnet_.bin"), "Pack"))
+    t._worker_alive = False
+    assert _wait_for(lambda: win._deletes)
+    assert payload.exists() and let_go == []
