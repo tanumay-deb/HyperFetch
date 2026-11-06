@@ -39,5 +39,6 @@ packages = ["gui", "gui2", "gui2.dialogs"]
 # Runtime assets (SVG icons + the app icon). Installed under
 # <prefix>/share/hyperfetch and found by gui.theme.resource_path at runtime.
 [tool.setuptools.data-files]
+"share/hyperfetch" = ["LICENSE"]
 "share/hyperfetch/assets" = ["assets/icon.png", "assets/icon.ico"]
 "share/hyperfetch/assets/icons" = ["assets/icons/*.svg"]

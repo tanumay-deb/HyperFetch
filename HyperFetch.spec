@@ -57,7 +57,8 @@ a = Analysis(
     pathex=[],
     binaries=crypto_binaries + ytdlp_binaries,
     datas=[('assets/icon.ico', 'assets'), ('assets/icon.png', 'assets'),
-           ('assets/icons', 'assets/icons')] + extra_datas + crypto_datas + ytdlp_datas,
+           ('assets/icons', 'assets/icons'),
+           ('LICENSE', '.')] + extra_datas + crypto_datas + ytdlp_datas,   # About -> License
     hiddenimports=hidden,
     hookspath=[],
     runtime_hooks=[],

@@ -16,6 +16,23 @@ import os
 
 import crash_reporter
 import utils
+
+# What the Windows build ships besides HyperFetch's own code, for About ->
+# Credits: (name, licence, where it lives).
+CREDITS = (
+    ("Python", "PSF License", "https://www.python.org/"),
+    ("Qt for Python (PySide6)", "LGPL-3.0", "https://doc.qt.io/qtforpython-6/"),
+    ("aria2", "GPL-2.0-or-later", "https://aria2.github.io/"),
+    ("FFmpeg", "GPL-3.0-or-later", "https://ffmpeg.org/"),
+    ("yt-dlp", "Unlicense", "https://github.com/yt-dlp/yt-dlp"),
+    ("Flask", "BSD-3-Clause", "https://flask.palletsprojects.com/"),
+    ("Flask-CORS", "MIT", "https://github.com/corydolphin/flask-cors"),
+    ("Waitress", "ZPL-2.1", "https://github.com/Pylons/waitress"),
+    ("Requests", "Apache-2.0", "https://requests.readthedocs.io/"),
+    ("cryptography", "Apache-2.0 or BSD-3-Clause", "https://cryptography.io/"),
+    ("PyInstaller", "GPL-2.0-or-later with its bootloader exception",
+     "https://pyinstaller.org/"),
+)
 from gui.theme import APP_VERSION
 
 try:
@@ -661,12 +678,50 @@ class PageBuilderMixin:
         self.upd_btn.clicked.connect(self._download_update)
         g.addWidget(self.upd_btn)
         links = QHBoxLayout()
+        # they were there, connected to nothing (2026-11-04)
         lic = QPushButton("License"); lic.setObjectName("ghost")
+        lic.clicked.connect(self._show_license)
         cred = QPushButton("Credits"); cred.setObjectName("ghost")
+        cred.clicked.connect(self._show_credits)
         links.addWidget(lic); links.addWidget(cred); links.addStretch()
         g.addLayout(links)
         v.addWidget(f); v.addStretch()
         return sa
+
+    def _show_license(self):
+        from gui.theme import resource_path
+        try:
+            with open(resource_path("LICENSE"), encoding="utf-8") as f:
+                text = f.read()
+        except OSError:
+            import updater
+            text = "MIT License: https://github.com/%s/blob/main/LICENSE" % updater.REPO
+        self._show_text("License", text)
+
+    def _show_credits(self):
+        import html
+        rows = "".join('<p><a href="%s">%s</a> &mdash; %s</p>' % (
+            url, html.escape(name), html.escape(lic)) for name, lic, url in CREDITS)
+        self._show_text("Credits", "<p>HyperFetch is built on, and ships with:</p>" + rows
+                        + "<p>and the libraries they use.</p>", rich=True)
+
+    def _show_text(self, title, text, rich=False):
+        from PySide6.QtWidgets import QDialog, QDialogButtonBox, QTextBrowser
+        dlg = QDialog(self)
+        dlg.setWindowTitle(title)
+        dlg.resize(520, 440)
+        lay = QVBoxLayout(dlg)
+        view = QTextBrowser()
+        view.setOpenExternalLinks(True)
+        if rich:
+            view.setHtml(text)
+        else:
+            view.setPlainText(text)
+        lay.addWidget(view)
+        close = QDialogButtonBox(QDialogButtonBox.Close)
+        close.rejected.connect(dlg.reject)
+        lay.addWidget(close)
+        dlg.exec()
 
     # ---- behaviour ----
     def _swatch_style(self, hexv, sel):
