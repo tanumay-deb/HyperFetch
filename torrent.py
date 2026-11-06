@@ -1187,6 +1187,24 @@ def archive_metadata(task, out_dir):
             return ""
 
 
+def control_infohash(path):
+    """The infohash an aria2 control file (<name>.aria2) is for, as hex; ""
+    when it names none (not a torrent's) or cannot be read. The file starts
+    with its version (2 bytes; 1: integers big-endian, 0: the machine's own
+    order), 4 bytes of flags, the infohash's length (4) and the infohash."""
+    try:
+        with open(path, "rb") as f:
+            head = f.read(30)
+    except OSError:
+        return ""
+    if len(head) < 30:
+        return ""
+    order = "big" if head[:2] == b"\x00\x01" else "little"
+    if int.from_bytes(head[6:10], order) != 20:
+        return ""
+    return head[10:30].hex()
+
+
 def cleanup_artifacts(task):
     """Remove the aria2 leftovers for a task the user cancelled or deleted: the
     <name>.aria2 control file and our saved metadata copy. Only ever touches
@@ -1207,12 +1225,19 @@ def cleanup_artifacts(task):
     if known.lower() not in _PLACEHOLDER_FILENAMES:
         names.add(known)
     names.add(torrent_top_name(metadata_torrent_path(task, folder)))
+    # Two torrents of one name in one folder share the control file's name;
+    # removing one took the other's progress, and it had to check every piece
+    # again (2026-11-04). aria2 writes the infohash in the file.
+    mine = (task_infohash(task) or "").lower()
     work = getattr(task, "unfinished_in", "") or ""     # where it is written, if not home
     for where in {folder, work} - {""}:
         for name in names:
             if not name or not _within(where, name):
                 continue
             ctl = os.path.join(where, name + ".aria2")
+            theirs = control_infohash(ctl) if len(mine) == 40 else ""
+            if theirs and theirs != mine:
+                continue                    # another torrent's: its progress
             if os.path.isfile(ctl):
                 try:
                     os.remove(ctl)

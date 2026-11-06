@@ -504,3 +504,26 @@ def test_the_listen_port_in_use_is_the_running_engines(daemon, monkeypatch):
     started = utils.LISTEN_PORT
     monkeypatch.setattr(utils, "LISTEN_PORT", _free_port())
     assert torrent.listen_port() == started, "aria2 does not move to a new port"
+
+
+def test_a_real_control_file_names_its_torrent(swarm, daemon, tmp_path):
+    """cleanup_artifacts tells another torrent's control file of the same
+    name by the infohash in it (list #15): read from one aria2 wrote."""
+    out = tmp_path / "downloads"
+    out.mkdir()
+    t = T.DownloadTask(swarm["torrent"], str(out / "Payload.torrent"))
+
+    def pause_when_started():
+        _wait(lambda: t.downloaded >= PIECE)
+        t.request_pause()
+
+    was = utils.global_limiter.limit_bps
+    utils.global_limiter.set_limit(256 * 1024)
+    try:
+        threading.Thread(target=pause_when_started, daemon=True).start()
+        _run(t)
+    finally:
+        utils.global_limiter.set_limit(was)
+    assert t.status == T.PAUSED, (t.status, t.error)
+    ctl = out / "Payload.bin.aria2"
+    assert torrent.control_infohash(str(ctl)) == torrent.task_infohash(t) != ""
