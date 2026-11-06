@@ -209,7 +209,7 @@ def live_preferences():
     nothing until HyperFetch restarted (2026-11-03). New downloads take them;
     the upload cap holds for the running ones at once. Measured on 1.37.0:
     each value here is taken, "" included, and read back; Pre-allocate and
-    the proxy reach new downloads, "" clears the proxy (2026-11-04). Not the
+    the proxy reach new downloads, "" clears the proxy (2026-11-06). Not the
     listen port nor the disk cache: aria2 answers OK to both and keeps what
     it started with, so they wait for the next daemon (Settings says so)."""
     up = int(getattr(utils, "MAX_UPLOAD_BPS", 0) or 0)
