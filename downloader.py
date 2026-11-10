@@ -5,6 +5,7 @@ inside a worker thread by the queue. It updates the task's fields in place so th
 GUI (polling on a timer) reflects live progress.
 """
 import os
+import re
 import time
 import shutil
 import logging
@@ -174,6 +175,28 @@ def check_mirror(t, url):
     if not total.isdigit() or int(total) != size:
         return "That link's file is not the same size as this one: not the same file."
     return None
+
+
+# A checksum file's line: "<64 hex>  name" (sha256sum; "*name" in binary
+# mode), the digest alone, or BSD's "SHA256 (name) = <64 hex>".
+_SUM_LINE = re.compile(r"\s*(?:([a-fA-F0-9]{64})(?:\s+\*?\S.*)?"
+                       r"|SHA256\s*\(.*\)\s*=\s*([a-fA-F0-9]{64}))\s*")
+
+
+def checksum_in(text):
+    """The SHA-256 a checksum file gives, or "": its first line shaped like
+    one. Any 64 hex digits anywhere used to do, and a site that answers every
+    address with a web page - its home page, a "not found" that says 200 -
+    often has some on it (an asset's hash, a token): a good download read
+    "hash mismatch" (2026-11-06)."""
+    text = text.lstrip()
+    if text[:1] == "<":
+        return ""                           # a web page, an XML error
+    for line in text.splitlines():
+        m = _SUM_LINE.fullmatch(line)
+        if m:
+            return (m.group(1) or m.group(2)).lower()
+    return ""
 
 
 def discard_partial(t):
@@ -995,8 +1018,8 @@ class Downloader:
         The suffix goes on the link's path, before its query: on the end of
         download.php?id=5 it asked for "?id=5.sha256", which a site reads as
         id=5 - the file itself, read whole into memory (2026-11-04). And only
-        the start of the answer is read: a checksum file is a line."""
-        import re as _re
+        the start of the answer is read: a checksum file is a line
+        (checksum_in says which)."""
         parts = urllib.parse.urlsplit(self.url)
         for suffix in (".sha256", ".sha256sum"):
             link = urllib.parse.urlunsplit(parts._replace(path=parts.path + suffix,
@@ -1008,9 +1031,10 @@ class Downloader:
                     if r.status_code != 200:
                         continue
                     head = r.raw.read(SIDECAR_MAX, decode_content=True) or b""
-                m = _re.search(r"\b([a-fA-F0-9]{64})\b", head.decode("utf-8", "replace"))
-                if m:
-                    return m.group(1)
+                # utf-8-sig: a byte order mark at its start is not the line's
+                found = checksum_in(head.decode("utf-8-sig", "replace"))
+                if found:
+                    return found
             except (requests.RequestException, urllib3.exceptions.HTTPError, OSError):
                 pass
         return None

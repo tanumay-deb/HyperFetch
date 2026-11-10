@@ -17,6 +17,17 @@ import task as T
 from downloader import Downloader
 
 DIGEST = hashlib.sha256(b"the file").hexdigest()
+TOKEN = "0123456789abcdef" * 4          # 64 hex digits that are no checksum
+BOM = bytes([0xEF, 0xBB, 0xBF])
+PAGES = {
+    # a site that answers every address with its page, and says 200
+    "/page.bin.sha256": ("<!DOCTYPE html><html><head><script src='/a.js?v=%s'></script>"
+                         "</head><body>Not found</body></html>" % TOKEN).encode(),
+    "/text.bin.sha256": ("Sorry, no such file. Reference %s." % TOKEN).encode(),
+    "/bsd.bin.sha256": ("SHA256 (bsd.bin) = %s\n" % DIGEST.upper()).encode(),
+    "/star.bin.sha256": BOM + ("%s *star.bin\r\n" % DIGEST).encode(),
+    "/bare.bin.sha256": DIGEST.encode(),
+}
 
 
 @pytest.fixture
@@ -49,6 +60,12 @@ def site():
                         time.sleep(0.05)
                 except OSError:
                     pass
+            elif path in PAGES:
+                body = PAGES[path]
+                self.send_response(200)
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
             else:
                 self.send_response(404)
                 self.send_header("Content-Length", "0")
@@ -76,3 +93,15 @@ def test_only_the_start_of_a_checksum_answer_is_read(site, tmp_path):
     t0 = time.monotonic()
     assert _expected(site.url + "/f.bin", tmp_path) == DIGEST
     assert time.monotonic() - t0 < 2, "it read the whole answer"
+
+
+@pytest.mark.parametrize("name", ["page.bin", "text.bin"])
+def test_a_web_page_where_the_checksum_would_be_is_no_checksum(site, tmp_path, name):
+    """Any 64 hex digits in the answer were taken for it, and a good download
+    read "hash mismatch" (2026-11-06)."""
+    assert _expected(site.url + "/" + name, tmp_path) is None
+
+
+@pytest.mark.parametrize("name", ["bsd.bin", "star.bin", "bare.bin"])
+def test_the_usual_shapes_of_a_checksum_file_are_read(site, tmp_path, name):
+    assert _expected(site.url + "/" + name, tmp_path) == DIGEST
