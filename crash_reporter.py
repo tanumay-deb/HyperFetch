@@ -34,8 +34,11 @@ def _write_report(exc_type, exc, tb, source, app_version):
         "platform": platform.platform(),
         "cwd": os.getcwd(),
         "exc_type": exc_type.__name__,
-        "exc_msg": str(exc)[:500],
-        "traceback": "".join(traceback.format_exception(exc_type, exc, tb))[-8000:],
+        # no download addresses (the privacy policy): an error's text often
+        # carries the link it failed on
+        "exc_msg": utils.without_addresses(str(exc))[:500],
+        "traceback": utils.without_addresses(
+            "".join(traceback.format_exception(exc_type, exc, tb)))[-8000:],
     }
     name = time.strftime("%Y%m%dT%H%M%S") + f"-{int(time.time() * 1000) % 1000:03d}.json"
     path = os.path.join(crashes_dir(), name)

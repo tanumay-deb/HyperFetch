@@ -1224,6 +1224,47 @@ def get_logger(engine):
     return logging.getLogger("hyperfetch." + engine)
 
 
+# A link, as it appears in an error: scheme, host, and the rest of it.
+_ADDRESS = re.compile(r"\b([a-z][a-z0-9+.\-]+://)([^\s/?#'\"<>]+)([^\s'\"<>]*)", re.I)
+_MAGNET = re.compile(r"magnet:\?[^\s'\"<>]+", re.I)
+_ASKED_PATH = re.compile(r"(with url: )\S+")      # requests, in a connection error
+# yt-dlp's errors name the video: "[youtube] dQw4w9WgXcQ: Video unavailable"
+_VIDEO_ID = re.compile(r"(\[[A-Za-z][\w:+.\-]*\]) [^\s:]+:")
+
+
+def without_addresses(text):
+    """`text` with every download address cut down to its site: a link keeps
+    its scheme and host ("https://example.com/…"), a magnet nothing, and
+    neither does the path requests names in a connection error ("with url:
+    /f.zip?token=…") nor the video yt-dlp names in its errors ("[youtube]
+    <id>:"). The privacy policy says the log holds download
+    addresses only with Debug logging on, and crash reports none: error
+    lines carried them whole, a sign-in token in the query included
+    (2026-11-04)."""
+    def site(m):
+        host = m.group(2).rsplit("@", 1)[-1]        # never a user:password
+        return m.group(1) + host + ("/…" if m.group(3) else "")
+
+    text = _MAGNET.sub("magnet:…", text)
+    text = _ADDRESS.sub(site, text)
+    text = _VIDEO_ID.sub(lambda m: m.group(1), text)
+    return _ASKED_PATH.sub(lambda m: m.group(1) + "…", text)
+
+
+class _LogFormat(logging.Formatter):
+    """The log's lines - the traceback under one too - with download addresses
+    cut down to their site unless Debug logging is on (without_addresses)."""
+
+    def __init__(self, addresses):
+        super().__init__("%(asctime)s %(levelname)-7s %(name)s: %(message)s",
+                         "%Y-%m-%d %H:%M:%S")
+        self._addresses = addresses
+
+    def format(self, record):
+        line = super().format(record)
+        return line if self._addresses else without_addresses(line)
+
+
 def setup_logging(debug=False):
     """Configure the 'hyperfetch' logger tree. Warnings/errors are always written
     to %APPDATA%\\HyperFetch\\hyperfetch.log (created lazily, so a clean run leaves
@@ -1243,8 +1284,7 @@ def setup_logging(debug=False):
         # delay=True: the file is created only when something is actually logged
         fh = logging.FileHandler(os.path.join(app_data_dir(), "hyperfetch.log"),
                                  encoding="utf-8", delay=True)
-        fh.setFormatter(logging.Formatter(
-            "%(asctime)s %(levelname)-7s %(name)s: %(message)s", "%Y-%m-%d %H:%M:%S"))
+        fh.setFormatter(_LogFormat(addresses=debug))
         logger.addHandler(fh)
     except OSError:
         logger.addHandler(logging.NullHandler())
