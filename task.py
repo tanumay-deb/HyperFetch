@@ -353,6 +353,11 @@ class DownloadTask:
         self.sha256 = ""
         utils.remove_temp(utils.temp_download_path(self))
         self.temp_path = ""
+        if self.status != COMPLETED:
+            # a half-done video's partial is yt-dlp's own (.part, .ytdl,
+            # fragments): left there, the "restart" went on from it
+            import yt_dl
+            yt_dl.discard_left(self, tries=1)
         self.log_event("Restarted")
 
     # ---- priority queue ordering: lower priority value first, then FIFO ----

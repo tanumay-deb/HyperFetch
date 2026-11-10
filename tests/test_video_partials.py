@@ -69,3 +69,17 @@ def test_nothing_goes_for_a_name_yt_dlp_never_gave_nor_for_a_finished_one(dl):
         t = _video(dl, status=status, named=named)
         q.remove_task(t)
         assert _there(dl) == sorted(LEFT + MINE), status
+
+
+def test_restart_of_a_half_done_video_starts_over(dl):
+    """Restart dropped the app's own temp file only: yt-dlp found its .part
+    again and went on from it, so nothing was restarted (2026-11-06)."""
+    t = _video(dl)
+    t.reset_progress()
+    assert _there(dl) == sorted(MINE)
+
+
+def test_restart_of_a_finished_video_takes_nothing(dl):
+    t = _video(dl, status=T.COMPLETED)
+    t.reset_progress()
+    assert _there(dl) == sorted(LEFT + MINE)
