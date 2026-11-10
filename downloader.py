@@ -178,9 +178,13 @@ def check_mirror(t, url):
 
 
 # A checksum file's line: "<64 hex>  name" (sha256sum; "*name" in binary
-# mode), the digest alone, or BSD's "SHA256 (name) = <64 hex>".
-_SUM_LINE = re.compile(r"\s*(?:([a-fA-F0-9]{64})(?:\s+\*?\S.*)?"
-                       r"|SHA256\s*\(.*\)\s*=\s*([a-fA-F0-9]{64}))\s*")
+# mode), the digest alone, or the digest after its label - BSD's "SHA256
+# (name) = ...", OpenSSL's "SHA2-256(name)= ...", "sha256: ...", and what
+# PowerShell's Get-FileHash prints ("Hash : ...", "SHA256  ...  path").
+_SUM_LINE = re.compile(
+    r"\s*(?:([a-f0-9]{64})(?:\s+\*?\S.*)?"
+    r"|(?:SHA(?:2-|-)?256|Hash)\s*(?:\(.*\))?\s*[=:]?\s*([a-f0-9]{64})(?:\s+\S.*)?)\s*",
+    re.I)
 
 
 def checksum_in(text):

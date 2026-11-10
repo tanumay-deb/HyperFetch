@@ -105,3 +105,32 @@ def test_a_web_page_where_the_checksum_would_be_is_no_checksum(site, tmp_path, n
 @pytest.mark.parametrize("name", ["bsd.bin", "star.bin", "bare.bin"])
 def test_the_usual_shapes_of_a_checksum_file_are_read(site, tmp_path, name):
     assert _expected(site.url + "/" + name, tmp_path) == DIGEST
+
+
+@pytest.mark.parametrize("text", [
+    "SHA2-256(f.bin)= %s" % DIGEST,                          # openssl 3
+    "SHA256(f.bin)= %s" % DIGEST,                            # openssl 1
+    "sha256 (f.bin) = %s" % DIGEST,
+    "sha256: %s" % DIGEST,
+    "SHA-256=%s" % DIGEST.upper(),
+    "Hash      : %s" % DIGEST.upper(),                       # Get-FileHash | Format-List
+    "SHA256          %s       C:/dl/f.bin" % DIGEST.upper(),     # its table's row
+    "Algorithm : SHA256\nHash      : %s\nPath      : C:/dl/f.bin" % DIGEST.upper(),
+])
+def test_a_checksum_after_its_label_is_read(text):
+    """Shapes the first cut of checksum_in turned away, which "any 64 hex
+    digits" had taken: such a file read as no checksum at all."""
+    from downloader import checksum_in
+    assert checksum_in(text) == DIGEST
+
+
+@pytest.mark.parametrize("text", [
+    "Sorry, no such file. Reference %s." % TOKEN,
+    '{"error": "not found", "request": "%s"}' % TOKEN,
+    "  <html><body>%s</body></html>" % TOKEN,
+    "token=%s" % TOKEN,
+    TOKEN + TOKEN,                                           # a SHA-512, not this
+])
+def test_hex_digits_that_are_no_checksum_line(text):
+    from downloader import checksum_in
+    assert checksum_in(text) == ""
