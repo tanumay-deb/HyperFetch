@@ -1535,7 +1535,8 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, Up
             segments=self.segments, verify_tls=self.verify_tls, pair_token=self.pair_token,
             theme=self.theme, accent=cur_accent, sched_en=self.scheduler_enabled,
             sched_start=self.scheduler_start, sched_stop=self.scheduler_stop,
-            extras=getattr(self, "_extras", {}), pair_requests=self.pair_requests)
+            extras=getattr(self, "_extras", {}), pair_requests=self.pair_requests,
+            queues=list(self.queue.queues.keys()))
         self._active_settings_dlg = dlg
         res = dlg.exec()
         self._active_settings_dlg = None

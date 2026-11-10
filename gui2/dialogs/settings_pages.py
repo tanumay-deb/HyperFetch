@@ -182,7 +182,10 @@ class PageBuilderMixin:
         self._row(g, "Concurrent Downloads", "Maximum downloads at the same time", self.conc)
         self.conns = self._slider(1, 32, segs)
         self._row(g, "Segments per Download", "Simultaneous HTTP range segments per file", self.conns)
-        self.def_queue = self._combo(["Main"], ex.get("default_queue"))
+        # the queues there are: it listed "Main" alone, so one made in
+        # Manage Queues could not be picked (2026-11-04)
+        self.def_queue = self._combo(getattr(self, "_queue_names", None) or ["Main"],
+                                     ex.get("default_queue"))
         self._row(g, "Default Queue", "Where new downloads land", self.def_queue)
         self.ask_before_add = self._toggle(not ex.get("skip_new_download_dialog", False))
         self._row(g, "Ask before adding a download",
