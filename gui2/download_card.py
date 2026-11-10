@@ -428,7 +428,9 @@ class DownloadCardWidget(QFrame):
             bits.append(_swarm(t))
             self.sub.setText("  •  ".join(bits))
         elif done:
-            age = humanize_age(getattr(t, "added", 0))
+            # since it finished - it counted from when it was added, so one
+            # that waited three days read "3 days ago" the moment it was done
+            age = humanize_age(getattr(t, "completed_at", 0) or getattr(t, "added", 0))
             self.sub.setText(f"Completed  •  {human_size(t.total_size or t.downloaded)}"
                              + (f"  •  {age}" if age else ""))
         elif is_tor and not t.total_size and getattr(t, "meta_failed", False):
