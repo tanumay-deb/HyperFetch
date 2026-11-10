@@ -208,6 +208,17 @@ def create_app(queue, save_dir, pending=None, token=None, pair_requests=None):
 
     app.config["HYPERFETCH_TOKEN"] = token
 
+    @app.after_request
+    def _note_change(resp):
+        # What the web page changed is saved by the window on its next tick
+        # (gui2/app.py _save_web_changes). The list was written only while a
+        # download ran or as the app closed, so a crash lost a rename, a
+        # remove, a limit or a pause made from the phone (2026-11-04).
+        if (request.method in ("POST", "DELETE") and resp.status_code < 400
+                and request.path.startswith("/api/downloads")):
+            queue.changed_elsewhere = True
+        return resp
+
     @app.route("/pair", methods=["GET", "POST", "OPTIONS"])
     def pair():
         """Hand the pairing token to the official extension so it can auto-pair —

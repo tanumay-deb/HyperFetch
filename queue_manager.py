@@ -30,6 +30,7 @@ class QueueManager:
         self._heap = []                  # ready-to-run tasks (priority ordered)
         self.tasks = []                  # every task ever added, for the GUI
         self.unreadable = []             # saved rows restore could not read, kept as they were
+        self.changed_elsewhere = False   # the web page changed the list: the window saves it
         self.queues = {}
         for q in (queues or [{"name": "Main", "max_concurrent": 3}]):
             self.queues[q["name"]] = Queue(q["name"], q["max_concurrent"])

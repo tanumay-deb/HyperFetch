@@ -255,3 +255,34 @@ def test_the_web_session_does_not_unlock_the_extension_routes(env):
     _login(c)
     r = _get(c, "/pair", headers={"Origin": "chrome-extension://x"})
     assert r.status_code == 403
+
+
+# ---- what the web page changes is saved (2026-11-04, list #18) ----------------------
+# The window wrote the list only while a download ran or as it closed: on an
+# idle list a rename, a remove, a limit or a pause from the phone was lost by
+# a crash.
+def test_a_change_from_the_web_page_marks_the_list_to_be_saved(env):
+    c, q, t = env
+    _login(c)
+    assert _get(c, "/api/downloads").status_code == 200
+    assert not getattr(q, "changed_elsewhere", False), "a read is not a change"
+    assert _post(c, "/api/downloads/nope/pause").status_code == 404
+    assert not getattr(q, "changed_elsewhere", False), "a refused change is not one"
+    assert _post(c, "/api/downloads/task-1/limit", json={"bps": 1000}).status_code == 200
+    assert q.changed_elsewhere is True
+    q.changed_elsewhere = False
+    assert _delete(c, "/api/downloads/task-1").status_code == 200
+    assert q.changed_elsewhere is True
+
+
+def test_the_window_saves_it_on_its_next_tick():
+    import inspect
+    import types
+    from gui2.app import DownloadAppV2
+    saved = []
+    win = types.SimpleNamespace(queue=types.SimpleNamespace(changed_elsewhere=True),
+                                _save_state=lambda: saved.append(1))
+    DownloadAppV2._save_web_changes(win)
+    DownloadAppV2._save_web_changes(win)
+    assert saved == [1] and win.queue.changed_elsewhere is False
+    assert "self._save_web_changes()" in inspect.getsource(DownloadAppV2.refresh)

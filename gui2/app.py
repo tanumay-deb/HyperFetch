@@ -418,6 +418,14 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, Up
         utils.save_json(self._state_path, rows, keep_backup=True)
         self._allow_empty_save = False      # one-shot permission
 
+    def _save_web_changes(self):
+        """What the web page changed - a rename, a remove, a limit, a pause -
+        is saved now (api_server marks it). Nothing in the window did it, and
+        _autosave_tick writes only while a download runs."""
+        if getattr(self.queue, "changed_elsewhere", False):
+            self.queue.changed_elsewhere = False    # first: one made meanwhile is kept
+            self._save_state()
+
     def _autosave_tick(self):
         # flush only while something is in flight — an idle list changes via
         # user actions, and those already save. Or when a waiting video was
@@ -781,6 +789,7 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, Up
         self._finish_moves()
         self._finish_mirror_checks()
         self._finish_deletes()
+        self._save_web_changes()
         bar = getattr(self, "action_bar", None)
         if bar is not None and bar.isVisible():   # statuses change under a selection
             self._update_action_bar(self.list.selected_ids())
