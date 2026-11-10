@@ -143,7 +143,10 @@ def _add_mapping(control_url, svc_type, port, proto, internal_ip, lease=LEASE):
     """"" when the router took the mapping, else what it said. A lease it
     refuses is asked for again without one: a router that takes only
     permanent mappings says so with error 725 - or with another error, and
-    such a router did map before leases were asked for."""
+    such a router did map before leases were asked for. Only when it
+    ANSWERED (_soap's "HTTP ..."): one that is only slow may have taken the
+    first request, and the second left a mapping with no end behind, there
+    long after the app is gone (2026-11-04)."""
     said = _soap(control_url, svc_type, "AddPortMapping",
                  '<NewRemoteHost></NewRemoteHost>'
                  '<NewExternalPort>%d</NewExternalPort>'
@@ -154,7 +157,7 @@ def _add_mapping(control_url, svc_type, port, proto, internal_ip, lease=LEASE):
                  '<NewPortMappingDescription>HyperFetch</NewPortMappingDescription>'
                  '<NewLeaseDuration>%d</NewLeaseDuration>'
                  % (port, proto, port, internal_ip, lease))
-    if lease and said:
+    if lease and said.startswith("HTTP "):
         return _add_mapping(control_url, svc_type, port, proto, internal_ip, 0)
     return said
 

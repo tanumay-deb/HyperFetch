@@ -226,3 +226,19 @@ def test_settings_closes_it_when_upnp_is_switched_off():
     import inspect
     from gui2.app_settings import SettingsMixin
     assert "upnp.unmap" in inspect.getsource(SettingsMixin)
+
+
+@pytest.mark.parametrize("said", ["TimeoutError", "URLError", "RemoteDisconnected"])
+def test_a_router_that_did_not_answer_is_not_asked_for_a_mapping_with_no_end(monkeypatch, said):
+    """A lease refused is asked for again without one - but a router only
+    slow to answer may have taken the first request, and the second left a
+    permanent mapping behind (list #11)."""
+    asked = []
+
+    def soap(control_url, svc_type, action, args):
+        asked.append(int(args.split("<NewLeaseDuration>")[1].split("<")[0]))
+        return said
+
+    monkeypatch.setattr(upnp, "_soap", soap)
+    assert upnp._add_mapping("http://r/ctrl", "svc", 56666, "TCP", "192.168.1.5") == said
+    assert asked == [upnp.LEASE]
