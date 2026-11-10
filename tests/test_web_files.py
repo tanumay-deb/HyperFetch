@@ -364,3 +364,18 @@ def test_a_page_shown_inline_cannot_run_its_script(env):
     r = _get(c, f"/api/downloads/{t.id}/file?inline=1")
     assert r.headers.get("Content-Security-Policy") == "sandbox"
     assert r.headers.get("X-Content-Type-Options") == "nosniff"
+
+
+@pytest.mark.parametrize("count,cut", [(MAX_LISTED_FILES, False), (MAX_LISTED_FILES + 1, True)])
+def test_a_listing_is_called_cut_short_only_when_it_is(env, count, cut):
+    """A download of exactly as many files as the list holds read "truncated"
+    (2026-11-04, list #20)."""
+    c, q, dl = env
+    d = dl / "many"
+    d.mkdir()
+    for i in range(count):
+        (d / f"f{i:04d}.bin").write_bytes(b"x")
+    t = _task(q, d)
+    body = _get(c, f"/api/downloads/{t.id}/files").get_json()
+    assert len(body["files"]) == MAX_LISTED_FILES
+    assert body["truncated"] is cut

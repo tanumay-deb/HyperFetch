@@ -113,8 +113,9 @@ def _resolve_root(t):
     return candidate
 
 
-def servable_files(t):
-    """The files a finished download is allowed to hand out, in order.
+def servable_files(t, limit=MAX_LISTED_FILES):
+    """The files a finished download is allowed to hand out, in order, no
+    more than `limit` of them.
 
     The root comes from the TASK (``save_path``), never from the request, so
     there is no caller-supplied path to traverse with. Callers pick a file by
@@ -161,7 +162,7 @@ def servable_files(t):
             out.append({"path": full, "name": n,
                         "rel": os.path.relpath(full, real_root).replace("\\", "/"),
                         "size": size})
-            if len(out) >= MAX_LISTED_FILES:
+            if len(out) >= limit:
                 return out
     return out
 
@@ -811,10 +812,13 @@ def create_app(queue, save_dir, pending=None, token=None, pair_requests=None):
         t, missing = _task_or_404(task_id)
         if missing:
             return missing
-        files = servable_files(t)
+        # one past what is listed, to know whether there are more: a
+        # download of exactly as many files as fit read "truncated"
+        files = servable_files(t, MAX_LISTED_FILES + 1)
+        more, files = len(files) > MAX_LISTED_FILES, files[:MAX_LISTED_FILES]
         return jsonify({
             "ready": t.status == T.COMPLETED,
-            "truncated": len(files) >= MAX_LISTED_FILES,
+            "truncated": more,
             # Where it looked, when it found nothing. This is the owner's own
             # machine and their own control page, so the path is theirs to see —
             # and "the file is no longer here" without it is undiagnosable. A
