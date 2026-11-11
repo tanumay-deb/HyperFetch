@@ -183,8 +183,9 @@ def check_mirror(t, url):
 # (name) = ...", OpenSSL's "SHA2-256(name)= ...", "sha256: ...", and what
 # PowerShell's Get-FileHash prints ("Hash : ...", "SHA256  ...  path").
 _SUM_LINE = re.compile(
-    r"\s*(?:([a-f0-9]{64})(?:\s+\*?\S.*)?"
-    r"|(?:SHA(?:2-|-)?256|Hash)\s*(?:\(.*\))?\s*[=:]?\s*([a-f0-9]{64})(?:\s+\S.*)?)\s*",
+    r"\s*(?:(?P<d1>[a-f0-9]{64})(?:\s+\*?(?P<n1>\S.*?))?"
+    r"|(?:SHA(?:2-|-)?256|Hash)\s*(?:\((?P<n2>.*)\))?\s*[=:]?\s*(?P<d2>[a-f0-9]{64})"
+    r"(?:\s+(?P<n3>\S.*?))?)\s*",
     re.I)
 
 
@@ -226,13 +227,16 @@ def _sha256_in_json(data):
     return found.pop() if len(found) == 1 else ""
 
 
-def checksum_in(text):
-    """The SHA-256 a checksum file gives, or "": its first line shaped like
-    one, or what a JSON answer names (_sha256_in_json). Any 64 hex digits
+def checksum_in(text, names=()):
+    """The SHA-256 a checksum file gives, or "": the lines shaped like one,
+    or what a JSON answer names (_sha256_in_json). Any 64 hex digits
     anywhere used to do, and a site that answers every address with a web
     page - its home page, a "not found" that says 200 - often has some on it
     (an asset's hash, a token): a good download read "hash mismatch"
-    (2026-11-06). That stopped JSON being read at all (2026-11-11)."""
+    (2026-11-06). That stopped JSON being read at all (2026-11-11). Of a
+    list of several files' sums, the one naming a file in `names`: the
+    first line was taken, another file's, and read as a mismatch
+    (2026-11-12)."""
     text = text.lstrip()
     if text[:1] == "<":
         return ""                           # a web page, an XML error
@@ -241,11 +245,17 @@ def checksum_in(text):
             return _sha256_in_json(json.loads(text))
         except (ValueError, RecursionError):
             return ""                       # cut short at SIDECAR_MAX, or not JSON
+    found = []                              # (digest, the file it names, or "")
     for line in text.splitlines():
         m = _SUM_LINE.fullmatch(line)
         if m:
-            return (m.group(1) or m.group(2)).lower()
-    return ""
+            found.append(((m.group("d1") or m.group("d2")).lower(),
+                          m.group("n1") or m.group("n2") or m.group("n3") or ""))
+    if len({d for d, _ in found}) <= 1:
+        return found[0][0] if found else ""
+    wanted = {n.lower() for n in names if n}
+    mine = {d for d, n in found if n.replace("\\", "/").rsplit("/", 1)[-1].lower() in wanted}
+    return mine.pop() if len(mine) == 1 else ""
 
 
 def discard_partial(t):
@@ -1089,7 +1099,9 @@ class Downloader:
                         continue
                     head = r.raw.read(SIDECAR_MAX, decode_content=True) or b""
                 # utf-8-sig: a byte order mark at its start is not the line's
-                found = checksum_in(head.decode("utf-8-sig", "replace"))
+                found = checksum_in(head.decode("utf-8-sig", "replace"),
+                                    (urllib.parse.unquote(parts.path.rsplit("/", 1)[-1]),
+                                     self.t.filename))
                 if found:
                     return found
             except (requests.RequestException, urllib3.exceptions.HTTPError, OSError):

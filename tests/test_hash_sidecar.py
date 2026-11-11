@@ -28,6 +28,9 @@ PAGES = {
     "/star.bin.sha256": BOM + ("%s *star.bin\r\n" % DIGEST).encode(),
     "/bare.bin.sha256": DIGEST.encode(),
     "/json.bin.sha256": ('{"name": "json.bin", "sha256": "%s"}' % DIGEST).encode(),
+    # one list for every file of a release, answered at each file's .sha256
+    "/multi.bin.sha256": ("%s *setup.exe\n%s *multi.bin\n"
+                          % (hashlib.sha256(b"another").hexdigest(), DIGEST)).encode(),
 }
 
 
@@ -103,7 +106,7 @@ def test_a_web_page_where_the_checksum_would_be_is_no_checksum(site, tmp_path, n
     assert _expected(site.url + "/" + name, tmp_path) is None
 
 
-@pytest.mark.parametrize("name", ["bsd.bin", "star.bin", "bare.bin", "json.bin"])
+@pytest.mark.parametrize("name", ["bsd.bin", "star.bin", "bare.bin", "json.bin", "multi.bin"])
 def test_the_usual_shapes_of_a_checksum_file_are_read(site, tmp_path, name):
     assert _expected(site.url + "/" + name, tmp_path) == DIGEST
 
@@ -163,3 +166,18 @@ def test_a_checksum_sent_as_json_is_read(text):
 def test_json_that_names_no_one_sha256(text):
     from downloader import checksum_in
     assert checksum_in(text) == ""
+
+
+def test_a_list_of_several_files_gives_this_ones_sum():
+    """The first line was taken, another file's: a good download read "hash
+    mismatch" (2026-11-12). This file's line, or none."""
+    from downloader import checksum_in
+    other = hashlib.sha256(b"another").hexdigest()
+    listed = "%s  setup.exe\n%s  dir/f.bin\n" % (other, DIGEST)
+    assert checksum_in(listed, ["f.bin"]) == DIGEST
+    assert checksum_in(listed, ["F.BIN"]) == DIGEST
+    assert checksum_in("SHA256 (setup.exe) = %s\nSHA256 (f.bin) = %s\n" % (other, DIGEST),
+                       ["f.bin"]) == DIGEST
+    assert checksum_in(listed, ["missing.bin"]) == "", "another file's sum: a false mismatch"
+    assert checksum_in(listed) == ""
+    assert checksum_in("%s  f.bin\n%s  f.bin\n" % (DIGEST, DIGEST)) == DIGEST, "one sum, twice"
