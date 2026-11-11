@@ -256,7 +256,10 @@ class PageBuilderMixin:
                   "that one site up over secure DNS, and send the start of each "
                   "connection to it in two pieces so the provider's filter does "
                   "not cut it. Everything else is left as it is.", self.dns_auto)
-        self._host_rules = dict(ex.get("host_rules", {}) or {})
+        # each rule copied too: the dialog's rows write into a rule, and with
+        # the saved one shared an edit was live at once and Cancel kept it
+        self._host_rules = {h: dict(r) for h, r in (ex.get("host_rules") or {}).items()
+                            if isinstance(r, dict)}
         n = len(self._host_rules)
         self.hostrules_btn = QPushButton("Configure" if not n else f"Edit ({n})")
         self.hostrules_btn.clicked.connect(self._open_host_rules)

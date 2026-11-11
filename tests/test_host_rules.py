@@ -115,3 +115,21 @@ def test_the_dialog_keeps_a_host_as_a_link_names_it():
         dlg._add()
     assert sorted(rules) == ["::1", "example.com", "files.example.org", "xn--bcher-kva.de"]
 
+
+def test_cancel_in_settings_undoes_an_edit_to_a_rule():
+    """Settings' copy of the rules shared each rule with the saved ones: an
+    edit in Per-host rules (its rows write into the rule) was live at once,
+    and Cancel kept it (2026-11-12)."""
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication
+    from gui2.dialogs.settings import SettingsDialogV2
+    QApplication.instance() or QApplication([])
+    saved = {"host_rules": {"a.com": {"segments": 4, "ytdlp": False}}}
+    dlg = SettingsDialogV2(None, extras=saved, save_dir=".", max_concurrent=3, segments=8,
+                           verify_tls=True, pair_token="T", theme="Dark", accent="purple",
+                           sched_en=False, sched_start="00:00", sched_stop="06:00")
+    try:
+        dlg._host_rules["a.com"]["segments"] = 9         # as the rule's spin box writes
+        assert saved["host_rules"]["a.com"]["segments"] == 4, "changed before Save"
+    finally:
+        dlg.deleteLater()
