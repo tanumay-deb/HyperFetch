@@ -28,7 +28,7 @@ hidden = (
     # local modules reached via lazy `import` inside functions
     ['hls', 'downloader', 'queue_manager', 'api_server', 'task', 'utils',
      'crash_reporter', 'updater', 'torrent', 'aria2d', 'yt_dl', 'doh', 'unblock', 'upnp',
-     'history', 'trackers', 'scrape', 'swarm',
+     'history', 'trackers', 'scrape', 'swarm', 'third_party',
      'gui2.dialogs.history', 'gui2.dialogs.queues', 'gui2.dialogs.console',
      'gui2.dialogs.host_rules', 'gui2.dialogs.welcome']
     + crypto_hidden + ytdlp_hidden
@@ -78,6 +78,16 @@ a = Analysis(
               'PySide6.QtBluetooth', 'PySide6.QtPdf'],
     noarchive=False,
 )
+
+# Every package the build ships - those of the files Analysis collected - with
+# its version, licence and licence texts, as licenses/third-party/
+# (third_party.py; Settings -> About -> Credits reads its credits.json)
+sys.path.insert(0, SPECPATH)
+import third_party
+third_party.write(os.path.join('build', third_party.FOLDER),
+                  files=[src for _, src, _ in a.pure + a.binaries + a.datas])
+a.datas += Tree(os.path.join('build', third_party.FOLDER),
+                prefix=os.path.join('licenses', third_party.FOLDER))
 pyz = PYZ(a.pure)
 
 exe = EXE(

@@ -19,7 +19,7 @@ def _read(*parts):
 
 def test_each_licence_text_is_the_real_one():
     aria2 = _read("licenses", "aria2-COPYING.txt")
-    ffmpeg = _read("licenses", "FFmpeg-COPYING.GPLv3.txt")
+    ffmpeg = _read("licenses", "GPL-3.0-only.txt")         # FFmpeg's COPYING.GPLv3
     assert "GNU GENERAL PUBLIC LICENSE" in aria2[:200] and "Version 2, June 1991" in aria2[:200]
     assert "GNU GENERAL PUBLIC LICENSE" in ffmpeg[:200] and "Version 3, 29 June 2007" in ffmpeg[:200]
     assert "END OF TERMS AND CONDITIONS" in aria2 and "END OF TERMS AND CONDITIONS" in ffmpeg
@@ -32,7 +32,7 @@ def test_the_notice_says_what_is_shipped_and_where_its_source_is():
     assert ("release-%s/aria2-%s.tar.xz" % (aria2_version, aria2_version)) in notice
     assert "https://github.com/BtbN/FFmpeg-Builds" in notice
     assert "https://github.com/FFmpeg/FFmpeg" in notice and "FFmpeg-version.txt" in notice
-    for name in ("aria2-COPYING.txt", "FFmpeg-COPYING.GPLv3.txt"):
+    for name in ("aria2-COPYING.txt", "GPL-3.0-only.txt"):
         assert name in notice and os.path.isfile(os.path.join(LICENSES, name)), name
     assert "three years" in notice and "/issues" in notice, "no written offer of the source"
 
@@ -48,3 +48,18 @@ def test_credits_points_at_the_notice():
     from gui2.dialogs import settings_pages
     assert "THIRD-PARTY-NOTICES.txt" in inspect.getsource(
         settings_pages.PageBuilderMixin._show_credits)
+
+
+def test_qt_goes_with_the_lgpl_and_where_its_source_is():
+    """Qt's wheels carry only Qt's commercial licence; HyperFetch uses Qt
+    under the LGPL-3.0 and shipped no text of it (2026-11-11)."""
+    lgpl = _read("licenses", "LGPL-3.0-only.txt")
+    assert "GNU LESSER GENERAL PUBLIC LICENSE" in lgpl[:200] and "Version 3, 29 June 2007" in lgpl[:200]
+    assert "0. Additional Definitions." in lgpl
+    version = re.search(r"^PySide6==([\d.]+)$", _read("requirements.txt"), re.M).group(1)
+    notice = _read("licenses", "THIRD-PARTY-NOTICES.txt")
+    assert ("Qt %s" % version) in notice and ("PySide6 %s" % version) in notice
+    minor = version.rsplit(".", 1)[0]
+    assert ("archive/qt/%s/%s/single/qt-everywhere-src-%s.tar.xz" % (minor, version, version)) in notice
+    assert ("PySide6-%s-src/pyside-setup-everywhere-src-%s.tar.xz" % (version, version)) in notice
+    assert "LGPL-3.0-only.txt" in notice and "GPL-3.0-only.txt" in notice

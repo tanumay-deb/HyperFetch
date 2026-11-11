@@ -1,11 +1,13 @@
-HyperFetch - programs of other authors licensed under the GNU GPL
-==================================================================
+HyperFetch - parts by other authors under the GNU GPL and LGPL
+==============================================================
 
 HyperFetch ships two programs of other authors that are licensed under the
-GNU General Public License. They are separate programs that HyperFetch
-starts; HyperFetch's own code is under the MIT License (LICENSE). Every
-other part HyperFetch is built on is listed, with its licence, under
-Settings -> About -> Credits.
+GNU General Public License, and the Qt libraries, under the GNU Lesser
+General Public License. aria2 and FFmpeg are separate programs that
+HyperFetch starts; HyperFetch's own code is under the MIT License (LICENSE).
+Every package HyperFetch is built from is listed, with its version, its
+licence and its licence texts, in third-party\credits.json beside this file
+(the texts are in third-party\), and under Settings -> About -> Credits.
 
 
 aria2 1.37.0 (bin\aria2c.exe) - the torrent engine
@@ -28,8 +30,8 @@ Copyright (c) 2000-2026 the FFmpeg developers
 
 Licence:  GNU General Public License, version 3 or (at your option) any
           later version: a "gpl" build, configured with --enable-gpl and
-          --enable-version3. The licence text: FFmpeg-COPYING.GPLv3.txt
-          (FFmpeg's own COPYING.GPLv3 file).
+          --enable-version3. The licence text: GPL-3.0-only.txt (FFmpeg's
+          own COPYING.GPLv3 file, byte for byte).
 Binary:   ffmpeg-master-latest-win64-gpl.zip, from
           https://github.com/BtbN/FFmpeg-Builds
 Version:  FFmpeg-version.txt, beside this file, is the first line that
@@ -38,6 +40,27 @@ Version:  FFmpeg-version.txt, beside this file, is the first line that
 Source:   https://github.com/FFmpeg/FFmpeg/tree/<that commit>, and the scripts
           it was built with, which fetch the exact source of every library
           in it: https://github.com/BtbN/FFmpeg-Builds
+
+
+Qt 6.11.0, through Qt for Python (PySide6 6.11.0) - the window
+--------------------------------------------------------------
+Copyright (C) The Qt Company Ltd. and other contributors
+
+Licence:  GNU Lesser General Public License, version 3. The licence texts:
+          LGPL-3.0-only.txt and GPL-3.0-only.txt (the LGPL is a set of
+          additions to the GPL), as Qt's own repository carries them
+          (qtbase, tag v6.11.0, LICENSES\).
+Binary:   the PySide6, PySide6_Essentials, PySide6_Addons and shiboken6
+          6.11.0 wheels, as The Qt Company publishes them on
+          https://pypi.org/project/PySide6/. HyperFetch uses them unchanged.
+          They are separate files in HyperFetch's folder (_internal\PySide6\,
+          _internal\shiboken6\): another build of the same version can be
+          put in their place.
+Source:   Qt:      https://download.qt.io/archive/qt/6.11/6.11.0/single/qt-everywhere-src-6.11.0.tar.xz
+          PySide6: https://download.qt.io/official_releases/QtForPython/pyside6/PySide6-6.11.0-src/pyside-setup-everywhere-src-6.11.0.tar.xz
+Inside:   Qt carries code of other authors (zlib, libpng, FreeType,
+          HarfBuzz, PCRE2 and more); each, with its licence, is listed at
+          https://doc.qt.io/qt-6.11/licenses-used-in-qt.html
 
 
 Written offer
