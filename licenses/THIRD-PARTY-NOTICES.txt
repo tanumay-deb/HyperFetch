@@ -1,0 +1,49 @@
+HyperFetch - programs of other authors licensed under the GNU GPL
+==================================================================
+
+HyperFetch ships two programs of other authors that are licensed under the
+GNU General Public License. They are separate programs that HyperFetch
+starts; HyperFetch's own code is under the MIT License (LICENSE). Every
+other part HyperFetch is built on is listed, with its licence, under
+Settings -> About -> Credits.
+
+
+aria2 1.37.0 (bin\aria2c.exe) - the torrent engine
+--------------------------------------------------
+Copyright (C) 2006, 2019 Tatsuhiro Tsujikawa
+
+Licence:  GNU General Public License, version 2 or (at your option) any
+          later version, with the OpenSSL linking exception that aria2's
+          source carries. The licence text: aria2-COPYING.txt (aria2's own
+          COPYING file, from its release-1.37.0 tag).
+Binary:   aria2-1.37.0-win-64bit-build1.zip, as published at
+          https://github.com/aria2/aria2/releases/tag/release-1.37.0
+Source:   https://github.com/aria2/aria2/releases/download/release-1.37.0/aria2-1.37.0.tar.xz
+          (and the repository: https://github.com/aria2/aria2, tag release-1.37.0)
+
+
+FFmpeg (bin\ffmpeg.exe) - joins and rewrites videos
+---------------------------------------------------
+Copyright (c) 2000-2026 the FFmpeg developers
+
+Licence:  GNU General Public License, version 3 or (at your option) any
+          later version: a "gpl" build, configured with --enable-gpl and
+          --enable-version3. The licence text: FFmpeg-COPYING.GPLv3.txt
+          (FFmpeg's own COPYING.GPLv3 file).
+Binary:   ffmpeg-master-latest-win64-gpl.zip, from
+          https://github.com/BtbN/FFmpeg-Builds
+Version:  FFmpeg-version.txt, beside this file, is the first line that
+          bin\ffmpeg.exe -version printed when this copy of HyperFetch was
+          built. The part after "-g" is the FFmpeg commit.
+Source:   https://github.com/FFmpeg/FFmpeg/tree/<that commit>, and the scripts
+          it was built with, which fetch the exact source of every library
+          in it: https://github.com/BtbN/FFmpeg-Builds
+
+
+Written offer
+-------------
+For at least three years from the date of each HyperFetch release, anyone
+may have the complete corresponding source code of the aria2 and FFmpeg that
+release ships, at no charge beyond the cost of providing it: ask by opening
+an issue at https://github.com/tanumay-deb/HyperFetch/issues and naming the
+HyperFetch version.

@@ -705,8 +705,15 @@ class PageBuilderMixin:
         import html
         rows = "".join('<p><a href="%s">%s</a> &mdash; %s</p>' % (
             url, html.escape(name), html.escape(lic)) for name, lic, url in CREDITS)
+        from PySide6.QtCore import QUrl
+        from gui.theme import resource_path
+        notices = QUrl.fromLocalFile(resource_path("licenses", "THIRD-PARTY-NOTICES.txt"))
         self._show_text("Credits", "<p>HyperFetch is built on, and ships with:</p>" + rows
-                        + "<p>and the libraries they use.</p>", rich=True)
+                        + "<p>and the libraries they use.</p>"
+                        "<p>aria2 and FFmpeg are under the GNU GPL: their licences, the "
+                        "versions shipped and where their source is are in "
+                        '<a href="%s">THIRD-PARTY-NOTICES.txt</a>.</p>'
+                        % notices.toString(), rich=True)
 
     def _show_text(self, title, text, rich=False):
         from PySide6.QtWidgets import QDialog, QDialogButtonBox, QTextBrowser

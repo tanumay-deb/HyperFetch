@@ -51,6 +51,15 @@ elif os.path.isfile(os.path.join('bin', 'aria2c')):
 # ffmpeg for yt-dlp merges (1080p/4K + DASH-only videos); optional
 if os.path.isfile(os.path.join('bin', 'ffmpeg.exe')):
     extra_datas.append(('bin/ffmpeg.exe', 'bin'))
+    # Which FFmpeg this is - build.ps1 fetches the latest - goes beside the GPL
+    # notice (licenses/THIRD-PARTY-NOTICES.txt): its commit is where its source is.
+    import subprocess
+    _ver = subprocess.run([os.path.join('bin', 'ffmpeg.exe'), '-hide_banner', '-version'],
+                          capture_output=True, text=True, timeout=60).stdout.splitlines()
+    os.makedirs('build', exist_ok=True)
+    with open(os.path.join('build', 'FFmpeg-version.txt'), 'w', encoding='utf-8') as _f:
+        print(_ver[0] if _ver else 'unknown', file=_f)
+    extra_datas.append((os.path.join('build', 'FFmpeg-version.txt'), 'licenses'))
 
 a = Analysis(
     ['main.py'],
@@ -58,7 +67,9 @@ a = Analysis(
     binaries=crypto_binaries + ytdlp_binaries,
     datas=[('assets/icon.ico', 'assets'), ('assets/icon.png', 'assets'),
            ('assets/icons', 'assets/icons'),
-           ('LICENSE', '.')] + extra_datas + crypto_datas + ytdlp_datas,   # About -> License
+           ('LICENSE', '.'),                                # About -> License
+           ('licenses', 'licenses'),     # the GPL programs' licences + where their source is
+           ] + extra_datas + crypto_datas + ytdlp_datas,
     hiddenimports=hidden,
     hookspath=[],
     runtime_hooks=[],
