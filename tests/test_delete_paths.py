@@ -300,6 +300,17 @@ def _pending():
     return utils.load_json(app_shortcuts._pending_path(), [])
 
 
+def _join_deletes(timeout=30):
+    """Wait for the delete threads, then read: a read polled while one writes
+    the list holds the file open, and on Windows the write's replace is then
+    refused - the path stayed listed, and CI's windows/py3.12 failed
+    (2026-11-11). The app has no such reader."""
+    import threading
+    for th in threading.enumerate():
+        if th.name == "delete":
+            th.join(timeout)
+
+
 def test_the_paths_are_noted_before_the_wait_and_crossed_off_after(tmp_path, monkeypatch):
     import threading
     import time
@@ -316,12 +327,14 @@ def test_the_paths_are_noted_before_the_wait_and_crossed_off_after(tmp_path, mon
     assert _pending() == [str(payload)], "nothing noted while it waits for the engine"
     t._worker_alive = False
     assert _gone(payload)
-    assert _wait_for(lambda: _pending() == []), _pending()
+    _join_deletes()
+    assert _pending() == []
 
 
 def _resume(win):
     S._resume_deletes(win)
-    assert _wait_for(lambda: _pending() == []), _pending()
+    _join_deletes()
+    assert _pending() == []
 
 
 def test_a_delete_the_close_cut_short_is_done_at_the_next_start(tmp_path):
