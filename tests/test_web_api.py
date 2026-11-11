@@ -286,3 +286,27 @@ def test_the_window_saves_it_on_its_next_tick():
     DownloadAppV2._save_web_changes(win)
     assert saved == [1] and win.queue.changed_elsewhere is False
     assert "self._save_web_changes()" in inspect.getsource(DownloadAppV2.refresh)
+
+
+@pytest.mark.parametrize("path, body", [
+    ("/api/downloads", [1]),
+    ("/api/downloads", {"url": 5}),
+    ("/api/downloads/task-1/limit", [1]),
+    ("/api/downloads/task-1/limit", {"bps": float("inf")}),     # JSON's Infinity
+    ("/api/downloads/task-1/move", [1]),
+    ("/api/downloads/task-1/rename", {"name": 5}),
+    ("/api/downloads/task-1/rename", [1]),
+])
+def test_a_body_that_is_not_what_it_should_be_is_refused_not_a_crash(env, path, body):
+    """An array where an object goes, a number where text goes, or Infinity
+    for a limit was a 500 for a 400 (2026-11-12). A body that is no object
+    is no body: no limit, as an empty one always meant."""
+    c, _q, _t = env
+    _login(c)
+    assert _post(c, path, json=body).status_code < 500, (path, body)
+
+
+def test_a_sign_in_that_is_not_text_is_refused_not_a_crash(env):
+    c, _q, _t = env
+    _enable()
+    assert _post(c, "/api/login", json={"username": 5, "password": ["x"]}).status_code < 500

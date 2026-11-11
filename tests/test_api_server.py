@@ -527,3 +527,17 @@ def test_probe_refuses_a_wrong_token_before_it_reads_the_link(tmp_path):
     ask = lambda tok: c.post("/probe", json={"url": ""},
                              headers={"X-HyperFetch-Token": tok}).status_code
     assert (ask("stale"), ask("tok")) == (401, 400)
+
+
+@pytest.mark.parametrize("route", ["/download", "/probe", "/open", "/focus", "/pair/request"])
+@pytest.mark.parametrize("body", [[1, 2], 5, "a link",
+                                  {"url": 5, "target": ["x"], "filename": 3, "code": [],
+                                   "cookies": {"a": 1}, "hlsMaster": 7}])
+def test_a_body_that_is_not_what_it_should_be_is_refused_not_a_crash(tmp_path, route, body):
+    """A JSON array, or a number where text goes, went to .get / .strip: a
+    500 for a 400 (2026-11-12)."""
+    import types
+    pairing = types.SimpleNamespace(request=lambda origin, code: "pending")
+    app = create_app(_FakeQueue(), str(tmp_path), pending=deque(), pair_requests=pairing)
+    r = app.test_client().post(route, json=body, headers={"Origin": "moz-extension://a-b"})
+    assert r.status_code < 500, (route, body, r.status_code)

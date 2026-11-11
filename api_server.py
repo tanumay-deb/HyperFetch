@@ -182,6 +182,27 @@ def is_loopback(remote_addr):
     return (remote_addr or "") in LOOPBACK_ADDRS
 
 
+def _body():
+    """The request's JSON object, else {}: a body that is another kind of JSON
+    - an array, a number - went to .get, a 500 on every route (2026-11-12)."""
+    data = request.get_json(silent=True)
+    return data if isinstance(data, dict) else {}
+
+
+def _text(data, key):
+    """A field that should be text, else "": a number or a list there raised
+    in .strip() - a 500 for a 400 (2026-11-12)."""
+    v = data.get(key)
+    return v if isinstance(v, str) else ""
+
+
+def _browser_headers(data):
+    """The Cookie, User-Agent and Referer the extension sends with a link."""
+    return {header: _text(data, key) for key, header in
+            (("cookies", "Cookie"), ("userAgent", "User-Agent"), ("referrer", "Referer"))
+            if _text(data, key)}
+
+
 def create_app(queue, save_dir, pending=None, token=None, pair_requests=None):
     app = Flask(__name__)
     # Only browser-extension origins may call cross-origin. Websites use http(s)
@@ -283,7 +304,7 @@ def create_app(queue, save_dir, pending=None, token=None, pair_requests=None):
             resp = jsonify({"status": "unavailable"})
             resp.status_code = 404
         else:
-            data = request.get_json(silent=True) or {}
+            data = _body()
             state = pair_requests.request(origin, str(data.get("code", "")))
             body = {"status": state}
             if state == "approved":
@@ -352,19 +373,13 @@ def create_app(queue, save_dir, pending=None, token=None, pair_requests=None):
         if not is_loopback(request.remote_addr):
             return jsonify({"status": "error",
                             "message": "local requests only"}), 403
-        data = request.get_json(silent=True) or {}
+        data = _body()
         if not _authorized(data):
             return jsonify({"status": "error", "message": "unauthorized"}), 401
-        url = (data.get("url") or "").strip()
+        url = _text(data, "url").strip()
         if not url.lower().startswith(("http://", "https://")):
             return jsonify({"status": "error", "message": "invalid url"}), 400
-        headers = {}
-        if data.get("cookies"):
-            headers["Cookie"] = data["cookies"]
-        if data.get("userAgent"):
-            headers["User-Agent"] = data["userAgent"]
-        if data.get("referrer"):
-            headers["Referer"] = data["referrer"]
+        headers = _browser_headers(data)
         import hls
         try:
             found = hls.probe(url, headers)
@@ -379,16 +394,16 @@ def create_app(queue, save_dir, pending=None, token=None, pair_requests=None):
         if not is_loopback(request.remote_addr):
             return jsonify({"status": "error",
                             "message": "local requests only"}), 403
-        data = request.get_json(silent=True) or {}
+        data = _body()
         if not _authorized(data):
             return jsonify({"status": "error", "message": "unauthorized"}), 401
 
-        url = (data.get("url") or "").strip()
+        url = _text(data, "url").strip()
         # real web downloads + magnet links; block file://, chrome://, javascript:
         if not url.lower().startswith(("http://", "https://", "magnet:")):
             return jsonify({"status": "error", "message": "invalid url"}), 400
 
-        suggested = data.get("filename") or ""
+        suggested = _text(data, "filename")
 
         # Auto-capture allowlist: the extension's browser-download capture sends
         # auto=true. Reject (so the browser keeps the file) when its extension is
@@ -402,20 +417,13 @@ def create_app(queue, save_dir, pending=None, token=None, pair_requests=None):
         log.info("server received download: %s", url)
 
         # browser context for auth-gated hosts (Google Drive etc.)
-        headers = {}
-        if data.get("cookies"):
-            headers["Cookie"] = data["cookies"]
-        if data.get("userAgent"):
-            headers["User-Agent"] = data["userAgent"]
-        if data.get("referrer"):
-            headers["Referer"] = data["referrer"]
+        headers = _browser_headers(data)
 
         def link(key):
             """A second web link the extension sends with the download: the
             master playlist a stream's quality came from (hlsMaster), the link
             the browser started at before a signed one (origUrl)."""
-            v = data.get(key)
-            v = v.strip() if isinstance(v, str) else ""
+            v = _text(data, key).strip()
             return v if v.lower().startswith(("http://", "https://")) else ""
 
         hls_master, orig_url = link("hlsMaster"), link("origUrl")
@@ -449,7 +457,7 @@ def create_app(queue, save_dir, pending=None, token=None, pair_requests=None):
         if not is_loopback(request.remote_addr):
             return jsonify({"status": "error",
                             "message": "local requests only"}), 403
-        data = request.get_json(silent=True) or {}
+        data = _body()
         if not _authorized(data):
             return jsonify({"status": "error", "message": "unauthorized"}), 401
         if pending is None:
@@ -468,10 +476,10 @@ def create_app(queue, save_dir, pending=None, token=None, pair_requests=None):
         if not is_loopback(request.remote_addr):
             return jsonify({"status": "error",
                             "message": "local requests only"}), 403
-        data = request.get_json(silent=True) or {}
+        data = _body()
         if not _authorized(data):
             return jsonify({"status": "error", "message": "unauthorized"}), 401
-        target = (data.get("target") or "").strip()
+        target = _text(data, "target").strip()
         if not (target.lower().startswith("magnet:") or target.lower().endswith(".torrent")):
             return jsonify({"status": "error", "message": "not a torrent/magnet"}), 400
         if pending is not None:
@@ -549,7 +557,7 @@ def create_app(queue, save_dir, pending=None, token=None, pair_requests=None):
 
     @app.route("/api/login", methods=["POST"])
     def api_login():
-        data = request.get_json(silent=True) or {}
+        data = _body()
         addr = request.remote_addr or "?"
         if not web_auth.is_enabled():
             return jsonify({"status": "error", "code": "disabled",
@@ -567,7 +575,7 @@ def create_app(queue, save_dir, pending=None, token=None, pair_requests=None):
                             "retryAfter": int(wait) + 1}), 429
         ok = False
         try:
-            ok = web_auth.verify(data.get("username") or "", data.get("password") or "")
+            ok = web_auth.verify(_text(data, "username"), _text(data, "password"))
         finally:
             throttle.end(addr, ok)
         if not ok:
@@ -684,8 +692,8 @@ def create_app(queue, save_dir, pending=None, token=None, pair_requests=None):
         deny = require_web_auth()
         if deny:
             return deny
-        data = request.get_json(silent=True) or {}
-        url = (data.get("url") or "").strip()
+        data = _body()
+        url = _text(data, "url").strip()
         # same allow-list as the extension endpoint: no file://, no chrome://,
         # no javascript:. This one is reachable from the network, so it matters
         # more here, not less.
@@ -728,8 +736,8 @@ def create_app(queue, save_dir, pending=None, token=None, pair_requests=None):
         if missing:
             return missing
         try:
-            bps = max(0, int((request.get_json(silent=True) or {}).get("bps", 0)))
-        except (TypeError, ValueError):
+            bps = max(0, int(_body().get("bps", 0)))
+        except (TypeError, ValueError, OverflowError):     # Infinity is JSON to Python
             return jsonify({"status": "error", "message": "bad limit"}), 400
         t.speed_limit = bps
         try:
@@ -746,7 +754,7 @@ def create_app(queue, save_dir, pending=None, token=None, pair_requests=None):
         t, missing = _task_or_404(task_id)
         if missing:
             return missing
-        where = (request.get_json(silent=True) or {}).get("where", "")
+        where = _body().get("where", "")
         if where not in ("top", "up", "down", "bottom"):
             return jsonify({"status": "error", "message": "bad direction"}), 400
         queue.move(t, where)
@@ -770,7 +778,7 @@ def create_app(queue, save_dir, pending=None, token=None, pair_requests=None):
             return missing
         if _torrent.is_torrent_task(t.url, t.filename):
             return jsonify({"status": "error", "message": _torrent.NAMES_KEPT}), 409
-        raw = ((request.get_json(silent=True) or {}).get("name") or "").strip()
+        raw = _text(_body(), "name").strip()
         # Ask before sanitising, not after: safe_filename never returns empty,
         # it falls back to "download". Checking its output would let a name of
         # spaces through and quietly rename the file to that.
