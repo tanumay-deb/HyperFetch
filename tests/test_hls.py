@@ -74,6 +74,12 @@ def hls_server(aes_tools):
         "langs-text.m3u8": (langs("अंग्रेज़ी", hindi_first=True), "text/plain"),
         "en.m3u8": (media("seg").encode(), "application/vnd.apple.mpegurl"),
         "hi.m3u8": (media("seg").encode(), "application/vnd.apple.mpegurl"),
+        # playlists that moved: old/ answers with where they are now (new/),
+        # whose links are relative to new/ (2026-11-12)
+        "old/master.m3u8": ("/new/master.m3u8", "redirect"),
+        "old/high.m3u8": ("/new/high.m3u8", "redirect"),
+        "new/master.m3u8": (with_sound("audio.m3u8"), "application/vnd.apple.mpegurl"),
+        "new/high.m3u8": (media("seg").encode(), "application/vnd.apple.mpegurl"),
         "sep.m3u8": (with_sound("audio.m3u8"), "application/vnd.apple.mpegurl"),
         "muxed.m3u8": (with_sound(""), "application/vnd.apple.mpegurl"),
         "dubbed.m3u8": (dubbed, "application/vnd.apple.mpegurl"),
@@ -97,6 +103,7 @@ def hls_server(aes_tools):
     for i in range(5):
         routes[f"seg{i}.ts"] = (segs[i], "video/mp2t")
         routes[f"enc{i}.ts"] = (enc_segs[i], "video/mp2t")
+        routes[f"new/seg{i}.ts"] = (segs[i], "video/mp2t")
 
     # one file holding the init section and every segment, a byte range of it
     # each (#EXT-X-BYTERANGE; no "@" = on from the last range). plain.mp4 is
@@ -129,7 +136,12 @@ def hls_server(aes_tools):
             p = self.path.split("?")[0].lstrip("/")
             asked.append(p)
             rng = self.headers.get("Range")
-            if p in routes and rng and p != "plain.mp4":
+            if p in routes and routes[p][1] == "redirect":
+                self.send_response(302)
+                self.send_header("Location", routes[p][0])
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+            elif p in routes and rng and p != "plain.mp4":
                 body, ct = routes[p]
                 a, _, b = rng[len("bytes="):].partition("-")
                 a, b = int(a), min(int(b), len(body) - 1)
@@ -449,6 +461,29 @@ def test_quality_strings_from_before_read_as_they_did(tmp_path, monkeypatch):
         monkeypatch.setattr(yt_dl, "_ffmpeg_dir", lambda: str(tmp_path) if ffmpeg else None)
         t.yt_format = given
         assert yt_dl._choosing_opts(t, str(tmp_path))[0]["format"] == wanted, given
+
+
+def test_a_master_that_moved_still_hands_its_stream_over(hls_server, tmp_path, to_ytdlp):
+    """The browser read the master where it was sent (new/) and picked
+    new/high.m3u8; the engine joined the master's links against the address
+    it asked (old/), found no such quality, and saved the picture alone,
+    "Completed" (2026-11-12). It is handed over by the address it was given."""
+    t = T.DownloadTask(f"{hls_server.base}/new/high.m3u8", str(tmp_path / "Clip.m3u8"),
+                       filename="Clip.m3u8")
+    t.hls_master = f"{hls_server.base}/old/master.m3u8"
+    Downloader(t).run()
+    assert [h["url"] for h in to_ytdlp] == [f"{hls_server.base}/old/master.m3u8"]
+
+
+def test_a_playlist_that_moved_is_read_where_it_went(hls_server, tmp_path, to_ytdlp):
+    """Its segments are named relative to where it was sent, as a player
+    reads them: joined against the address asked, every one was a 404."""
+    t = T.DownloadTask(f"{hls_server.base}/old/high.m3u8", str(tmp_path / "Clip.m3u8"),
+                       filename="Clip.m3u8")
+    Downloader(t).run()
+    assert t.status == T.COMPLETED, t.error
+    assert open(t.save_path, "rb").read() == hls_server.plain_total
+    assert "new/seg0.ts" in hls_server.asked
 
 
 def test_a_master_given_as_it_is_goes_there_too(hls_server, tmp_path, to_ytdlp):

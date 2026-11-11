@@ -326,8 +326,16 @@ class HlsDownloader:
         return s
 
     # ----------------------------------------------------------- playlist parse
+    def _fetch(self, url):
+        """A playlist's text and the address it came from after redirects:
+        its links are relative to that one, as a player reads them. Joined
+        against the address asked, a moved playlist's segments were 404s and
+        a moved master named no quality the browser picked (2026-11-12)."""
+        r = _get(self.session, url, self.headers)
+        return _playlist_text(r), r.url
+
     def _fetch_text(self, url):
-        return _playlist_text(_get(self.session, url, self.headers))
+        return self._fetch(url)[0]
 
     def _is_master(self, text):
         return "#EXT-X-STREAM-INF" in text
@@ -741,22 +749,24 @@ class HlsDownloader:
         os.makedirs(os.path.dirname(self.t.save_path) or ".", exist_ok=True)
         temp_path = utils.temp_download_path(self.t)
 
-        master = master_url = ""     # where the quality was picked, if known
+        # where the quality was picked, if known: as given (master_url), and
+        # where it came from (master_base, which its links are joined against)
+        master = master_url = master_base = ""
+        picked = self.t.url          # the quality, by the address it was asked at
         try:
-            text = self._fetch_text(self.t.url)
-            base = self.t.url
+            text, base = self._fetch(self.t.url)
             if self._is_master(text):
-                master, master_url = text, self.t.url
+                master, master_url, master_base = text, self.t.url, base
                 variant = self._pick_variant(text, base)
                 if not variant:
                     raise RuntimeError("no playable variant in master playlist")
-                base = variant
-                text = self._fetch_text(variant)
+                picked = variant
+                text, base = self._fetch(variant)
             elif getattr(self.t, "hls_master", ""):
                 # the browser picked this quality from it (task.hls_master)
                 master_url = self.t.hls_master
                 try:
-                    master = self._fetch_text(master_url)
+                    master, master_base = self._fetch(master_url)
                 except requests.RequestException as e:
                     log.info("HLS: the master playlist would not come (%s); the "
                              "stream as it was picked", type(e).__name__)
@@ -771,12 +781,12 @@ class HlsDownloader:
             self.t.error = "HLS playlist had no segments (live stream or DRM?)"
             return
 
-        if not endlist and self._is_live_window(base, text):
+        if not endlist and self._is_live_window(picked, text):
             self.t.status = T.ERROR
             self.t.error = LIVE_STREAM
             return
 
-        apart = self._sound_apart(master, master_url, base) if master else None
+        apart = self._sound_apart(master, master_base, picked) if master else None
         if apart is not None:
             self._to_ytdlp(master_url, *apart)
             return
