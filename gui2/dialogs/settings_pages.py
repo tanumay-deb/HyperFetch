@@ -17,22 +17,6 @@ import os
 import crash_reporter
 import utils
 
-# What the Windows build ships besides HyperFetch's own code, for About ->
-# Credits: (name, licence, where it lives).
-CREDITS = (
-    ("Python", "PSF License", "https://www.python.org/"),
-    ("Qt for Python (PySide6)", "LGPL-3.0", "https://doc.qt.io/qtforpython-6/"),
-    ("aria2", "GPL-2.0-or-later", "https://aria2.github.io/"),
-    ("FFmpeg", "GPL-3.0-or-later", "https://ffmpeg.org/"),
-    ("yt-dlp", "Unlicense", "https://github.com/yt-dlp/yt-dlp"),
-    ("Flask", "BSD-3-Clause", "https://flask.palletsprojects.com/"),
-    ("Flask-CORS", "MIT", "https://github.com/corydolphin/flask-cors"),
-    ("Waitress", "ZPL-2.1", "https://github.com/Pylons/waitress"),
-    ("Requests", "Apache-2.0", "https://requests.readthedocs.io/"),
-    ("cryptography", "Apache-2.0 or BSD-3-Clause", "https://cryptography.io/"),
-    ("PyInstaller", "GPL-2.0-or-later with its bootloader exception",
-     "https://pyinstaller.org/"),
-)
 from gui.theme import APP_VERSION
 
 try:
@@ -699,18 +683,29 @@ class PageBuilderMixin:
         self._show_text("License", text)
 
     def _show_credits(self):
+        """What the build ships, as its build listed it (third_party): the
+        list was typed by hand - eleven of the two dozen (2026-11-11)."""
         import html
-        rows = "".join('<p><a href="%s">%s</a> &mdash; %s</p>' % (
-            url, html.escape(name), html.escape(lic)) for name, lic, url in CREDITS)
+        import third_party
         from PySide6.QtCore import QUrl
         from gui.theme import resource_path
-        notices = QUrl.fromLocalFile(resource_path("licenses", "THIRD-PARTY-NOTICES.txt"))
-        self._show_text("Credits", "<p>HyperFetch is built on, and ships with:</p>" + rows
-                        + "<p>and the libraries they use.</p>"
-                        "<p>aria2 and FFmpeg are under the GNU GPL: their licences, the "
-                        "versions shipped and where their source is are in "
-                        '<a href="%s">THIRD-PARTY-NOTICES.txt</a>.</p>'
-                        % notices.toString(), rich=True)
+
+        def row(e):
+            name = html.escape("%s %s" % (e["name"], e.get("version") or ""))
+            if e.get("url"):
+                name = '<a href="%s">%s</a>' % (html.escape(e["url"], quote=True), name)
+            return "<p>%s &mdash; %s</p>" % (name, html.escape(e.get("licence") or "see its licence"))
+
+        folder = QUrl.fromLocalFile(resource_path("licenses")).toString()
+        notices = QUrl.fromLocalFile(resource_path("licenses", "THIRD-PARTY-NOTICES.txt")).toString()
+        self._show_text("Credits", "<p>HyperFetch is built on, and ships with:</p>"
+                        + "".join(row(e) for e in third_party.credits())
+                        + '<p>Their licence texts are in the <a href="%s">licenses</a> folder. '
+                        "It also ships two programs under the GNU GPL, aria2 (torrents) and "
+                        "FFmpeg (videos), and uses Qt under the GNU LGPL: the versions "
+                        "shipped and where their source is are in "
+                        '<a href="%s">THIRD-PARTY-NOTICES.txt</a>.</p>' % (folder, notices),
+                        rich=True)
 
     def _show_text(self, title, text, rich=False):
         from PySide6.QtWidgets import QDialog, QDialogButtonBox, QTextBrowser

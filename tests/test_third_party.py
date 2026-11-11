@@ -72,3 +72,19 @@ def test_a_built_app_reads_the_list_its_build_wrote(tmp_path, monkeypatch):
     monkeypatch.setattr(sys, "_MEIPASS", str(tmp_path), raising=False)
     assert third_party.credits() == listed
 
+
+def test_credits_lists_what_the_build_ships():
+    """Credits was a list typed by hand: eleven names, Werkzeug, urllib3,
+    certifi and the rest of what a build carries not among them."""
+    from gui2.dialogs import settings_pages
+    shown = []
+
+    class Page(settings_pages.PageBuilderMixin):
+        def _show_text(self, title, text, rich=False):
+            shown.append(text)
+
+    Page()._show_credits()
+    for name in ("Python", "PySide6", "Werkzeug", "urllib3", "certifi", "Jinja2"):
+        assert ">%s " % name in shown[0], name
+    assert "THIRD-PARTY-NOTICES.txt" in shown[0] and "aria2" in shown[0]
+    assert not hasattr(settings_pages, "CREDITS"), "a list typed by hand"
