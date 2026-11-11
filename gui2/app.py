@@ -183,6 +183,7 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, Up
         self._setup_shortcuts()
         self._apply_appearance()
         self._load_state()
+        self._proxy_hold_due = True     # said once, by the first refresh() after this
         self._start_server()
         self._restore_window()
 
@@ -417,6 +418,15 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, Up
                 return
         utils.save_json(self._state_path, rows, keep_backup=True)
         self._allow_empty_save = False      # one-shot permission
+
+    def _say_proxy_hold(self):
+        """Once, as the app starts: torrents are held because Settings' proxy
+        is one the torrent engine cannot use (torrent.proxy_refused). Only
+        when the list has a torrent to hold; its card says so too."""
+        why = _torrent.proxy_refused()
+        if why and any(_torrent.is_torrent_task(t.url, t.filename)
+                       for t in self.queue.tasks):
+            self._toasts.show("error", "Torrents are on hold", why, secs=15)
 
     def _save_web_changes(self):
         """What the web page changed - a rename, a remove, a limit, a pause -
@@ -799,6 +809,9 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, Up
         self._ask_pairing()
         self._notify_added()
         self._notify_yields()
+        if getattr(self, "_proxy_hold_due", False) and hasattr(self, "_toasts"):
+            self._proxy_hold_due = False
+            self._say_proxy_hold()
         if (self._server_error and not self._server_error_shown
                 and hasattr(self, "_toasts")):
             self._server_error_shown = True

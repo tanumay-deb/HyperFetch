@@ -255,3 +255,85 @@ def test_no_ratio_limit_with_a_time_seeds_for_the_time(monkeypatch):
     assert "--seed-ratio=0.0" in o and "--seed-time=30" in o
     live = _live(monkeypatch, SEED_ENABLED=True, SEED_RATIO=0.0, SEED_MINUTES=30)
     assert (live["seed-ratio"], live["seed-time"]) == ("0.0", "30")
+
+
+# ---- a proxy the engine cannot use holds torrents (2026-11-10) -------------------
+# b11881e let aria2 start without a socks proxy saved earlier: torrents then
+# connected straight from this address while Settings showed a proxy.
+SOCKS = {"http": "socks5://user:hunter2@127.0.0.1:1080",
+         "https": "socks5://user:hunter2@127.0.0.1:1080"}
+HTTP_PROXY = {"http": "http://127.0.0.1:3128", "https": "http://127.0.0.1:3128"}
+
+
+def _proxy(monkeypatch, proxies, for_torrents=True):
+    monkeypatch.setattr(utils, "PROXIES", proxies)
+    monkeypatch.setattr(utils, "PROXY_TORRENTS", for_torrents)
+    return torrent.proxy_refused()
+
+
+def test_only_a_proxy_the_engine_cannot_use_holds_torrents(monkeypatch):
+    why = _proxy(monkeypatch, SOCKS)
+    assert "socks5" in why and "Settings" in why
+    assert "hunter2" not in why and "user" not in why, "the proxy's sign-in is in the message"
+    assert _proxy(monkeypatch, HTTP_PROXY) == ""
+    assert _proxy(monkeypatch, None) == "" and _proxy(monkeypatch, {}) == ""
+    assert _proxy(monkeypatch, SOCKS, for_torrents=False) == "", "kept off the proxy on purpose"
+
+
+class _Untouched:
+    """The daemon, which nothing may ask anything of."""
+    def __getattr__(self, name):
+        raise AssertionError("the torrent engine was asked for %s" % name)
+
+
+def test_a_torrent_started_then_fails_in_words_and_asks_the_engine_nothing(tmp_path, monkeypatch):
+    import task as T
+    _proxy(monkeypatch, SOCKS)
+    monkeypatch.setattr(torrent, "aria2c_path", lambda: "aria2c")
+    monkeypatch.setattr(aria2d, "DAEMON", _Untouched())
+    t = T.DownloadTask("magnet:?xt=urn:btih:" + "a" * 40, str(tmp_path / "magnet_.bin"))
+    torrent.TorrentDownloader(t).run()
+    assert t.status == T.ERROR
+    assert "proxy" in t.error and "Settings" in t.error, t.error
+    assert not t.error.startswith("Torrent engine unavailable"), "read as the engine's fault"
+
+
+def test_the_engine_is_not_started_for_anything_else_either(tmp_path, monkeypatch):
+    """The metadata fetch for a waiting magnet, a drawer's question: no
+    daemon, so nothing of a torrent leaves from this address."""
+    monkeypatch.setattr(utils, "app_data_dir", lambda: str(tmp_path))
+    _proxy(monkeypatch, SOCKS)
+    d = aria2d.Aria2Daemon()
+    monkeypatch.setattr(d, "_attach", lambda: pytest.fail("looked for a daemon to attach to"))
+    monkeypatch.setattr(d, "_spawn", lambda: pytest.fail("started a daemon"))
+    assert d.ensure() is False
+    _proxy(monkeypatch, HTTP_PROXY)
+    monkeypatch.setattr(d, "_attach", lambda: False)
+    monkeypatch.setattr(d, "_spawn", lambda: True)
+    monkeypatch.setattr(d, "_purge", lambda: None)
+    monkeypatch.setattr(d, "_reap_others", lambda: None)
+    assert d.ensure() is True
+
+
+def test_the_window_says_so_once_and_only_with_a_torrent_in_the_list(monkeypatch):
+    import inspect
+    import types
+    import task as T
+    from gui2.app import DownloadAppV2
+    _proxy(monkeypatch, SOCKS)
+    said = []
+    plain = T.DownloadTask("https://example.test/a.zip", "C:/dl/a.zip", filename="a.zip")
+    magnet = T.DownloadTask("magnet:?xt=urn:btih:" + "b" * 40, "C:/dl/magnet_.bin")
+    win = types.SimpleNamespace(queue=types.SimpleNamespace(tasks=[plain]),
+                                _toasts=types.SimpleNamespace(show=lambda *a, **k: said.append(a)))
+    DownloadAppV2._say_proxy_hold(win)
+    assert said == [], "a list with no torrent in it was told about torrents"
+    win.queue.tasks.append(magnet)
+    DownloadAppV2._say_proxy_hold(win)
+    assert len(said) == 1 and said[0][1] == "Torrents are on hold" and "socks5" in said[0][2]
+    _proxy(monkeypatch, HTTP_PROXY)
+    DownloadAppV2._say_proxy_hold(win)
+    assert len(said) == 1
+    src = inspect.getsource(DownloadAppV2.refresh)
+    assert "_proxy_hold_due" in src and "self._say_proxy_hold()" in src
+    assert "self._proxy_hold_due = True" in inspect.getsource(DownloadAppV2.__init__)

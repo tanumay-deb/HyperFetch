@@ -166,6 +166,23 @@ def proxy_url():
     return ""
 
 
+def proxy_refused():
+    """Why no torrent is started with the proxy Settings holds, or "": it is
+    one aria2 cannot use - a SOCKS one, saved before Settings refused them.
+    proxy_url hands aria2 nothing then, and b11881e let the engine start so:
+    a torrent connected straight from this address while Settings showed a
+    proxy. It is held instead, and says why (2026-11-10). Torrents kept off
+    the proxy on purpose (PROXY_TORRENTS off) are not held."""
+    if utils.PROXIES and utils.PROXY_TORRENTS:
+        url = utils.PROXIES.get("https") or utils.PROXIES.get("http") or ""
+        if url and not proxy_url():
+            return ("Settings has a proxy HyperFetch cannot use (%s://…), so torrents "
+                    "are not started: they would connect without it. Set an http:// "
+                    "proxy under Settings → Network → Proxy Settings, or clear it."
+                    % url.split("://", 1)[0])
+    return ""
+
+
 def preference_opts():
     """aria2 options that come from user settings, shared by both engines.
 
@@ -1665,6 +1682,9 @@ class TorrentDownloader:
                             "aria2 to download torrents/magnets.")
             return
         try:
+            held = proxy_refused()
+            if held:
+                raise CannotStart(held)
             return self._run_rpc()
         except CannotStart as e:
             # failed, not paused: the card says why only for a failure, and

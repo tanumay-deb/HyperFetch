@@ -458,6 +458,11 @@ class Aria2Daemon:
         with self._lock:
             if self.alive():
                 return True
+            import torrent
+            if torrent.proxy_refused():
+                # never without the proxy Settings names: no daemon, so no
+                # torrent, metadata fetch or DHT from this address
+                return False
             if self._attach():
                 self._purge()
                 self._reap_others()
