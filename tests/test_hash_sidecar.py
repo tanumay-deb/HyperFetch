@@ -27,6 +27,7 @@ PAGES = {
     "/bsd.bin.sha256": ("SHA256 (bsd.bin) = %s\n" % DIGEST.upper()).encode(),
     "/star.bin.sha256": BOM + ("%s *star.bin\r\n" % DIGEST).encode(),
     "/bare.bin.sha256": DIGEST.encode(),
+    "/json.bin.sha256": ('{"name": "json.bin", "sha256": "%s"}' % DIGEST).encode(),
 }
 
 
@@ -102,7 +103,7 @@ def test_a_web_page_where_the_checksum_would_be_is_no_checksum(site, tmp_path, n
     assert _expected(site.url + "/" + name, tmp_path) is None
 
 
-@pytest.mark.parametrize("name", ["bsd.bin", "star.bin", "bare.bin"])
+@pytest.mark.parametrize("name", ["bsd.bin", "star.bin", "bare.bin", "json.bin"])
 def test_the_usual_shapes_of_a_checksum_file_are_read(site, tmp_path, name):
     assert _expected(site.url + "/" + name, tmp_path) == DIGEST
 
@@ -132,5 +133,33 @@ def test_a_checksum_after_its_label_is_read(text):
     TOKEN + TOKEN,                                           # a SHA-512, not this
 ])
 def test_hex_digits_that_are_no_checksum_line(text):
+    from downloader import checksum_in
+    assert checksum_in(text) == ""
+
+
+@pytest.mark.parametrize("text", [
+    '{"sha256": "%s"}' % DIGEST,
+    '{\n  "file": "f.bin",\n  "sha256": "%s"\n}\n' % DIGEST.upper(),
+    '{"algorithm": "SHA-256", "hash": "%s"}' % DIGEST,
+    '{"digest": "sha256:%s"}' % DIGEST,
+    '{"md5": "%s", "SHA256": "%s"}' % ("0" * 32, DIGEST),
+    '[{"name": "f.bin", "checksums": {"sha256": "%s"}}]' % DIGEST,
+])
+def test_a_checksum_sent_as_json_is_read(text):
+    """Read while "any 64 hex digits" did; the line rule that came after it
+    turned every JSON answer away (2026-11-11)."""
+    from downloader import checksum_in
+    assert checksum_in(text) == DIGEST
+
+
+@pytest.mark.parametrize("text", [
+    '{"token": "%s"}' % TOKEN,
+    '{"algorithm": "blake3", "hash": "%s"}' % TOKEN,                 # 64 hex, not SHA-256
+    '{"files": [{"name": "a", "sha256": "%s"}, {"name": "b", "sha256": "%s"}]}'
+    % (DIGEST, TOKEN),                                               # which one is ours?
+    '{"sha256": ',                                                   # cut short
+    "[" * 5000,                                                      # nested past reading
+])
+def test_json_that_names_no_one_sha256(text):
     from downloader import checksum_in
     assert checksum_in(text) == ""

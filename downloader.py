@@ -4,6 +4,7 @@ A ``Downloader`` is bound to one :class:`task.DownloadTask` and run synchronousl
 inside a worker thread by the queue. It updates the task's fields in place so the
 GUI (polling on a timer) reflects live progress.
 """
+import json
 import os
 import re
 import time
@@ -187,15 +188,59 @@ _SUM_LINE = re.compile(
     re.I)
 
 
+_HEX64 = re.compile(r"(?:sha-?256|sha2-256)?[:=]?\s*([a-f0-9]{64})", re.I)
+
+
+def _sha256_in_json(data):
+    """The SHA-256 a JSON answer gives: under a key that says so ("sha256",
+    "SHA-256", "sha256sum"), or a "hash"/"checksum"/"digest" that says so
+    itself ("sha256:<hex>") or beside an "algorithm" of SHA-256. Not a hash
+    of another kind (BLAKE3 is 64 hex digits too), and "" when it names
+    several: which file's is this one's?"""
+    found = set()
+
+    def plain(k):
+        return re.sub(r"[^a-z0-9]", "", str(k).lower())
+
+    def walk(o):
+        if isinstance(o, list):
+            for v in o:
+                walk(v)
+        if not isinstance(o, dict):
+            return
+        algo = plain(o.get("algorithm") or o.get("algo") or o.get("type") or "")
+        for k, v in o.items():
+            if not isinstance(v, str):
+                walk(v)
+                continue
+            m = _HEX64.fullmatch(v.strip())
+            if not m:
+                continue
+            named = re.match(r"(?:sha-?256|sha2-256)", v.strip(), re.I) is not None
+            if (plain(k).startswith(("sha256", "sha2256"))
+                    or (plain(k) in ("hash", "checksum", "digest", "value")
+                        and (named or algo in ("sha256", "sha2256")))):
+                found.add(m.group(1).lower())
+
+    walk(data)
+    return found.pop() if len(found) == 1 else ""
+
+
 def checksum_in(text):
     """The SHA-256 a checksum file gives, or "": its first line shaped like
-    one. Any 64 hex digits anywhere used to do, and a site that answers every
-    address with a web page - its home page, a "not found" that says 200 -
-    often has some on it (an asset's hash, a token): a good download read
-    "hash mismatch" (2026-11-06)."""
+    one, or what a JSON answer names (_sha256_in_json). Any 64 hex digits
+    anywhere used to do, and a site that answers every address with a web
+    page - its home page, a "not found" that says 200 - often has some on it
+    (an asset's hash, a token): a good download read "hash mismatch"
+    (2026-11-06). That stopped JSON being read at all (2026-11-11)."""
     text = text.lstrip()
     if text[:1] == "<":
         return ""                           # a web page, an XML error
+    if text[:1] in ("{", "["):
+        try:
+            return _sha256_in_json(json.loads(text))
+        except (ValueError, RecursionError):
+            return ""                       # cut short at SIDECAR_MAX, or not JSON
     for line in text.splitlines():
         m = _SUM_LINE.fullmatch(line)
         if m:
