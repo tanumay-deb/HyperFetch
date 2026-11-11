@@ -149,6 +149,7 @@ def _stub_window(tasks, wc="Shut down PC"):
         _extras={"when_complete": wc},
         _show_from_tray=lambda: shown.append(True),
         styleSheet=lambda: "",
+        _is_update=lambda t: False,
     )
     return stub, DownloadAppV2, shown
 
@@ -244,3 +245,55 @@ def test_a_queue_whose_last_download_fails_still_powers_off():
     b.status, b.error = T.ERROR, "segment 3/5 failed"
     A._check_completions(app)
     assert asked == ["Shut down PC", "Shut down PC"], "not asked after the last one failed"
+
+
+def test_the_apps_own_update_neither_arms_nor_holds_back_the_countdown(monkeypatch):
+    """Its finish put the countdown over the "Update ready" question
+    (2026-11-11); it is not one of the downloads the setting waits for."""
+    import types
+    import task as T
+    from gui2.app import DownloadAppV2 as A
+    update = T.DownloadTask("https://github.com/x/setup.exe", "C:/dl/setup.exe",
+                            filename="setup.exe")
+    mine = T.DownloadTask("https://e.test/a.bin", "C:/dl/a.bin", filename="a.bin")
+    asked = []
+    app = types.SimpleNamespace(
+        queue=types.SimpleNamespace(tasks=[update, mine]),
+        _completed_seen=None, _errored_seen=None, _unfiled=set(),
+        _extras={"categorize": False, "when_complete": "Shut down PC",
+                 "skip_complete_popup": True},
+        _save_state=lambda: None, _is_update=lambda t: t is update,
+        _update_finished=lambda t: None, _maybe_categorize=lambda t: None,
+        _toasts=types.SimpleNamespace(show=lambda *a, **k: None),
+        _flash_taskbar=lambda: None, tray=None,
+        _open_file=lambda t: None, _open_folder=lambda t: None,
+        _maybe_power_off=lambda wc: asked.append(wc))
+    update.status = mine.status = T.DOWNLOADING
+    A._check_completions(app)                  # the first tick takes stock
+    mine.status = T.COMPLETED
+    update.status = T.DOWNLOADING
+    A._check_completions(app)
+    assert asked == ["Shut down PC"]
+    update.status = T.COMPLETED
+    A._check_completions(app)
+    assert asked == ["Shut down PC"], "the update's own finish armed it"
+
+    # ...and one still coming down does not keep the PC on
+    _app()
+    update.status = T.DOWNLOADING
+    stub, cls, _ = _stub_window([update, mine])
+    stub._is_update = lambda t: t is update
+    armed = []
+
+    class _Dlg:                         # never the real one: it powers off
+        def __init__(self, *a, **k):
+            armed.append(k.get("action"))
+            self.finished = types.SimpleNamespace(connect=lambda *a, **k: None)
+
+        def show(self): pass
+        def raise_(self): pass
+        def activateWindow(self): pass
+
+    monkeypatch.setattr("gui2.dialogs.shutdown.ShutdownDialog", _Dlg)
+    cls._maybe_power_off(stub, "Shut down PC")
+    assert armed == ["Shut down"], "the update coming down kept the PC on"

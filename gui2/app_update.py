@@ -37,6 +37,7 @@ class UpdateMixin:
         self._update_seen = ""          # the version already announced
         self._update_url = ""           # the installer, once it is in the list
         self._update_ready = ""         # ...and where it is, once down and checked
+        self._install_box = None        # "Update ready", while it is open
 
     # ---- finding out -----------------------------------------------------------
     def _update_due(self, now):
@@ -147,11 +148,18 @@ class UpdateMixin:
             return False
         self._update_ready = task.save_path
         self.sidebar.set_update("Install %s" % version)
-        if self._ask_install(version):
-            self._install_update(task.save_path)
+        self._ask_install(version)
         return True
 
     def _ask_install(self, version):
+        """Put "Install now / Later", without waiting for the answer
+        (_install_answered takes it). It was exec()'d inside the 500 ms
+        refresh, whose timer kept firing under it: another copy of the
+        question every half second, and a "Shut down when done" countdown
+        that opened over them could not be clicked (2026-11-11)."""
+        if self._install_box is not None:
+            return                      # already asked
+        from PySide6.QtCore import Qt
         from PySide6.QtWidgets import QMessageBox
         box = QMessageBox(self)
         box.setIcon(QMessageBox.Question)
@@ -159,11 +167,18 @@ class UpdateMixin:
         box.setText("HyperFetch %s is ready to install." % version)
         box.setInformativeText("HyperFetch closes while it installs. Downloads in "
                                "progress pick up where they stopped afterwards.")
-        now = box.addButton("Install now", QMessageBox.AcceptRole)
+        self._install_now = box.addButton("Install now", QMessageBox.AcceptRole)
         box.addButton("Later", QMessageBox.RejectRole)
-        box.setDefaultButton(now)
-        box.exec()
-        return box.clickedButton() is now
+        box.setDefaultButton(self._install_now)
+        box.setWindowModality(Qt.NonModal)   # a countdown beside it stays clickable
+        box.finished.connect(self._install_answered)   # bound: no closure over the box
+        self._install_box = box
+        box.show()
+
+    def _install_answered(self, *_):
+        box, self._install_box = self._install_box, None
+        if box is not None and box.clickedButton() is self._install_now and self._update_ready:
+            self._install_update(self._update_ready)
 
     def _run_installer(self, path):
         os.startfile(path)

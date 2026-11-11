@@ -115,7 +115,8 @@ class _Window(UpdateMixin):
 
     def _ask_install(self, version):
         self.asked.append(version)
-        return self.answer
+        if self.answer:                          # answered at once, as _install_answered does
+            self._install_update(self._update_ready)
 
     def _run_installer(self, path):
         self.ran.append(path)
@@ -198,6 +199,58 @@ def test_a_finished_update_is_checked_and_offered(tmp_path):
     assert w.asked == ["2.8.1"]
     assert w.ran == [t.save_path], "Install now did not run the installer"
     assert w.quits == 1, "the app has to close, or the installer waits for it"
+
+
+def test_the_question_does_not_hold_the_window_up(tmp_path):
+    """"Update ready" was exec()'d inside the 500 ms refresh, whose timer kept
+    firing under it: a copy of the question every half second, and a "Shut
+    down when done" countdown over them that could not be clicked
+    (2026-11-11). Put with the real box, on a real window."""
+    from PySide6.QtCore import QTimer
+    from PySide6.QtWidgets import QApplication, QMessageBox, QWidget
+    app = QApplication.instance() or QApplication([])
+
+    class Shown(QWidget, _Window):
+        _ask_install = UpdateMixin._ask_install          # the real question
+
+        def __init__(self):
+            QWidget.__init__(self)
+            _Window.__init__(self, info=INFO)
+
+    def boxes():
+        return [b for b in app.topLevelWidgets()
+                if isinstance(b, QMessageBox) and b.isVisible()]
+
+    held = []
+
+    def while_held():                                    # only runs if it blocks
+        held.append(len(boxes()))
+        for b in boxes():
+            b.done(0)
+
+    w = Shown()
+    w._on_update_clicked()
+    t = _done(tmp_path)
+    guard = QTimer()                                     # answers each blocking one
+    guard.timeout.connect(while_held)
+    guard.start(300)
+    try:
+        w._update_finished(t)
+        w._update_finished(t)                            # the next tick
+        guard.stop()
+        assert held == [], "the question held the window up while it was open"
+        assert len(boxes()) == 1, "asked twice"
+        assert QApplication.activeModalWidget() is None, "a countdown beside it is not clickable"
+        now = next(b for b in boxes()[0].buttons() if b.text() == "Install now")
+        now.click()
+        app.processEvents()
+        assert w.ran == [t.save_path] and w.quits == 1
+        assert boxes() == []
+    finally:
+        guard.stop()
+        for b in boxes():
+            b.done(0)
+        w.close()
 
 
 def test_later_keeps_it_one_click_away(tmp_path):

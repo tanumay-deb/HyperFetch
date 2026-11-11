@@ -1147,7 +1147,10 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, Up
             self._save_state()
         # a failure ends a download too: armed only on a completion, an
         # overnight queue whose last download failed left the PC on (2026-11-02)
-        newly_ended = bool(done - self._completed_seen) or bool(errd - self._errored_seen)
+        # The app's own update is none of them: its finish put the countdown
+        # over the "Update ready" question (2026-11-11).
+        ours = {t.id for t in self.queue.tasks if self._is_update(t)}
+        newly_ended = bool(done - self._completed_seen - ours) or bool(errd - self._errored_seen - ours)
         self._completed_seen, self._errored_seen = done, errd
         if newly_ended and wc in ("Shut down PC", "Sleep"):
             self._maybe_power_off(wc)
@@ -1170,7 +1173,8 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, Up
         if getattr(self, "_power_dlg", None) is not None:
             return                                  # already counting down
         busy = (T.DOWNLOADING, T.QUEUED, T.SCHEDULED)
-        if any(t.status in busy for t in self.queue.tasks):
+        # nor does the app's own update hold it back (_check_completions)
+        if any(t.status in busy and not self._is_update(t) for t in self.queue.tasks):
             return
         from gui2.dialogs.shutdown import ShutdownDialog
         action = "Sleep" if wc == "Sleep" else "Shut down"
