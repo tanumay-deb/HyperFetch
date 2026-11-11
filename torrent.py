@@ -176,10 +176,10 @@ def proxy_refused():
     if utils.PROXIES and utils.PROXY_TORRENTS:
         url = utils.PROXIES.get("https") or utils.PROXIES.get("http") or ""
         if url and not proxy_url():
-            return ("Settings has a proxy HyperFetch cannot use (%s://…), so torrents "
-                    "are not started: they would connect without it. Set an http:// "
-                    "proxy under Settings → Network → Proxy Settings, or clear it."
-                    % url.split("://", 1)[0])
+            return utils.PROXY_HOLD + (
+                " (%s://…), so torrents are not started: they would connect without "
+                "it. Set an http:// proxy under Settings → Network → Proxy Settings, "
+                "or clear it." % url.split("://", 1)[0])
     return ""
 
 

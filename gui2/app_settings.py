@@ -11,6 +11,7 @@ import shiboken6
 from PySide6.QtWidgets import QApplication, QWidget
 from PySide6.QtCore import QTimer
 
+import task as T
 import utils
 from gui.theme import apply_theme
 from gui2 import palette
@@ -126,6 +127,7 @@ class SettingsMixin:
         self._apply_web_settings(v)      # must run BEFORE the line below
         self._extras.update(v)
         self._apply_network_settings()
+        self._release_proxy_holds()
         # the torrent engine that is running, too: it read these only as it
         # started (off this thread - a busy daemon answers late)
         import aria2d
@@ -277,6 +279,18 @@ class SettingsMixin:
             f = app.font(); f.setPointSize(pt); app.setFont(f)
         # re-generate the stylesheet so the app chrome resizes immediately
         self.setStyleSheet(palette.qss())
+
+    def _release_proxy_holds(self):
+        """A download held for a proxy its engine cannot use (utils.PROXY_HOLD)
+        goes back in line once Settings no longer has one: each needed Resume
+        by hand (2026-11-11). Also as the app starts - held in an earlier run."""
+        import torrent as _tor
+        for t in list(self.queue.tasks):
+            if t.status != T.ERROR or not (t.error or "").startswith(utils.PROXY_HOLD):
+                continue
+            tor = _tor.is_torrent_task(t.url, t.filename)
+            if not (_tor.proxy_refused() if tor else utils.proxy_unusable()):
+                self.queue.resume_task(t)
 
     def _apply_network_settings(self):
         """Push persisted Network/Advanced prefs into the backend globals the

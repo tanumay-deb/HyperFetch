@@ -183,6 +183,7 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, Up
         self._setup_shortcuts()
         self._apply_appearance()
         self._load_state()
+        self._release_proxy_holds()     # held in an earlier run, put right since
         self._resume_deletes()          # "Delete from disk" the last close cut short
         self._proxy_hold_due = True     # said once, by the first refresh() after this
         self._start_server()

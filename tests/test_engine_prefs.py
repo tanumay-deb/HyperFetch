@@ -206,7 +206,7 @@ def test_saving_settings_tells_the_running_engine(monkeypatch):
 
     class Win(app_settings.SettingsMixin):
         theme, save_dir, _extras = "dark", "", {}
-        queue = types.SimpleNamespace(set_max_concurrent=lambda q, n: None, segments=8)
+        queue = types.SimpleNamespace(set_max_concurrent=lambda q, n: None, segments=8, tasks=[])
 
         def _nothing(self, *a, **k):          # the rest of the window: not this test's
             pass
@@ -346,3 +346,32 @@ def test_the_window_says_so_once_and_only_of_what_the_list_holds(monkeypatch):
     src = inspect.getsource(DownloadAppV2.refresh)
     assert "_proxy_hold_due" in src and "self._say_proxy_hold()" in src
     assert "self._proxy_hold_due = True" in inspect.getsource(DownloadAppV2.__init__)
+
+
+def test_held_downloads_go_back_in_line_once_the_proxy_is_put_right(monkeypatch):
+    """Each held download and torrent needed Resume by hand (2026-11-11)."""
+    import inspect
+    import types
+    import task as T
+    from gui2.app import DownloadAppV2
+    from gui2.app_settings import SettingsMixin
+    _proxy(monkeypatch, SOCKS)
+    monkeypatch.setattr(utils, "_requests_speak_socks", lambda: False, raising=False)
+    plain = T.DownloadTask("https://example.test/a.zip", "C:/dl/a.zip", filename="a.zip")
+    magnet = T.DownloadTask("magnet:?xt=urn:btih:" + "c" * 40, "C:/dl/magnet_.bin")
+    failed = T.DownloadTask("https://example.test/b.zip", "C:/dl/b.zip", filename="b.zip")
+    plain.status, plain.error = T.ERROR, utils.proxy_unusable()
+    magnet.status, magnet.error = T.ERROR, torrent.proxy_refused()
+    failed.status, failed.error = T.ERROR, "HTTP 404 Not Found"
+    resumed = []
+    win = types.SimpleNamespace(queue=types.SimpleNamespace(
+        tasks=[plain, magnet, failed], resume_task=resumed.append))
+    SettingsMixin._release_proxy_holds(win)
+    assert resumed == [], "let go while the proxy was still one it cannot use"
+    _proxy(monkeypatch, HTTP_PROXY)
+    SettingsMixin._release_proxy_holds(win)
+    assert resumed == [plain, magnet], "a held one stayed held, or a real failure went again"
+    # put right in Settings, and found as the app starts
+    assert "self._release_proxy_holds()" in inspect.getsource(SettingsMixin._apply_settings)
+    init = inspect.getsource(DownloadAppV2.__init__)
+    assert init.index("self._release_proxy_holds()") > init.index("self._load_state()")

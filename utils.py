@@ -447,6 +447,11 @@ def odd_proxy_scheme():
     return url.split("://", 1)[0]
 
 
+# How a download held for the proxy says so (proxy_unusable, torrent.proxy_refused):
+# put right in Settings, it goes back in line (SettingsMixin._release_proxy_holds).
+PROXY_HOLD = "Settings has a proxy HyperFetch cannot use"
+
+
 def proxy_unusable():
     """Why the proxy Settings holds cannot carry this app's own downloads
     (the HTTP and stream engines, which use requests), or "": a socks5://
@@ -458,10 +463,10 @@ def proxy_unusable():
     scheme = odd_proxy_scheme()
     if not scheme or _requests_speak_socks():
         return ""
-    return ("Settings has a proxy HyperFetch cannot use for this download (%s://…), "
-            "so it is not started: it would fail or go around the proxy. Set an "
-            "http:// proxy under Settings → Network → Proxy Settings, or clear it."
-            % scheme)
+    return PROXY_HOLD + (
+        " for this download (%s://…), so it is not started: it would fail or go "
+        "around the proxy. Set an http:// proxy under Settings → Network → Proxy "
+        "Settings, or clear it." % scheme)
 MAX_CONNECTIONS = 0       # global ceiling on per-download segments (0 = unlimited)
 LISTEN_PORT = 0           # torrent listen port (0 = aria2 default)
 DISK_CACHE = True         # aria2 --disk-cache on/off
