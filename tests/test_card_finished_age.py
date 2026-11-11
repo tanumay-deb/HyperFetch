@@ -30,6 +30,21 @@ def test_a_finished_card_counts_from_when_it_finished():
     assert "2 hrs ago" in _sub(t)
 
 
+def test_a_restarted_download_counts_from_its_new_finish():
+    """Restart kept the first finish's time: done again, it read "3 days ago"."""
+    t = T.DownloadTask("https://example.test/a.zip", "C:/dl/a.zip",
+                       added=time.time() - 4 * 86400)
+    t.total_size = t.downloaded = 1000
+    t.status = T.COMPLETED
+    t.completed_at = time.time() - 3 * 86400    # finished three days ago
+    t.reset_progress()                          # Restart (app_actions._restart_task)
+    t.status = T.QUEUED
+    t.status = T.DOWNLOADING
+    t.total_size = t.downloaded = 1000
+    t.status = T.COMPLETED
+    assert "just now" in _sub(t), _sub(t)
+
+
 def test_one_saved_before_that_was_noted_still_says_when_it_was_added():
     t = T.DownloadTask("https://example.test/a.zip", "C:/dl/a.zip",
                        added=time.time() - 3 * 86400)

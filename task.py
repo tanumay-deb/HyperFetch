@@ -351,6 +351,9 @@ class DownloadTask:
         self.error = ""
         self.hash_status = ""
         self.sha256 = ""
+        # stamped again when it finishes again: a Restart of one finished days
+        # ago read "3 days ago" the moment it was done (2026-11-11)
+        self.completed_at = 0.0
         utils.remove_temp(utils.temp_download_path(self))
         self.temp_path = ""
         if self.status != COMPLETED:
