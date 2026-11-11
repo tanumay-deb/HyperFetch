@@ -54,9 +54,15 @@ def test_a_connection_limit_is_met_at_the_limit(media_server, make_payload, tmp_
         assert eng.media_done and t.status == T.DOWNLOADING, t.error
     assert open(t.save_path, "rb").read() == data
     assert media_server.stats["max_active"] == 2
+    # What is counted is the server's connections over time, not the wall
+    # clock: "took < 0.85 x one connection" failed on CI's slower Windows
+    # runners at 3.44-3.49 s against 3.4 (2026-10-16, 2026-11-10). Measured
+    # here: on two connections for 79-83% of the transfer in every case; one
+    # connection at a time, the bug this guards, gave 8-10%.
+    two = _share_with(media_server.timeline, 2)
+    assert two > 0.5, "two connections for only %.0f%% of the transfer" % (two * 100)
     one_connection = SIZE / RATE
-    assert took < 0.85 * one_connection, (
-        "%.1f s: no faster than one connection (%.1f s)" % (took, one_connection))
+    assert took < 1.5 * one_connection, "%.1f s: it stalled" % took
     # The gate grows back as streams are accepted, so it asks past the limit
     # now and then: about once a range (8 or 9 here when all goes to plan),
     # and the opening burst can cost one or two more on a busy machine - 9
