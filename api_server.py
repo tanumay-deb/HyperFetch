@@ -320,11 +320,13 @@ def create_app(queue, save_dir, pending=None, token=None, pair_requests=None):
             origin = request.headers.get("Origin", "") or "(no origin)"
             if origin not in _rejected_seen:
                 _rejected_seen.add(origin)
+                # the route, not "a download": the popup's token check (/probe)
+                # was logged as a download refused (2026-11-12)
                 log.warning(
-                    "refused a download from %s: %s. If this is the browser "
+                    "refused a request to %s from %s: %s. If this is the browser "
                     "extension, its saved token no longer matches this app — "
                     "re-pair it from Settings.",
-                    origin,
+                    request.path, origin,
                     "wrong token" if presented else "no token presented")
         return ok
 

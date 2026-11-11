@@ -477,7 +477,19 @@ def test_a_retrying_extension_cannot_fill_the_log(tmp_path, caplog):
     for _ in range(20):
         c.post("/download", json={"url": "https://x/a.zip", "token": "bad"},
                headers={"Origin": "chrome-extension://loop"})
-    assert caplog.text.count("refused a download") == 1
+    assert caplog.text.count("refused a request to /download") == 1
+
+
+def test_the_popups_token_check_is_not_logged_as_a_download(tmp_path, caplog):
+    """The popup asks /probe to tell a stale token (2026-11-04); the refusal
+    read "refused a download", and nothing was being downloaded."""
+    import logging as _logging
+    app = create_app(_FakeQueue(), str(tmp_path), pending=deque(), token="tok")
+    caplog.set_level(_logging.WARNING, logger="hyperfetch.server")
+    app.test_client().post("/probe", json={"url": ""}, headers={
+        "X-HyperFetch-Token": "stale", "Origin": "chrome-extension://popup"})
+    assert "refused a request to /probe" in caplog.text
+    assert "refused a download" not in caplog.text
 
 
 def test_the_right_token_logs_nothing(tmp_path, caplog):
