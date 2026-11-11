@@ -110,7 +110,7 @@ def probe(url, headers=None):
     base = {**HEADERS, **(headers or {})}
     sess = requests.Session()
     try:
-        text = _get(sess, url, base).text
+        text = _playlist_text(_get(sess, url, base))
     except requests.RequestException:
         return {"variants": [], "duration": 0.0, "live": False}
     if "#EXT-X-STREAM-INF" not in text:
@@ -146,7 +146,7 @@ def probe(url, headers=None):
     duration, live = 0.0, False
     if variants:
         try:
-            duration, live = _playlist_facts(_get(sess, variants[0]["url"], base).text)
+            duration, live = _playlist_facts(_playlist_text(_get(sess, variants[0]["url"], base)))
         except requests.RequestException:
             duration, live = 0.0, False
 
@@ -162,6 +162,16 @@ def probe(url, headers=None):
         out.append({"label": label, "height": v["height"],
                     "bandwidth": v["bandwidth"], "url": v["url"], "size": size})
     return {"variants": out, "duration": duration, "live": live}
+
+
+def _playlist_text(r):
+    """A playlist's text: UTF-8 (RFC 8216 4.1, and what yt-dlp reads) unless
+    the server names a charset. requests reads text/* with none as ISO-8859-1,
+    where a UTF-8 name's byte 0x85 is a line break to splitlines(): the default
+    sound's tag, cut in two, read as no default (2026-11-11)."""
+    if "charset=" not in (r.headers.get("Content-Type") or "").lower():
+        r.encoding = "utf-8"
+    return r.text
 
 
 def _get(session, url, headers, stats=None, **kw):
@@ -317,7 +327,7 @@ class HlsDownloader:
 
     # ----------------------------------------------------------- playlist parse
     def _fetch_text(self, url):
-        return _get(self.session, url, self.headers).text
+        return _playlist_text(_get(self.session, url, self.headers))
 
     def _is_master(self, text):
         return "#EXT-X-STREAM-INF" in text
@@ -345,14 +355,14 @@ class HlsDownloader:
         return best_url
 
     def _sound_apart(self, master, master_url, variant_url):
-        """The height of `variant_url`'s picture when the master playlist
-        `master` gives its sound a playlist of its own - the #EXT-X-MEDIA
-        TYPE=AUDIO a player plays in the variant's AUDIO group (DEFAULT=YES,
-        else the group's first) has a URI: then the variant's segments hold no
-        sound. None when they do - a default with no URI is sound in the
-        variant (RFC 8216 4.3.4.1.1), other languages beside it are not missed
-        sound - or when the variant is not in that master (0: apart, no
-        height given)."""
+        """(height of `variant_url`'s picture, the sound a player plays with
+        it) when the master playlist `master` gives its sound a playlist of
+        its own - the #EXT-X-MEDIA TYPE=AUDIO a player plays in the variant's
+        AUDIO group (DEFAULT=YES, else the group's first; its attributes) has
+        a URI: then the variant's segments hold no sound. None when they do -
+        a default with no URI is sound in the variant (RFC 8216 4.3.4.1.1),
+        other languages beside it are not missed sound - or when the variant
+        is not in that master (height 0: apart, no height given)."""
         lines = [line.strip() for line in master.splitlines()]
         played = {}               # AUDIO group -> the rendition a player plays
         for line in lines:
@@ -379,23 +389,37 @@ class HlsDownloader:
             if a.get("AUDIO") not in groups:
                 return None
             m = re.match(r"\d+x(\d+)", a.get("RESOLUTION", ""))
-            return int(m.group(1)) if m else 0
+            return (int(m.group(1)) if m else 0), played[a["AUDIO"]]
         return None
 
-    def _to_ytdlp(self, master_url, height):
+    def _to_ytdlp(self, master_url, height, sound):
         """A stream whose sound is a playlist of its own, to yt-dlp, which
         fetches that too and joins the two (ffmpeg): this engine fetched the
         picture alone and finished a video with no sound (2026-11-03). The
-        master and the height picked are what it is given; the name stays the
-        page's (name_chosen), not yt-dlp's "master"."""
+        master, the height picked and the sound a player plays with it are
+        what it is given; the name stays the page's (name_chosen), not
+        yt-dlp's "master"."""
         import yt_dl
         log.info("HLS %s: its sound is a stream of its own; handing it to yt-dlp",
                  self.t.filename)
         self.t.log_event("Its sound is a stream of its own: yt-dlp fetches both and joins them")
         self.t.url = master_url
         self.t.use_ytdlp = True                 # a resume goes straight to yt-dlp
-        if height:
-            self.t.yt_format = "bv*[height<=%d]+ba/b[height<=%d]" % (height, height)
+        # That sound by its NAME in any group - yt-dlp adds a group's rank,
+        # ", low"/", high" - else its language, else yt-dlp's own "best
+        # audio", which takes a rendition with no DEFAULT for one as good as
+        # the default and breaks the tie by name: the Hindi sound of an
+        # English default (2026-11-11). Its choice of group stays its own.
+        # yt_dl._choosing_opts keeps them.
+        h = "[height<=%d]" % height if height else ""
+        quoted = lambda v: v.replace("\\", "\\\\").replace('"', '\\"')  # noqa: E731
+        picks = []
+        if sound.get("NAME") and "\0" not in sound["NAME"]:    # NUL: refused by tokenize (3.12+)
+            picks.append('ba[format_note~="^%s(?:, (?:low|high))?$"]'
+                         % quoted(re.escape(sound["NAME"])))
+        if sound.get("LANGUAGE") and "\0" not in sound["LANGUAGE"]:
+            picks.append('ba[language="%s"]' % quoted(sound["LANGUAGE"]))
+        self.t.yt_format = "/".join("bv*%s+%s" % (h, p) for p in picks + ["ba"]) + "/b" + h
         if not self.t.name_chosen:
             self.t.name_chosen = yt_dl.stem(os.path.basename(self.t.save_path))
         self.t.seg_total = self.t.seg_done = 0
@@ -752,9 +776,9 @@ class HlsDownloader:
             self.t.error = LIVE_STREAM
             return
 
-        height = self._sound_apart(master, master_url, base) if master else None
-        if height is not None:
-            self._to_ytdlp(master_url, height)
+        apart = self._sound_apart(master, master_url, base) if master else None
+        if apart is not None:
+            self._to_ytdlp(master_url, *apart)
             return
 
         total = len(segments)

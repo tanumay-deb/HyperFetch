@@ -199,12 +199,17 @@ def _choosing_opts(t, out_dir):
     # not available": prefer a height-capped merge when ffmpeg is present,
     # else a single muxed stream — always with a plain "b" fallback.
     req = (getattr(t, "yt_format", "") or "").strip()
-    mh = re.search(r"height<=(\d+)", req)
+    # the height before any quoted value: a sound's name may say "height<=480"
+    mh = re.search(r"height<=(\d+)", req.split('"', 1)[0])
     h = mh.group(1) if mh else None
+    # the sound a stream's player plays, asked for first (hls._to_ytdlp)
+    sounds = re.findall(r'\+ba(\[(?:format_note~|language)="(?:[^"\\]|\\.)*"\])', req)
     if req.startswith("ba"):                        # audio-only intent
         opts["format"] = "ba[ext=m4a]/ba/b"
     elif ffdir:
-        opts["format"] = (f"bv*[height<={h}]+ba/b[height<={h}]/b" if h else "bv*+ba/b")
+        v = f"bv*[height<={h}]" if h else "bv*"
+        opts["format"] = "".join(f"{v}+ba{s}/" for s in sounds) + (
+            f"{v}+ba/b[height<={h}]/b" if h else "bv*+ba/b")
     else:
         opts["format"] = (f"b[height<={h}]/b" if h else "b")
 
