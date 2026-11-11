@@ -90,3 +90,12 @@ def test_a_video_still_goes_through_yt_dlp(socks, tmp_path, monkeypatch):
                        filename="v.mp4")
     Downloader(t).run()
     assert ran == [t] and t.status != T.ERROR
+
+
+def test_settings_says_what_torrents_send_through_the_proxy():
+    """aria2 proxies its HTTP requests only: UDP trackers, DHT and peers go
+    straight from this address, and Settings did not say so (2026-11-12)."""
+    import inspect
+    from gui2.dialogs import settings_pages
+    page = inspect.getsource(settings_pages.PageBuilderMixin._p_network)
+    assert "only their HTTP trackers" in page and "DHT and peers" in page

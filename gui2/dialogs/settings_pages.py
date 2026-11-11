@@ -243,7 +243,11 @@ class PageBuilderMixin:
         self._proxy_url = (ex.get("proxy") or "").strip()
         self.proxy_btn = QPushButton("Configure" if not self._proxy_url else "Edit")
         self.proxy_btn.clicked.connect(self._config_proxy)
-        self._row(g, "Proxy Settings", "Configure a proxy for downloads", self.proxy_btn)
+        # it did not say what torrents leave out (2026-11-12): aria2 proxies its
+        # HTTP requests only
+        self._row(g, "Proxy Settings", "Configure a proxy for downloads. Torrents send "
+                  "only their HTTP trackers through it: UDP trackers, DHT and peers "
+                  "connect directly.", self.proxy_btn)
         self.dns_https = self._toggle(ex.get("dns_https", False))
         self._row(g, "DNS over HTTPS", "Use secure DNS for resolving addresses", self.dns_https)
         self.dns_auto = self._toggle(ex.get("dns_auto", True))
