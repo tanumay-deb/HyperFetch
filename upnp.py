@@ -240,7 +240,7 @@ def _map(port):
     ip = _local_ip()
     if not ip:
         return False
-    refused = []
+    refused, answered = [], False
     for control_url, svc_type in services:
         said = {proto: _add_mapping(control_url, svc_type, int(port), proto, ip)
                 for proto in ("TCP", "UDP")}
@@ -253,6 +253,13 @@ def _map(port):
             log.info("UPnP: the router opened torrent port %s (%s)", port, "+".join(ok))
             return True
         refused.append(", ".join("%s: %s" % kv for kv in said.items()))
+        answered = answered or any(why.startswith("HTTP ") for why in said.values())
+    if not answered:
+        # timed out or cut off on every ask: no refusal, and nothing to
+        # forward by hand for that (it said so, 2026-11-12)
+        log.info("UPnP: the router did not answer when asked to open torrent port "
+                 "%s (%s); it is not opened", port, "; ".join(refused))
+        return False
     # 606 / HTTP 401-403: control switched off or locked; UPnP error 401
     # "Invalid Action": not offered there. "UPnP on" in a router's settings
     # does not always mean it maps ports (the user's does not).

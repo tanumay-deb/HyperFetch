@@ -69,6 +69,9 @@ def test_no_address_still_searches(monkeypatch):
     ("http://r/desc.xml", [("http://r/ctl", "svc")], {"TCP": "", "UDP": ""}, "opened torrent port"),
     ("http://r/desc.xml", [("http://r/ctl", "svc")], {"TCP": "HTTP 401", "UDP": "HTTP 401"},
      "refused to open torrent port 51413 (TCP: HTTP 401, UDP: HTTP 401)"),
+    # no answer is no refusal: it said "forward the port by hand" (2026-11-12)
+    ("http://r/desc.xml", [("http://r/ctl", "svc")], {"TCP": "TimeoutError", "UDP": "URLError"},
+     "did not answer when asked to open torrent port 51413 (TCP: TimeoutError, UDP: URLError)"),
 ])
 def test_what_the_router_said_is_logged(monkeypatch, caplog, found, control, said, expect):
     monkeypatch.setattr(upnp, "_discover", lambda: found)
