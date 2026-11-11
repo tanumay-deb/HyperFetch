@@ -4,10 +4,37 @@
 list) and the selection-aware behaviours they trigger.
 """
 import os
+import threading
 
 from PySide6.QtCore import Qt
 
 import task as T
+
+_PENDING_LOCK = threading.Lock()
+
+
+def _pending_path():
+    import utils
+    return os.path.join(utils.app_data_dir(), "pending_deletes.json")
+
+
+def _note_pending(add=(), done=()):
+    """The paths "Delete from disk" was asked for and has not dealt with
+    yet, kept in app data. A delete waits for the download's engine to let
+    go of its files; the app closed meanwhile left them on disk and said
+    nothing (2026-11-11). The next start deals with what is listed
+    (ShortcutsMixin._resume_deletes)."""
+    import utils
+    with _PENDING_LOCK:
+        left = [p for p in utils.load_json(_pending_path(), []) if isinstance(p, str)]
+        left = [p for p in left if p not in done] + [p for p in add if p not in left]
+        if left:
+            utils.save_json(_pending_path(), left)
+        else:
+            try:
+                os.remove(_pending_path())
+            except OSError:
+                pass
 
 
 class ShortcutsMixin:
@@ -91,26 +118,49 @@ class ShortcutsMixin:
         if jobs:
             # A running download's files are still open: deleted once its
             # engine lets go, off this thread (it froze the window, 2026-11-04)
-            import threading
+            _note_pending(add=[p for _, paths in jobs for p in paths])
             threading.Thread(target=self._delete_files, args=(jobs,),
                              name="delete", daemon=True).start()
+
+    def _resume_deletes(self):
+        """As the app starts: delete what "Delete from disk" had not dealt
+        with when it last closed (_note_pending), on a thread - but nothing a
+        download in the list now points at: it was added again since."""
+        def resume():
+            import utils
+            left = [p for p in utils.load_json(_pending_path(), []) if isinstance(p, str)]
+            if not left:
+                return
+            owned = set()
+            for t in list(self.queue.tasks):
+                for p in [getattr(t, "save_path", "") or ""] + self._payload_paths(t):
+                    if p:
+                        owned.add(os.path.normcase(os.path.abspath(p)))
+            keep = [p for p in left if os.path.normcase(os.path.abspath(p)) not in owned]
+            _note_pending(done=[p for p in left if p not in keep])
+            if keep:
+                self._delete_files([(None, keep)])
+
+        threading.Thread(target=resume, name="delete", daemon=True).start()
 
     def _delete_files(self, jobs):
         """[(task, paths)] of downloads just removed: wait for each one's
         worker to end and, for a torrent, for aria2 to close its files and
         forget it (torrent._let_go), then delete. On a thread; what could not
-        be deleted goes to _finish_deletes."""
+        be deleted goes to _finish_deletes. A task of None: paths left from
+        the last time the app ran (_resume_deletes), nothing to wait for."""
         import time
         import torrent as _tor
         failed = []
         for t, targets in jobs:
             end = time.monotonic() + 60
-            while getattr(t, "_worker_alive", False) and time.monotonic() < end:
+            while t is not None and getattr(t, "_worker_alive", False) and time.monotonic() < end:
                 time.sleep(0.2)
-            if _tor.is_torrent_task(t.url, t.filename):
+            if t is not None and _tor.is_torrent_task(t.url, t.filename):
                 ih = _tor.task_infohash(t)
                 if ih and any(x is not t and _tor.task_infohash(x) == ih
                               for x in list(self.queue.tasks)):
+                    _note_pending(done=targets)
                     continue                # added again meanwhile: its files now
                 try:
                     _tor._let_go(t)
@@ -121,6 +171,7 @@ class ShortcutsMixin:
                 err = self._remove_path(path, attempts=10, delay=0.5)
                 if err:
                     failed.append((os.path.basename(path) or path, self._why_not_deleted(err)))
+                _note_pending(done=[path])      # dealt with: gone, or said why not
         self._deletes.append(failed)
 
     @staticmethod

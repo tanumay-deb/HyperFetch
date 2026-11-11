@@ -289,3 +289,71 @@ def test_a_read_only_file_says_why_for_real(tmp_path):
         assert err is not None and "permission" in S._why_not_deleted(err)
     finally:
         os.chmod(f, stat.S_IWRITE | stat.S_IREAD)
+
+
+# ---- a delete the app's closing cut short is done at the next start (list #18) --------
+# A delete waits for the download's engine to let go of its files; closing the app
+# meanwhile killed the wait, and the files stayed on disk with nothing said.
+def _pending():
+    import utils
+    from gui2 import app_shortcuts
+    return utils.load_json(app_shortcuts._pending_path(), [])
+
+
+def test_the_paths_are_noted_before_the_wait_and_crossed_off_after(tmp_path, monkeypatch):
+    import threading
+    import time
+    import gui2.dialogs.delete as D
+    payload = tmp_path / "Pack"
+    payload.mkdir()
+    (payload / "e1.mkv").write_bytes(b"x")
+    (tmp_path / "Pack.aria2").write_bytes(b"ctl")
+    t = _task(str(tmp_path / "magnet_.bin"), "Pack")
+    t.status, t._worker_alive = T.DOWNLOADING, True
+    monkeypatch.setattr(D, "DeleteDialog", _Asked)
+    win = _window(remove_task=lambda t: None)
+    S._delete_tasks(win, [t])
+    assert _pending() == [str(payload)], "nothing noted while it waits for the engine"
+    t._worker_alive = False
+    assert _gone(payload)
+    assert _wait_for(lambda: _pending() == []), _pending()
+
+
+def _resume(win):
+    S._resume_deletes(win)
+    assert _wait_for(lambda: _pending() == []), _pending()
+
+
+def test_a_delete_the_close_cut_short_is_done_at_the_next_start(tmp_path):
+    import utils
+    from gui2 import app_shortcuts
+    f, d = tmp_path / "a.zip", tmp_path / "Show.S01"
+    f.write_bytes(b"x")
+    (d / "sub").mkdir(parents=True)
+    (d / "sub" / "e1.mkv").write_bytes(b"x")
+    utils.save_json(app_shortcuts._pending_path(), [str(f), str(d)])
+    win = _window()
+    _resume(win)
+    assert _gone(f) and _gone(d)
+    assert _wait_for(lambda: win._deletes) and win._deletes[-1] == []
+
+
+def test_one_a_download_in_the_list_points_at_again_is_kept(tmp_path):
+    import utils
+    from gui2 import app_shortcuts
+    f = tmp_path / "a.zip"
+    f.write_bytes(b"the new one")
+    utils.save_json(app_shortcuts._pending_path(), [str(f)])
+    again = T.DownloadTask("https://a.example/a.zip", str(f), filename="a.zip")
+    again.status = T.COMPLETED
+    win = _window()
+    win.queue.tasks.append(again)
+    _resume(win)
+    assert f.read_bytes() == b"the new one"
+
+
+def test_the_window_finishes_them_as_it_starts():
+    import inspect
+    from gui2.app import DownloadAppV2
+    src = inspect.getsource(DownloadAppV2.__init__)
+    assert src.index("self._load_state()") < src.index("self._resume_deletes()")
