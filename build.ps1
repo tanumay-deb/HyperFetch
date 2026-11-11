@@ -61,8 +61,9 @@ if (Test-Path $ffExe) {
 } else {
     try {
         New-Item -ItemType Directory -Force bin | Out-Null
-        # BtbN static Windows build (essentials would also do; gpl is fine)
-        $ffUrl = "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip"
+        # FFmpeg-Builds' static Windows build (essentials would also do; gpl is
+        # fine). It moved from BtbN/ in 2026: the old name only redirects here.
+        $ffUrl = "https://github.com/FFmpeg-Builds/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip"
         $zip = Join-Path $env:TEMP "ffmpeg-win64.zip"
         Invoke-WebRequest -Uri $ffUrl -OutFile $zip -UseBasicParsing
         $tmp = Join-Path $env:TEMP "ffmpeg-extract"

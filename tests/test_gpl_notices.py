@@ -89,3 +89,17 @@ def test_every_release_carries_the_source_of_what_it_ships():
     assert release.index("tools/gpl_sources.py") > release.index("build.ps1"),         "gathered before the build wrote FFmpeg-version.txt"
     notice = _read("licenses", "THIRD-PARTY-NOTICES.txt")
     assert "Written offer" not in notice and "three years" not in notice
+
+
+def test_the_build_fetches_ffmpeg_from_where_its_source_is_looked_up():
+    """FFmpeg-Builds moved from BtbN/ in 2026; build.ps1 still asked the old
+    name, which only redirects. The release's source step looks there too
+    (tools/gpl_sources.BUILDS)."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        "gpl_sources", os.path.join(ROOT, "tools", "gpl_sources.py"))
+    gs = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(gs)
+    build = _read("build.ps1")
+    assert ("https://github.com/%s/releases/download/latest/" % gs.BUILDS) in build
+    assert "github.com/BtbN/" not in build
