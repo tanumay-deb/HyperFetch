@@ -8,6 +8,8 @@ app reported success.
 """
 import os
 
+import pytest
+
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import task as T
@@ -137,7 +139,8 @@ def _window(remove_task=lambda t: None):
         queue=types.SimpleNamespace(remove_task=remove_task, tasks=[]),
         _toasts=types.SimpleNamespace(said=[]), _deletes=collections.deque(),
         _save_state=lambda: None, refresh=lambda: None,
-        _payload_paths=S._payload_paths, _remove_path=S._remove_path)
+        _payload_paths=S._payload_paths, _remove_path=S._remove_path,
+        _why_not_deleted=getattr(S, "_why_not_deleted", None))
     win._toasts.show = lambda *a, **k: win._toasts.said.append(a)
     win._delete_files = lambda jobs: S._delete_files(win, jobs)
     win._finish_deletes = lambda: S._finish_deletes(win)
@@ -195,7 +198,9 @@ def test_files_that_will_not_go_are_said_once_and_not_as_try_again(tmp_path, mon
     t = T.DownloadTask("https://a.example/a.zip", str(f), filename="a.zip")
     t.status = T.COMPLETED
     monkeypatch.setattr(D, "DeleteDialog", _Asked)
-    monkeypatch.setattr(S, "_remove_path", staticmethod(lambda p, **k: False))
+    busy = PermissionError(13, "The process cannot access the file")
+    busy.winerror = 32                          # what Windows says of an open file
+    monkeypatch.setattr(S, "_remove_path", staticmethod(lambda p, **k: busy))
     win = _window()
     win._remove_path = S._remove_path
     S._delete_tasks(win, [t])
@@ -210,7 +215,7 @@ def test_removal_handles_a_directory(tmp_path):
     d = tmp_path / "Show.S01"
     (d / "sub").mkdir(parents=True)
     (d / "sub" / "ep.mkv").write_bytes(b"x" * 5)
-    assert S._remove_path(str(d)) is True
+    assert S._remove_path(str(d)) is None
     assert not d.exists()
 
 
@@ -247,3 +252,40 @@ def test_a_torrent_added_again_while_its_delete_waits_keeps_its_files(tmp_path, 
     t._worker_alive = False
     assert _wait_for(lambda: win._deletes)
     assert payload.exists() and let_go == []
+
+
+
+def test_a_file_windows_refuses_is_not_blamed_on_another_program(tmp_path, monkeypatch):
+    """The message always said "another program has them open" - also of a
+    file refused for want of permission, or a read-only one (list #19)."""
+    import gui2.dialogs.delete as D
+    f = tmp_path / "a.zip"
+    f.write_bytes(b"x")
+    t = T.DownloadTask("https://a.example/a.zip", str(f), filename="a.zip")
+    t.status = T.COMPLETED
+    denied = PermissionError(13, "Access is denied")
+    denied.winerror = 5
+    monkeypatch.setattr(D, "DeleteDialog", _Asked)
+    monkeypatch.setattr(S, "_remove_path", staticmethod(lambda p, **k: denied))
+    win = _window()
+    win._remove_path = S._remove_path
+    S._delete_tasks(win, [t])
+    assert _wait_for(lambda: win._deletes)
+    S._finish_deletes(win)
+    body = win._toasts.said[-1][2]
+    assert "a.zip" in body and "permission" in body and "another program" not in body, body
+
+
+def test_a_read_only_file_says_why_for_real(tmp_path):
+    import stat
+    import sys
+    if sys.platform != "win32":
+        pytest.skip("deleting a read-only file is allowed off Windows")
+    f = tmp_path / "locked.bin"
+    f.write_bytes(b"x")
+    os.chmod(f, stat.S_IREAD)
+    try:
+        err = S._remove_path(str(f), attempts=1)
+        assert err is not None and "permission" in S._why_not_deleted(err)
+    finally:
+        os.chmod(f, stat.S_IWRITE | stat.S_IREAD)

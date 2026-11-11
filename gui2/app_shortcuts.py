@@ -118,9 +118,22 @@ class ShortcutsMixin:
                 except Exception:
                     pass
             for path in targets:
-                if not self._remove_path(path, attempts=10, delay=0.5):
-                    failed.append(os.path.basename(path) or path)
+                err = self._remove_path(path, attempts=10, delay=0.5)
+                if err:
+                    failed.append((os.path.basename(path) or path, self._why_not_deleted(err)))
         self._deletes.append(failed)
+
+    @staticmethod
+    def _why_not_deleted(err):
+        """What to tell the user of a delete that failed. It always said
+        "another program has them open" - also of a file Windows refused for
+        want of permission, or one marked read-only (2026-11-11)."""
+        win = getattr(err, "winerror", None)
+        if win in (32, 33):                  # sharing / lock violation
+            return "another program has them open"
+        if win == 5 or (win is None and isinstance(err, PermissionError)):
+            return "Windows refused: no permission, or they are read-only"
+        return str(getattr(err, "strerror", "") or err)
 
     def _finish_deletes(self):
         """What delete threads could not delete, said on the window's thread."""
@@ -130,10 +143,15 @@ class ShortcutsMixin:
                 # Never silent: "delete from disk" that quietly did nothing is
                 # worse than an error, because the files are still taking up
                 # space and the user believes they are gone.
+                why = {}
+                for name, reason in failed:          # by reason, in order
+                    why.setdefault(reason, []).append(name)
                 self._toasts.show(
                     "error", "Could not delete some files",
-                    ", ".join(failed[:3]) + ("…" if len(failed) > 3 else "")
-                    + " — another program has them open. They are still on disk.")
+                    " ".join("%s%s — %s." % (", ".join(names[:3]),
+                                             "…" if len(names) > 3 else "", reason)
+                             for reason, names in why.items())
+                    + " They are still on disk.")
 
     @staticmethod
     def _payload_paths(t):
@@ -200,7 +218,8 @@ class ShortcutsMixin:
 
     @staticmethod
     def _remove_path(path, attempts=5, delay=0.4):
-        """Delete a file or a whole torrent folder, retrying briefly.
+        """Delete a file or a whole torrent folder, retrying briefly. None
+        when it is gone, else the error that kept it.
 
         remove_task only ASKS the engine to stop; aria2 still has the files open
         for a moment after, and on Windows an open handle makes the delete fail
@@ -215,14 +234,13 @@ class ShortcutsMixin:
                     shutil.rmtree(path)         # not ignore_errors: we report
                 else:
                     os.remove(path)
-                return True
-            except OSError:
+                return None
+            except OSError as e:
                 if not os.path.exists(path):
-                    return True                 # something else got there first
+                    return None                 # something else got there first
                 if attempt == attempts - 1:
-                    return False
+                    return e                    # what stopped it, for the message
                 _time.sleep(delay)
-        return False
 
     def _space_selected(self):
         for t in self._sel_tasks():
