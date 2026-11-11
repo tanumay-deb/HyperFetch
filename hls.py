@@ -110,7 +110,9 @@ def probe(url, headers=None):
     base = {**HEADERS, **(headers or {})}
     sess = requests.Session()
     try:
-        text = _playlist_text(_get(sess, url, base))
+        r = _get(sess, url, base)
+        # its links are relative to where it came from (HlsDownloader._fetch)
+        text, url = _playlist_text(r), r.url
     except requests.RequestException:
         return {"variants": [], "duration": 0.0, "live": False}
     if "#EXT-X-STREAM-INF" not in text:

@@ -302,6 +302,15 @@ def test_probe_variants_lists_master(hls_server):
     assert all(x.get("url") and x.get("label") for x in v)
 
 
+def test_the_qualities_of_a_master_that_moved_point_where_it_went(hls_server):
+    """The badge's quality list (/probe) joined a moved master's links
+    against the address asked: every quality it offered was a 404
+    (2026-11-12)."""
+    import hls
+    v = hls.probe_variants(f"{hls_server.base}/old/master.m3u8")
+    assert [x["url"] for x in v] == [f"{hls_server.base}/new/high.m3u8"]
+
+
 def test_probe_variants_empty_for_media_playlist(hls_server):
     import hls
     # high.m3u8 is a media playlist (no #EXT-X-STREAM-INF) -> nothing to choose
