@@ -531,18 +531,21 @@ HOST_RULES = {}
 def host_rule(url):
     """The per-host rule for a URL's host (matches the exact host or a parent
     domain, e.g. a rule for 'example.com' also covers 'cdn.example.com'); {} if
-    none."""
+    none. Of several that match, the longest host's rule is used, whole."""
     try:
         host = urllib.parse.urlparse(url).netloc.split("@")[-1].split(":")[0].lower()
     except Exception:
         return {}
     if not host:
         return {}
+    # The most specific host wins, not the first one added: a rule for
+    # cdn.example.com added after example.com was never used (2026-11-11).
+    best, found = 0, {}
     for h, rule in (HOST_RULES or {}).items():
         h = (h or "").lower().lstrip(".")
-        if h and (host == h or host.endswith("." + h)):
-            return rule or {}
-    return {}
+        if h and (host == h or host.endswith("." + h)) and len(h) > best:
+            best, found = len(h), (rule if isinstance(rule, dict) else {})
+    return found
 
 # Auto-capture allowlist (Settings -> Browser Integration). When the extension's
 # browser-download capture forwards an auto-captured file, the server only accepts
