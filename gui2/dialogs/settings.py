@@ -246,7 +246,6 @@ class SettingsDialogV2(PageBuilderMixin, QDialog):
             "disk_cache": self.disk_cache.isChecked(),
             "hash_check": self.hash_check.isChecked(),
             "debug_log": self.debug_log.isChecked(),
-            "browsers": {b: t.isChecked() for b, t in self.browsers.items()},
             "capture_exts": self._parse_exts(self.capture_exts.text()),
             "web_enabled": self.web_enabled.isChecked(),
             "web_username": self.web_user.text().strip(),

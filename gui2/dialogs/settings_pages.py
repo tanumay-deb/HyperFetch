@@ -367,11 +367,8 @@ class PageBuilderMixin:
         self._row(g, "Browser Extension", "Install the HyperFetch extension for Chrome, Firefox or Edge", get)
         v.addWidget(f)
         f2, g2 = self._card()
-        self.browsers = {}
-        for b in ("Google Chrome", "Microsoft Edge"):
-            tog = self._toggle((ex.get("browsers") or {}).get(b, True))
-            self.browsers[b] = tog
-            self._row(g2, b, "Detected", tog)
+        # A "Detected" switch each for Chrome and Edge stood here: nothing
+        # detected a browser, and nothing read the switch (2026-11-11).
         # on-page download-button corner — served to the extension via /ping;
         # the extension mirrors it into chrome.storage when its popup opens
         _corners = {"Top right": "top-right", "Top left": "top-left",
