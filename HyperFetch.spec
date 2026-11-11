@@ -23,6 +23,8 @@ try:
     ytdlp_datas, ytdlp_binaries, ytdlp_hidden = collect_all('yt_dlp')
 except Exception:
     ytdlp_datas, ytdlp_binaries, ytdlp_hidden = [], [], []
+# its own PyInstaller hook is for building, not running (excludes, below)
+ytdlp_hidden = [m for m in ytdlp_hidden if not m.startswith('yt_dlp.__pyinstaller')]
 
 hidden = (
     # local modules reached via lazy `import` inside functions
@@ -75,7 +77,11 @@ a = Analysis(
     runtime_hooks=[],
     excludes=['tkinter', 'pytest', 'PySide6.QtWebEngineCore',
               'PySide6.Qt3DCore', 'PySide6.QtMultimedia', 'PySide6.QtQuick',
-              'PySide6.QtBluetooth', 'PySide6.QtPdf'],
+              'PySide6.QtBluetooth', 'PySide6.QtPdf',
+              # collect_all('yt_dlp') takes yt-dlp's own PyInstaller hook, which
+              # imports PyInstaller: every build shipped PyInstaller's code (GPLv2)
+              # and the tools it uses, 2.8 MB nothing runs (2026-11-12)
+              'yt_dlp.__pyinstaller', 'PyInstaller'],
     noarchive=False,
 )
 

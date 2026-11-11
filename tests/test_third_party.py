@@ -88,3 +88,16 @@ def test_credits_lists_what_the_build_ships():
         assert ">%s " % name in shown[0], name
     assert "THIRD-PARTY-NOTICES.txt" in shown[0] and "aria2" in shown[0]
     assert not hasattr(settings_pages, "CREDITS"), "a list typed by hand"
+
+
+def test_the_build_leaves_out_pyinstallers_own_code():
+    """collect_all('yt_dlp') takes yt-dlp's own PyInstaller hook, which
+    imports PyInstaller: every build shipped PyInstaller's code (GPLv2) and
+    the tools it uses - setuptools, pefile, altgraph, packaging,
+    pywin32-ctypes - which nothing runs (2026-11-12)."""
+    with open(os.path.join(ROOT, "HyperFetch.spec"), encoding="utf-8") as f:
+        spec = f.read()
+    excludes = spec.split("excludes=[", 1)[1].split("]", 1)[0]
+    assert "'PyInstaller'" in excludes and "'yt_dlp.__pyinstaller'" in excludes
+    # nor asked for by name: PyInstaller logs an ERROR for an excluded hidden import
+    assert "not m.startswith('yt_dlp.__pyinstaller')" in spec
