@@ -260,3 +260,14 @@ def test_the_timeline_stays_capped():
     for i in range(T.DownloadTask.EVENTS_MAX + 50):
         t.error = "failure number %d" % i
     assert len(t.events) == T.DownloadTask.EVENTS_MAX
+
+
+def test_a_task_made_without_a_name_takes_no_query_for_one():
+    """With no name, a task took the link's last part, query and all: a
+    harness's task named itself after a signed link's token, which then went
+    to the log (2026-11-10). The app always passes one; nothing else should
+    get the query either."""
+    t = T.DownloadTask("https://e.test/files/a.zip?token=s3cret&x=1#frag", "C:/dl/a.zip")
+    assert t.filename == "a.zip"
+    assert T.DownloadTask("magnet:?xt=urn:btih:" + "a" * 40, "C:/dl/m.bin").filename == "download"
+    assert T.DownloadTask("https://e.test/", "C:/dl/x").filename == "download"

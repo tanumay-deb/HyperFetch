@@ -4,6 +4,7 @@ import time
 import uuid
 import threading
 import itertools
+import urllib.parse
 from enum import Enum
 from typing import List, Optional
 import utils
@@ -102,7 +103,10 @@ class DownloadTask:
             self.added = added or 0
         self.url = url
         self.save_path = save_path
-        self.filename = filename or url.split("/")[-1]
+        # the link's last path part, never its query: one with a token in it
+        # was a name, and so went to the log (2026-11-10)
+        self.filename = filename or (urllib.parse.urlsplit(url).path.rsplit("/", 1)[-1]
+                                     or "download")
         # extra request headers (Cookie/Referer/User-Agent from the browser)
         # needed for auth-gated downloads like Google Drive
         self.headers = headers or {}
