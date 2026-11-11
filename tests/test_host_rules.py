@@ -1,4 +1,8 @@
 """Per-host rules: host matching + downloader segment override."""
+import os
+
+import pytest
+
 import utils
 import task as T
 from downloader import Downloader
@@ -66,3 +70,48 @@ def test_a_rule_that_is_not_a_rule_is_none(monkeypatch):
         monkeypatch.setattr(utils, "HOST_RULES", rules)
         assert utils.host_rule("https://cdn.example.com/f.bin") == {}
         assert downloader.connections_for("https://cdn.example.com/f.bin", 6) == 6
+
+
+# ---- a host as a link names it (2026-11-12) ----------------------------------
+@pytest.mark.parametrize("typed, kept", [
+    ("Example.COM", "example.com"),
+    ("https://user:pw@dl.example.com:8080/x?y=1#z", "dl.example.com"),
+    ("*.example.com", "example.com"),
+    ("example.com.", "example.com"),
+    ("files.example.com?x=1", "files.example.com"),
+    ("[::1]:8080", "::1"),
+    ("bücher.de", "xn--bcher-kva.de"),
+    ("   ", ""),
+])
+def test_a_host_is_kept_as_a_link_names_it(typed, kept):
+    """The dialog kept "*.example.com", a trailing dot or a "?query" as typed
+    - rules that never match - and "[::1]:8080" as "[" (2026-11-12)."""
+    assert utils.rule_host(typed) == kept
+
+
+def test_rules_match_ipv6_addresses_and_international_names(monkeypatch):
+    """Every IPv6 link's host read as "[", so one IPv6 rule (saved as "[")
+    took them all; a rule typed as bücher.de never met its link's
+    xn--bcher-kva.de (2026-11-12)."""
+    rule = {"segments": 3, "ytdlp": False}
+    monkeypatch.setattr(utils, "HOST_RULES", {"[": {"segments": 1}, "::1": rule,
+                                              "bücher.de": rule, "*.example.com": rule})
+    assert utils.host_rule("http://[2001:db8::1]/f") == {}, "the old '[' rule took every IPv6 host"
+    assert utils.host_rule("http://[::1]:8080/f") == rule
+    assert utils.host_rule("https://xn--bcher-kva.de/f") == rule
+    assert utils.host_rule("https://bücher.de/f") == rule
+    assert utils.host_rule("https://cdn.example.com/f") == rule
+
+
+def test_the_dialog_keeps_a_host_as_a_link_names_it():
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication
+    from gui2.dialogs.host_rules import HostRulesDialog
+    QApplication.instance() or QApplication([])
+    rules = {}
+    dlg = HostRulesDialog(None, rules)
+    for typed in ("*.Example.com", "[::1]:8080", "bücher.de", "files.example.org?x=1"):
+        dlg.host_edit.setText(typed)
+        dlg._add()
+    assert sorted(rules) == ["::1", "example.com", "files.example.org", "xn--bcher-kva.de"]
+

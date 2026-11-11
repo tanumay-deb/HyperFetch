@@ -10,6 +10,7 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Qt
 
+import utils
 from gui2.palette import COLORS
 from gui2.dialogs.common import DialogHeader
 from gui.icons import themed_icon
@@ -77,11 +78,8 @@ class HostRulesDialog(QDialog):
         return f
 
     def _add(self):
-        host = self.host_edit.text().strip().lower().lstrip(".")
-        # tolerate a pasted URL — keep just the host
-        if "//" in host:
-            host = host.split("//", 1)[1]
-        host = host.split("/")[0].split("@")[-1].split(":")[0]
+        # as a link names it (utils.rule_host): a pasted URL, "*.", a port
+        host = utils.rule_host(self.host_edit.text())
         if host:
             self.rules[host] = {"segments": self.seg_edit.value(), "ytdlp": self.ytdlp_chk.isChecked()}
             self.host_edit.clear(); self.ytdlp_chk.setChecked(False)

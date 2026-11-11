@@ -528,12 +528,34 @@ BADGE_CORNER = "top-right"  # extension's on-page download-button corner (served
 HOST_RULES = {}
 
 
+def rule_host(text):
+    """A host as a per-host rule keys it, and as a link names it: lowercase,
+    no scheme, user, port, path, query, "*." or trailing dot, an IPv6 address
+    without its brackets, an international name in its ASCII (xn--) form.
+    The dialog kept "*.example.com" or "x.com?a=1" as typed - rules that
+    never match - and "[::1]:8080" as "[", which every IPv6 link's host read
+    as too (2026-11-12). "" when there is no host."""
+    h = (text or "").strip().lower()
+    if "//" in h:
+        h = h.split("//", 1)[1]
+    h = re.split(r"[/?#]", h, 1)[0].rsplit("@", 1)[-1]
+    if h.startswith("["):
+        h = h[1:].split("]", 1)[0]
+    elif h.count(":") == 1:
+        h = h.split(":", 1)[0]              # a port; more colons: an IPv6 address
+    h = h.lstrip("*.").rstrip(".")
+    try:
+        return h.encode("idna").decode("ascii")
+    except UnicodeError:
+        return h                            # not a name IDNA takes: as it is
+
+
 def host_rule(url):
     """The per-host rule for a URL's host (matches the exact host or a parent
     domain, e.g. a rule for 'example.com' also covers 'cdn.example.com'); {} if
     none. Of several that match, the longest host's rule is used, whole."""
     try:
-        host = urllib.parse.urlparse(url).netloc.split("@")[-1].split(":")[0].lower()
+        host = rule_host(urllib.parse.urlsplit(url).netloc)
     except Exception:
         return {}
     if not host:
@@ -542,7 +564,7 @@ def host_rule(url):
     # cdn.example.com added after example.com was never used (2026-11-11).
     best, found = 0, {}
     for h, rule in (HOST_RULES or {}).items():
-        h = (h or "").lower().lstrip(".")
+        h = rule_host(h)
         if h and (host == h or host.endswith("." + h)) and len(h) > best:
             best, found = len(h), (rule if isinstance(rule, dict) else {})
     return found
