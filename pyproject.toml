@@ -31,8 +31,10 @@ hyperfetch = "main:main"
 # refuses a flat layout with this many top-level modules).
 [tool.setuptools]
 py-modules = [
-    "main", "api_server", "crash_reporter", "doh", "downloader", "history",
-    "hls", "queue_manager", "task", "torrent", "updater", "upnp", "utils", "yt_dl",
+    "main", "api_server", "aria2d", "crash_reporter", "doh", "downloader", "history",
+    "hls", "pairing", "plain_errors", "queue_manager", "scrape", "swarm", "task",
+    "third_party", "torrent", "trackers", "unblock", "updater", "upnp", "utils",
+    "web_auth", "yt_dl",
 ]
 packages = ["gui", "gui2", "gui2.dialogs"]
 
