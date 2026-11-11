@@ -20,7 +20,9 @@ Licence:  GNU General Public License, version 2 or (at your option) any
           COPYING file, from its release-1.37.0 tag).
 Binary:   aria2-1.37.0-win-64bit-build1.zip, as published at
           https://github.com/aria2/aria2/releases/tag/release-1.37.0
-Source:   https://github.com/aria2/aria2/releases/download/release-1.37.0/aria2-1.37.0.tar.xz
+Source:   in the release's source zip (the end of this file), with the six
+          libraries that build is made of. aria2's own is also at
+          https://github.com/aria2/aria2/releases/download/release-1.37.0/aria2-1.37.0.tar.xz
           (and the repository: https://github.com/aria2/aria2, tag release-1.37.0)
 
 
@@ -33,13 +35,15 @@ Licence:  GNU General Public License, version 3 or (at your option) any
           --enable-version3. The licence text: GPL-3.0-only.txt (FFmpeg's
           own COPYING.GPLv3 file, byte for byte).
 Binary:   ffmpeg-master-latest-win64-gpl.zip, from
-          https://github.com/BtbN/FFmpeg-Builds
+          https://github.com/FFmpeg-Builds/FFmpeg-Builds (BtbN/FFmpeg-Builds
+          until 2026)
 Version:  FFmpeg-version.txt, beside this file, is the first line that
           bin\ffmpeg.exe -version printed when this copy of HyperFetch was
           built. The part after "-g" is the FFmpeg commit.
-Source:   https://github.com/FFmpeg/FFmpeg/tree/<that commit>, and the scripts
-          it was built with, which fetch the exact source of every library
-          in it: https://github.com/BtbN/FFmpeg-Builds
+Source:   in the release's source zip (the end of this file): FFmpeg at that
+          commit (https://github.com/FFmpeg/FFmpeg/tree/<that commit>), and
+          the FFmpeg-Builds scripts of the build that made it. Each script
+          names the repository and exact commit of one library in it.
 
 
 Qt 6.11.0, through Qt for Python (PySide6 6.11.0) - the window
@@ -63,10 +67,11 @@ Inside:   Qt carries code of other authors (zlib, libpng, FreeType,
           https://doc.qt.io/qt-6.11/licenses-used-in-qt.html
 
 
-Written offer
--------------
-For at least three years from the date of each HyperFetch release, anyone
-may have the complete corresponding source code of the aria2 and FFmpeg that
-release ships, at no charge beyond the cost of providing it: ask by opening
-an issue at https://github.com/tanumay-deb/HyperFetch/issues and naming the
-HyperFetch version.
+Source, with every release
+--------------------------
+Every HyperFetch release carries, beside its installer and its portable
+zip, HyperFetch-<version>-gpl-source.zip: the source of the aria2 and the
+FFmpeg that release ships - aria2 1.37.0 and the six libraries its Windows
+build is made of (GMP, Expat, SQLite, zlib, c-ares, libssh2), and FFmpeg at
+the commit in FFmpeg-version.txt with the scripts of the build that made it.
+https://github.com/tanumay-deb/HyperFetch/releases

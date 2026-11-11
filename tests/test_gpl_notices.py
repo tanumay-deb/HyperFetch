@@ -30,11 +30,11 @@ def test_the_notice_says_what_is_shipped_and_where_its_source_is():
     aria2_version = re.search(r'\$ariaVersion\s*=\s*"([\d.]+)"', _read("build.ps1")).group(1)
     assert ("aria2 %s" % aria2_version) in notice, "the notice names another aria2 than the build's"
     assert ("release-%s/aria2-%s.tar.xz" % (aria2_version, aria2_version)) in notice
-    assert "https://github.com/BtbN/FFmpeg-Builds" in notice
+    assert "https://github.com/FFmpeg-Builds/FFmpeg-Builds" in notice
     assert "https://github.com/FFmpeg/FFmpeg" in notice and "FFmpeg-version.txt" in notice
     for name in ("aria2-COPYING.txt", "GPL-3.0-only.txt"):
         assert name in notice and os.path.isfile(os.path.join(LICENSES, name)), name
-    assert "three years" in notice and "/issues" in notice, "no written offer of the source"
+    assert "gpl-source.zip" in notice and "HyperFetch/releases" in notice, "nowhere said where the source is"
 
 
 def test_the_build_ships_them_and_which_ffmpeg_it_is():
@@ -63,3 +63,29 @@ def test_qt_goes_with_the_lgpl_and_where_its_source_is():
     assert ("archive/qt/%s/%s/single/qt-everywhere-src-%s.tar.xz" % (minor, version, version)) in notice
     assert ("PySide6-%s-src/pyside-setup-everywhere-src-%s.tar.xz" % (version, version)) in notice
     assert "LGPL-3.0-only.txt" in notice and "GPL-3.0-only.txt" in notice
+
+
+def test_every_release_carries_the_source_of_what_it_ships():
+    """The source was offered on request for three years from each release:
+    a promise somebody had to keep (2026-11-11). The release carries it."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        "gpl_sources", os.path.join(ROOT, "tools", "gpl_sources.py"))
+    gs = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(gs)
+    aria2_version = re.search(r'\$ariaVersion\s*=\s*"([\d.]+)"', _read("build.ps1")).group(1)
+    assert gs.ARIA2[0][0].endswith("/aria2-%s.tar.xz" % aria2_version), "not the aria2 the build ships"
+    assert len(gs.ARIA2) == 7, "aria2 and the six libraries its Dockerfile.mingw builds in"
+    assert all(re.fullmatch(r"[0-9a-f]{64}", sha) for _, sha in gs.ARIA2)
+    line = "ffmpeg version N-128790-g9bee1e603c-20261111 Copyright (c) 2000-2026 the FFmpeg developers"
+    assert gs.ffmpeg_build(line) == "N-128790-g9bee1e603c"
+    releases = [{"tag_name": "latest", "assets": [{"name": "ffmpeg-master-latest-win64-gpl.zip"}]},
+                {"tag_name": "autobuild-2026-11-11-12-39",
+                 "assets": [{"name": "ffmpeg-N-128790-g9bee1e603c-win64-gpl-shared.zip"},
+                            {"name": "ffmpeg-N-128790-g9bee1e603c-win64-gpl.zip"}]}]
+    assert gs.builds_tag(releases, "N-128790-g9bee1e603c") == "autobuild-2026-11-11-12-39"
+    release = _read(".github", "workflows", "release.yml")
+    assert "python tools/gpl_sources.py" in release and "dist/HyperFetch-*-gpl-source.zip" in release
+    assert release.index("tools/gpl_sources.py") > release.index("build.ps1"),         "gathered before the build wrote FFmpeg-version.txt"
+    notice = _read("licenses", "THIRD-PARTY-NOTICES.txt")
+    assert "Written offer" not in notice and "three years" not in notice

@@ -65,6 +65,13 @@ jobs:
         shell: pwsh
         run: Compress-Archive -Path dist\HyperFetch\* -DestinationPath "dist\HyperFetch-${{ steps.ver.outputs.version }}-portable.zip"
 
+      # The source of aria2 and FFmpeg as this build ships them, on the page
+      # the installer comes from (licenses/THIRD-PARTY-NOTICES.txt says so)
+      - name: Gather the source of the GPL programs it ships
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python tools/gpl_sources.py ${{ steps.ver.outputs.version }} dist
+
       # Browser extension zips, straight from the tagged source. The Chrome one
       # is what gets uploaded to the Web Store; the Edge one has no store listing
       # at all, so this release asset is its only distribution channel. Only the
@@ -112,6 +119,7 @@ jobs:
           files: |
             dist/installer/*.exe
             dist/HyperFetch-*-portable.zip
+            dist/HyperFetch-*-gpl-source.zip
             dist/hyperfetch-chrome-*.zip
             dist/hyperfetch-edge-*.zip
             dist/hyperfetch-firefox-*.zip
