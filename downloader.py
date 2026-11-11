@@ -819,6 +819,14 @@ class Downloader:
             yt_dl.YtDlpDownloader(self.t, segments=self.num_segments).run()
             return
 
+        # a proxy requests cannot use: held, in words (videos above go on -
+        # yt-dlp speaks SOCKS itself)
+        held = utils.proxy_unusable()
+        if held:
+            self.t.status = T.ERROR
+            self.t.error = held
+            return
+
         # HLS (.m3u8) playlists need segment fetch+concat, not a byte download
         import hls
         if hls.is_hls(self.t.url, self.t.filename, self._probe_ctype):

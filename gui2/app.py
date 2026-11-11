@@ -420,13 +420,25 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, Up
         self._allow_empty_save = False      # one-shot permission
 
     def _say_proxy_hold(self):
-        """Once, as the app starts: torrents are held because Settings' proxy
-        is one the torrent engine cannot use (torrent.proxy_refused). Only
-        when the list has a torrent to hold; its card says so too."""
-        why = _torrent.proxy_refused()
-        if why and any(_torrent.is_torrent_task(t.url, t.filename)
-                       for t in self.queue.tasks):
-            self._toasts.show("error", "Torrents are on hold", why, secs=15)
+        """Once, as the app starts: downloads are held because Settings' proxy
+        is one their engine cannot use - torrents (torrent.proxy_refused),
+        ordinary downloads and streams (utils.proxy_unusable). Only when the
+        list has one to hold; its card says so too."""
+        tor, plain = _torrent.proxy_refused(), utils.proxy_unusable()
+        is_tor = lambda t: _torrent.is_torrent_task(t.url, t.filename)  # noqa: E731
+        torrents = bool(tor) and any(is_tor(t) for t in self.queue.tasks)
+        others = bool(plain) and any(
+            t.status != T.COMPLETED and not is_tor(t) and not yt_dl.is_ytdlp_task(t)
+            for t in self.queue.tasks)
+        if torrents or others:
+            what = ("Torrents and downloads" if torrents and others
+                    else "Torrents" if torrents else "Downloads")
+            self._toasts.show(
+                "error", what + " are on hold",
+                "Settings has a proxy HyperFetch cannot use (%s://…), so they are not "
+                "started: they would fail or go around it. Set an http:// proxy under "
+                "Settings → Network → Proxy Settings, or clear it."
+                % utils.odd_proxy_scheme(), secs=15)
 
     def _save_web_changes(self):
         """What the web page changed - a rename, a remove, a limit, a pause -

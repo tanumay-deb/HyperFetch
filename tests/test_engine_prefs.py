@@ -315,25 +315,34 @@ def test_the_engine_is_not_started_for_anything_else_either(tmp_path, monkeypatc
     assert d.ensure() is True
 
 
-def test_the_window_says_so_once_and_only_with_a_torrent_in_the_list(monkeypatch):
+def test_the_window_says_so_once_and_only_of_what_the_list_holds(monkeypatch):
     import inspect
     import types
     import task as T
     from gui2.app import DownloadAppV2
     _proxy(monkeypatch, SOCKS)
+    monkeypatch.setattr(utils, "_requests_speak_socks", lambda: False, raising=False)
     said = []
     plain = T.DownloadTask("https://example.test/a.zip", "C:/dl/a.zip", filename="a.zip")
+    plain.status = T.COMPLETED
+    video = T.DownloadTask("https://www.youtube.com/watch?v=abcdefghijk", "C:/dl/v.mp4")
     magnet = T.DownloadTask("magnet:?xt=urn:btih:" + "b" * 40, "C:/dl/magnet_.bin")
-    win = types.SimpleNamespace(queue=types.SimpleNamespace(tasks=[plain]),
+    win = types.SimpleNamespace(queue=types.SimpleNamespace(tasks=[plain, video]),
                                 _toasts=types.SimpleNamespace(show=lambda *a, **k: said.append(a)))
     DownloadAppV2._say_proxy_hold(win)
-    assert said == [], "a list with no torrent in it was told about torrents"
+    assert said == [], "a finished download and a video were said to be held"
     win.queue.tasks.append(magnet)
     DownloadAppV2._say_proxy_hold(win)
     assert len(said) == 1 and said[0][1] == "Torrents are on hold" and "socks5" in said[0][2]
+    plain.status = T.PAUSED
+    DownloadAppV2._say_proxy_hold(win)
+    assert said[-1][1] == "Torrents and downloads are on hold"
+    win.queue.tasks.remove(magnet)
+    DownloadAppV2._say_proxy_hold(win)
+    assert said[-1][1] == "Downloads are on hold"
     _proxy(monkeypatch, HTTP_PROXY)
     DownloadAppV2._say_proxy_hold(win)
-    assert len(said) == 1
+    assert len(said) == 3
     src = inspect.getsource(DownloadAppV2.refresh)
     assert "_proxy_hold_due" in src and "self._say_proxy_hold()" in src
     assert "self._proxy_hold_due = True" in inspect.getsource(DownloadAppV2.__init__)

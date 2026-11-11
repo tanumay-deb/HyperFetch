@@ -37,3 +37,56 @@ def test_only_a_proxy_it_can_use_is_saved(page, monkeypatch, typed, kept):
     page._config_proxy()
     assert page._proxy_url == kept
     assert bool(page.warned) is (kept == ""), page.warned
+
+
+# ---- a socks proxy saved earlier holds ordinary downloads, in words (2026-11-11) -----
+# requests speaks SOCKS only with PySocks, which the build does not carry: every
+# download failed as "Connection lost - Resume to retry", the real error only in
+# the log. yt-dlp speaks SOCKS itself, so a video still goes.
+import utils                                                      # noqa: E402
+import task as T                                                  # noqa: E402
+
+SOCKS = {"http": "socks5://127.0.0.1:1080", "https": "socks5://127.0.0.1:1080"}
+
+
+@pytest.fixture
+def socks(monkeypatch):
+    monkeypatch.setattr(utils, "PROXIES", SOCKS)
+    monkeypatch.setattr(utils, "_requests_speak_socks", lambda: False, raising=False)
+
+
+def test_which_proxies_the_downloads_cannot_use(monkeypatch):
+    for proxies, held in ((SOCKS, True), ({"http": "http://h:1", "https": "http://h:1"}, False),
+                          ({"http": "h:1", "https": "h:1"}, False), (None, False), ({}, False)):
+        monkeypatch.setattr(utils, "PROXIES", proxies)
+        monkeypatch.setattr(utils, "_requests_speak_socks", lambda: False, raising=False)
+        assert bool(utils.proxy_unusable()) is held, proxies
+    monkeypatch.setattr(utils, "PROXIES", SOCKS)
+    monkeypatch.setattr(utils, "_requests_speak_socks", lambda: True)
+    assert utils.proxy_unusable() == "", "with PySocks there requests can use it"
+
+
+@pytest.mark.parametrize("path", ["files/report.zip", "live/index.m3u8"])
+def test_a_download_with_such_a_proxy_says_why_and_asks_nobody(socks, media_server, tmp_path,
+                                                               path):
+    from downloader import Downloader
+    media_server.put(path, b"x" * 4096)
+    t = T.DownloadTask(media_server.url(path), str(tmp_path / path.split("/")[-1]),
+                       filename=path.split("/")[-1])
+    Downloader(t, segments=4).run()
+    assert t.status == T.ERROR
+    assert "proxy" in t.error and "Settings" in t.error, t.error
+    assert "Connection lost" not in t.error
+    assert media_server.log == [], "a request went out around the proxy"
+
+
+def test_a_video_still_goes_through_yt_dlp(socks, tmp_path, monkeypatch):
+    import yt_dl
+    from downloader import Downloader
+    ran = []
+    monkeypatch.setattr(yt_dl, "YtDlpDownloader",
+                        lambda t, segments=None: type("Y", (), {"run": lambda s: ran.append(t)})())
+    t = T.DownloadTask("https://www.youtube.com/watch?v=abcdefghijk", str(tmp_path / "v.mp4"),
+                       filename="v.mp4")
+    Downloader(t).run()
+    assert ran == [t] and t.status != T.ERROR

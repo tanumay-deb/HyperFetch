@@ -428,6 +428,40 @@ VERIFY_TLS = True
 PROXIES = None            # requests proxies: None=auto/env, {}=force-direct, {...}=custom
 PROXY_TORRENTS = True     # torrents (aria2) use PROXIES too; the users server turns
                           # this off, since its torrents run direct by design
+
+
+def _requests_speak_socks():
+    """Whether requests can use a SOCKS proxy here: only with PySocks,
+    which the build does not carry."""
+    import importlib.util
+    return importlib.util.find_spec("socks") is not None
+
+
+def odd_proxy_scheme():
+    """The scheme of the proxy Settings holds when it is not an http(s)
+    one ("socks5"), else "": the kind neither requests (without PySocks)
+    nor aria2 can use."""
+    url = (PROXIES or {}).get("https") or (PROXIES or {}).get("http") or ""
+    if "://" not in url or url.lower().startswith(("http://", "https://")):
+        return ""
+    return url.split("://", 1)[0]
+
+
+def proxy_unusable():
+    """Why the proxy Settings holds cannot carry this app's own downloads
+    (the HTTP and stream engines, which use requests), or "": a socks5://
+    one saved before Settings refused them, with no SOCKS support at hand.
+    Every such download failed as "Connection lost - Resume to retry", the
+    real error ("Missing dependencies for SOCKS support") only in the log
+    (2026-11-11). It is held instead, and says why. yt-dlp speaks SOCKS
+    itself, so videos still go; torrents: torrent.proxy_refused."""
+    scheme = odd_proxy_scheme()
+    if not scheme or _requests_speak_socks():
+        return ""
+    return ("Settings has a proxy HyperFetch cannot use for this download (%s://…), "
+            "so it is not started: it would fail or go around the proxy. Set an "
+            "http:// proxy under Settings → Network → Proxy Settings, or clear it."
+            % scheme)
 MAX_CONNECTIONS = 0       # global ceiling on per-download segments (0 = unlimited)
 LISTEN_PORT = 0           # torrent listen port (0 = aria2 default)
 DISK_CACHE = True         # aria2 --disk-cache on/off
