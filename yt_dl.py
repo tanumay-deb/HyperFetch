@@ -153,13 +153,31 @@ def _system_path():
     return os.pathsep.join(parts)
 
 
+_DENO_MISS_TTL = 60.0
+_deno_miss = (0.0, None)
+
+
 def _deno():
     """Where deno is, "" when nowhere: on this process's PATH, else on the
-    system's PATH as it is now, else where Deno's own installer puts it."""
+    system's PATH as it is now, else where Deno's own installer puts it.
+    A miss is cached for a minute so NameScout's 3 s poll does not re-read
+    the registry and re-scan PATH on every tick."""
+    global _deno_miss
     import shutil
-    later = [p for p in _system_path().split(os.pathsep) if p]
-    later.append(os.path.join(os.path.expanduser("~"), ".deno", "bin"))
-    return shutil.which("deno") or shutil.which("deno", path=os.pathsep.join(later)) or ""
+    env_key = (os.environ.get("PATH"), os.path.expanduser("~"), _system_path)
+    now = time.monotonic()
+    if now < _deno_miss[0] and _deno_miss[1] == env_key:
+        return ""
+    found = shutil.which("deno")
+    if not found:
+        later = [p for p in _system_path().split(os.pathsep) if p]
+        later.append(os.path.join(os.path.expanduser("~"), ".deno", "bin"))
+        found = shutil.which("deno", path=os.pathsep.join(later))
+    if found:
+        _deno_miss = (0.0, None)
+        return found
+    _deno_miss = (now + _DENO_MISS_TTL, env_key)
+    return ""
 
 
 # YouTube turning this connection away - its "confirm you're not a bot" or a

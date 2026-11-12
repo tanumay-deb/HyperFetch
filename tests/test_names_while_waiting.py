@@ -709,3 +709,42 @@ def test_with_the_real_ytdlp_the_name_given_while_waiting_is_the_downloads(
     assert t.status == T.COMPLETED, t.error
     assert t.save_path == named, "its download called it something else"
     assert open(t.save_path, "rb").read() == data
+
+
+def test_missing_deno_is_cached_for_a_minute(site, media_server, tmp_path, queue, monkeypatch):
+    """NameScout calls yt_dl._deno() every 3 s per waiting video; without deno
+    that is two registry reads and a PATH scan each time. Cache a miss for a
+    minute (2026-11-12)."""
+    import shutil
+    now = [1000.0]
+    reg_reads = []
+    which_calls = []
+    real_which = shutil.which
+
+    def fake_which(cmd, *a, **k):
+        if cmd == "deno":
+            which_calls.append((cmd, a, k))
+            return None
+        return real_which(cmd, *a, **k)
+
+    monkeypatch.setattr(yt_dl.time, "monotonic", lambda: now[0])
+    monkeypatch.setattr(yt_dl, "_system_path", lambda: (reg_reads.append(1) or ""))
+    monkeypatch.setattr(shutil, "which", fake_which)
+
+    t1, _ = _waiting(media_server, tmp_path, queue, name="one.bin")
+    t2, _ = _waiting(media_server, tmp_path, queue, name="two.bin")
+    scout = _scout(queue)
+
+    assert scout.run_once() is t1
+    assert len(reg_reads) == 1
+    first_which = len(which_calls)
+
+    now[0] += 3.0
+    assert scout.run_once() is t2
+    assert len(reg_reads) == 1, "re-read the registry within the 1-minute miss cache"
+    assert len(which_calls) == first_which, "re-scanned PATH within the 1-minute miss cache"
+
+    now[0] += 60.0
+    assert yt_dl._deno() == ""
+    assert len(reg_reads) == 2, "did not re-check after the 1-minute miss cache expired"
+
