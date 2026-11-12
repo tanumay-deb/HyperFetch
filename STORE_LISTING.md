@@ -51,15 +51,22 @@ What each listing had on 2026-10-04, read from the stores' public pages:
 Chrome and Edge take the short summary from the manifest's `description`;
 Firefox's is typed into the listing.
 
-## What's new in 1.9.1 (release notes field / notes for reviewers)
+## What's new in 1.9.5 (release notes field / notes for reviewers)
+
+Every store had 1.9.3 on 2026-11-12, so this covers 1.9.4 too.
 
 ```
-1.9.1
-- The video button sends the video its player is playing, not an advert's
-  stream or a thumbnail's preview clip.
-- Chrome and Edge: new installs pair with the HyperFetch app on their own
-  again. Needs HyperFetch 2.7.0 or later.
-- The welcome page and the popup show the HyperFetch logo.
+1.9.5
+- The popup checks the saved pairing with the HyperFetch app as it opens,
+  and pairs again when the app no longer knows it. It used to say "paired"
+  until a download was refused.
+1.9.4
+- A stream's video button also sends the playlist its quality was picked
+  from, so HyperFetch 2.8.8 can save a stream whose sound is a separate
+  playlist with its sound.
+- A download from a signed link (GitHub release files, for one) also sends
+  the link it started at, so the app can finish it after the signed link
+  expires.
 ```
 
 For a reviewer: the package is the source. Nothing is minified or built;
