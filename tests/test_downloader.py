@@ -381,3 +381,49 @@ def test_a_video_link_that_stops_sending_parts_is_an_error_not_a_pause(media_ser
     th.join(60)
     assert t.status == T.ERROR and "no longer sends" in t.error, (t.status, t.error)
     assert not t.pause_requested and not eng.media_done
+
+
+def test_a_non_range_download_cut_short_is_an_error_not_completed(tmp_path):
+    """HEAD announces N bytes; GET sends N/2 bytes chunked without ranges and
+    closes cleanly. It must fail as 'the server ended the file early — Restart',
+    never mark the half-file Completed."""
+    import http.server
+    import threading
+
+    total = 4096
+    half = b"A" * (total // 2)
+
+    class _H(http.server.BaseHTTPRequestHandler):
+        protocol_version = "HTTP/1.1"
+
+        def do_HEAD(self):
+            self.send_response(200)
+            self.send_header("Content-Type", "application/octet-stream")
+            self.send_header("Content-Length", str(total))
+            self.end_headers()
+
+        def do_GET(self):
+            self.send_response(200)
+            self.send_header("Content-Type", "application/octet-stream")
+            self.send_header("Transfer-Encoding", "chunked")
+            self.end_headers()
+            self.wfile.write(f"{len(half):x}\r\n".encode() + half + b"\r\n0\r\n\r\n")
+            self.wfile.flush()
+
+        def log_message(self, *a):
+            pass
+
+    srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _H)
+    th = threading.Thread(target=srv.serve_forever, daemon=True)
+    th.start()
+    try:
+        dst = tmp_path / "cut.bin"
+        t = T.DownloadTask(f"http://127.0.0.1:{srv.server_port}/cut.bin", str(dst))
+        Downloader(t, segments=4).run()
+        assert t.status == T.ERROR, (t.status, t.error)
+        assert "the server ended the file early — Restart" in t.error
+        assert not dst.exists()
+    finally:
+        srv.shutdown()
+        srv.server_close()
+

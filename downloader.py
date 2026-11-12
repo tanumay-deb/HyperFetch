@@ -1035,8 +1035,16 @@ class Downloader:
             self.t.status = T.PAUSED
             return
 
-        all_done = all(s.complete for s in self.t.segments) if self.t.supports_range \
-            else self.t.downloaded > 0
+        if self.t.supports_range:
+            all_done = all(s.complete for s in self.t.segments)
+        elif self.t.total_size > 0:
+            if self.t.downloaded < self.t.total_size:
+                self.t.status = T.ERROR
+                self.t.error = "the server ended the file early — Restart"
+                return
+            all_done = True
+        else:
+            all_done = self.t.downloaded > 0
         if all_done:
             # cross-volume-safe atomic finalize (shared helper); on failure leave
             # temp_path in %TEMP% for a retry and never mark COMPLETED.
