@@ -164,14 +164,24 @@ def _deno():
 
 # YouTube turning this connection away - its "confirm you're not a bot" or a
 # 429 - told in words the app's user can act on, not yt-dlp's --cookies flags
-REFUSED = ("YouTube is refusing this connection for now and asks for a sign-in. Send "
-           "the video from your browser (the HyperFetch button or right-click), so "
-           "your YouTube sign-in goes with it, or try again later.")
+REFUSED = ("YouTube is refusing this connection for now and asks for a sign-in. Sign "
+           "in to YouTube in your browser and send the video from there (the "
+           "HyperFetch button or right-click), or try again later.")
 REFUSED_SIGNED_IN = ("YouTube is refusing this connection for now, even with your "
                      "sign-in. Try again later.")
 SIGNED_IN_NEEDS_DENO = ("YouTube asks this connection to sign in, and a signed-in "
                         "download needs Deno to unlock the video. Install it ({how}), "
                         "then Resume.")
+
+
+def _signed_in(t):
+    """Whether the browser's cookies are a YouTube sign-in - yt-dlp's own test
+    (_has_auth_cookies): LOGIN_INFO and one of the SAPISID cookies. A
+    visitor's cookies come from the browser too."""
+    cookie = next((v for k, v in _http_headers(t).items() if k.lower() == "cookie"), "")
+    names = {part.split("=", 1)[0].strip() for part in cookie.split(";")}
+    return "LOGIN_INFO" in names and bool(
+        names & {"SAPISID", "__Secure-1PAPISID", "__Secure-3PAPISID"})
 
 
 def _refused(low):
@@ -196,7 +206,7 @@ def explain(err, t, unsolved=False, ffdir=""):
     if youtube and _refused(low):
         # a signed-in try that found no formats (nothing to solve the
         # challenge) and a retry without cookies that met the bot check
-        signed_in = any(k.lower() == "cookie" for k in _http_headers(t))
+        signed_in = _signed_in(t)
         return (SIGNED_IN_NEEDS_DENO.format(how=_get_deno()) if signed_in and needs_deno
                 else REFUSED_SIGNED_IN if signed_in else REFUSED)
     if youtube and _formats_unavailable(err) and needs_deno:

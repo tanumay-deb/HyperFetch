@@ -358,10 +358,39 @@ def test_429_reads_the_same(tmp_path, monkeypatch):
 def test_signed_in_and_still_refused_says_try_later(tmp_path, monkeypatch):
     _deno(monkeypatch, there=True)
     _refusing(monkeypatch, _bot)
-    t = _task(tmp_path, {"Cookie": "SID=x"})
+    t = _task(tmp_path, {"Cookie": SIGNED_IN})
     yt_dl.YtDlpDownloader(t).run()
     assert "even with your sign-in" in t.error and "try again later" in t.error.lower()
     assert "browser" not in t.error, "it came from the browser already"
+
+
+# what a browser signed in to YouTube sends - yt-dlp's own test of a sign-in
+# (_has_auth_cookies): LOGIN_INFO and one of the SAPISID cookies
+SIGNED_IN = "LOGIN_INFO=a; SAPISID=b; VISITOR_INFO1_LIVE=c; YSC=d"
+VISITOR = "VISITOR_INFO1_LIVE=c; YSC=d; PREF=f6=40000000"
+
+
+def test_a_browser_not_signed_in_to_youtube_is_told_to_sign_in(tmp_path, monkeypatch):
+    """Cookies came, but a visitor's: "even with your sign-in" was not so."""
+    _deno(monkeypatch, there=True)
+    _refusing(monkeypatch, _bot)
+    t = _task(tmp_path, {"Cookie": VISITOR})
+    yt_dl.YtDlpDownloader(t).run()
+    assert "even with your sign-in" not in t.error, t.error
+    assert "Sign in to YouTube in your browser" in t.error, t.error
+
+
+@pytest.mark.parametrize("cookie,signed_in", [
+    (SIGNED_IN, True),
+    ("LOGIN_INFO=a; __Secure-3PAPISID=b", True),
+    ("LOGIN_INFO=a; __Secure-1PAPISID=b", True),
+    ("SAPISID=b; SID=c", False),           # rotated out: LOGIN_INFO goes first
+    (VISITOR, False),
+    ("", False),
+])
+def test_a_sign_in_is_what_yt_dlp_takes_for_one(tmp_path, cookie, signed_in):
+    t = _task(tmp_path, {"Cookie": cookie} if cookie else {})
+    assert yt_dl._signed_in(t) is signed_in
 
 
 def test_signed_in_without_deno_says_install_deno(tmp_path, monkeypatch):
@@ -369,7 +398,7 @@ def test_signed_in_without_deno_says_install_deno(tmp_path, monkeypatch):
     challenge), the retry without cookies met the bot check. Deno is the fix."""
     _deno(monkeypatch, there=False)
     attempts = _refusing(monkeypatch, _unsolved_then_bot)
-    t = _task(tmp_path, {"Cookie": "SID=x"})
+    t = _task(tmp_path, {"Cookie": SIGNED_IN})
     yt_dl.YtDlpDownloader(t).run()
     assert [_has_cookie(a) for a in attempts] == [True, False]
     assert yt_dl._get_deno() in t.error, t.error
