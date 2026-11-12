@@ -69,3 +69,27 @@ def test_without_a_search_the_buttons_mean_everything(tmp_path):
     assert _ticked(d) == []
     d.btn_select_all.click()
     assert _ticked(d) == FILES
+
+
+def test_bars_follow_checkboxes_after_select_none_and_without_file_progress(tmp_path, monkeypatch):
+    d, _sent = _drawer(tmp_path)
+    t = d._task_ref
+    d.btn_select_none.click()
+    assert [b.format() for b in d._file_bars] == ["Skipped"] * len(FILES)
+    d.update_live(t, 0.0)
+    assert [b.format() for b in d._file_bars] == ["Skipped"] * len(FILES)
+
+    # Also when file_progress is empty (static .torrent listing)
+    import gui2.details_drawer as dd
+    monkeypatch.setattr(dd._torrent, "list_files",
+                        lambda _t: [("Pics/a.jpg", 10), ("Pics/b.mp4", 10)])
+    t.file_progress = []
+    d.open_for(t)
+    assert [b.format() for b in d._file_bars] == ["—", "—"]
+    d._file_row_widgets[1][1].setChecked(False)
+    assert [b.format() for b in d._file_bars] == ["—", "Skipped"]
+    d.btn_select_none.click()
+    assert [b.format() for b in d._file_bars] == ["Skipped", "Skipped"]
+    d.btn_select_all.click()
+    assert [b.format() for b in d._file_bars] == ["—", "—"]
+

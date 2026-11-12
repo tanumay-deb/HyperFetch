@@ -994,25 +994,40 @@ class DetailsDrawer(QFrame):
         if not _torrent.is_torrent_task(t.url, t.filename):
             return
         live = self._live_file_entries(t)
-        if not live:
-            return
-        if len(live) != len(self._file_bars):
+        entries = getattr(self, "_file_entries", None) or []
+        if live and len(live) != len(self._file_bars):
             self._populate_static(t)      # metadata arrived, file list changed
+            return
+        if not live and not entries:
             return
         # Look each row up by its aria2 INDEX, not by position. Once the table
         # is sorted the on-screen order is no longer the engine's, and a zip()
         # would paint every file's progress onto somebody else's row.
         for row, bar in enumerate(self._file_bars):
-            idx = (self._file_row_widgets[row][0]
-                   if row < len(self._file_row_widgets) else row)
-            if not 0 <= idx < len(live):
-                continue
-            _rel, size, completed, selected = live[idx]
+            if row < len(self._file_row_widgets):
+                idx, cb, size = self._file_row_widgets[row]
+                selected = cb.isChecked()
+            else:
+                idx, selected = row, True
+            if live:
+                if not 0 <= idx < len(live):
+                    continue
+                _rel, size, completed, _sel = live[idx]
+            else:
+                if not 0 <= idx < len(entries):
+                    continue
+                size = entries[idx]["size"]
+                completed = entries[idx]["completed"]
+            if 0 <= idx < len(entries):
+                entries[idx]["completed"] = completed
+                entries[idx]["selected"] = selected
             pct = self._file_pct(size, completed)
-            partial = bool(completed > 0 and pct < 100)
+            partial = bool(completed and pct < 100)
             bar.setProperty("hf_partial", partial)
             if not selected:
                 bar.setFormat("Skipped")
+            elif completed is None:
+                bar.setFormat("—")
             else:
                 # A file with a few bytes rounds to "0%", which made the
                 # Downloading tile count rows that all read zero. Say <1%.
@@ -1628,10 +1643,10 @@ class DetailsDrawer(QFrame):
         # aria2 indexes files from 1
         selected = [str(idx + 1) for idx, cb, _ in
                     sorted(self._file_row_widgets, key=lambda w: w[0]) if cb.isChecked()]
+        t = getattr(self, "_task_ref", None)
         win = self._window()
-        if not win:
-            return
-        t = next((x for x in win.queue.tasks if x.id == self._tid), None)
+        if win:
+            t = next((x for x in win.queue.tasks if x.id == self._tid), t)
         # is_torrent_task(), not a task attribute that never existed
         if not t or not _torrent.is_torrent_task(t.url, t.filename):
             return
@@ -1643,16 +1658,19 @@ class DetailsDrawer(QFrame):
             # list used to be ticked again - one just unticked - and fetched
             # (2026-11-02).
             running = t.status in (T.DOWNLOADING, T.QUEUED)
-            if running:
+            if running and win:
                 win.queue.pause_task(t)
-            toasts = getattr(win, "_toasts", None)
+            toasts = getattr(win, "_toasts", None) if win else None
             if toasts:
                 toasts.show("info", "Paused" if running else "Nothing ticked",
                             ("No file is ticked, so the torrent is paused. " if running
                              else "")
                             + "Tick the files to fetch; nothing changes until one is.")
+            self._refresh_files(t)
             return
-        win.queue.change_torrent_files(self._tid, ",".join(selected))
+        if win:
+            win.queue.change_torrent_files(self._tid, ",".join(selected))
+        self._refresh_files(t)
 
     def _load(self, t):
         """Point the drawer at a task and refresh its content (no slide)."""
