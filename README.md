@@ -133,7 +133,7 @@ download only content you have the right to.
 Free code signing provided by SignPath.io, certificate by SignPath Foundation.
 
 The application was made on 6 October 2026 and is waiting for an answer.
-Releases up to and including 2.8.7 are not signed; the first signed release
+Releases up to and including 2.8.8 are not signed; the first signed release
 will say so in its notes.
 
 - **What is signed:** `HyperFetch.exe` and the installer, built by GitHub
