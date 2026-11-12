@@ -110,3 +110,59 @@ def test_the_same_limit_set_again_keeps_the_share():
     rl.set_share(250_000)
     rl.set_limit(L)
     assert rl.rate == 250_000
+
+
+def test_hls_stream_waits_on_global_and_task_limiters(tmp_path, monkeypatch):
+    import hls
+    import task as T
+    t = T.DownloadTask("https://example.test/v.m3u8", str(tmp_path / "v.ts"), filename="v.ts")
+    dl = hls.HlsDownloader(t)
+    monkeypatch.setattr(hls, "_get", lambda *a, **k: type("R", (), {"content": b"x" * 4096, "status_code": 200, "headers": {}})())
+    g_waits, t_waits = [], []
+    monkeypatch.setattr(utils.global_limiter, "wait", lambda n, stop=None: g_waits.append(n))
+    monkeypatch.setattr(t._limiter, "wait", lambda n, stop=None: t_waits.append(n))
+    out = dl._fetch_segment("https://example.test/seg0.ts", 0, None)
+    assert out == b"x" * 4096
+    assert g_waits == [4096] and t_waits == [4096]
+
+
+def test_ytdlp_own_download_waits_on_global_and_task_limiters(tmp_path, monkeypatch):
+    import sys
+    import types
+    import task as T
+    import yt_dl
+    out = tmp_path / "clip.mp4"
+    t = T.DownloadTask("https://www.youtube.com/watch?v=abcdefghijk", str(out), filename="clip.mp4")
+    g_waits, t_waits = [], []
+    monkeypatch.setattr(utils.global_limiter, "wait", lambda n, stop=None: g_waits.append(n))
+    monkeypatch.setattr(t._limiter, "wait", lambda n, stop=None: t_waits.append(n))
+
+    class _FakeYDL:
+        def __init__(self, opts):
+            self.params = opts
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            pass
+
+        def prepare_filename(self, info):
+            return str(out)
+
+        def extract_info(self, url, download=True):
+            out.write_bytes(b"x" * 8192)
+            for hook in self.params.get("progress_hooks") or []:
+                hook({"status": "downloading", "downloaded_bytes": 4096,
+                      "total_bytes": 8192, "info_dict": {"id": "v1"}})
+                hook({"status": "downloading", "downloaded_bytes": 8192,
+                      "total_bytes": 8192, "info_dict": {"id": "v1"}})
+                hook({"status": "finished", "downloaded_bytes": 8192,
+                      "total_bytes": 8192, "filename": str(out), "info_dict": {"id": "v1"}})
+            return {"id": "v1", "title": "clip", "ext": "mp4"}
+
+    monkeypatch.setitem(sys.modules, "yt_dlp", types.SimpleNamespace(YoutubeDL=_FakeYDL))
+    yt_dl.YtDlpDownloader(t, segments=1).run()
+    assert t.status == T.COMPLETED, t.error
+    assert g_waits == [4096, 4096] and t_waits == [4096, 4096]
+

@@ -936,7 +936,7 @@ class YtDlpDownloader:
         # bar went back to 0% as the second began. The parts of one video
         # finished so far, and which video that is (a playlist's next starts
         # its own count).
-        parts = {"video": None, "done": 0}
+        parts = {"video": None, "done": 0, "paced": int(self.t.downloaded or 0)}
 
         def hook(d):
             if self.t.cancel_requested or self.t.pause_requested:
@@ -944,16 +944,29 @@ class YtDlpDownloader:
             st = d.get("status")
             info = d.get("info_dict") or {}
             if info.get("id") != parts["video"]:
+                if parts["video"] is not None:
+                    parts["paced"] = 0
                 parts["video"], parts["done"] = info.get("id"), 0
             got = d.get("downloaded_bytes") or 0
             size = d.get("total_bytes") or d.get("total_bytes_estimate") or 0
             if st == "downloading":
                 whole = sum(int(f.get("filesize") or f.get("filesize_approx") or 0)
                             for f in info.get("requested_formats") or [])
-                self.t.downloaded = parts["done"] + got
+                now_got = parts["done"] + got
+                delta = now_got - parts["paced"]
+                if delta > 0:
+                    parts["paced"] = now_got
+                    stop = lambda: self.t.pause_requested or self.t.cancel_requested
+                    import utils
+                    utils.global_limiter.wait(delta, stop)
+                    self.t._limiter.wait(delta, stop)
+                    if stop():
+                        raise _Abort()
+                self.t.downloaded = now_got
                 self.t.total_size = max(whole, parts["done"] + size)
             elif st == "finished":
                 parts["done"] += size or got
+                parts["paced"] = max(parts["paced"], parts["done"])
                 self.t.downloaded = parts["done"]
                 final["path"] = d.get("filename") or final["path"]
 

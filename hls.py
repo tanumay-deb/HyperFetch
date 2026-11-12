@@ -652,9 +652,13 @@ class HlsDownloader:
         server answer a range with less than asked: the rest is asked for
         again, as the HTTP engine does - a short part was saved as it came,
         and the video finished "Completed" broken (2026-11-04)."""
+        stop = lambda: self.t.pause_requested or self.t.cancel_requested
         if not part:
             r = _get(self._seg_session(), url, self.headers, self._stats)
-            return self._decrypt(r.content, key, seq)
+            raw_seg = r.content
+            utils.global_limiter.wait(len(raw_seg), stop)
+            self.t._limiter.wait(len(raw_seg), stop)
+            return self._decrypt(raw_seg, key, seq)
         start, length = part
         data, empty = b"", 0
         while len(data) < length:
@@ -676,6 +680,9 @@ class HlsDownloader:
                 if empty >= SEG_RETRIES:
                     raise RuntimeError("the server sent %d of the %d bytes of a "
                                        "segment" % (len(data), length))
+            else:
+                utils.global_limiter.wait(len(got), stop)
+                self.t._limiter.wait(len(got), stop)
             data += got
         return self._decrypt(data, key, seq)
 
