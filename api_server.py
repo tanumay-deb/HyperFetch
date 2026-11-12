@@ -168,9 +168,8 @@ def servable_files(t, limit=MAX_LISTED_FILES):
 
 
 def web_dir():
-    """The web UI folder, in a dev checkout and in the frozen build alike."""
-    base = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
-    return os.path.join(base, "web")
+    """The web UI folder, in a dev checkout, a frozen build, or a pip install."""
+    return utils.resource_path("web")
 
 
 def is_loopback(remote_addr):
@@ -958,9 +957,7 @@ def create_app(queue, save_dir, pending=None, token=None, pair_requests=None):
         a second static folder — assets/ holds more than the page should be
         able to ask for.
         """
-        base = getattr(sys, "_MEIPASS",
-                       os.path.dirname(os.path.abspath(__file__)))
-        return send_from_directory(os.path.join(base, "assets"), "icon.png")
+        return send_from_directory(utils.resource_path("assets"), "icon.png")
 
     return app
 

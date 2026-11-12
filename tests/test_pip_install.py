@@ -19,3 +19,22 @@ def test_every_top_level_module_is_listed():
     packages = re.search(r"^packages = \[(.*?)\]", text, re.M).group(1)
     for pkg in ("gui", "gui2", "gui2.dialogs"):
         assert '"%s"' % pkg in packages, pkg
+
+
+def test_a_pip_install_ships_and_finds_the_web_page_and_the_licences(tmp_path, monkeypatch):
+    import api_server
+    import utils
+    with open(os.path.join(ROOT, "pyproject.toml"), encoding="utf-8") as f:
+        text = f.read()
+    for f in api_server.ALLOWED_UI_FILES:
+        assert '"web/%s"' % f in text, f
+    assert '"share/hyperfetch/licenses" = ["licenses/*.txt"]' in text
+    share = tmp_path / "share" / "hyperfetch"
+    for folder in ("web", "assets", "licenses"):
+        (share / folder).mkdir(parents=True)
+    monkeypatch.setattr(utils.os.path, "abspath", lambda p: str(tmp_path / "site-packages" / "utils.py"))
+    monkeypatch.setattr(utils.sys, "prefix", str(tmp_path))
+    assert api_server.web_dir() == str(share / "web")
+    assert utils.resource_path("licenses") == str(share / "licenses")
+    assert utils.resource_path("assets") == str(share / "assets")
+

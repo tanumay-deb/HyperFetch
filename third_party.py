@@ -18,8 +18,10 @@ import shutil
 import sys
 import sysconfig
 
+import utils
+
 ROOT = os.path.dirname(os.path.abspath(__file__))
-LICENSES = os.path.join(ROOT, "licenses")
+LICENSES = utils.resource_path("licenses")
 FOLDER = "third-party"          # in a build's licenses/
 CREDITS = "credits.json"
 # Qt's wheels carry only Qt's commercial licence. HyperFetch uses Qt under the

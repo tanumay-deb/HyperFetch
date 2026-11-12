@@ -14,6 +14,26 @@ import urllib.parse
 DEFAULT_HEADERS = {"User-Agent": "Mozilla/5.0 (HyperFetch)"}
 
 
+def resource_path(*parts):
+    """Locate a bundled resource across dev, a PyInstaller build, and a
+    pip/pipx install. Checks, in order: the PyInstaller bundle (``_MEIPASS``),
+    the dev repo root, and the install data dir
+    (``<sys.prefix>/share/hyperfetch`` — where pip puts our data-files)."""
+    candidates = []
+    mei = getattr(sys, "_MEIPASS", None)
+    if mei:
+        candidates.append(mei)
+    dev_root = os.path.dirname(os.path.abspath(__file__))
+    candidates.append(dev_root)
+    candidates.append(os.path.join(sys.prefix, "share", "hyperfetch"))
+    for base in candidates:
+        p = os.path.join(base, *parts)
+        if os.path.exists(p):
+            return p
+    return os.path.join(dev_root, *parts)
+
+
+
 def temp_dir():
     """The folder this installation keeps its in-progress temp files in: one
     for each app-data folder, inside the system temp folder.
