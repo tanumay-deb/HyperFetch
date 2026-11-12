@@ -53,8 +53,7 @@ class SettingsMixin:
         self.verify_tls = bool(s.get("verify_tls", True))
         utils.VERIFY_TLS = self.verify_tls
         self.theme = s.get("theme", "dark")
-        apply_theme(self.theme)                       # for the shared PropertiesDialog
-        palette.set_theme(self.theme)                 # v2 palette (dark / light / system)
+        apply_theme(palette.set_theme(self.theme))    # resolve dark / light / system once for both
         palette.set_accent(s.get("accent", "purple"))  # v2 widgets
         self.pair_token = utils.get_or_create_token()
         self.queues_config = s.get("queues", [{"name": "Main", "max_concurrent": self.max_concurrent}])
@@ -118,8 +117,7 @@ class SettingsMixin:
                  or palette.ACCENTS.get(v["accent"]) != palette.COLORS["accent"]
                  or v.get("font_size", "Medium") != self._extras.get("font_size", "Medium"))
         self.theme = v["theme"]
-        apply_theme(self.theme)
-        palette.set_theme(self.theme)
+        apply_theme(palette.set_theme(self.theme))
         palette.set_accent(v["accent"])
         self.scheduler_enabled = v["sched_en"]
         self.scheduler_start = v["sched_start"]
@@ -143,8 +141,7 @@ class SettingsMixin:
     def _toggle_theme(self):
         """The status bar's button: dark <-> light."""
         self.theme = "light" if palette.active_theme() == "dark" else "dark"
-        apply_theme(self.theme)
-        palette.set_theme(self.theme)
+        apply_theme(palette.set_theme(self.theme))
         self._save_settings()
         # after the click that asked: the button is one of what goes
         QTimer.singleShot(0, self._reskin)

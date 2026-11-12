@@ -104,6 +104,9 @@ def apply_theme(name):
     AND propagating them to the consumer modules that imported them by value."""
     global THEME, ACCENT, ACCENT_2, BG, SURFACE, SURFACE_2
     global BORDER, HOVER, PRESSED, ALT, SEL, TEXT, MUTED
+    if name == "system":
+        from gui2 import palette as _pal
+        name = "light" if _pal._system_is_light() else "dark"
     THEME = "light" if name == "light" else "dark"
     p = palette_for(THEME)
     ACCENT, ACCENT_2 = p["accent"], p["accent2"]

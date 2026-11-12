@@ -106,6 +106,20 @@ def set_accent(key_or_hex):
     COLORS["accent"] = hexv
     # a slightly lighter sibling for gradients
     COLORS["accent2"] = _lighten(hexv, 0.15)
+    try:
+        import sys
+        from gui import theme as _gtheme
+        _gtheme.ACCENT = hexv
+        _gtheme.ACCENT_2 = COLORS["accent2"]
+        for modname in getattr(_gtheme, "_THEME_CONSUMERS", ()):
+            mod = sys.modules.get(modname)
+            if mod is not None:
+                if hasattr(mod, "ACCENT"):
+                    mod.ACCENT = hexv
+                if hasattr(mod, "ACCENT_2"):
+                    mod.ACCENT_2 = COLORS["accent2"]
+    except Exception:
+        pass
     return hexv
 
 

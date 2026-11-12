@@ -375,3 +375,29 @@ def test_held_downloads_go_back_in_line_once_the_proxy_is_put_right(monkeypatch)
     assert "self._release_proxy_holds()" in inspect.getsource(SettingsMixin._apply_settings)
     init = inspect.getsource(DownloadAppV2.__init__)
     assert init.index("self._release_proxy_holds()") > init.index("self._load_state()")
+
+
+def test_system_theme_on_light_windows_and_accent_reach_gui_theme(monkeypatch):
+    """'system' on a light-mode Windows gives gui.theme.TEXT the light theme's
+    text colour, and a new accent reaches gui.theme.ACCENT."""
+    import gui.theme as gtheme
+    from gui2 import palette
+    monkeypatch.setattr(palette, "_system_is_light", lambda: True)
+    try:
+        resolved = palette.set_theme("system")
+        gtheme.apply_theme(resolved)
+        assert resolved == "light"
+        assert gtheme.THEME == "light"
+        assert gtheme.TEXT == gtheme.LIGHT["text"]
+        # Calling apply_theme("system") directly also resolves it via palette
+        gtheme.apply_theme("system")
+        assert gtheme.THEME == "light"
+        assert gtheme.TEXT == gtheme.LIGHT["text"]
+        # Accent reaches gui.theme.ACCENT
+        hexv = palette.set_accent("green")
+        assert gtheme.ACCENT == hexv == palette.ACCENTS["green"]
+    finally:
+        gtheme.apply_theme("dark")
+        palette.set_theme("dark")
+        palette.set_accent("purple")
+
