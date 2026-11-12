@@ -136,7 +136,8 @@ def test_a_seed_reads_100_percent(monkeypatch):
 
     monkeypatch.setattr(aria2d, "DAEMON", _Daemon())
     QApplication.instance() or QApplication([])
-    drawer = DetailsDrawer(QWidget())
+    host = QWidget()
+    drawer = DetailsDrawer(host)
     t = T.DownloadTask("magnet:?xt=urn:btih:abc", "C:/dl/x")
     t.gid = "gid1"
     rows = drawer._peer_rows(t)
@@ -226,3 +227,30 @@ def test_a_failed_peer_ask_waits_before_the_next(monkeypatch):
     for _ in range(5):                     # five half-second ticks
         drawer._avail_counts(t, 8)
     assert asked == [1]
+
+
+def test_queued_task_in_drawer_shows_start_now_and_emits_start():
+    """A Queued task not waiting out a retry shows 'Start now' in the drawer
+    and emits 'start' (force_start) instead of 'resume' (which QueueManager
+    ignores for a queued task)."""
+    import time
+    QApplication.instance() or QApplication([])
+    host = QWidget()
+    drawer = DetailsDrawer(host)
+    t = T.DownloadTask("https://example.test/file.bin", "C:/dl/file.bin")
+    t.status = T.QUEUED
+    emitted = []
+    drawer.action.connect(lambda act, tid: emitted.append((act, tid)))
+    drawer.open_for(t)
+    assert "Start now" in drawer.btn_primary.text()
+    drawer.btn_primary.click()
+    assert emitted == [("start", t.id)]
+
+    # One waiting out a retry keeps Resume
+    emitted.clear()
+    t.retry_after = time.time() + 120
+    drawer.update_live(t, 0.0)
+    assert "Resume" in drawer.btn_primary.text()
+    drawer.btn_primary.click()
+    assert emitted == [("resume", t.id)]
+
