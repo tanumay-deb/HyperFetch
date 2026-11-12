@@ -117,3 +117,24 @@ def test_a_list_that_cannot_be_opened_is_still_never_saved_over(tmp_path, monkey
     assert app._state_load_failed
     assert (tmp_path / "downloads.json").is_dir()
     assert not [n for n in os.listdir(tmp_path) if ".corrupt-" in n]
+
+
+def test_write_durably_retries_a_brief_permission_error_on_replace(tmp_path, monkeypatch):
+    """On Windows os.replace raises PermissionError ([WinError 5]) when another
+    handle briefly holds the target open."""
+    p = tmp_path / "state.json"
+    p.write_text('{"old": 1}', encoding="utf-8")
+    real_replace = os.replace
+    tries = []
+
+    def flaky_replace(src, dst):
+        tries.append(1)
+        if len(tries) < 3:
+            raise PermissionError(13, "Access is denied", str(dst))
+        return real_replace(src, dst)
+
+    monkeypatch.setattr(os, "replace", flaky_replace)
+    utils.write_durably(str(p), '{"new": 2}')
+    assert len(tries) == 3
+    assert p.read_text(encoding="utf-8") == '{"new": 2}'
+
