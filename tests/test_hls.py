@@ -570,7 +570,9 @@ def test_a_stream_that_fills_the_disk_names_the_drive_and_move_to(hls_server, tm
     out = tmp_path / "Clip.ts"
     t = T.DownloadTask(f"{hls_server.base}/high.m3u8", str(out), filename="Clip.ts")
     Downloader(t).run()
-    drive = os.path.splitdrive(str(tmp_path))[0] or str(tmp_path)
+    # where the partial is written: its drive, or on a system with no drive
+    # letters its folder (the destination's drive was the same only on Windows)
+    drive = os.path.splitdrive(t.temp_path)[0] or os.path.dirname(t.temp_path)
     assert t.status == T.ERROR
     assert "disk full" in t.error
     assert drive in t.error
