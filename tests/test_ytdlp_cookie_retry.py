@@ -264,9 +264,10 @@ def unsolved_ytdlp(monkeypatch):
 
 
 def _deno(monkeypatch, there):
+    """deno there or not, whatever this machine has; ffmpeg there."""
     import shutil
-    monkeypatch.setattr(shutil, "which", lambda n: (
-        ("/usr/bin/" + n) if (n != "deno" or there) else None))
+    monkeypatch.setattr(shutil, "which", lambda n, *a, **k: "/usr/bin/" + n)
+    monkeypatch.setattr(yt_dl, "_deno", lambda: "/usr/bin/deno" if there else "")
 
 
 def test_no_formats_for_want_of_deno_says_install_deno(tmp_path, unsolved_ytdlp,
@@ -382,3 +383,43 @@ def test_another_sites_429_is_left_alone(tmp_path, monkeypatch):
                        filename="v.mkv")
     yt_dl.YtDlpDownloader(t).run()
     assert "YouTube" not in t.error, t.error
+
+
+# ---- a deno installed while HyperFetch runs is used, no restart ----
+def _installed_now(monkeypatch, tmp_path):
+    """deno put where the system's PATH now points, and not on the PATH this
+    process started with - what an install while the app runs leaves."""
+    import os
+    there = tmp_path / "installed"
+    there.mkdir()
+    exe = there / ("deno.exe" if os.name == "nt" else "deno")
+    exe.write_bytes(b"")
+    exe.chmod(0o755)
+    monkeypatch.setenv("PATH", str(tmp_path / "nothing"))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path / "home"))
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.setattr(yt_dl, "_system_path", lambda: str(there), raising=False)
+    return str(exe)
+
+
+def test_a_deno_installed_after_the_app_started_is_handed_to_yt_dlp(tmp_path,
+                                                                    monkeypatch):
+    """A restart lost the browser's sign-in (cookies live in memory only), and
+    a resumed signed-out try met YouTube's bot check."""
+    import os
+    exe = _installed_now(monkeypatch, tmp_path)
+    opts, _ = yt_dl._choosing_opts(_task(tmp_path, {}), str(tmp_path))
+    given = (opts.get("js_runtimes") or {}).get("deno", {}).get("path", "")
+    assert os.path.normcase(given) == os.path.normcase(exe), opts.get("js_runtimes")
+    assert yt_dl.explain(RuntimeError("Requested format is not available"),
+                         _task(tmp_path, {}), unsolved=True) != yt_dl.NEEDS_DENO
+
+
+def test_the_advice_keeps_the_sign_in():
+    for text in (yt_dl.NEEDS_DENO, yt_dl.SIGNED_IN_NEEDS_DENO):
+        assert "restart" not in text.lower() and "Resume" in text, text
+
+
+@pytest.mark.skipif(__import__("os").name != "nt", reason="Windows' registry")
+def test_the_system_path_is_read_from_windows():
+    assert "system32" in yt_dl._system_path().lower()

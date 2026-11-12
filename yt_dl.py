@@ -121,8 +121,38 @@ class _YtLog:
     def error(self, m): log.debug("yt-dlp: %s", m)
 
 
+# "then Resume", no restart: the browser's sign-in lives in memory only, and
+# _deno finds a deno installed while the app runs
 NEEDS_DENO = ("YouTube needs Deno to unlock this video. Install it (in a terminal: "
-              "winget install DenoLand.Deno), restart HyperFetch, then Resume.")
+              "winget install DenoLand.Deno), then Resume.")
+
+
+def _system_path():
+    """The PATH Windows has now, the user's and the machine's, from the
+    registry: an install while HyperFetch runs changes that, not the PATH this
+    process started with. "" elsewhere."""
+    if os.name != "nt":
+        return ""
+    import winreg
+    parts = []
+    for root, key in ((winreg.HKEY_CURRENT_USER, "Environment"),
+                      (winreg.HKEY_LOCAL_MACHINE,
+                       r"SYSTEM\CurrentControlSet\Control\Session Manager\Environment")):
+        try:
+            with winreg.OpenKey(root, key) as k:
+                parts.append(os.path.expandvars(winreg.QueryValueEx(k, "Path")[0]))
+        except OSError:
+            pass
+    return os.pathsep.join(parts)
+
+
+def _deno():
+    """Where deno is, "" when nowhere: on this process's PATH, else on the
+    system's PATH as it is now, else where Deno's own installer puts it."""
+    import shutil
+    later = [p for p in _system_path().split(os.pathsep) if p]
+    later.append(os.path.join(os.path.expanduser("~"), ".deno", "bin"))
+    return shutil.which("deno") or shutil.which("deno", path=os.pathsep.join(later)) or ""
 
 
 # YouTube turning this connection away - its "confirm you're not a bot" or a
@@ -134,8 +164,7 @@ REFUSED_SIGNED_IN = ("YouTube is refusing this connection for now, even with you
                      "sign-in. Try again later.")
 SIGNED_IN_NEEDS_DENO = ("YouTube asks this connection to sign in, and a signed-in "
                         "download needs Deno to unlock the video. Install it (in a "
-                        "terminal: winget install DenoLand.Deno), restart HyperFetch, "
-                        "then Resume.")
+                        "terminal: winget install DenoLand.Deno), then Resume.")
 
 
 def _refused(low):
@@ -154,10 +183,9 @@ def explain(err, t, unsolved=False, ffdir=""):
     `unsolved`: yt-dlp said it could not solve YouTube's challenge
     (_YtLog.unsolved). `ffdir`: where ffmpeg is - None when nowhere."""
     import re
-    import shutil
     low = re.sub(r"\x1b\[[0-9;]*m", "", str(err)).strip().lower()
     youtube = "youtu" in (t.url or "").lower()
-    needs_deno = unsolved and not shutil.which("deno")
+    needs_deno = unsolved and not _deno()
     if youtube and _refused(low):
         # a signed-in try that found no formats (nothing to solve the
         # challenge) and a retry without cookies that met the bot check
@@ -273,6 +301,9 @@ def _choosing_opts(t, out_dir):
     ffdir = _ffmpeg_dir()
     if ffdir:
         opts["ffmpeg_location"] = ffdir
+    deno = _deno()
+    if deno:                # yt-dlp looks on this process's PATH only
+        opts["js_runtimes"] = {"deno": {"path": deno}}
 
     # YouTube's "n challenge": the solver scripts ship (yt-dlp-ejs), the runtime
     # is the user's deno - the one runtime yt-dlp enables by default; node and
