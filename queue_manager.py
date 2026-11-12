@@ -301,6 +301,7 @@ class QueueManager:
                 self.queues[task.queue_name] = q
             q.active += 1
             self.active += 1
+            task._slot_queue = q.name
             task._worker_alive = True
 
             threading.Thread(target=self._execute, args=(task, q.name),
@@ -374,10 +375,17 @@ class QueueManager:
         """Remove a queue and move its tasks to the Main queue."""
         with self.cond:
             if name in self.queues and name != "Main":
-                del self.queues[name]
+                old = self.queues.pop(name)
+                main = self.queues.get("Main")
+                if not main:
+                    main = Queue("Main", 3)
+                    self.queues["Main"] = main
+                main.active += old.active
                 for task in self.tasks:
                     if getattr(task, "queue_name", "Main") == name:
                         task.queue_name = "Main"
+                    if getattr(task, "_slot_queue", None) == name:
+                        task._slot_queue = "Main"
                 self.cond.notify_all()
 
     def add_queue(self, name, max_concurrent=3):
@@ -529,6 +537,7 @@ class QueueManager:
                     self.queues[task.queue_name] = q
                 q.active += 1
                 self.active += 1
+                task._slot_queue = q.name
                 task._worker_alive = True
             # Bind the slot to the queue we charged it against (q.name), passed
             # explicitly — reading task.queue_name again in _execute would let a
@@ -556,7 +565,7 @@ class QueueManager:
             if getattr(task, "_slot_released", False):
                 return
             task._slot_released = True
-            q = self.queues.get(started_queue)
+            q = self.queues.get(getattr(task, "_slot_queue", None) or started_queue)
             if q:
                 q.active -= 1
             self.active -= 1
@@ -568,7 +577,7 @@ class QueueManager:
         # the engine calls this when the torrent finishes and starts seeding
         task._release_slot = lambda: self._release_slot(task, started_queue)
         # a torrent stuck without seeders asks this before giving way (torrent.py)
-        task._better_waiting = lambda: self._live_candidate_waiting(task, started_queue)
+        task._better_waiting = lambda: self._live_candidate_waiting(task, getattr(task, "_slot_queue", None) or started_queue)
         # a torrent asks this for aria2's part of the download speed limit
         task._speed_share = self.torrent_speed_limit
         try:
@@ -626,10 +635,11 @@ class QueueManager:
                 # a seeding torrent already handed its slot back; decrementing
                 # again here would let the queue run over its own limit
                 if not getattr(task, "_slot_released", False):
-                    q = self.queues.get(started_queue)
+                    q = self.queues.get(getattr(task, "_slot_queue", None) or started_queue)
                     if q:
                         q.active -= 1
                     self.active -= 1
+                task._slot_queue = None
                 task._slot_released = False
                 task._release_slot = None
                 task._better_waiting = None

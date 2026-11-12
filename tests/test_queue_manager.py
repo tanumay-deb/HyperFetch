@@ -417,3 +417,42 @@ def test_the_slot_is_not_returned_twice(monkeypatch):
         f"slot accounting drifted: active={q.active} "
         f"main={q.queues['Main'].active}")
     q.shutdown()
+
+
+def test_deleting_a_queue_with_running_downloads_counts_them_in_main(monkeypatch):
+    gate = threading.Event()
+
+    class Slow:
+        def __init__(self, t, segments=8):
+            self.t = t
+
+        def run(self):
+            self.t.status = T.DOWNLOADING
+            if self.t.save_path == "n.bin":
+                gate.wait(5)
+            self.t.status = T.COMPLETED
+
+    monkeypatch.setattr(queue_manager, "Downloader", Slow)
+    q = QueueManager(queues=[{"name": "Main", "max_concurrent": 1},
+                             {"name": "Night", "max_concurrent": 1}])
+    try:
+        n = T.DownloadTask("https://example.test/n.bin", "n.bin")
+        n.queue_name = "Night"
+        q.add_task(n)
+        assert _wait(lambda: n.status == T.DOWNLOADING)
+
+        q.delete_queue("Night")
+        assert n.queue_name == "Main"
+        assert q.queues["Main"].active == 1
+
+        m = q.add_task(T.DownloadTask("https://example.test/m.bin", "m.bin"))
+        time.sleep(0.1)
+        assert m.status == T.QUEUED, "Main started a download on top of the running one moved from Night"
+
+        gate.set()
+        assert _wait(lambda: n.status == T.COMPLETED and m.status == T.COMPLETED)
+        assert _wait(lambda: q.active == 0 and q.queues["Main"].active == 0)
+    finally:
+        gate.set()
+        q.shutdown()
+
