@@ -64,10 +64,17 @@ class HostRulesDialog(QDialog):
         for host in sorted(self.rules):
             self._rows.addWidget(self._row(host, self.rules[host]))
 
+    @staticmethod
+    def _shown(host):
+        try:
+            return host.encode("ascii").decode("idna")
+        except UnicodeError:
+            return host
+
     def _row(self, host, rule):
         f = QFrame(); f.setObjectName("panel")
         h = QHBoxLayout(f); h.setContentsMargins(12, 8, 12, 8); h.setSpacing(10)
-        name = QLabel(host); name.setStyleSheet("font-weight:700;background:transparent;")
+        name = QLabel(self._shown(host)); name.setStyleSheet("font-weight:700;background:transparent;")
         spin = QSpinBox(); spin.setRange(1, 32); spin.setValue(int(rule.get("segments", 4) or 4)); spin.setFixedWidth(56)
         spin.valueChanged.connect(lambda n, hh=host: self.rules[hh].__setitem__("segments", n))
         yt = QCheckBox("yt-dlp"); yt.setChecked(bool(rule.get("ytdlp")))

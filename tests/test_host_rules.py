@@ -114,6 +114,9 @@ def test_the_dialog_keeps_a_host_as_a_link_names_it():
         dlg.host_edit.setText(typed)
         dlg._add()
     assert sorted(rules) == ["::1", "example.com", "files.example.org", "xn--bcher-kva.de"]
+    from PySide6.QtWidgets import QLabel
+    shown = {w.text() for w in dlg.findChildren(QLabel)}
+    assert "bücher.de" in shown and "xn--bcher-kva.de" not in shown
 
 
 def test_cancel_in_settings_undoes_an_edit_to_a_rule():
