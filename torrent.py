@@ -1245,11 +1245,13 @@ def control_infohash(path):
     return head[10:30].hex()
 
 
-def cleanup_artifacts(task):
+def cleanup_artifacts(task, drop_rpc=True):
     """Remove the aria2 leftovers for a task the user cancelled or deleted: the
     <name>.aria2 control file and our saved metadata copy. Only ever touches
     files belonging to THIS task — a blind sweep could delete the control file
     of a torrent another client (or another of our tasks) is still resuming."""
+    if drop_rpc and not getattr(task, "_worker_alive", False):
+        _let_go(task)
     save = getattr(task, "save_path", "") or ""
     folder = os.path.dirname(save) or "."
     removed = []
@@ -1651,10 +1653,10 @@ def _let_go(task, wait=15.0):
     older control file along, and the torrent went back to that point."""
     import aria2d
     d = aria2d.DAEMON
-    if not d.alive():
+    if not getattr(d, "alive", lambda: False)():
         return                               # no daemon of ours: nothing holds it
     td = TorrentDownloader(task)
-    gid = td._rpc_find_existing(d, live_only=False)
+    gid = td._rpc_find_existing(d, live_only=False) or getattr(task, "gid", "") or ""
     if not gid:
         return
     try:
@@ -1670,6 +1672,7 @@ def _let_go(task, wait=15.0):
             break
         time.sleep(0.1)
     td._rpc_remove(d, gid, force=True)
+    task.gid = None
 
 
 class TorrentDownloader:
@@ -2470,7 +2473,7 @@ class TorrentDownloader:
         while True:
             if self.t.cancel_requested:
                 self._rpc_remove(d, cur, force=True)
-                cleanup_artifacts(self.t)
+                cleanup_artifacts(self.t, drop_rpc=False)
                 self.t.status = T.CANCELLED
                 return top
             if self.t.pause_requested:

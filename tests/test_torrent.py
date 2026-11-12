@@ -368,3 +368,32 @@ def test_a_missing_name_falls_through_to_the_mtime_guess(tmp_path, name):
     d, t = _dl(tmp_path, name)
     d._resolve_save_path(str(out), "")
     assert t.save_path == str(real)
+
+
+def test_removing_a_paused_torrent_drops_it_from_aria2(tmp_path, monkeypatch):
+    import aria2d
+    from queue_manager import QueueManager
+    ih = "a" * 40
+    calls = []
+
+    class _Daemon:
+        def alive(self):
+            return True
+
+        def call(self, method, *params):
+            calls.append((method, params))
+            if method == "aria2.tellWaiting":
+                return [{"gid": "paused-gid", "infoHash": ih, "status": "paused"}]
+            if method == "aria2.tellStatus":
+                return {"status": "paused"}
+            return []
+
+    monkeypatch.setattr(aria2d, "DAEMON", _Daemon())
+    q = QueueManager()
+    q.shutdown()
+    t = T.DownloadTask(f"magnet:?xt=urn:btih:{ih}&dn=Show", str(tmp_path / "Show"),
+                       filename="Show", status=T.PAUSED)
+    q.add_task(t, start=False)
+    q.remove_task(t)
+    assert ("aria2.forceRemove", ("paused-gid",)) in calls
+    assert ("aria2.removeDownloadResult", ("paused-gid",)) in calls

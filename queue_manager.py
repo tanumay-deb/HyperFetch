@@ -268,6 +268,8 @@ class QueueManager:
             # does): one beside the destination is not swept as a leftover
             utils.remove_temp(getattr(task, "temp_path", ""))
             if task.status != T.COMPLETED:
+                if self._is_torrent(task):
+                    _torrent.cleanup_artifacts(task)
                 import yt_dl                # a video's partial is yt-dlp's own
                 yt_dl.discard_left(task, tries=1)
 
