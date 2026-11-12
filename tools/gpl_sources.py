@@ -16,6 +16,7 @@ installer comes from, the source needs nobody (GPLv2 section 3, GPLv3
 section 6(d)).
 """
 import hashlib
+import http.client
 import json
 import os
 import re
@@ -57,7 +58,7 @@ def _get(url, tries=3, delay=2.0):
         try:
             with urllib.request.urlopen(req, timeout=300) as r:
                 return r.read()
-        except OSError as e:
+        except (OSError, http.client.HTTPException) as e:
             last = e
             code = getattr(e, "code", None)
             if code and 400 <= code < 500 and code not in (408, 429):

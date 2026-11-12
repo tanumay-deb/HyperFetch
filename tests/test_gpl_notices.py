@@ -128,3 +128,21 @@ def test_a_dropped_connection_while_gathering_source_is_retried(monkeypatch):
     assert gs._get("https://example.test/src.tar.xz", delay=0) == b"tarball"
     assert len(calls) == 3
 
+    # http.client.IncompleteRead is an HTTPException, not an OSError
+    import http.client
+    reads = []
+
+    class CutReply:
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def read(self):
+            reads.append(1)
+            if len(reads) == 1:
+                raise http.client.IncompleteRead(b"part", 10)
+            return b"whole-tarball"
+
+    monkeypatch.setattr(gs.urllib.request, "urlopen", lambda req, timeout=0: CutReply())
+    assert gs._get("https://example.test/src.tar.xz", delay=0) == b"whole-tarball"
+    assert len(reads) == 2
+
+
