@@ -273,6 +273,35 @@ class ActionsMixin:
             threading.Thread(target=move, name="move", daemon=True).start()
             self.refresh()
             return
+        partial = utils.existing_temp_path(t) if not own else ""
+        if partial and not utils.same_drive(os.path.dirname(partial), dest_dir):
+            running = t.status in (T.DOWNLOADING, T.QUEUED)
+            if running:
+                self.queue.pause_task(t)
+            t.moving, t.move_done, t.move_total = True, 0, utils.tree_size(partial)
+
+            def move_partial():
+                end = time.monotonic() + 60
+                while getattr(t, "_worker_alive", False) and time.monotonic() < end:
+                    time.sleep(0.2)
+                try:
+                    if getattr(t, "_worker_alive", False):
+                        raise RuntimeError("the download did not stop")
+                    src = utils.existing_temp_path(t) or partial
+                    t.move_total = utils.tree_size(src)
+                    new_temp = utils.temp_path_for(t, dest_dir)
+                    utils.move_with_progress(
+                        src, new_temp, lambda n: setattr(t, "move_done", n))
+                    utils.drop_empty_temp_home(src)
+                    t.temp_path = new_temp
+                    said = ""
+                except Exception as e:
+                    said = str(e) or type(e).__name__
+                self._moves.append((t, target, dest_dir, said, running))
+
+            threading.Thread(target=move_partial, name="move", daemon=True).start()
+            self.refresh()
+            return
         # nothing on disk yet (queued/paused HTTP): just retarget the destination
         self._moved(t, target, dest_dir)
         self.refresh()

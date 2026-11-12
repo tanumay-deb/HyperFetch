@@ -327,3 +327,31 @@ def test_an_unfinished_download_never_takes_another_one_s_file(window, tmp_path)
     assert not (window.dest / "setup.exe").exists()
     assert t.save_path == str(window.dest / "setup.exe"), "this one was not sent there"
     assert not t.moving
+
+
+@pytest.mark.parametrize("status", [T.DOWNLOADING, T.PAUSED])
+def test_an_unfinished_download_to_another_drive_takes_its_partial_along(window, tmp_path,
+                                                                         monkeypatch, status):
+    """Move to… only changed save_path, leaving the partial on the full drive
+    it was moved off: every Resume failed with No space left on device again
+    (2026-11-12, #1)."""
+    monkeypatch.setattr(utils, "same_drive",
+                        lambda a, b: os.path.abspath(a) == os.path.abspath(b))
+    old = tmp_path / "old"
+    old.mkdir()
+    t = T.DownloadTask("https://a.example/big.bin", str(old / "big.bin"), filename="big.bin")
+    t.status, t.downloaded = status, len(DATA)
+    old_temp = utils.temp_download_path(t)
+    open(old_temp, "wb").write(DATA)
+
+    window._move_task_files(t)
+    _landed(window)
+
+    assert window.toasts[-1][1] == "Moved", window.toasts
+    assert t.save_path == str(window.dest / "big.bin") and t.sort_base == ""
+    new_temp = utils.temp_download_path(t)
+    assert os.path.dirname(os.path.dirname(new_temp)) == str(window.dest)
+    assert open(new_temp, "rb").read() == DATA
+    assert not os.path.exists(old_temp) and os.listdir(old) == []
+    assert window.resumed == ([t] if status == T.DOWNLOADING else [])
+

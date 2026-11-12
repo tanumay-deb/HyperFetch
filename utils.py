@@ -56,6 +56,44 @@ def _temp_dir_in(base):
     return os.path.join(base, "HyperFetch-%08x" % tag)
 
 
+def existing_temp_path(task):
+    """Where `task`'s `.hfdownload` file is on disk right now, or ""."""
+    task_id = getattr(task, "id", task)
+    name = f"{task_id}.hfdownload"
+    old = os.path.join(tempfile.gettempdir(), name)
+    remembered = getattr(task, "temp_path", "") or ""
+    dest_dir = os.path.dirname(os.path.abspath(getattr(task, "save_path", "") or "")) \
+        if getattr(task, "save_path", "") else ""
+    beside = os.path.join(_temp_dir_in(dest_dir), name) if dest_dir else ""
+    for where in (remembered, old, os.path.join(_temp_dir_in(tempfile.gettempdir()), name),
+                  os.path.join(temp_dir(), name), beside):
+        if where and os.path.exists(where):
+            return where
+    return ""
+
+
+def temp_path_for(task, dest_dir):
+    """Where a new `.hfdownload` file for `task` destined for `dest_dir` goes."""
+    task_id = getattr(task, "id", task)
+    name = f"{task_id}.hfdownload"
+    old = os.path.join(tempfile.gettempdir(), name)
+    dest_dir = os.path.abspath(dest_dir) if dest_dir else ""
+    beside = os.path.join(_temp_dir_in(dest_dir), name) if dest_dir else ""
+    folder = temp_dir()
+    if beside and not INCOMPLETE_DIR and not same_drive(folder, dest_dir):
+        try:
+            os.makedirs(os.path.dirname(beside), exist_ok=True)
+            _hide(os.path.dirname(beside))
+            return beside
+        except OSError:
+            pass                    # cannot write there: the temp folder, as before
+    try:
+        os.makedirs(folder, exist_ok=True)
+    except OSError:
+        return old                  # no folder of our own: where they always were
+    return os.path.join(folder, name)
+
+
 def temp_download_path(task):
     """The in-progress ``.hfdownload`` temp file for a task (one place defines the
     convention; downloader + HLS both use it). `task` is a DownloadTask, or
@@ -69,29 +107,12 @@ def temp_download_path(task):
     than the destination and no unfinished-downloads folder was picked: then
     in a hidden folder of our own beside the destination, so finishing is a
     rename and not a copy of the whole file (asked 2026-10-30)."""
-    task_id = getattr(task, "id", task)
-    name = f"{task_id}.hfdownload"
-    old = os.path.join(tempfile.gettempdir(), name)
-    remembered = getattr(task, "temp_path", "") or ""
-    dest_dir = os.path.dirname(os.path.abspath(getattr(task, "save_path", "") or ""))         if getattr(task, "save_path", "") else ""
-    beside = os.path.join(_temp_dir_in(dest_dir), name) if dest_dir else ""
-    for where in (remembered, old, os.path.join(_temp_dir_in(tempfile.gettempdir()), name),
-                  os.path.join(temp_dir(), name), beside):
-        if where and os.path.exists(where):
-            return _remember(task, where)
-    folder = temp_dir()
-    if beside and not INCOMPLETE_DIR and not same_drive(folder, dest_dir):
-        try:
-            os.makedirs(os.path.dirname(beside), exist_ok=True)
-            _hide(os.path.dirname(beside))
-            return _remember(task, beside)
-        except OSError:
-            pass                    # cannot write there: the temp folder, as before
-    try:
-        os.makedirs(folder, exist_ok=True)
-    except OSError:
-        return _remember(task, old)  # no folder of our own: where they always were
-    return _remember(task, os.path.join(folder, name))
+    where = existing_temp_path(task)
+    if where:
+        return _remember(task, where)
+    dest_dir = os.path.dirname(os.path.abspath(getattr(task, "save_path", "") or "")) \
+        if getattr(task, "save_path", "") else ""
+    return _remember(task, temp_path_for(task, dest_dir))
 
 
 def _remember(task, path):
