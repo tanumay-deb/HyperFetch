@@ -2405,7 +2405,7 @@ class TorrentDownloader:
         fresh add being refused as "InfoHash ... is already registered".
         Pass live_only=False when the caller wants to drop ANY registration.
         """
-        want = infohash_for(self.t.url, self.t.filename)
+        want = task_infohash(self.t)
         if not want:
             return ""
         dead = []

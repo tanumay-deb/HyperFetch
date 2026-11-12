@@ -291,3 +291,20 @@ def test_an_unanswering_daemon_does_not_trigger_a_re_add(tmp_path):
     td = _moved_td(tmp_path)
     gid = td._rpc_add(d, {"dir": str(tmp_path / "out")})
     assert gid == "oldgid" and d.removed == []
+
+
+def test_a_web_torrent_finds_its_existing_daemon_entry_from_its_saved_infohash(tmp_path):
+    """A torrent added from a web .torrent link (or whose local .torrent was
+    deleted) has its infohash on the task, not in infohash_for(url, filename)."""
+    t = T.DownloadTask("https://x/a.torrent", str(tmp_path / "out"), filename="a.torrent")
+    t.infohash = "a" * 40
+    td = torrent.TorrentDownloader(t)
+
+    class _Live(_DeadDaemon):
+        def call(self, method, *a):
+            if method == "aria2.tellActive":
+                return [{"gid": "livegid", "infoHash": "a" * 40, "status": "active"}]
+            return super().call(method, *a)
+
+    assert td._rpc_find_existing(_Live()) == "livegid"
+
