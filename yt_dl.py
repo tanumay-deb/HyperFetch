@@ -222,7 +222,10 @@ def _cookies_last(attempt, opts):
     """``attempt(opts)`` - and, when the site hands back no usable format to a
     request that carried cookies, once more without them."""
     try:
-        return attempt(opts)
+        # a copy: yt-dlp keeps the dict it is given as its params and moves a
+        # Cookie header out of it, so the check below found none and the
+        # retry never ran (2026-11-12)
+        return attempt(dict(opts))
     except (_Abort, _Failed):
         raise
     except Exception as e:

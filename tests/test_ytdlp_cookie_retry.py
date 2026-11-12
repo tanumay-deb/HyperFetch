@@ -17,12 +17,21 @@ import yt_dl
 
 
 class _FakeYDL:
-    """Stands in for yt_dlp.YoutubeDL. Records the headers of every attempt."""
+    """Stands in for yt_dlp.YoutubeDL. Records the headers of every attempt.
+
+    It edits the options it is given the way the real one does: yt-dlp keeps
+    that very dict as its params and moves a Cookie header out of it into its
+    cookie jar (YoutubeDL.__init__, 2026.08.19). A fake that left its options
+    alone hid that the fallback read the cookie back from there - and never
+    retried."""
 
     def __init__(self, opts, attempts, fail_when):
         self.opts = opts
         self._attempts = attempts
         self._fail_when = fail_when
+        self._hdrs = dict(opts.get("http_headers") or {})
+        opts["http_headers"] = {k: v for k, v in self._hdrs.items()
+                                if k.lower() != "cookie"}
 
     def __enter__(self):
         return self
@@ -31,7 +40,7 @@ class _FakeYDL:
         return False
 
     def extract_info(self, url, download=True):
-        hdrs = self.opts.get("http_headers") or {}
+        hdrs = self._hdrs
         self._attempts.append(hdrs)
         if self._fail_when(hdrs):
             raise RuntimeError(
@@ -80,6 +89,31 @@ def test_retries_without_cookies_when_no_format_is_available(tmp_path, fake_ytdl
     assert attempts[1].get("User-Agent") == "UA"
     assert attempts[1].get("Referer") == "https://y/"
     assert t.status != T.ERROR, f"retry succeeded but task errored: {t.error}"
+
+
+def test_the_retry_happens_with_the_real_yt_dlp(tmp_path):
+    """The real constructor, not a fake: it takes the Cookie header out of the
+    options it is handed. The fallback found no cookie there after the first
+    try and raised instead of retrying, so a YouTube video sent from the
+    browser ended on "no downloadable video stream" (user's log, 2026-11-12:
+    no "retrying without them" line)."""
+    import yt_dlp
+    had_cookie = []
+
+    def attempt(o):
+        had_cookie.append(_has_cookie(o.get("http_headers") or {}))
+        with yt_dlp.YoutubeDL(o):
+            pass
+        if len(had_cookie) == 1:
+            raise yt_dlp.utils.DownloadError(
+                "ERROR: [youtube] abc: Requested format is not available. "
+                "Use --list-formats for a list of available formats")
+        return "video.mkv"
+
+    opts = {"http_headers": {"Cookie": "SID=x", "User-Agent": "UA"},
+            "logger": yt_dl._YtLog(), "quiet": True, "no_warnings": True}
+    assert yt_dl._cookies_last(attempt, opts) == "video.mkv"
+    assert had_cookie == [True, False]
 
 
 def test_no_retry_when_there_were_no_cookies(tmp_path, fake_ytdlp):
