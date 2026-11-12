@@ -235,3 +235,64 @@ def test_the_failure_reaches_the_drawer(tmp_path, stale_ytdlp):
     t = _task(tmp_path, {})
     yt_dl.YtDlpDownloader(t).run()
     assert any(e["level"] == "ERROR" and "403" in e["message"] for e in t.events)
+
+
+# ---- YouTube's challenge left unsolved: say Deno, not "private" ----
+UNSOLVED = ("[youtube] abc: n challenge solving failed: Some formats may be missing. "
+            "Ensure you have a supported JavaScript runtime and challenge solver "
+            "script distribution installed.")
+
+
+class _UnsolvedYDL(_FakeYDL):
+    """How a signed-in YouTube request fails with no runtime to solve its
+    challenge: yt-dlp warns, every format drops out (user's log, 2026-11-12)."""
+
+    def extract_info(self, url, download=True):
+        self._attempts.append(self._hdrs)
+        self.opts["logger"].warning(UNSOLVED)
+        raise RuntimeError("ERROR: [youtube] abc: Requested format is not available. "
+                           "Use --list-formats for a list of available formats")
+
+
+@pytest.fixture
+def unsolved_ytdlp(monkeypatch):
+    attempts = []
+    mod = types.ModuleType("yt_dlp")
+    mod.YoutubeDL = lambda opts: _UnsolvedYDL(opts, attempts, lambda h: False)
+    monkeypatch.setitem(sys.modules, "yt_dlp", mod)
+    return attempts
+
+
+def _deno(monkeypatch, there):
+    import shutil
+    monkeypatch.setattr(shutil, "which", lambda n: (
+        ("/usr/bin/" + n) if (n != "deno" or there) else None))
+
+
+def test_no_formats_for_want_of_deno_says_install_deno(tmp_path, unsolved_ytdlp,
+                                                       monkeypatch):
+    """It said "private, region-locked, or need a sign-in" - none of it so."""
+    _deno(monkeypatch, there=False)
+    t = _task(tmp_path, {})
+    yt_dl.YtDlpDownloader(t).run()
+    assert t.status == T.ERROR
+    assert "Deno" in t.error and "winget install DenoLand.Deno" in t.error, t.error
+    assert "private" not in t.error
+
+
+def test_with_deno_there_it_is_not_blamed(tmp_path, unsolved_ytdlp, monkeypatch):
+    """deno present and the challenge still unsolved: something else broke."""
+    _deno(monkeypatch, there=True)
+    t = _task(tmp_path, {})
+    yt_dl.YtDlpDownloader(t).run()
+    assert t.status == T.ERROR
+    assert "Deno" not in t.error, t.error
+
+
+def test_another_site_with_no_formats_is_not_told_about_deno(tmp_path, unsolved_ytdlp,
+                                                             monkeypatch):
+    _deno(monkeypatch, there=False)
+    t = T.DownloadTask("https://example.test/video", str(tmp_path / "v.mkv"),
+                       filename="v.mkv")
+    yt_dl.YtDlpDownloader(t).run()
+    assert "Deno" not in t.error, t.error

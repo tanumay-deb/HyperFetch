@@ -101,11 +101,35 @@ class _Failed(Exception):
 
 class _YtLog:
     """Routes yt-dlp's own messages (deprecation notices, ERROR echoes) into our
-    debug log instead of stdout/stderr, so they don't spam the app console."""
+    debug log instead of stdout/stderr, so they don't spam the app console.
+
+    Notes whether yt-dlp said it could not solve YouTube's challenge
+    (``unsolved``): with nothing to solve it, a signed-in request's formats
+    all drop out."""
+    unsolved = False
+
     def debug(self, m): pass
     def info(self, m): pass
-    def warning(self, m): log.debug("yt-dlp: %s", m)
+
+    def warning(self, m):
+        low = m.lower()
+        if ("challenge solving failed" in low or "signature solving failed" in low
+                or "no supported javascript runtime" in low):
+            self.unsolved = True
+        log.debug("yt-dlp: %s", m)
+
     def error(self, m): log.debug("yt-dlp: %s", m)
+
+
+NEEDS_DENO = ("YouTube needs Deno to unlock this video. Install it (in a terminal: "
+              "winget install DenoLand.Deno), restart HyperFetch, then Resume.")
+
+
+def _needs_deno(opts):
+    """yt-dlp could not solve YouTube's challenge, and there is no deno - the
+    one runtime it enables - to solve it with."""
+    import shutil
+    return getattr(opts.get("logger"), "unsolved", False) and not shutil.which("deno")
 
 
 def _http_headers(t):
@@ -890,7 +914,10 @@ class YtDlpDownloader:
             # three-month-old yt-dlp downloaded fine on a current one — with a
             # JavaScript runtime present and without. The "no JS runtime"
             # warning yt-dlp prints alongside this is a red herring for it.
-            if ("403" in low or "unable to download video data" in low) and                     "youtu" in (self.t.url or "").lower():
+            youtube = "youtu" in (self.t.url or "").lower()
+            if youtube and _formats_unavailable(e) and _needs_deno(opts):
+                self.t.error = NEEDS_DENO
+            elif ("403" in low or "unable to download video data" in low) and youtube:
                 self.t.error = (
                     "YouTube refused the download (403). That usually means "
                     "HyperFetch's bundled yt-dlp (%s) has gone stale — YouTube "
