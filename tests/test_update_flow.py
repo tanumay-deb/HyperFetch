@@ -245,7 +245,7 @@ def test_the_question_does_not_hold_the_window_up(tmp_path):
         now.click()
         app.processEvents()
         assert w.ran == [t.save_path] and w.quits == 1
-        assert boxes() == []
+        assert boxes() == [] and w.findChildren(QMessageBox) == []
     finally:
         guard.stop()
         for b in boxes():

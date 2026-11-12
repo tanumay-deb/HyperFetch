@@ -177,8 +177,12 @@ class UpdateMixin:
 
     def _install_answered(self, *_):
         box, self._install_box = self._install_box, None
-        if box is not None and box.clickedButton() is self._install_now and self._update_ready:
-            self._install_update(self._update_ready)
+        if box is not None:
+            install = box.clickedButton() is self._install_now
+            box.setParent(None)
+            box.deleteLater()
+            if install and self._update_ready:
+                self._install_update(self._update_ready)
 
     def _run_installer(self, path):
         os.startfile(path)
