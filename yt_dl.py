@@ -123,8 +123,15 @@ class _YtLog:
 
 # "then Resume", no restart: the browser's sign-in lives in memory only, and
 # _deno finds a deno installed while the app runs
-NEEDS_DENO = ("YouTube needs Deno to unlock this video. Install it (in a terminal: "
-              "winget install DenoLand.Deno), then Resume.")
+NEEDS_DENO = "YouTube needs Deno to unlock this video. Install it ({how}), then Resume."
+
+
+def _get_deno(windows=None):
+    """How to install deno, in the terms of the system the app runs on."""
+    if windows is None:
+        windows = os.name == "nt"
+    return ("in a terminal: winget install DenoLand.Deno" if windows
+            else "from https://deno.com")
 
 
 def _system_path():
@@ -163,8 +170,8 @@ REFUSED = ("YouTube is refusing this connection for now and asks for a sign-in. 
 REFUSED_SIGNED_IN = ("YouTube is refusing this connection for now, even with your "
                      "sign-in. Try again later.")
 SIGNED_IN_NEEDS_DENO = ("YouTube asks this connection to sign in, and a signed-in "
-                        "download needs Deno to unlock the video. Install it (in a "
-                        "terminal: winget install DenoLand.Deno), then Resume.")
+                        "download needs Deno to unlock the video. Install it ({how}), "
+                        "then Resume.")
 
 
 def _refused(low):
@@ -190,10 +197,10 @@ def explain(err, t, unsolved=False, ffdir=""):
         # a signed-in try that found no formats (nothing to solve the
         # challenge) and a retry without cookies that met the bot check
         signed_in = any(k.lower() == "cookie" for k in _http_headers(t))
-        return (SIGNED_IN_NEEDS_DENO if signed_in and needs_deno
+        return (SIGNED_IN_NEEDS_DENO.format(how=_get_deno()) if signed_in and needs_deno
                 else REFUSED_SIGNED_IN if signed_in else REFUSED)
     if youtube and _formats_unavailable(err) and needs_deno:
-        return NEEDS_DENO
+        return NEEDS_DENO.format(how=_get_deno())
     # A 403 on the media URLs almost always means this build's yt-dlp
     # has aged out. YouTube changes how it signs those URLs every few
     # weeks and an older copy simply stops working. The version is

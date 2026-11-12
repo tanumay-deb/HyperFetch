@@ -277,7 +277,7 @@ def test_no_formats_for_want_of_deno_says_install_deno(tmp_path, unsolved_ytdlp,
     t = _task(tmp_path, {})
     yt_dl.YtDlpDownloader(t).run()
     assert t.status == T.ERROR
-    assert "Deno" in t.error and "winget install DenoLand.Deno" in t.error, t.error
+    assert "Deno" in t.error and yt_dl._get_deno() in t.error, t.error
     assert "private" not in t.error
 
 
@@ -372,7 +372,7 @@ def test_signed_in_without_deno_says_install_deno(tmp_path, monkeypatch):
     t = _task(tmp_path, {"Cookie": "SID=x"})
     yt_dl.YtDlpDownloader(t).run()
     assert [_has_cookie(a) for a in attempts] == [True, False]
-    assert "winget install DenoLand.Deno" in t.error, t.error
+    assert yt_dl._get_deno() in t.error, t.error
 
 
 def test_another_sites_429_is_left_alone(tmp_path, monkeypatch):
@@ -412,7 +412,7 @@ def test_a_deno_installed_after_the_app_started_is_handed_to_yt_dlp(tmp_path,
     given = (opts.get("js_runtimes") or {}).get("deno", {}).get("path", "")
     assert os.path.normcase(given) == os.path.normcase(exe), opts.get("js_runtimes")
     assert yt_dl.explain(RuntimeError("Requested format is not available"),
-                         _task(tmp_path, {}), unsolved=True) != yt_dl.NEEDS_DENO
+                         _task(tmp_path, {}), unsolved=True).find("Deno") < 0
 
 
 def test_the_advice_keeps_the_sign_in():
@@ -423,3 +423,10 @@ def test_the_advice_keeps_the_sign_in():
 @pytest.mark.skipif(__import__("os").name != "nt", reason="Windows' registry")
 def test_the_system_path_is_read_from_windows():
     assert "system32" in yt_dl._system_path().lower()
+
+
+def test_the_way_to_get_deno_is_the_systems_own():
+    """winget is Windows': from source on Linux or macOS it is no help."""
+    assert "winget install DenoLand.Deno" in yt_dl._get_deno(windows=True)
+    elsewhere = yt_dl._get_deno(windows=False)
+    assert "deno.com" in elsewhere and "winget" not in elsewhere
