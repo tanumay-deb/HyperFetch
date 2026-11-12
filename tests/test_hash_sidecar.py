@@ -147,6 +147,8 @@ def test_hex_digits_that_are_no_checksum_line(text):
     '{"digest": "sha256:%s"}' % DIGEST,
     '{"md5": "%s", "SHA256": "%s"}' % ("0" * 32, DIGEST),
     '[{"name": "f.bin", "checksums": {"sha256": "%s"}}]' % DIGEST,
+    '{"sha256": {"value": "%s"}}' % DIGEST,
+    '{"checksums": {"sha-256": {"hex": "%s"}}}' % DIGEST,
 ])
 def test_a_checksum_sent_as_json_is_read(text):
     """Read while "any 64 hex digits" did; the line rule that came after it

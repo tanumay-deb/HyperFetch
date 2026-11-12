@@ -203,24 +203,24 @@ def _sha256_in_json(data):
     def plain(k):
         return re.sub(r"[^a-z0-9]", "", str(k).lower())
 
-    def walk(o):
+    def walk(o, under=""):
         if isinstance(o, list):
             for v in o:
-                walk(v)
+                walk(v, under)
         if not isinstance(o, dict):
             return
-        algo = plain(o.get("algorithm") or o.get("algo") or o.get("type") or "")
+        algo = plain(o.get("algorithm") or o.get("algo") or o.get("type") or "") or under
         for k, v in o.items():
             if not isinstance(v, str):
-                walk(v)
+                walk(v, plain(k) if plain(k).startswith(("sha256", "sha2256")) else algo)
                 continue
             m = _HEX64.fullmatch(v.strip())
             if not m:
                 continue
             named = re.match(r"(?:sha-?256|sha2-256)", v.strip(), re.I) is not None
             if (plain(k).startswith(("sha256", "sha2256"))
-                    or (plain(k) in ("hash", "checksum", "digest", "value")
-                        and (named or algo in ("sha256", "sha2256")))):
+                    or (plain(k) in ("hash", "checksum", "digest", "value", "hex")
+                        and (named or algo.startswith(("sha256", "sha2256"))))):
                 found.add(m.group(1).lower())
 
     walk(data)
