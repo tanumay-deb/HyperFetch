@@ -490,6 +490,8 @@ def test_the_popups_token_check_is_not_logged_as_a_download(tmp_path, caplog):
         "X-HyperFetch-Token": "stale", "Origin": "chrome-extension://popup"})
     assert "refused a request to /probe" in caplog.text
     assert "refused a download" not in caplog.text
+    assert "re-pair it from Settings" not in caplog.text
+    assert "pair again by itself" in caplog.text and "Firefox" in caplog.text
 
 
 def test_the_right_token_logs_nothing(tmp_path, caplog):

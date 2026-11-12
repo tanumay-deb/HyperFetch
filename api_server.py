@@ -345,7 +345,7 @@ def create_app(queue, save_dir, pending=None, token=None, pair_requests=None):
                 log.warning(
                     "refused a request to %s from %s: %s. If this is the browser "
                     "extension, its saved token no longer matches this app — "
-                    "re-pair it from Settings.",
+                    "it will pair again by itself (Firefox asks you to approve).",
                     request.path, origin,
                     "wrong token" if presented else "no token presented")
         return ok
