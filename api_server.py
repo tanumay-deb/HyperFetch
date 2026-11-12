@@ -167,9 +167,9 @@ def servable_files(t, limit=MAX_LISTED_FILES):
     return out
 
 
-def web_dir():
+def web_dir(root=None):
     """The web UI folder, in a dev checkout, a frozen build, or a pip install."""
-    return utils.resource_path("web")
+    return utils.resource_path("web", root=root)
 
 
 def is_loopback(remote_addr):

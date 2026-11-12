@@ -14,7 +14,7 @@ import urllib.parse
 DEFAULT_HEADERS = {"User-Agent": "Mozilla/5.0 (HyperFetch)"}
 
 
-def resource_path(*parts):
+def resource_path(*parts, root=None):
     """Locate a bundled resource across dev, a PyInstaller build, and a
     pip/pipx install. Checks, in order: the PyInstaller bundle (``_MEIPASS``),
     the dev repo root, and the install data dir
@@ -23,7 +23,7 @@ def resource_path(*parts):
     mei = getattr(sys, "_MEIPASS", None)
     if mei:
         candidates.append(mei)
-    dev_root = os.path.dirname(os.path.abspath(__file__))
+    dev_root = root if root is not None else os.path.dirname(os.path.abspath(__file__))
     candidates.append(dev_root)
     candidates.append(os.path.join(sys.prefix, "share", "hyperfetch"))
     for base in candidates:

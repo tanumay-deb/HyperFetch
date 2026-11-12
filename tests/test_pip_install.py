@@ -32,11 +32,11 @@ def test_a_pip_install_ships_and_finds_the_web_page_and_the_licences(tmp_path, m
     share = tmp_path / "share" / "hyperfetch"
     for folder in ("web", "assets", "licenses"):
         (share / folder).mkdir(parents=True)
-    monkeypatch.setattr(utils.os.path, "abspath", lambda p: str(tmp_path / "site-packages" / "utils.py"))
+    site_packages = str(tmp_path / "site-packages")
     monkeypatch.setattr(utils.sys, "prefix", str(tmp_path))
-    assert api_server.web_dir() == str(share / "web")
-    assert utils.resource_path("licenses") == str(share / "licenses")
-    assert utils.resource_path("assets") == str(share / "assets")
+    assert api_server.web_dir(root=site_packages) == str(share / "web")
+    assert utils.resource_path("licenses", root=site_packages) == str(share / "licenses")
+    assert utils.resource_path("assets", root=site_packages) == str(share / "assets")
     from gui import theme
     assert theme.resource_path is utils.resource_path
 
