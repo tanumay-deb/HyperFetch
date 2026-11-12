@@ -167,6 +167,20 @@ def test_magnet_infohash():
     assert torrent.magnet_infohash("https://x/y.zip") == ""
 
 
+def test_base32_and_hex_magnets_have_the_same_infohash():
+    """A 32-char Base32 btih (upper or lower case) decodes to the same 40-char
+    hex infohash as the hex spelling."""
+    import base64
+    raw = bytes(range(1, 21))
+    hex_ih = raw.hex()
+    b32_upper = base64.b32encode(raw).decode("ascii")
+    b32_lower = b32_upper.lower()
+    assert torrent.magnet_infohash(f"magnet:?xt=urn:btih:{b32_upper}&dn=x") == hex_ih
+    assert torrent.magnet_infohash(f"magnet:?xt=urn:btih:{b32_lower}&dn=x") == hex_ih
+    assert torrent.magnet_infohash(f"magnet:?xt=urn:btih:{hex_ih.upper()}&dn=x") == hex_ih
+
+
+
 def test_list_files_while_downloading(tmp_path):
     """Mid-download save_path is a placeholder inside aria2's --dir, where the
     <infohash>.torrent metadata lives."""

@@ -513,8 +513,21 @@ def magnet_name(url):
     return urllib.parse.unquote_plus(m.group(1)) if m else ""
 
 
+def _btih_hex(raw):
+    """Normalise a btih: 32-char Base32 is decoded to 40-hex; anything else
+    is lowercased."""
+    raw = (raw or "").strip()
+    if re.fullmatch(r"[A-Za-z2-7]{32}", raw):
+        import base64
+        try:
+            return base64.b32decode(raw, casefold=True).hex()
+        except ValueError:
+            pass
+    return raw.lower()
+
+
 def magnet_infohash(url):
-    """The 40-hex btih from a magnet, lowercased; '' if absent."""
+    """The 40-hex btih from a magnet (hex or Base32), lowercased; '' if absent."""
     try:
         pairs = urllib.parse.parse_qsl(urllib.parse.urlsplit(url or "").query,
                                        keep_blank_values=True)
@@ -525,9 +538,9 @@ def magnet_infohash(url):
             continue
         m = re.fullmatch(r"urn:btih:([A-Za-z0-9]+)", value, re.I)
         if m:
-            return m.group(1).lower()
+            return _btih_hex(m.group(1))
     m = re.search(r"xt=urn:btih:([A-Za-z0-9]+)", url or "", re.I)
-    return m.group(1).lower() if m else ""
+    return _btih_hex(m.group(1)) if m else ""
 
 
 def magnet_trackers(url):

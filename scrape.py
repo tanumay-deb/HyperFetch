@@ -228,14 +228,9 @@ def scrape_tracker(tracker, infohashes, timeout=TIMEOUT):
 
 def infohash_bytes(ih):
     """The 20-byte infohash from its 40-hex or 32-base32 spelling; None otherwise."""
-    ih = (ih or "").strip()
-    try:
-        if re.fullmatch(r"[0-9a-fA-F]{40}", ih):
-            return bytes.fromhex(ih)
-        if re.fullmatch(r"[A-Za-z2-7]{32}", ih):
-            return base64.b32decode(ih, casefold=True)
-    except ValueError:
-        pass
+    ih = torrent._btih_hex(ih)
+    if re.fullmatch(r"[0-9a-f]{40}", ih):
+        return bytes.fromhex(ih)
     return None
 
 
