@@ -20,6 +20,7 @@ import json
 import os
 import re
 import sys
+import time
 import urllib.request
 import zipfile
 
@@ -46,13 +47,24 @@ ARIA2 = (
 )
 
 
-def _get(url):
-    req = urllib.request.Request(url, headers={"User-Agent": "HyperFetch-release"})
-    token = os.environ.get("GH_TOKEN")
-    if token and url.startswith("https://api.github.com/"):
-        req.add_header("Authorization", "Bearer " + token)
-    with urllib.request.urlopen(req, timeout=300) as r:
-        return r.read()
+def _get(url, tries=3, delay=2.0):
+    last = None
+    for n in range(tries):
+        req = urllib.request.Request(url, headers={"User-Agent": "HyperFetch-release"})
+        token = os.environ.get("GH_TOKEN")
+        if token and url.startswith("https://api.github.com/"):
+            req.add_header("Authorization", "Bearer " + token)
+        try:
+            with urllib.request.urlopen(req, timeout=300) as r:
+                return r.read()
+        except OSError as e:
+            last = e
+            code = getattr(e, "code", None)
+            if code and 400 <= code < 500 and code not in (408, 429):
+                raise
+            if n < tries - 1:
+                time.sleep(delay * (n + 1))
+    raise last
 
 
 def ffmpeg_build(line):

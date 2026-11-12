@@ -103,3 +103,28 @@ def test_the_build_fetches_ffmpeg_from_where_its_source_is_looked_up():
     build = _read("build.ps1")
     assert ("https://github.com/%s/releases/download/latest/" % gs.BUILDS) in build
     assert "github.com/BtbN/" not in build
+
+
+def test_a_dropped_connection_while_gathering_source_is_retried(monkeypatch):
+    import importlib.util
+    import urllib.error
+    spec = importlib.util.spec_from_file_location(
+        "gpl_sources", os.path.join(ROOT, "tools", "gpl_sources.py"))
+    gs = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(gs)
+    calls = []
+
+    class Reply(io.BytesIO):
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+
+    def urlopen(req, timeout=0):
+        calls.append(req.full_url)
+        if len(calls) < 3:
+            raise urllib.error.URLError("connection reset")
+        return Reply(b"tarball")
+
+    monkeypatch.setattr(gs.urllib.request, "urlopen", urlopen)
+    assert gs._get("https://example.test/src.tar.xz", delay=0) == b"tarball"
+    assert len(calls) == 3
+
