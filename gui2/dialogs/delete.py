@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
 )
 import sys
+from gui.icons import themed_icon
 from gui2.palette import COLORS
 from gui.theme import resource_path
 class DeleteDialog(QDialog):
@@ -105,9 +106,9 @@ class DeleteDialog(QDialog):
 
         # Icon
         icon = QLabel()
-        pm = QPixmap("resources/icons/trash.png")
+        pm = themed_icon("trash", "error").pixmap(40, 40)
         if not pm.isNull():
-            icon.setPixmap(pm.scaled(40, 40, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+            icon.setPixmap(pm)
         else:
             icon.setText("🗑")
             icon.setObjectName("iconFallback")

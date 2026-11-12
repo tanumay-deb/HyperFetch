@@ -370,3 +370,13 @@ def test_the_window_finishes_them_as_it_starts():
     from gui2.app import DownloadAppV2
     src = inspect.getsource(DownloadAppV2.__init__)
     assert src.index("self._load_state()") < src.index("self._resume_deletes()")
+
+
+def test_delete_dialog_renders_themed_trash_icon():
+    from PySide6.QtWidgets import QApplication, QLabel
+    from gui2.dialogs.delete import DeleteDialog
+    QApplication.instance() or QApplication([])
+    dlg = DeleteDialog(finished=1, downloading=0)
+    assert dlg.findChild(QLabel, "iconFallback") is None
+    assert any(lbl.pixmap() and not lbl.pixmap().isNull()
+               for lbl in dlg.findChildren(QLabel))
