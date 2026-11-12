@@ -264,3 +264,10 @@ def test_the_list_carries_what_the_menu_needs_to_draw_itself(env):
               environ_overrides={"REMOTE_ADDR": LAN}).get_json()["downloads"][0]
     assert d["speedLimit"] == 62500
     assert d["url"] == "https://example.test/a.bin"
+
+
+def test_scheduled_card_has_a_resume_button_like_the_menu():
+    page = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                             "web", "app.js"), encoding="utf-8").read()
+    assert 'd.status === "Paused" || d.status === "Error" || d.status === "Scheduled") ? "resume"' in page
+

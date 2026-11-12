@@ -559,7 +559,7 @@ function update(c, d, bps, serial) {
 
   const running = d.status === "Downloading" || d.status === "Queued";
   const toggle = running ? "pause"
-               : (d.status === "Paused" || d.status === "Error") ? "resume" : "";
+               : (d.status === "Paused" || d.status === "Error" || d.status === "Scheduled") ? "resume" : "";
   /* Only this row is rebuilt, and only when the state it depends on changes. */
   const key = toggle + (d.status === "Completed" ? "+save" : "");
   if (c.buttons !== key) {
