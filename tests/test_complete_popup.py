@@ -63,6 +63,7 @@ def test_the_buttons_fit_inside_the_popup():
 def test_connections_are_hidden_for_a_torrent():
     """A torrent has no HTTP segments, so the row would always read 0."""
     from PySide6.QtWidgets import QLabel
+    from gui.theme import human_speed
     tor = _dlg("Movie", url="magnet:?xt=urn:btih:abc")
     labels = [l.text() for l in tor.findChildren(QLabel)]
     assert "Connections" not in labels
@@ -100,3 +101,28 @@ def test_an_unticked_box_records_nothing():
     stub = types.SimpleNamespace(_extras={}, _save_settings=lambda: None)
     DownloadAppV2._remember_skip_complete(stub, d)
     assert "skip_complete_popup" not in stub._extras
+
+
+def test_time_and_average_speed_do_not_include_queue_wait():
+    """A download that waited an hour in the queue and then downloaded 100 MB
+    in 10 seconds must report ~10 s and ~10 MB/s, not 1 h and ~28 KB/s."""
+    from PySide6.QtWidgets import QLabel
+    from gui.theme import human_speed
+    _app()
+    host = QWidget()
+    now = time.time()
+    t = T.DownloadTask("https://x/file.zip", "E:/dl/file.zip",
+                       filename="file.zip", total_size=100 * 1024 * 1024,
+                       added=now - 3600)
+    t.status = T.DOWNLOADING
+    assert getattr(t, "started_at", 0) >= now - 1
+    t.started_at = now - 10
+    t.downloaded = 100 * 1024 * 1024
+    t.status = T.COMPLETED
+    t.completed_at = now
+    d = CompleteDialog(host, t)
+    d._host_ref = host
+    texts = [l.text() for l in d.findChildren(QLabel)]
+    assert "10s" in texts, texts
+    assert human_speed(10 * 1024 * 1024) in texts, texts
+

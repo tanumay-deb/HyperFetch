@@ -246,6 +246,8 @@ class DownloadTask:
         # determined belongs to admin, never to whoever asked for it.
         self.owner = ""
         # When this finished, for the site's 30-day retention. 0 until it does.
+        self.started_at = time.time() if status == DOWNLOADING else 0.0
+        self.started_at = 0.0
         self.completed_at = 0.0
         # hash-check in progress (transient). A recheck reads the whole payload
         # off disk, so without this the UI shows nothing moving for minutes.
@@ -309,6 +311,8 @@ class DownloadTask:
             # Stamped here rather than derived from the events timeline, which
             # is capped and would forget the moment on a long-lived task. The
             # site's retention clock reads this, so it has to survive restarts.
+            if value == DOWNLOADING and not self.started_at:
+                self.started_at = time.time()
             if value == COMPLETED and not self.completed_at:
                 self.completed_at = time.time()
             self.log_event(str(value))
@@ -454,6 +458,7 @@ class DownloadTask:
             "sort_base": self.sort_base,
             "is_scheduled": getattr(self, "is_scheduled", False),
             "owner": self.owner,
+            "started_at": self.started_at,
             "completed_at": self.completed_at,
             "last_seeds": self.last_seeds,
             "last_seeds_at": self.last_seeds_at,
@@ -501,6 +506,7 @@ class DownloadTask:
         # Missing on every task written before accounts existed, which is why
         # it defaults to "" rather than raising — those belong to admin.
         t.owner = d.get("owner", "") or ""
+        t.started_at = float(d.get("started_at", 0) or 0)
         t.completed_at = float(d.get("completed_at", 0) or 0)
         t.last_seeds = d.get("last_seeds")
         t.last_seeds_at = float(d.get("last_seeds_at", 0) or 0)

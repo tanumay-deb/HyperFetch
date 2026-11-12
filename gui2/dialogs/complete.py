@@ -144,7 +144,9 @@ class CompleteDialog(QDialog):
         pg.addLayout(top)
 
         # Stats
-        elapsed = max(1e-9, time.time() - getattr(t, "added", 0)) if getattr(t, "added", 0) else 0
+        start = getattr(t, "started_at", 0) or getattr(t, "added", 0)
+        end = getattr(t, "completed_at", 0) or time.time()
+        elapsed = max(1e-9, end - start) if start else 0
         avg = (t.downloaded / elapsed) if elapsed else 0
         
         stats_frame = QFrame()
