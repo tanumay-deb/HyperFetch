@@ -190,6 +190,12 @@ def test_trackers_for_a_torrent_file_reads_its_announce_list(tmp_path):
     t = T.DownloadTask(str(path), "x", filename="x.torrent")
     assert scrape.trackers_for(t)[:2] == ["http://file.example/announce", "udp://tier2.example:80"]
     assert scrape.task_infohash(t) == bytes.fromhex(torrent.torrent_infohash(str(path)))
+    torrent.add_trackers(t, ["udp://added.example:80/announce"])
+    assert scrape.trackers_for(t)[:3] == [
+        "udp://added.example:80/announce",
+        "http://file.example/announce",
+        "udp://tier2.example:80",
+    ]
 
 
 def test_a_private_torrent_is_asked_about_only_at_its_own_trackers(tmp_path, monkeypatch):

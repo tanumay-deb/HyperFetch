@@ -290,7 +290,7 @@ def trackers_for(task):
     torrent talks to its own trackers and nobody else (BEP 27), so it gets no
     public ones. Only trackers that can be scraped, each once."""
     _, file_trackers, private = _file_facts(task)
-    own = torrent.magnet_trackers(task.url) if torrent.is_magnet(task.url) else file_trackers
+    own = torrent.trackers_of(task) or file_trackers
     import trackers
     public = [] if private else trackers.current()
     out, seen = [], set()
