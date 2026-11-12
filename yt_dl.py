@@ -186,14 +186,13 @@ def _choosing_opts(t, out_dir):
     if ffdir:
         opts["ffmpeg_location"] = ffdir
 
-    # No JS runtime is bundled. yt-dlp warns that YouTube extraction without
-    # one is deprecated, but measured against real videos it currently changes
-    # nothing: the same 33 formats up to 2160p come back with and without a
-    # runtime, because YouTube is not demanding the "n challenge" for anonymous
-    # requests. Bundling one is not free either — deno is ~110 MB, and quickjs
-    # is 2 MB but yt-dlp ships no solver lib for it, so it must fetch one at
-    # solve time. Revisit when YouTube actually starts requiring it; the
-    # cookie fallback (_cookies_last) is what fixes the failure seen in practice.
+    # YouTube's "n challenge": the solver scripts ship (yt-dlp-ejs), the runtime
+    # is the user's deno - the one runtime yt-dlp enables by default; node and
+    # bun would run YouTube's script without deno's sandbox. No runtime is
+    # bundled (deno is ~110 MB). An anonymous request has not needed one so far;
+    # a signed-in one does, and without deno _cookies_last tries it again with
+    # no cookies. Without the package no solver loaded even with deno
+    # (measured 2026-11-12, tests/test_youtube_solver.py).
 
     # Build a format string that never hard-fails with "requested format is
     # not available": prefer a height-capped merge when ffmpeg is present,

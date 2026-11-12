@@ -25,6 +25,11 @@ except Exception:
     ytdlp_datas, ytdlp_binaries, ytdlp_hidden = [], [], []
 # its own PyInstaller hook is for building, not running (excludes, below)
 ytdlp_hidden = [m for m in ytdlp_hidden if not m.startswith('yt_dlp.__pyinstaller')]
+# YouTube's challenge solver: yt-dlp takes its scripts from this package, and
+# without it a signed-in YouTube request gets no video formats (2026-11-12).
+# Imported here so a build without it stops instead of shipping that.
+import yt_dlp_ejs  # noqa: E402,F401
+ejs_datas, ejs_binaries, ejs_hidden = collect_all('yt_dlp_ejs')
 
 hidden = (
     # local modules reached via lazy `import` inside functions
@@ -33,7 +38,7 @@ hidden = (
      'history', 'trackers', 'scrape', 'swarm', 'third_party',
      'gui2.dialogs.history', 'gui2.dialogs.queues', 'gui2.dialogs.console',
      'gui2.dialogs.host_rules', 'gui2.dialogs.welcome']
-    + crypto_hidden + ytdlp_hidden
+    + crypto_hidden + ytdlp_hidden + ejs_hidden
     + collect_submodules('flask_cors')
 )
 
@@ -66,12 +71,12 @@ if os.path.isfile(os.path.join('bin', 'ffmpeg.exe')):
 a = Analysis(
     ['main.py'],
     pathex=[],
-    binaries=crypto_binaries + ytdlp_binaries,
+    binaries=crypto_binaries + ytdlp_binaries + ejs_binaries,
     datas=[('assets/icon.ico', 'assets'), ('assets/icon.png', 'assets'),
            ('assets/icons', 'assets/icons'),
            ('LICENSE', '.'),                                # About -> License
            ('licenses', 'licenses'),     # the GPL programs' licences + where their source is
-           ] + extra_datas + crypto_datas + ytdlp_datas,
+           ] + extra_datas + crypto_datas + ytdlp_datas + ejs_datas,
     hiddenimports=hidden,
     hookspath=[],
     runtime_hooks=[],

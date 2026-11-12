@@ -1831,5 +1831,16 @@ def _self_test_v2():
     dt = T.DownloadTask("http://test.com", "test.bin")
     c_dlg = CompleteDialog(win, dt)
 
+    # YouTube's challenge solver is in the build (yt-dlp-ejs: its scripts are
+    # data files) - without it a signed-in YouTube request gets no formats
+    try:
+        import yt_dlp_ejs.yt.solver as solver
+        solver_ok = bool(solver.core() and solver.lib())
+    except Exception:
+        solver_ok = False
+    if not solver_ok:
+        print("selftest: YouTube's challenge solver (yt-dlp-ejs) is missing")
+        return 1
+
     print(f"v2 selftest OK v{APP_VERSION}")
     return 0
