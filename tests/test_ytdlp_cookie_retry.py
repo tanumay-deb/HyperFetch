@@ -296,3 +296,89 @@ def test_another_site_with_no_formats_is_not_told_about_deno(tmp_path, unsolved_
                        filename="v.mkv")
     yt_dl.YtDlpDownloader(t).run()
     assert "Deno" not in t.error, t.error
+
+
+# ---- YouTube turning this connection away: plain words, not yt-dlp's flags ----
+BOT = ("ERROR: [youtube] abc: Sign in to confirm you’re not a bot. Use "
+       "--cookies-from-browser or --cookies for the authentication. See  "
+       "https://github.com/yt-dlp/yt-dlp/wiki/FAQ  for how to manually pass cookies.")
+RATE = ("ERROR: [youtube] abc: Unable to download webpage: HTTP Error 429: "
+        "Too Many Requests (caused by <HTTPError 429: Too Many Requests>)")
+
+
+class _RefusedYDL(_FakeYDL):
+    """The user's 2026-11-12 log: YouTube answered 429 and asked for a sign-in.
+    A signed-in try with nothing to solve the challenge got no formats, and
+    the retry without cookies met the bot check."""
+
+    def extract_info(self, url, download=True):
+        self._attempts.append(self._hdrs)
+        return self._fail_when(self._hdrs, self.opts["logger"])
+
+
+def _refusing(monkeypatch, behave):
+    attempts = []
+    mod = types.ModuleType("yt_dlp")
+    mod.YoutubeDL = lambda opts: _RefusedYDL(opts, attempts, behave)
+    monkeypatch.setitem(sys.modules, "yt_dlp", mod)
+    return attempts
+
+
+def _bot(hdrs, logger):
+    raise RuntimeError(BOT)
+
+
+def _unsolved_then_bot(hdrs, logger):
+    if _has_cookie(hdrs):
+        logger.warning(UNSOLVED)
+        raise RuntimeError("ERROR: [youtube] abc: Requested format is not available.")
+    raise RuntimeError(BOT)
+
+
+def test_the_bot_check_without_a_sign_in_says_send_it_from_the_browser(tmp_path,
+                                                                        monkeypatch):
+    _refusing(monkeypatch, _bot)
+    t = _task(tmp_path, {"User-Agent": "UA"})
+    yt_dl.YtDlpDownloader(t).run()
+    assert t.status == T.ERROR
+    assert "browser" in t.error and "try again later" in t.error, t.error
+    assert "--cookies" not in t.error, "a flag the app's user cannot pass"
+
+
+def test_429_reads_the_same(tmp_path, monkeypatch):
+    def rate(hdrs, logger):
+        raise RuntimeError(RATE)
+    _refusing(monkeypatch, rate)
+    t = _task(tmp_path, {})
+    yt_dl.YtDlpDownloader(t).run()
+    assert "refusing this connection" in t.error, t.error
+
+
+def test_signed_in_and_still_refused_says_try_later(tmp_path, monkeypatch):
+    _deno(monkeypatch, there=True)
+    _refusing(monkeypatch, _bot)
+    t = _task(tmp_path, {"Cookie": "SID=x"})
+    yt_dl.YtDlpDownloader(t).run()
+    assert "even with your sign-in" in t.error and "try again later" in t.error.lower()
+    assert "browser" not in t.error, "it came from the browser already"
+
+
+def test_signed_in_without_deno_says_install_deno(tmp_path, monkeypatch):
+    """The real chain: the signed-in try had no formats (nothing to solve the
+    challenge), the retry without cookies met the bot check. Deno is the fix."""
+    _deno(monkeypatch, there=False)
+    attempts = _refusing(monkeypatch, _unsolved_then_bot)
+    t = _task(tmp_path, {"Cookie": "SID=x"})
+    yt_dl.YtDlpDownloader(t).run()
+    assert [_has_cookie(a) for a in attempts] == [True, False]
+    assert "winget install DenoLand.Deno" in t.error, t.error
+
+
+def test_another_sites_429_is_left_alone(tmp_path, monkeypatch):
+    def rate(hdrs, logger):
+        raise RuntimeError(RATE)
+    _refusing(monkeypatch, rate)
+    t = T.DownloadTask("https://example.test/video", str(tmp_path / "v.mkv"),
+                       filename="v.mkv")
+    yt_dl.YtDlpDownloader(t).run()
+    assert "YouTube" not in t.error, t.error

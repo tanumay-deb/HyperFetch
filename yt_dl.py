@@ -125,6 +125,24 @@ NEEDS_DENO = ("YouTube needs Deno to unlock this video. Install it (in a termina
               "winget install DenoLand.Deno), restart HyperFetch, then Resume.")
 
 
+# YouTube turning this connection away - its "confirm you're not a bot" or a
+# 429 - told in words the app's user can act on, not yt-dlp's --cookies flags
+REFUSED = ("YouTube is refusing this connection for now and asks for a sign-in. Send "
+           "the video from your browser (the HyperFetch button or right-click), so "
+           "your YouTube sign-in goes with it, or try again later.")
+REFUSED_SIGNED_IN = ("YouTube is refusing this connection for now, even with your "
+                     "sign-in. Try again later.")
+SIGNED_IN_NEEDS_DENO = ("YouTube asks this connection to sign in, and a signed-in "
+                        "download needs Deno to unlock the video. Install it (in a "
+                        "terminal: winget install DenoLand.Deno), restart HyperFetch, "
+                        "then Resume.")
+
+
+def _refused(low):
+    return ("not a bot" in low or "sign in to confirm" in low
+            or "http error 429" in low or "too many requests" in low)
+
+
 def _needs_deno(opts):
     """yt-dlp could not solve YouTube's challenge, and there is no deno - the
     one runtime it enables - to solve it with."""
@@ -915,7 +933,13 @@ class YtDlpDownloader:
             # JavaScript runtime present and without. The "no JS runtime"
             # warning yt-dlp prints alongside this is a red herring for it.
             youtube = "youtu" in (self.t.url or "").lower()
-            if youtube and _formats_unavailable(e) and _needs_deno(opts):
+            if youtube and _refused(low):
+                # a signed-in try that found no formats (nothing to solve the
+                # challenge) and a retry without cookies that met the bot check
+                signed_in = any(k.lower() == "cookie" for k in _http_headers(self.t))
+                self.t.error = (SIGNED_IN_NEEDS_DENO if signed_in and _needs_deno(opts)
+                                else REFUSED_SIGNED_IN if signed_in else REFUSED)
+            elif youtube and _formats_unavailable(e) and _needs_deno(opts):
                 self.t.error = NEEDS_DENO
             elif ("403" in low or "unable to download video data" in low) and youtube:
                 self.t.error = (
