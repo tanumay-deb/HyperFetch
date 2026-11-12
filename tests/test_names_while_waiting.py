@@ -489,6 +489,28 @@ def test_the_look_is_dropped_when_its_download_starts(monkeypatch, tmp_path):
     assert time.monotonic() - began < 3, "waited for the page it had given up on"
 
 
+def test_a_page_youtube_turns_away_is_told_in_plain_words(monkeypatch, tmp_path):
+    """The waiting video's log carried yt-dlp's own text - "Use
+    --cookies-from-browser or --cookies" - where its card says what to do."""
+    def refuse(o):
+        raise RuntimeError("ERROR: [youtube] abc: Sign in to confirm you're not a bot. "
+                           "Use --cookies-from-browser or --cookies for the authentication.")
+    _Page(monkeypatch, refuse)
+    with pytest.raises(Exception) as e:
+        yt_dl.look_up(_video(tmp_path))
+    assert "refusing this connection" in str(e.value), str(e.value)
+    assert "--cookies" not in str(e.value)
+    assert yt_dl._plain(e.value) == str(e.value), "the scout logs it as it is"
+
+
+def test_a_failure_with_no_plain_words_is_raised_as_it_was(monkeypatch, tmp_path):
+    def private(o):
+        raise RuntimeError("ERROR: [youtube] abc: Private video")
+    _Page(monkeypatch, private)
+    with pytest.raises(RuntimeError, match="Private video"):
+        yt_dl.look_up(_video(tmp_path))
+
+
 def test_a_page_that_takes_too_long_counts_as_unread(monkeypatch, tmp_path):
     gate = threading.Event()
     _Page(monkeypatch, lambda o: gate.wait(10) and {"title": "video", "ext": "mp4"})

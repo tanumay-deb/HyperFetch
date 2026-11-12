@@ -143,11 +143,57 @@ def _refused(low):
             or "http error 429" in low or "too many requests" in low)
 
 
-def _needs_deno(opts):
-    """yt-dlp could not solve YouTube's challenge, and there is no deno - the
-    one runtime it enables - to solve it with."""
+class Unreadable(Exception):
+    """A page that would not read, told in plain words (explain)."""
+
+
+def explain(err, t, unsolved=False, ffdir=""):
+    """Plain words for a yt-dlp failure on `t` that has them, else "".
+
+    The download's card and the log of a video that waits say the same.
+    `unsolved`: yt-dlp said it could not solve YouTube's challenge
+    (_YtLog.unsolved). `ffdir`: where ffmpeg is - None when nowhere."""
+    import re
     import shutil
-    return getattr(opts.get("logger"), "unsolved", False) and not shutil.which("deno")
+    low = re.sub(r"\x1b\[[0-9;]*m", "", str(err)).strip().lower()
+    youtube = "youtu" in (t.url or "").lower()
+    needs_deno = unsolved and not shutil.which("deno")
+    if youtube and _refused(low):
+        # a signed-in try that found no formats (nothing to solve the
+        # challenge) and a retry without cookies that met the bot check
+        signed_in = any(k.lower() == "cookie" for k in _http_headers(t))
+        return (SIGNED_IN_NEEDS_DENO if signed_in and needs_deno
+                else REFUSED_SIGNED_IN if signed_in else REFUSED)
+    if youtube and _formats_unavailable(err) and needs_deno:
+        return NEEDS_DENO
+    # A 403 on the media URLs almost always means this build's yt-dlp
+    # has aged out. YouTube changes how it signs those URLs every few
+    # weeks and an older copy simply stops working. The version is
+    # frozen into the build, so the user cannot update it themselves
+    # and the message has to say that rather than blame the network.
+    #
+    # Measured rather than assumed: the URL that failed here on a
+    # three-month-old yt-dlp downloaded fine on a current one — with a
+    # JavaScript runtime present and without. The "no JS runtime"
+    # warning yt-dlp prints alongside this is a red herring for it.
+    if ("403" in low or "unable to download video data" in low) and youtube:
+        return ("YouTube refused the download (403). That usually means "
+                "HyperFetch's bundled yt-dlp (%s) has gone stale — YouTube "
+                "changes how it signs video links every few weeks. A newer "
+                "HyperFetch build is the fix." % _ytdlp_version())
+    if ffdir is None and ("requested format is not available" in low
+                          or "ffmpeg" in low or "merging" in low):
+        return ("This video has no combined audio+video stream — it needs "
+                "ffmpeg to merge them (bundled in the app installer; on a "
+                "source run, put ffmpeg on your PATH).")
+    if "requested format is not available" in low:
+        # ffmpeg IS present, so merging is not the problem — the site
+        # served no downloadable video stream at all. Blaming ffmpeg here
+        # sent the user looking for a missing binary that was never missing.
+        return ("The site offered no downloadable video stream for this "
+                "one. It may be private, region-locked, or need a sign-in "
+                "the app doesn't have.")
+    return ""
 
 
 def _http_headers(t):
@@ -921,46 +967,9 @@ class YtDlpDownloader:
             self.t.status = T.ERROR
             import re as _re
             msg = _re.sub(r"\x1b\[[0-9;]*m", "", str(e)).strip()    # strip ANSI colour codes
-            low = msg.lower()
-            # A 403 on the media URLs almost always means this build's yt-dlp
-            # has aged out. YouTube changes how it signs those URLs every few
-            # weeks and an older copy simply stops working. The version is
-            # frozen into the build, so the user cannot update it themselves
-            # and the message has to say that rather than blame the network.
-            #
-            # Measured rather than assumed: the URL that failed here on a
-            # three-month-old yt-dlp downloaded fine on a current one — with a
-            # JavaScript runtime present and without. The "no JS runtime"
-            # warning yt-dlp prints alongside this is a red herring for it.
-            youtube = "youtu" in (self.t.url or "").lower()
-            if youtube and _refused(low):
-                # a signed-in try that found no formats (nothing to solve the
-                # challenge) and a retry without cookies that met the bot check
-                signed_in = any(k.lower() == "cookie" for k in _http_headers(self.t))
-                self.t.error = (SIGNED_IN_NEEDS_DENO if signed_in and _needs_deno(opts)
-                                else REFUSED_SIGNED_IN if signed_in else REFUSED)
-            elif youtube and _formats_unavailable(e) and _needs_deno(opts):
-                self.t.error = NEEDS_DENO
-            elif ("403" in low or "unable to download video data" in low) and youtube:
-                self.t.error = (
-                    "YouTube refused the download (403). That usually means "
-                    "HyperFetch's bundled yt-dlp (%s) has gone stale — YouTube "
-                    "changes how it signs video links every few weeks. A newer "
-                    "HyperFetch build is the fix." % _ytdlp_version())
-            elif ffdir is None and ("requested format is not available" in low
-                                    or "ffmpeg" in low or "merging" in low):
-                self.t.error = ("This video has no combined audio+video stream — it needs "
-                                "ffmpeg to merge them (bundled in the app installer; on a "
-                                "source run, put ffmpeg on your PATH).")
-            elif "requested format is not available" in low:
-                # ffmpeg IS present, so merging is not the problem — the site
-                # served no downloadable video stream at all. Blaming ffmpeg here
-                # sent the user looking for a missing binary that was never missing.
-                self.t.error = ("The site offered no downloadable video stream for this "
-                                "one. It may be private, region-locked, or need a sign-in "
-                                "the app doesn't have.")
-            else:
-                self.t.error = "yt-dlp: " + msg[:200]
+            self.t.error = (explain(e, self.t, getattr(opts.get("logger"), "unsolved", False),
+                                    ffdir)
+                            or "yt-dlp: " + msg[:200])
             log.error("yt-dlp failed: %s — %s", self.t.url, str(e)[:200])
         # out of the except blocks: what yt-dlp held is let go by now
         if self.t.cancel_requested and self.t.status != T.COMPLETED:
@@ -1024,7 +1033,7 @@ def look_up(t, give_up=lambda: False):
     own, as in can_extract, and an answer nobody waits for is dropped. Raises
     what yt-dlp raised, and TimeoutError past EXTRACT_TIMEOUT.
     """
-    opts, _ = _choosing_opts(t, os.path.dirname(t.save_path) or ".")
+    opts, ffdir = _choosing_opts(t, os.path.dirname(t.save_path) or ".")
     opts.update({"extract_flat": "in_playlist", "playlist_items": "1",
                  "socket_timeout": 15})
     url, box = t.url, {}
@@ -1054,7 +1063,11 @@ def look_up(t, give_up=lambda: False):
             raise TimeoutError("the page took over %d s to read" % EXTRACT_TIMEOUT)
         th.join(0.2)
     if "error" in box:
-        raise box["error"]
+        err = box["error"]
+        reason = explain(err, t, getattr(opts.get("logger"), "unsolved", False), ffdir)
+        if reason:
+            raise Unreadable(reason) from err
+        raise err
     return box["found"]
 
 
