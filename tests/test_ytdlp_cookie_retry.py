@@ -459,3 +459,12 @@ def test_the_way_to_get_deno_is_the_systems_own():
     assert "winget install DenoLand.Deno" in yt_dl._get_deno(windows=True)
     elsewhere = yt_dl._get_deno(windows=False)
     assert "deno.com" in elsewhere and "winget" not in elsewhere
+
+
+def test_a_video_id_containing_403_does_not_read_as_stale_ytdlp(tmp_path):
+    """'403' inside a YouTube video id must not trigger the HTTP 403 stale
+    yt-dlp message."""
+    t = _task(tmp_path, {})
+    assert yt_dl.explain(RuntimeError("ERROR: [youtube] abc403defgh: Video unavailable"), t) == ""
+    assert "stale" in yt_dl.explain(RuntimeError("HTTP Error 403: Forbidden"), t)
+

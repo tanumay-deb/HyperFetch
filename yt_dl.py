@@ -221,7 +221,7 @@ def explain(err, t, unsolved=False, ffdir=""):
     # three-month-old yt-dlp downloaded fine on a current one — with a
     # JavaScript runtime present and without. The "no JS runtime"
     # warning yt-dlp prints alongside this is a red herring for it.
-    if ("403" in low or "unable to download video data" in low) and youtube:
+    if (re.search(r"\b403\b", low) or "unable to download video data" in low) and youtube:
         return ("YouTube refused the download (403). That usually means "
                 "HyperFetch's bundled yt-dlp (%s) has gone stale — YouTube "
                 "changes how it signs video links every few weeks. A newer "
