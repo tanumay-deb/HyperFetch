@@ -392,3 +392,40 @@ def test_with_the_real_ffmpeg_a_real_stream_comes_out_as_an_ordinary_mp4(kind, t
                                      "-of", "csv=p=0", t.save_path], capture_output=True,
                                     text=True).stdout.strip() or 0)
         assert 5.5 <= secs <= 6.6, secs
+
+
+def test_remux_logs_single_line_summary_without_full_paths_and_caps_long_staged_path(
+        stream, dl, tmp_path, monkeypatch, caplog):
+    import sys
+    fake_ff = tmp_path / "fake_ffmpeg.py"
+    fake_ff.write_text(
+        "import sys\n"
+        "print('Error opening', sys.argv[7], file=sys.stderr); print('[mp4] Failed writing', sys.argv[-1], file=sys.stderr)\n"
+        "sys.exit(1)\n",
+        encoding="utf-8",
+    )
+    real_popen = subprocess.Popen
+    monkeypatch.setattr(hls, "ffmpeg_path", lambda: "ffmpeg")
+    monkeypatch.setattr(
+        subprocess, "Popen",
+        lambda cmd, **kw: real_popen([sys.executable, str(fake_ff), *cmd[1:]], **kw),
+    )
+    src = str(tmp_path / "secret_dir" / "input.hfdownload")
+    dst = str(dl / "output.mp4.hfmove")
+    with caplog.at_level("WARNING", logger="hyperfetch.hls"):
+        assert hls.remux(src, dst, seconds=10.0) is False
+    msgs = [r.getMessage() for r in caplog.records if r.name == "hyperfetch.hls"]
+    assert msgs, "expected a warning from remux"
+    for m in msgs:
+        assert "\n" not in m and "\r" not in m, f"multi-line raw stderr in log: {m!r}"
+        assert str(tmp_path) not in m and str(dl) not in m, f"full path leaked into log: {m!r}"
+        assert "Error opening input.hfdownload" in m
+
+    # Long title + .mp4.hfmove stays under Windows 260-char MAX_PATH
+    rewrite = _Rewrite(monkeypatch)
+    long_name = "L" * 220 + ".mp4"
+    t = _task(stream, dl, name=long_name)
+    Downloader(t).run()
+    assert t.status == T.COMPLETED, t.error
+    assert len(os.path.abspath(rewrite.calls[0]["dst"])) < 260
+    assert len(os.path.abspath(t.save_path)) < 260

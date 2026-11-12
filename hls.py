@@ -302,9 +302,16 @@ def remux(src, dst, seconds=0.0, should_stop=lambda: False):
         except OSError:
             pass
         if not stopped:
+            err = (said or [""])[0]
+            for full in (src, dst):
+                if full:
+                    err = err.replace(full, os.path.basename(full))
+                    err = err.replace(full.replace("\\", "/"), os.path.basename(full))
+            summary = " | ".join(dict.fromkeys(
+                line.strip() for line in err.splitlines() if line.strip()))[-240:]
             log.warning("ffmpeg did not rewrite %s as an MP4 (exit %s, %.0f of %.0f s): %s",
                         os.path.basename(src), p.returncode, got, seconds,
-                        (said or [""])[0][-300:])
+                        summary or "no output")
     return ok
 
 
@@ -713,9 +720,11 @@ class HlsDownloader:
         if not utils.HLS_TO_MP4 or ffmpeg_path() is None:
             return False
         dest = self.t.save_path
-        if dest.lower().endswith(".ts"):
-            dest = utils.unique_path(os.path.dirname(dest) or ".",
-                                     os.path.basename(dest)[:-3] + ".mp4")
+        name = os.path.basename(dest)
+        if name.lower().endswith(".ts"):
+            dest = utils.unique_path(os.path.dirname(dest) or ".", name[:-3] + ".mp4")
+        elif len(os.path.abspath(dest)) > 232:
+            dest = utils.unique_path(os.path.dirname(dest) or ".", name)
         staged = "%s.%s.hfmove" % (dest, self.t.id[:12])
         self.t.finishing = True                 # the card: "Saving as MP4…"
         try:

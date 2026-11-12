@@ -420,6 +420,10 @@ def finalize_download(temp_path, dest_path, free_name=True):
     for a video's part: yt-dlp named it, goes on to merge it by that name,
     and keeps its own rules for a file that is there."""
     import shutil
+    if free_name and len(os.path.abspath(dest_path)) > 232:
+        d = os.path.dirname(dest_path) or "."
+        budget = max(24, 232 - len(os.path.abspath(d)))
+        dest_path = os.path.join(d, safe_filename(os.path.basename(dest_path), max_len=min(200, budget)))
     # its own staging name: two downloads of one name may finish together
     staged = "%s.%s.hfmove" % (dest_path, os.path.splitext(os.path.basename(temp_path))[0][:12])
     unsparse(temp_path)
@@ -938,7 +942,8 @@ def typed_filename(name):
 def unique_path(directory, filename):
     """Avoid clobbering existing files: foo.zip -> foo (1).zip, foo (2).zip ...
     Always confines the result to `directory` (defends against traversal)."""
-    filename = safe_filename(filename)
+    budget = max(24, 232 - len(os.path.abspath(directory))) if directory else 200
+    filename = safe_filename(filename, max_len=min(200, budget))
     base, ext = os.path.splitext(filename)
     candidate = os.path.join(directory, filename)
     i = 1
