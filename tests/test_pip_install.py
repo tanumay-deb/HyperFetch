@@ -37,4 +37,7 @@ def test_a_pip_install_ships_and_finds_the_web_page_and_the_licences(tmp_path, m
     assert api_server.web_dir() == str(share / "web")
     assert utils.resource_path("licenses") == str(share / "licenses")
     assert utils.resource_path("assets") == str(share / "assets")
+    from gui import theme
+    assert theme.resource_path is utils.resource_path
+
 
