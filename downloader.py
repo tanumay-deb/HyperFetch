@@ -527,20 +527,7 @@ class Downloader:
     # ------------------------------------------------------------- planning
     @staticmethod
     def _format_disk_error(exc, path):
-        """Turn a bare OSError from the segment write into something actionable.
-        Detects ENOSPC ("No space left on device") and reports the actual free
-        bytes on the target volume so the user can pick a different drive in
-        Settings and resume from the partial .hfdownload still on disk."""
-        import errno
-        if getattr(exc, "errno", None) == errno.ENOSPC:
-            try:
-                free = shutil.disk_usage(os.path.dirname(path) or ".").free
-                free_mb = free >> 20
-                return (f"disk full — {free_mb} MiB free. "
-                        "Pick a different folder in Settings and Resume.")
-            except OSError:
-                return "disk full — pick a different folder in Settings and Resume."
-        return f"disk error: {exc}"
+        return utils.format_disk_error(exc, path)
 
     def _check_disk_space(self, path, needed):
         """Raise OSError if the target volume can't hold the file (+64 MiB slack)."""

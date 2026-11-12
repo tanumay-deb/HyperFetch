@@ -561,6 +561,27 @@ def disk_shortfall(path, needed):
     except OSError:
         return 0
     return max(0, needed + DISK_SLACK - free)
+
+
+def format_disk_error(exc, path):
+    """Turn a write OSError into something actionable: for ENOSPC, name the
+    drive and its free space, and tell the user to free space there or
+    Move to… another drive and Resume."""
+    import errno
+    import shutil
+    if getattr(exc, "errno", None) == errno.ENOSPC:
+        folder = os.path.dirname(os.path.abspath(path or ".")) or "."
+        drive = os.path.splitdrive(folder)[0] or folder
+        where = f" ({drive})" if drive else ""
+        try:
+            free = shutil.disk_usage(folder).free
+            return (f"disk full{where} — {free >> 20} MiB free; "
+                    "free space there, or Move to… another drive and Resume.")
+        except OSError:
+            return (f"disk full{where} — "
+                    "free space there, or Move to… another drive and Resume.")
+    return f"disk error: {exc}"
+
 BADGE_CORNER = "top-right"  # extension's on-page download-button corner (served via /ping)
 
 # Per-host download rules (Settings -> Network). {host: {"segments": int,

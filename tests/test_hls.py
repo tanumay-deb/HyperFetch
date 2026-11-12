@@ -534,3 +534,46 @@ def test_the_master_is_kept_with_the_download():
     t = T.DownloadTask("https://e.test/high.m3u8", "C:/dl/v.m3u8")
     t.hls_master = "https://e.test/master.m3u8"
     assert T.DownloadTask.from_dict(t.to_dict()).hls_master == "https://e.test/master.m3u8"
+
+
+def test_a_stream_that_fills_the_disk_names_the_drive_and_move_to(hls_server, tmp_path,
+                                                                  monkeypatch):
+    """ENOSPC while writing a segment says the drive is full, its free space,
+    and to free space there or Move to… another drive and Resume."""
+    import builtins
+    import errno
+    real_open = builtins.open
+
+    class _FullFile:
+        def __init__(self, f):
+            self._f = f
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return self._f.__exit__(*a)
+
+        def write(self, data):
+            raise OSError(errno.ENOSPC, "No space left on device")
+
+        def flush(self):
+            pass
+
+    def fake_open(path, mode="r", *a, **kw):
+        f = real_open(path, mode, *a, **kw)
+        if "b" in mode and ("w" in mode or "a" in mode):
+            return _FullFile(f)
+        return f
+
+    monkeypatch.setattr(builtins, "open", fake_open)
+    out = tmp_path / "Clip.ts"
+    t = T.DownloadTask(f"{hls_server.base}/high.m3u8", str(out), filename="Clip.ts")
+    Downloader(t).run()
+    drive = os.path.splitdrive(str(tmp_path))[0] or str(tmp_path)
+    assert t.status == T.ERROR
+    assert "disk full" in t.error
+    assert drive in t.error
+    assert "MiB free" in t.error
+    assert "free space there, or Move to… another drive and Resume" in t.error
+

@@ -207,7 +207,7 @@ def test_format_disk_error_includes_free_space_for_enospc(tmp_path):
     e = OSError(errno.ENOSPC, "no space")
     msg = Downloader._format_disk_error(e, str(tmp_path / "x.hfdownload"))
     assert "disk full" in msg.lower()
-    assert "miB" in msg or "Settings" in msg
+    assert "MiB" in msg and "Move to" in msg
 
 
 def test_format_disk_error_generic_passthrough(tmp_path):

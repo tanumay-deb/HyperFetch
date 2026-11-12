@@ -916,7 +916,7 @@ class HlsDownloader:
                         self.t.total_size = int(downloaded / done * total)
         except OSError as e:
             self.t.status = T.ERROR
-            self.t.error = f"disk error: {e}"
+            self.t.error = utils.format_disk_error(e, temp_path)
             return
 
         if self._stopped(temp_path):
