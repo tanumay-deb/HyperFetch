@@ -356,6 +356,7 @@ function formatSize(bytes) {
 }
 
 function updatePanel() {
+  if (IN_FRAME) return;                // one list, the page's: a frame shows its button only
   if (sniffedMedia.size === 0) return;
   if (badgeHidden) return;             // dismissed for this page view
 
@@ -825,6 +826,8 @@ function bestSniffedStream(video) {
   sniffedMedia.forEach((m) => {
     order++;
     if (!m.url || m.url.startsWith('blob:') || m.url.startsWith('data:')) return;
+    // the page is sent its frames' streams too, for its list: not for its button
+    if (!IN_FRAME && m.frameId > 0) return;
     if (m.owned && !(video && m.owners && m.owners.has(video))) return;
     let same = 0;
     if (hasLength) {

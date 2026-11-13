@@ -777,6 +777,17 @@ async function probeViaFetch(url) {
   };
 }
 
+// A sniffed stream goes to the frame that asked for it - an embedded player's
+// script picks its button from it (the page script runs in every frame since
+// 1.9.6) - and, from a frame, to the page too: the page's "Download Media"
+// list shows every stream in the tab, as it did before. A request no frame
+// made (-1) is the page's.
+function tellFrames(tabId, msg, frameId) {
+  const own = frameId >= 0 ? frameId : 0;
+  chrome.tabs.sendMessage(tabId, msg, { frameId: own }, ignoreErr);
+  if (own > 0) chrome.tabs.sendMessage(tabId, msg, { frameId: 0 }, ignoreErr);
+}
+
 // Resolve a sniffed .m3u8 into a quality picker (master) or a single row. The
 // page is told the frame that asked for it, its length and whether it is live:
 // that is how the badge tells a player's own stream from another's.
@@ -784,10 +795,7 @@ async function handleHls(url, tabId, fallbackName, referer, storeId, frameId) {
   // the frame is this request's, not the playlist's: a cached answer goes to
   // the next page with the frame that asked there
   const deliver = (payload) => {
-    if (tabId >= 0) {
-      chrome.tabs.sendMessage(tabId, Object.assign({}, payload, { frameId }),
-                              { frameId: frameId >= 0 ? frameId : 0 }, ignoreErr);
-    }
+    if (tabId >= 0) tellFrames(tabId, Object.assign({}, payload, { frameId }), frameId);
   };
   const cached = parsedHls.get(url);   // re-deliver to a new tab, no re-probe
   if (cached) {
@@ -873,7 +881,7 @@ chrome.webRequest.onResponseStarted.addListener(
     }
 
     if (details.tabId >= 0) {
-      chrome.tabs.sendMessage(details.tabId, {
+      tellFrames(details.tabId, {
         type: "SNIFFED_MEDIA",
         url: details.url,
         mime: contentType || kind,
@@ -881,9 +889,7 @@ chrome.webRequest.onResponseStarted.addListener(
         filename: filename,
         kind: kind,
         frameId: details.frameId
-      // to the frame that asked for it only: the page script runs in every
-      // frame (1.9.6), and an embedded player's script is the one that wants it
-      }, { frameId: details.frameId >= 0 ? details.frameId : 0 }, ignoreErr);
+      }, details.frameId);
     }
   },
   { urls: ["<all_urls>"] },

@@ -84,7 +84,7 @@ async function test(name, fn) {
     const { state } = load();
     state.onResponse(response('https://cdn.x/clip.mp4', { frameId: 3, type: 'video/mp4', length: 5000000 }));
     await settle();
-    assert.strictEqual(state.sent.length, 1);
+    assert.strictEqual(state.sent.length, 2, 'to the frame and to the page');
     assert.strictEqual(state.sent[0].msg.type, 'SNIFFED_MEDIA');
     assert.strictEqual(state.sent[0].msg.frameId, 3);
   });
@@ -176,32 +176,40 @@ async function test(name, fn) {
     await settle();
     state.onResponse(response(url, { tabId: 9, frameId: 5 }));
     await settle();
-    assert.deepStrictEqual(state.sent.map((s) => [s.tabId, s.msg.frameId]), [[4, 0], [9, 5]]);
+    assert.deepStrictEqual(state.sent.map((s) => [s.tabId, s.msg.frameId, s.opts.frameId]),
+                           [[4, 0, 0], [9, 5, 5], [9, 5, 0]]);
     assert.strictEqual(state.fetched.length, 2, 'parsed twice');
   });
 
   // ---- embedded players (1.9.6): each frame is told its own streams ----------
-  await test('a stream goes only to the frame that asked for it', async () => {
+  await test("a frame's stream goes to that frame and to the page", async () => {
     const { state } = load();
     state.onResponse(response('https://cdn.x/clip.mp4', { frameId: 3, type: 'video/mp4', length: 5000000 }));
     await settle();
-    assert.strictEqual(state.sent[0].opts.frameId, 3,
-      "every frame's script got it: the page's and every advert frame's");
+    assert.deepStrictEqual(state.sent.map((x) => x.opts.frameId), [3, 0],
+      'its own frame for the button, the page for its list - no advert frame');
   });
 
-  await test('a parsed playlist goes only to its frame too', async () => {
+  await test('a parsed playlist goes to its frame and to the page too', async () => {
     const url = 'https://cdn.x/film/master.m3u8';
     const { state } = load({ files: { [url]: MASTER, 'https://cdn.x/film/720/index.m3u8': VOD } });
     state.onResponse(response(url, { frameId: 2 }));
     await settle();
-    assert.strictEqual(state.sent[0].opts.frameId, 2);
+    assert.deepStrictEqual(state.sent.map((x) => x.opts.frameId), [2, 0]);
   });
 
   await test('a request no frame made is told to the page', async () => {
     const { state } = load();
     state.onResponse(response('https://cdn.x/clip.mp4', { frameId: -1, type: 'video/mp4', length: 5000000 }));
     await settle();
-    assert.strictEqual(state.sent[0].opts.frameId, 0);
+    assert.deepStrictEqual(state.sent.map((x) => x.opts.frameId), [0], 'once');
+  });
+
+  await test("the page's own stream is sent to it once", async () => {
+    const { state } = load();
+    state.onResponse(response('https://cdn.x/clip.mp4', { frameId: 0, type: 'video/mp4', length: 5000000 }));
+    await settle();
+    assert.deepStrictEqual(state.sent.map((x) => x.opts.frameId), [0]);
   });
 
   await test("a player's download names the embedded player as its Referer", async () => {

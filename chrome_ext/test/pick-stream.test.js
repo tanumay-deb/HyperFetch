@@ -231,6 +231,32 @@ async function test(name, fn) {
     assert.strictEqual(badgeOf(win)[0].style.display, 'block', 'a player-sized one did not');
   });
 
+  // the page is sent its frames' streams too - for its list, not for its button
+  await test("the page's own button is not offered a frame's stream", async () => {
+    const { win, state } = makeEnv();
+    mkVideo(win, {});                       // length not known yet
+    state.msgListener({ type: 'SNIFFED_MEDIA', url: 'https://ads.example/promo/master.m3u8', kind: 'hls',
+                        mime: 'application/x-mpegurl', size: 0, filename: 'master.m3u8', frameId: 7 });
+    await wait(300);
+    assert.strictEqual(badgeOf(win).length, 0, "an ad frame's stream was offered for the page's player");
+    state.msgListener(film());
+    await wait(300);
+    click(win);
+    assert.strictEqual(state.sent[0].url, FILM_720);
+  });
+
+  await test('one Download Media list, the page\'s: a frame shows none', async () => {
+    const LIST = 'hyperfetch-media-sniffer-root';
+    const inside = makeEnv({ inFrame: true });
+    inside.state.msgListener(film({ frameId: 7 }));
+    await wait(100);
+    assert.strictEqual(inside.win.document.getElementById(LIST), null, 'a list opened inside a frame');
+    const page = makeEnv();
+    page.state.msgListener(film({ frameId: 7 }));     // a frame's stream, sent to the page too
+    await wait(100);
+    assert.ok(page.win.document.getElementById(LIST), "the page's list is gone");
+  });
+
   await test('the page itself still badges a small player', async () => {
     const { win, state } = makeEnv();
     mkVideo(win, { w: 300, h: 250 });
