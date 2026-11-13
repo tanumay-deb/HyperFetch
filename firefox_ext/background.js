@@ -361,6 +361,19 @@ const storeOf = (tab) => (tab && tab.cookieStoreId ? { storeId: tab.cookieStoreI
 // A second link sent with a download (hlsMaster, origUrl): a web address or nothing.
 const webLink = (u) => typeof u === "string" && /^https?:\/\//i.test(u);
 
+// Sites whose videos the app fetches with yt-dlp from the page's address -
+// the app's yt_dl._SITES (tests/test_extension_frames.py keeps them one list).
+const YTDLP_SITES = [
+  "youtube.com", "youtu.be", "vimeo.com", "dailymotion.com", "twitch.tv",
+  "tiktok.com", "instagram.com", "facebook.com", "twitter.com", "x.com",
+  "soundcloud.com", "reddit.com", "bilibili.com", "rumble.com", "ok.ru"
+];
+function onYtdlpSite(u) {
+  let host = "";
+  try { host = new URL(u).hostname; } catch (e) { return false; }
+  return YTDLP_SITES.some((s) => host === s || host.endsWith("." + s));
+}
+
 // The right-click menu. One of three ways a download reaches the app; the other
 // two are the in-page video badges (content.js) and the browser-download
 // capture further down.
@@ -405,18 +418,12 @@ chrome.runtime.onInstalled.addListener((details) => {
     // Media-page sites (YouTube etc.) play via blob:/MSE, so there is no
     // capturable media URL — instead offer a PAGE-level item that sends the page
     // URL to the app, whose yt-dlp engine resolves the actual video. Shown only
-    // on hosts the app routes through yt-dlp (list mirrors yt_dl._SITES).
+    // on hosts the app routes through yt-dlp ("*." matches the bare host too).
     chrome.contextMenus.create({
       id: "hyperfetch-download-page",
       title: "Download video on this page with HyperFetch",
       contexts: ["page", "frame", "video"],
-      documentUrlPatterns: [
-        "*://*.youtube.com/*", "*://youtu.be/*", "*://*.vimeo.com/*",
-        "*://*.dailymotion.com/*", "*://*.twitch.tv/*", "*://*.tiktok.com/*",
-        "*://*.instagram.com/*", "*://*.facebook.com/*", "*://*.twitter.com/*",
-        "*://*.x.com/*", "*://*.soundcloud.com/*", "*://*.reddit.com/*",
-        "*://*.bilibili.com/*", "*://*.rumble.com/*", "*://*.ok.ru/*"
-      ]
+      documentUrlPatterns: YTDLP_SITES.map((s) => "*://*." + s + "/*")
     }, ignoreErr);
   });
 });
@@ -852,6 +859,11 @@ async function handleHls(url, tabId, fallbackName, referer, storeId, frameId) {
 chrome.webRequest.onResponseStarted.addListener(
   (details) => {
     if (!captureEnabled) return;
+    // A player frame on a yt-dlp site loads its video in pieces: a Vimeo
+    // embed's segment.mp4 was 2 MB of picture, no sound, no header, and its
+    // button saved that. The right-click "Download video on this page" sends
+    // the page to yt-dlp. The frame: its origin in Chrome, its address in Firefox.
+    if (details.frameId > 0 && onYtdlpSite(details.documentUrl || details.initiator)) return;
 
     let contentType = "";
     let contentLength = 0;

@@ -38,3 +38,16 @@ def test_the_page_script_listens_before_the_page_loads(folder):
 def test_the_three_browsers_carry_one_version():
     versions = {f: _manifest(f)["version"] for f in BROWSERS}
     assert len(set(versions.values())) == 1, versions
+
+
+def test_the_extension_knows_the_sites_the_app_sends_to_ytdlp():
+    """A player frame on one of these sites offers no button (its streams are
+    pieces; the app fetches the page with yt-dlp), and the right-click "Download
+    video on this page" shows on them: one list, the app's."""
+    import re
+
+    import yt_dl
+    with open(os.path.join(ROOT, "chrome_ext", "background.js"), encoding="utf-8") as f:
+        m = re.search(r"const YTDLP_SITES = \[(.*?)\];", f.read(), re.S)
+    assert m, "background.js has no YTDLP_SITES"
+    assert tuple(re.findall(r'"([^"]+)"', m.group(1))) == yt_dl._SITES

@@ -61,8 +61,10 @@ function load({ files = {}, probeImpl, answer } = {}) {
 const settle = async () => { for (let i = 0; i < 12; i++) await new Promise((r) => setImmediate(r)); };
 
 // A response as webRequest reports it.
-const response = (url, { tabId = 4, frameId = 0, type = 'application/vnd.apple.mpegurl', length } = {}) => ({
-  url, tabId, frameId,
+// initiator: the asking frame's origin (Chrome); documentUrl: its address (Firefox).
+const response = (url, { tabId = 4, frameId = 0, type = 'application/vnd.apple.mpegurl', length,
+                         initiator, documentUrl } = {}) => ({
+  url, tabId, frameId, initiator, documentUrl,
   responseHeaders: [{ name: 'Content-Type', value: type }]
     .concat(length ? [{ name: 'Content-Length', value: String(length) }] : []),
 });
@@ -92,6 +94,31 @@ async function test(name, fn) {
     assert.strictEqual(state.sent[0].msg.type, 'SNIFFED_MEDIA');
     assert.strictEqual(state.sent[0].msg.frameId, 3);
   });
+
+  // Measured on a Vimeo embed (2026-11-13): the player's segment.mp4 is one
+  // piece of a 62 s video - video only, no header - and its button saved it.
+  const PIECE = 'https://vod-adaptive-ak.vimeocdn.com/e/avf/u/segment.mp4?sid=1&st=video';
+  const MPD = 'https://vod-adaptive-ak.vimeocdn.com/e/sub/playlist.mpd?omit=av1';
+  for (const [browser, asker] of [['Chrome', { initiator: 'https://player.vimeo.com' }],
+                                  ['Firefox', { documentUrl: 'https://player.vimeo.com/video/76979871?autoplay=1' }]]) {
+    await test('a player frame on a yt-dlp site offers none of its pieces (' + browser + ')', async () => {
+      const { state } = load();
+      state.onResponse(response(PIECE, Object.assign({ frameId: 6, type: 'video/mp4', length: 2112441 }, asker)));
+      state.onResponse(response(MPD, Object.assign({ frameId: 6, type: 'application/dash+xml' }, asker)));
+      await settle();
+      assert.deepStrictEqual(state.sent, [], 'the right-click "Download video on this page" is the way');
+      assert.deepStrictEqual(state.fetched, [], 'not even read');
+    });
+  }
+
+  for (const asker of [{ initiator: 'https://myvimeo.com' }, { documentUrl: 'https://embed.example/e/1' }]) {
+    await test('a player frame on another site is offered its file: ' + JSON.stringify(asker), async () => {
+      const { state } = load();
+      state.onResponse(response(PIECE, Object.assign({ frameId: 6, type: 'video/mp4', length: 2112441 }, asker)));
+      await settle();
+      assert.strictEqual(state.sent.length, 2, 'to the frame and to the page');
+    });
+  }
 
   await test("a live stream's playlist is reported as live", async () => {
     const url = 'https://media-hls.adnetwork.example/b-hls-03/42508052/42508052_240p.m3u8';
