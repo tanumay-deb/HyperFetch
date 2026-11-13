@@ -82,7 +82,12 @@ each download's start.
 (extras `lines`: adapter names; all ticked when first switched on). A line of
 text: "Adds speed only when each is its own internet line - a phone, another
 router. A phone's data counts against its plan." Saved into `utils.LINES` (the
-ticked names, or empty when off).
+ticked names, or empty when off). Adapters with the same gateway address are on
+the same router - a cable beside the Wi-Fi to one router - and Settings says so
+beside them ("same router as Wi-Fi: adds no speed"). (My call.)
+
+In Auto mode (no connection count chosen) "the download's connection count"
+is what `parts_for` gives that file on one line. (My call.)
 
 **Engine (`downloader.py`).** Only when two or more ticked lines have an
 address now, and the download is plain HTTP(S), takes ranges, and goes neither
