@@ -509,16 +509,32 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
   if (msg && msg.type === "DOWNLOAD_URL") {
     // the sending frame's address: an embedded player's, not the site around it
-    const ref = (sender && (sender.url || (sender.tab && sender.tab.url))) || "";
+    const own = (sender && (sender.url || (sender.tab && sender.tab.url))) || "";
     // hold:false is the page saying it will open the file in the browser itself
     // if this fails. Holding it as well is how one click became two copies: the
     // browser's straight away, and the app's when the queue replayed.
     // hlsMaster: the playlist a stream's quality was picked from (content.js)
-    sendToApp(msg.url, msg.filename, ref,
+    const send = (ref) => sendToApp(msg.url, msg.filename, ref,
       (ok, status) => sendResponse({ ok, unpaired: status === 401 }),
       Object.assign(msg.hold === false ? { noHold: true } : {},
                     webLink(msg.hlsMaster) ? { hlsMaster: msg.hlsMaster } : {},
                     storeOf(sender && sender.tab)));
+    // A stream the page's list sends for a player in a frame (frameId): that
+    // frame's address, as the player's own button sends - the list sent the
+    // site's, and a server that checks it refused the download. The frame is
+    // asked (the worker keeps no record of frames, and may have been restarted);
+    // it answers only for a stream it was told of, else the page's address goes.
+    const tabId = sender && sender.tab ? sender.tab.id : -1;
+    if (Number.isInteger(msg.frameId) && msg.frameId > 0 && tabId >= 0 &&
+        msg.frameId !== sender.frameId) {
+      chrome.tabs.sendMessage(tabId, { type: "HYPERFETCH_ADDRESS", url: msg.hlsMaster || msg.url },
+        { frameId: msg.frameId }, (res) => {
+          ignoreErr();
+          send(res && webLink(res.href) ? res.href : own);
+        });
+    } else {
+      send(own);
+    }
     return true; // keep the message channel open for the async response
   }
 });

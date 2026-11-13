@@ -18,7 +18,8 @@ const BG = fs.readFileSync(path.join(__dirname, '..', 'background.js'), 'utf8');
 
 // files: { url: playlist text } the worker's own fetch can read.
 // probeImpl: the app's /probe; the default is an app that is not running.
-function load({ files = {}, probeImpl } = {}) {
+// answer(tabId, msg, opts): what a frame replies to the worker (undefined = no reply).
+function load({ files = {}, probeImpl, answer } = {}) {
   const noop = () => {};
   const state = { sent: [], onResponse: null, fetched: [] };
   const probe = probeImpl || (() => Promise.resolve({ ok: false }));
@@ -33,7 +34,10 @@ function load({ files = {}, probeImpl } = {}) {
       contextMenus: { create: noop, removeAll: (cb) => cb && cb(),
                       onClicked: { addListener: (cb) => { state.onClicked = cb; } } },
       webRequest: { onResponseStarted: { addListener: (cb) => { state.onResponse = cb; } } },
-      tabs: { sendMessage: (tabId, msg, opts) => { state.sent.push({ tabId, msg, opts }); } },
+      tabs: { sendMessage: (tabId, msg, opts, cb) => {
+        state.sent.push({ tabId, msg, opts });
+        if (cb) Promise.resolve().then(() => cb(answer ? answer(tabId, msg, opts) : undefined));
+      } },
       cookies: { getAll: (q, cb) => cb([]) },
     },
     URL,
@@ -221,6 +225,49 @@ async function test(name, fn) {
                       url: 'https://embed.example/player/abc' }, () => {});
     assert.strictEqual(calls[0][2], 'https://embed.example/player/abc',
       'the video server sees the page the player is on, not the site around it');
+  });
+
+  // ---- the page's list sends a frame's stream: that frame's address --------
+  const SITE = { tab: { id: 4, url: 'https://site.example/watch/1' }, frameId: 0,
+                 url: 'https://site.example/watch/1' };
+  const PLAYER = 'https://embed.example/player/abc';
+  const listSend = { type: 'DOWNLOAD_URL', url: 'https://cdn.embed.example/v/720.m3u8',
+                     hlsMaster: 'https://cdn.embed.example/v/master.m3u8', frameId: 6 };
+
+  await test("the page's list sends a frame's stream with that frame's address as Referer", async () => {
+    // measured in Edge, Chrome and Firefox (2026-11-13): the list sent the site's
+    // address, the button the player's - a server that checks it refused the list's
+    const asked = [];
+    const { sb, state } = load({ answer: (tabId, msg, opts) => {
+      asked.push([tabId, msg.type, msg.url, opts.frameId]);
+      return { href: PLAYER };
+    } });
+    const calls = [];
+    sb.sendToApp = (...a) => calls.push(a);
+    state.onMessage(listSend, SITE, () => {});
+    await settle();
+    assert.deepStrictEqual(asked, [[4, 'HYPERFETCH_ADDRESS', listSend.hlsMaster, 6]]);
+    assert.strictEqual(calls.length, 1);
+    assert.strictEqual(calls[0][2], PLAYER);
+  });
+
+  await test("a frame that does not know the stream (another player now) leaves the site's", async () => {
+    const { sb, state } = load({ answer: () => ({ href: '' }) });
+    const calls = [];
+    sb.sendToApp = (...a) => calls.push(a);
+    state.onMessage(listSend, SITE, () => {});
+    await settle();
+    assert.strictEqual(calls[0][2], SITE.url);
+  });
+
+  await test("a frame that is gone leaves the site's address, and the download still goes", async () => {
+    const { sb, state } = load();             // no reply at all
+    const calls = [];
+    sb.sendToApp = (...a) => calls.push(a);
+    state.onMessage(listSend, SITE, () => {});
+    await settle();
+    assert.strictEqual(calls.length, 1);
+    assert.strictEqual(calls[0][2], SITE.url);
   });
 
   await test('the right-click toast goes to the page, the image grab to the clicked frame', async () => {

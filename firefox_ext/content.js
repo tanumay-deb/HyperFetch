@@ -76,8 +76,12 @@ function sendToApp(url, suggestedName = null, opts = {}) {
   // hlsMaster: the playlist a stream's quality was picked from. The app reads
   // there whether the stream's sound is a playlist of its own, which the
   // picked one does not carry: alone it was saved without sound.
+  // frameId: the frame whose player asked for a stream the page's list sends.
+  // The worker asks that frame for its address: the Referer its server checks,
+  // and what the player's own button sends.
   const msg = Object.assign({ type: "DOWNLOAD_URL", url, filename, hold: !fallBack },
-                            opts.hlsMaster ? { hlsMaster: opts.hlsMaster } : {});
+                            opts.hlsMaster ? { hlsMaster: opts.hlsMaster } : {},
+                            opts.frameId > 0 ? { frameId: opts.frameId } : {});
   try {
     chrome.runtime.sendMessage(msg, (res) => {
       if (res && res.unpaired) {
@@ -141,8 +145,14 @@ const sniffedMedia = new Map();
 // rows so a master isn't duplicated by the chunklists the player also requests.
 const hlsVariantUrls = new Set();
 
-chrome.runtime.onMessage.addListener((msg) => {
-  if (msg.type === "SNIFFED_MEDIA") {
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (msg.type === "HYPERFETCH_ADDRESS") {
+    // The worker asks this frame's address for a stream the page's list sends.
+    // Only for a stream this frame was told of: once "Server 2" has put another
+    // player here, the old player's stream is not this page's.
+    const ours = sniffedMedia.has(msg.url) || hlsVariantUrls.has(msg.url);
+    sendResponse({ href: ours ? location.href : "" });
+  } else if (msg.type === "SNIFFED_MEDIA") {
     addSniffedMedia(msg);
   } else if (msg.type === "SNIFFED_HLS_MASTER") {
     addHlsMaster(msg);
@@ -585,7 +595,7 @@ function renderSingleItem(item, media) {
   btn.textContent = "Download with HyperFetch";
   btn.onclick = (e) => {
     e.preventDefault();
-    sendToApp(media.url, media.filename);
+    sendToApp(media.url, media.filename, { frameId: media.frameId });
   };
   item.appendChild(name);
   item.appendChild(meta);
@@ -622,7 +632,8 @@ function renderMasterItem(item, media) {
     btn.textContent = "Download " + v.label;
     btn.onclick = (e) => {
       e.preventDefault();
-      sendToApp(v.url, media.title + ' ' + v.label + '.m3u8', { hlsMaster: media.master });
+      sendToApp(v.url, media.title + ' ' + v.label + '.m3u8',
+                { hlsMaster: media.master, frameId: media.frameId });
     };
 
     row.appendChild(meta);

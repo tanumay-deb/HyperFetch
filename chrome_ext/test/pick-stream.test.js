@@ -263,6 +263,45 @@ async function test(name, fn) {
     assert.ok(page.win.document.getElementById(LIST), "the page's list is gone");
   });
 
+  // ---- the list sends a frame's stream with the frame it came from -------------
+  const listButtons = (win) => [...win.document.getElementById('hyperfetch-media-sniffer-root')
+    .shadowRoot.querySelectorAll('.btn-download')];
+
+  await test("the page's list sends a frame's stream with the frame it came from", async () => {
+    // the worker asks that frame for its address: the Referer its player's server checks
+    const { win, state } = makeEnv();
+    state.msgListener(film({ frameId: 7 }));
+    state.msgListener({ type: 'SNIFFED_MEDIA', url: 'https://embed.example/v/clip.mp4', kind: 'file',
+                        mime: 'video/mp4', size: 9000000, filename: 'clip.mp4', frameId: 3 });
+    await wait(100);
+    listButtons(win).forEach((b) => b.dispatchEvent(new win.MouseEvent('click', { bubbles: true })));
+    const sent = state.sent.map((m) => [m.url, m.frameId, m.hlsMaster]);
+    assert.deepStrictEqual(sent.sort(), [[FILM_720, 7, FILM], ['https://embed.example/v/clip.mp4', 3, undefined]]);
+  });
+
+  await test("the page's own stream goes from the list with no frame", async () => {
+    const { win, state } = makeEnv();
+    state.msgListener(film());
+    await wait(100);
+    listButtons(win)[0].dispatchEvent(new win.MouseEvent('click', { bubbles: true }));
+    assert.strictEqual(state.sent[0].url, FILM_720);
+    assert.ok(!('frameId' in state.sent[0]));
+  });
+
+  await test('a frame gives the worker its address only for a stream it was told of', async () => {
+    const { state } = makeEnv({ url: 'https://embed.example/player/abc', inFrame: true });
+    state.msgListener(film({ frameId: 7 }));
+    const ask = (url) => {
+      let got = 'no answer';
+      state.msgListener({ type: 'HYPERFETCH_ADDRESS', url }, {}, (r) => { got = r && r.href; });
+      return got;
+    };
+    assert.strictEqual(ask(FILM), 'https://embed.example/player/abc', 'its master');
+    assert.strictEqual(ask(FILM_720), 'https://embed.example/player/abc', 'a quality of it');
+    // "Server 2" put another player in this frame: the old player's stream is not its
+    assert.strictEqual(ask('https://other.example/v/master.m3u8'), '');
+  });
+
   await test('started before the page has a body, the list waits for it', async () => {
     // document_start (1.9.6): the script listens before the page is parsed
     const { win, state } = makeEnv({ loading: true });

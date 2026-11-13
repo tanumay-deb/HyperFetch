@@ -62,6 +62,9 @@ still has 1.9.3, 1.9.5's and 1.9.4's notes are kept below it.
   player (a frame from another site, as many video sites load their
   players). The page script now runs in every frame; inside a frame it shows
   only on a video at least 400x225, so advert frames stay clean.
+- The page's Download Media list sends an embedded player's video with the
+  player's address, as its button does; video servers that check it no
+  longer refuse the download.
 1.9.5
 - The popup checks the saved pairing with the HyperFetch app as it opens,
   and pairs again when the app no longer knows it. It used to say "paired"
@@ -81,7 +84,9 @@ For a reviewer: the package is the source. Nothing is minified or built;
 For a reviewer (1.9.6): `content_scripts` gained `"all_frames": true` - no new
 permission. The worker sends each frame only the streams that frame
 requested (`tabs.sendMessage` with `frameId`), and a page-level toast
-goes to the top frame only.
+goes to the top frame only. For a stream the page's list sends on behalf
+of a frame, the worker asks that frame for its address (`tabs.sendMessage`
+with its `frameId`) and uses it as the Referer - still no new permission.
 
 ## Firefox (addons.mozilla.org): Edit Product Page
 
