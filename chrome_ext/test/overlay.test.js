@@ -233,6 +233,30 @@ async function test(name, fn) {
     assert.ok(!menu.classList.contains('open'), 'moving off the badge no longer closes the menu');
   });
 
+  // Since 1.9.6 the page script runs in every frame: a frame with no button
+  // asked for a layout pass twice a second, ~1 s of CPU per 20 s on a page of
+  // 60 frames (measured, Edge and Firefox). It asks only to move a button.
+  await test('a page with no button asks for no layout pass; one with a button does', async () => {
+    const { win } = makeEnv();
+    let frames = 0;
+    const raf = win.requestAnimationFrame;
+    win.requestAnimationFrame = (cb) => { frames++; return raf(cb); };
+    win.document.body.appendChild(win.document.createElement('div'));   // the page changes
+    win.dispatchEvent(new win.Event('scroll'));
+    win.dispatchEvent(new win.Event('resize'));
+    await wait(1100);                                                    // two scans
+    assert.strictEqual(frames, 0, 'nothing to place, yet it asked ' + frames + ' times');
+    const v = mkVideo(win, { src: 'https://cdn.x/movie.mp4', top: 100, left: 100 });
+    win.document.body.appendChild(v);
+    await wait(300);
+    assert.ok(frames > 0, 'a new button is placed');
+    assert.strictEqual(badges(win)[0].style.display, 'block');
+    const placed = frames;
+    win.dispatchEvent(new win.Event('scroll'));
+    await wait(50);
+    assert.ok(frames > placed, 'and follows the page as it scrolls');
+  });
+
   console.log(`\n${passed} passed` + (process.exitCode ? ' (with failures)' : ''));
   // content.js installs setInterval timers on the jsdom window which keep the
   // node event loop alive; exit explicitly once assertions are done.

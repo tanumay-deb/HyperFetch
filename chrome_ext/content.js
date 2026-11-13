@@ -1129,8 +1129,10 @@ function positionAll() {
   _rafPending = false;
   videoOverlays.forEach((ov, v) => positionOverlay(v, ov));
 }
+// Only while there is a button to move: this runs twice a second in every
+// frame, and 60 frames asking for nothing cost ~1 s of CPU per 20 s.
 function scheduleReposition() {
-  if (_rafPending) return;
+  if (_rafPending || !videoOverlays.size) return;
   _rafPending = true;
   requestAnimationFrame(positionAll);
 }
