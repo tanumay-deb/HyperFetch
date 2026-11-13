@@ -359,6 +359,7 @@ function updatePanel() {
   if (IN_FRAME) return;                // one list, the page's: a frame shows its button only
   if (sniffedMedia.size === 0) return;
   if (badgeHidden) return;             // dismissed for this page view
+  if (!document.body) return;          // started before the page (document_start): drawn at DOMContentLoaded
 
   if (!panelContainer) {
     panelContainer = document.createElement("div");
@@ -1133,9 +1134,12 @@ document.addEventListener('fullscreenchange', () => {
 
 // new/removed <video> elements anywhere on the page
 const _videoObserver = new MutationObserver(() => { syncOverlays(); scheduleReposition(); });
-try {
-  _videoObserver.observe(document.documentElement, { childList: true, subtree: true });
-} catch (e) { /* documentElement not ready yet; the interval below covers it */ }
+function watchVideos() {
+  try {
+    _videoObserver.observe(document.documentElement, { childList: true, subtree: true });
+  } catch (e) { /* documentElement not ready yet: watched again at DOMContentLoaded */ }
+}
+watchVideos();
 
 // Also scan the DOM for static media (direct <video>/<audio> src and <source>).
 // Note: streaming sites use Media Source Extensions -> the src is a blob: URL
@@ -1173,9 +1177,13 @@ function scanDom() {
 }
 setInterval(scanDom, 500);
 
-// Run immediately on page load
+// Run immediately on page load. Started at document_start (1.9.6) - so a
+// player's stream sniffed while its page loads is not missed - the page has
+// no body yet: the list and the video watcher wait for DOMContentLoaded.
 if (document.readyState === 'loading') {
   document.addEventListener('DOMContentLoaded', () => {
+    watchVideos();
+    updatePanel();
     setTimeout(scanDom, 100);
   });
 } else {

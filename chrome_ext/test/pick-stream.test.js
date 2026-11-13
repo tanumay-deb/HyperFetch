@@ -25,13 +25,19 @@ const assert = require('assert');
 const CONTENT = fs.readFileSync(path.join(__dirname, '..', 'content.js'), 'utf8');
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
-function makeEnv({ url = 'https://www.tube.example/video-8xGJx1/a-film/', inFrame = false } = {}) {
+function makeEnv({ url = 'https://www.tube.example/video-8xGJx1/a-film/', inFrame = false,
+                   loading = false } = {}) {
   const dom = new JSDOM('<!DOCTYPE html><html><body></body></html>',
     { url, pretendToBeVisual: true, runScripts: 'outside-only' });
   const win = dom.window;
   // an embedded frame: its top is another window (the site around the player)
   // (jsdom will not redefine `top`; content.js asks `window.self !== window.top`)
   if (inFrame) Object.defineProperty(win, 'self', { get: () => ({}), configurable: true });
+  // a page still being parsed, as document_start sees it: no body, readyState loading
+  if (loading) {
+    win.document.body.remove();
+    Object.defineProperty(win.document, 'readyState', { get: () => 'loading', configurable: true });
+  }
   win.innerWidth = 1280;
   win.innerHeight = 800;
   const real = win.Element.prototype.attachShadow;
@@ -255,6 +261,17 @@ async function test(name, fn) {
     page.state.msgListener(film({ frameId: 7 }));     // a frame's stream, sent to the page too
     await wait(100);
     assert.ok(page.win.document.getElementById(LIST), "the page's list is gone");
+  });
+
+  await test('started before the page has a body, the list waits for it', async () => {
+    // document_start (1.9.6): the script listens before the page is parsed
+    const { win, state } = makeEnv({ loading: true });
+    state.msgListener(film());              // threw at document.body.appendChild: the list never came
+    assert.strictEqual(win.document.getElementById('hyperfetch-media-sniffer-root'), null);
+    win.document.documentElement.appendChild(win.document.createElement('body'));
+    win.document.dispatchEvent(new win.Event('DOMContentLoaded'));
+    await wait(100);
+    assert.ok(win.document.getElementById('hyperfetch-media-sniffer-root'), 'no list once the body came');
   });
 
   await test('the page itself still badges a small player', async () => {
