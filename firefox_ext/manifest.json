@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "HyperFetch",
   "description": "Sends downloads to the HyperFetch desktop app for accelerated multi-segment downloading.",
-  "version": "1.9.5",
+  "version": "1.9.6",
   "permissions": [
     "contextMenus",
     "storage",
@@ -40,7 +40,8 @@
       ],
       "js": [
         "content.js"
-      ]
+      ],
+      "all_frames": true
     }
   ],
   "browser_specific_settings": {

@@ -25,10 +25,13 @@ const assert = require('assert');
 const CONTENT = fs.readFileSync(path.join(__dirname, '..', 'content.js'), 'utf8');
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
-function makeEnv({ url = 'https://www.tube.example/video-8xGJx1/a-film/' } = {}) {
+function makeEnv({ url = 'https://www.tube.example/video-8xGJx1/a-film/', inFrame = false } = {}) {
   const dom = new JSDOM('<!DOCTYPE html><html><body></body></html>',
     { url, pretendToBeVisual: true, runScripts: 'outside-only' });
   const win = dom.window;
+  // an embedded frame: its top is another window (the site around the player)
+  // (jsdom will not redefine `top`; content.js asks `window.self !== window.top`)
+  if (inFrame) Object.defineProperty(win, 'self', { get: () => ({}), configurable: true });
   win.innerWidth = 1280;
   win.innerHeight = 800;
   const real = win.Element.prototype.attachShadow;
@@ -203,17 +206,37 @@ async function test(name, fn) {
   });
 
   // ---- other frames, idle players -------------------------------------------
-  await test("a stream another frame asked for is not this page's player's", async () => {
-    const { win, state } = makeEnv();
+  // 1.9.6: this script runs in every frame, and the worker sends each frame only
+  // the streams it asked for (sniff-facts.test.js), so a stream that reaches a
+  // frame is that frame's own, whatever its number - an embedded player's is 7.
+  await test("an embedded player's own stream is offered for its player", async () => {
+    const { win, state } = makeEnv({ inFrame: true });
     mkVideo(win, {});                       // length not known yet
-    state.msgListener({ type: 'SNIFFED_MEDIA', url: 'https://ads.example/promo/master.m3u8', kind: 'hls',
-                        mime: 'application/x-mpegurl', size: 0, filename: 'master.m3u8', frameId: 7 });
-    await wait(300);
-    assert.strictEqual(badgeOf(win).length, 0, "an ad frame's stream was offered for the page's player");
-    state.msgListener(film());
+    state.msgListener(film({ frameId: 7 }));
     await wait(300);
     click(win);
     assert.strictEqual(state.sent[0].url, FILM_720);
+  });
+
+  await test('inside an embedded frame, an advert-sized video gets no badge', async () => {
+    const { win, state } = makeEnv({ inFrame: true });
+    const ad = mkVideo(win, { w: 300, h: 250 });
+    state.msgListener(film({ frameId: 7 }));
+    await wait(300);
+    assert.ok(badgeOf(win).length === 0 || badgeOf(win)[0].style.display === 'none',
+      'a 300x250 advert frame got a Download button');
+    ad.getBoundingClientRect = () => ({ top: 0, left: 0, right: 800, bottom: 450, width: 800, height: 450 });
+    win.dispatchEvent(new win.Event('resize'));
+    await wait(300);
+    assert.strictEqual(badgeOf(win)[0].style.display, 'block', 'a player-sized one did not');
+  });
+
+  await test('the page itself still badges a small player', async () => {
+    const { win, state } = makeEnv();
+    mkVideo(win, { w: 300, h: 250 });
+    state.msgListener(film());
+    await wait(300);
+    assert.strictEqual(badgeOf(win)[0].style.display, 'block');
   });
 
   await test('a player with nothing attached to it is offered nothing sniffed', async () => {

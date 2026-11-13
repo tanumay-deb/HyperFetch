@@ -28,10 +28,12 @@ function load({ files = {}, probeImpl } = {}) {
         local: { get: (d, cb) => cb && cb(typeof d === 'object' ? d : {}) },
         onChanged: { addListener: noop },
       },
-      runtime: { onInstalled: { addListener: noop }, onMessage: { addListener: noop }, lastError: null },
-      contextMenus: { create: noop, removeAll: (cb) => cb && cb(), onClicked: { addListener: noop } },
+      runtime: { onInstalled: { addListener: noop }, lastError: null,
+                 onMessage: { addListener: (cb) => { state.onMessage = cb; } } },
+      contextMenus: { create: noop, removeAll: (cb) => cb && cb(),
+                      onClicked: { addListener: (cb) => { state.onClicked = cb; } } },
       webRequest: { onResponseStarted: { addListener: (cb) => { state.onResponse = cb; } } },
-      tabs: { sendMessage: (tabId, msg) => { state.sent.push({ tabId, msg }); } },
+      tabs: { sendMessage: (tabId, msg, opts) => { state.sent.push({ tabId, msg, opts }); } },
       cookies: { getAll: (q, cb) => cb([]) },
     },
     URL,
@@ -176,6 +178,56 @@ async function test(name, fn) {
     await settle();
     assert.deepStrictEqual(state.sent.map((s) => [s.tabId, s.msg.frameId]), [[4, 0], [9, 5]]);
     assert.strictEqual(state.fetched.length, 2, 'parsed twice');
+  });
+
+  // ---- embedded players (1.9.6): each frame is told its own streams ----------
+  await test('a stream goes only to the frame that asked for it', async () => {
+    const { state } = load();
+    state.onResponse(response('https://cdn.x/clip.mp4', { frameId: 3, type: 'video/mp4', length: 5000000 }));
+    await settle();
+    assert.strictEqual(state.sent[0].opts.frameId, 3,
+      "every frame's script got it: the page's and every advert frame's");
+  });
+
+  await test('a parsed playlist goes only to its frame too', async () => {
+    const url = 'https://cdn.x/film/master.m3u8';
+    const { state } = load({ files: { [url]: MASTER, 'https://cdn.x/film/720/index.m3u8': VOD } });
+    state.onResponse(response(url, { frameId: 2 }));
+    await settle();
+    assert.strictEqual(state.sent[0].opts.frameId, 2);
+  });
+
+  await test('a request no frame made is told to the page', async () => {
+    const { state } = load();
+    state.onResponse(response('https://cdn.x/clip.mp4', { frameId: -1, type: 'video/mp4', length: 5000000 }));
+    await settle();
+    assert.strictEqual(state.sent[0].opts.frameId, 0);
+  });
+
+  await test("a player's download names the embedded player as its Referer", async () => {
+    const { sb, state } = load();
+    const calls = [];
+    sb.sendToApp = (...a) => calls.push(a);
+    state.onMessage({ type: 'DOWNLOAD_URL', url: 'https://cdn.embed.example/v/master.m3u8' },
+                    { tab: { id: 4, url: 'https://site.example/watch/1' }, frameId: 6,
+                      url: 'https://embed.example/player/abc' }, () => {});
+    assert.strictEqual(calls[0][2], 'https://embed.example/player/abc',
+      'the video server sees the page the player is on, not the site around it');
+  });
+
+  await test('the right-click toast goes to the page, the image grab to the clicked frame', async () => {
+    const { sb, state } = load();
+    const calls = [];
+    sb.sendToApp = (...a) => calls.push(a);
+    state.onClicked({ menuItemId: 'hyperfetch-download', srcUrl: 'https://cdn.x/a.mp4', frameId: 6,
+                      frameUrl: 'https://embed.example/player/abc' }, { id: 4, url: 'https://site.example/w' });
+    assert.strictEqual(calls[0][2], 'https://embed.example/player/abc');
+    calls[0][3](true, 200, {});
+    const toast = state.sent.find((x) => x.msg.type === 'HYPERFETCH_TOAST');
+    assert.strictEqual(toast.opts.frameId, 0, 'one toast, not one in every frame');
+    state.onClicked({ menuItemId: 'hyperfetch-all-images', frameId: 6 }, { id: 4 });
+    const grab = state.sent.find((x) => x.msg.type === 'HYPERFETCH_GRAB');
+    assert.strictEqual(grab.opts.frameId, 6, 'one panel, in the frame that was clicked');
   });
 
   console.log(`\n${passed} passed` + (process.exitCode ? ' (with failures)' : ''));

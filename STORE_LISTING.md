@@ -51,11 +51,17 @@ What each listing had on 2026-10-04, read from the stores' public pages:
 Chrome and Edge take the short summary from the manifest's `description`;
 Firefox's is typed into the listing.
 
-## What's new in 1.9.5 (release notes field / notes for reviewers)
+## What's new in 1.9.6 (release notes field / notes for reviewers)
 
-Every store had 1.9.3 on 2026-11-12, so this covers 1.9.4 too.
+1.9.5 went to every store on 2026-11-12 (in review then); in case a store
+still has 1.9.3, 1.9.5's and 1.9.4's notes are kept below it.
 
 ```
+1.9.6
+- The Download button also shows on a video playing inside an embedded
+  player (a frame from another site, as many video sites load their
+  players). The page script now runs in every frame; inside a frame it shows
+  only on a video at least 400x225, so advert frames stay clean.
 1.9.5
 - The popup checks the saved pairing with the HyperFetch app as it opens,
   and pairs again when the app no longer knows it. It used to say "paired"
@@ -71,6 +77,11 @@ Every store had 1.9.3 on 2026-11-12, so this covers 1.9.4 too.
 
 For a reviewer: the package is the source. Nothing is minified or built;
 `background.js`, `content.js`, `popup.js` and `welcome.js` are as written.
+
+For a reviewer (1.9.6): `content_scripts` gained `"all_frames": true` - no new
+permission. The worker sends each frame only the streams that frame
+requested (`tabs.sendMessage` with `frameId`), and a page-level toast
+goes to the top frame only.
 
 ## Firefox (addons.mozilla.org): Edit Product Page
 

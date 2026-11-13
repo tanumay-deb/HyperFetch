@@ -436,9 +436,11 @@ chrome.contextMenus.onClicked.addListener((info, tab) => {
     "hyperfetch-grab-links": "all"
   };
   if (COLLECT[info.menuItemId]) {
+    // the page script runs in every frame (1.9.6): one panel, in the frame clicked
     if (tab && tab.id >= 0)
       chrome.tabs.sendMessage(tab.id,
-        { type: "HYPERFETCH_GRAB", scope: COLLECT[info.menuItemId] }, ignoreErr);
+        { type: "HYPERFETCH_GRAB", scope: COLLECT[info.menuItemId] },
+        { frameId: info.frameId || 0 }, ignoreErr);
     return;
   }
   if (info.menuItemId !== "hyperfetch-download" &&
@@ -457,7 +459,8 @@ chrome.contextMenus.onClicked.addListener((info, tab) => {
       : url.split("?")[0].split(/[\\/]/).pop() || "";
   }
   if (!url || url.startsWith("blob:") || url.startsWith("data:")) return;
-  const referrer = (tab && tab.url) || info.frameUrl || info.pageUrl || "";
+  // a frame's own address first: an embedded player's video server checks it
+  const referrer = info.frameUrl || (tab && tab.url) || info.pageUrl || "";
   // read the capture flag fresh — the cached global may be unhydrated on a
   // wake-triggered click.
   chrome.storage.local.get({ enabled: true }, ({ enabled }) => {
@@ -469,7 +472,8 @@ chrome.contextMenus.onClicked.addListener((info, tab) => {
         : status === 401 ? unpairedText()
         : "HyperFetch app offline";
       if (tab && tab.id >= 0)
-        chrome.tabs.sendMessage(tab.id, { type: "HYPERFETCH_TOAST", text }, ignoreErr);
+        chrome.tabs.sendMessage(tab.id, { type: "HYPERFETCH_TOAST", text },
+                                { frameId: 0 }, ignoreErr);   // one, on the page
     }, storeOf(tab));
   });
 });
@@ -504,7 +508,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
   if (msg && msg.type === "DOWNLOAD_URL") {
-    const ref = sender && sender.tab ? sender.tab.url : "";
+    // the sending frame's address: an embedded player's, not the site around it
+    const ref = (sender && (sender.url || (sender.tab && sender.tab.url))) || "";
     // hold:false is the page saying it will open the file in the browser itself
     // if this fails. Holding it as well is how one click became two copies: the
     // browser's straight away, and the app's when the queue replayed.
@@ -780,7 +785,8 @@ async function handleHls(url, tabId, fallbackName, referer, storeId, frameId) {
   // the next page with the frame that asked there
   const deliver = (payload) => {
     if (tabId >= 0) {
-      chrome.tabs.sendMessage(tabId, Object.assign({}, payload, { frameId }), ignoreErr);
+      chrome.tabs.sendMessage(tabId, Object.assign({}, payload, { frameId }),
+                              { frameId: frameId >= 0 ? frameId : 0 }, ignoreErr);
     }
   };
   const cached = parsedHls.get(url);   // re-deliver to a new tab, no re-probe
@@ -875,7 +881,9 @@ chrome.webRequest.onResponseStarted.addListener(
         filename: filename,
         kind: kind,
         frameId: details.frameId
-      }, ignoreErr);
+      // to the frame that asked for it only: the page script runs in every
+      // frame (1.9.6), and an embedded player's script is the one that wants it
+      }, { frameId: details.frameId >= 0 ? details.frameId : 0 }, ignoreErr);
     }
   },
   { urls: ["<all_urls>"] },

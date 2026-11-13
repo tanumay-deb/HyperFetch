@@ -756,7 +756,11 @@ function buildName(title, url, kind) {
 //  scroll / resize / fullscreen.
 // ===================================================================
 const videoOverlays = new Map();   // HTMLVideoElement -> { host, btn }
-const MIN_W = 120, MIN_H = 68;     // skip tiny thumbnails / tracking pixels
+// skip tiny thumbnails / tracking pixels. This script runs in every frame
+// (1.9.6, for embedded players); inside one only a player's size counts -
+// advert frames (300x250, 336x280) hold videos too.
+const IN_FRAME = window.self !== window.top;
+const MIN_W = IN_FRAME ? 400 : 120, MIN_H = IN_FRAME ? 225 : 68;
 
 // A stream is the player's own video when its length is the player's: within
 // SAME_*, the difference a playlist's rounded segment lengths make. Past
@@ -806,8 +810,8 @@ function markOwnedStreams() {
 // the "-preview.webm" a thumbnail plays on hover, were each sent in the film's
 // place, named after the page. So a stream has to be able to be this player's:
 //   - not one ANOTHER element plays by its own address;
-//   - not one another frame asked for (this script runs in the top frame, and
-//     a player's requests come from its own frame);
+//   - not one another frame asked for: the worker sends a frame only the
+//     streams it asked for (1.9.6), as a player's requests come from its own;
 //   - for a player that has a length: not a live stream, not a stream of
 //     another length, not a file too small for that length.
 // Among those left: one whose length is the player's, then the page's own
@@ -821,7 +825,6 @@ function bestSniffedStream(video) {
   sniffedMedia.forEach((m) => {
     order++;
     if (!m.url || m.url.startsWith('blob:') || m.url.startsWith('data:')) return;
-    if (m.frameId > 0) return;
     if (m.owned && !(video && m.owners && m.owners.has(video))) return;
     let same = 0;
     if (hasLength) {
