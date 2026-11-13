@@ -859,11 +859,6 @@ async function handleHls(url, tabId, fallbackName, referer, storeId, frameId) {
 chrome.webRequest.onResponseStarted.addListener(
   (details) => {
     if (!captureEnabled) return;
-    // A player frame on a yt-dlp site loads its video in pieces: a Vimeo
-    // embed's segment.mp4 was 2 MB of picture, no sound, no header, and its
-    // button saved that. The right-click "Download video on this page" sends
-    // the page to yt-dlp. The frame: its origin in Chrome, its address in Firefox.
-    if (details.frameId > 0 && onYtdlpSite(details.documentUrl || details.initiator)) return;
 
     let contentType = "";
     let contentLength = 0;
@@ -888,6 +883,11 @@ chrome.webRequest.onResponseStarted.addListener(
       return; // streaming chunk — skip
     } else if (MEDIA_FILE_RE.test(details.url) || isMediaCT) {
       if (contentLength && contentLength < 100000) return; // skip tiny UI sounds
+      // A plain file from a player frame on a yt-dlp site is one piece: a
+      // Vimeo embed's segment.mp4 was 2 MB of picture, no sound, no header.
+      // Its playlists stay (the app takes a .mpd to yt-dlp). The frame: its
+      // origin in Chrome, its address in Firefox.
+      if (details.frameId > 0 && onYtdlpSite(details.documentUrl || details.initiator)) return;
       kind = "file";
     } else {
       return;

@@ -65,9 +65,9 @@ still has 1.9.3, 1.9.5's and 1.9.4's notes are kept below it.
 - The page's Download Media list sends an embedded player's video with the
   player's address, as its button does; video servers that check it no
   longer refuse the download.
-- No button on a player from YouTube, Vimeo and the other sites HyperFetch
-  fetches with yt-dlp: such a player loads its video in pieces. Right-click
-  it and choose "Download video on this page".
+- A player from Vimeo, YouTube and the other sites HyperFetch fetches with
+  yt-dlp is never offered one piece of its video (Vimeo's loads it in pieces
+  of a few MB), only its playlist, from which HyperFetch fetches it whole.
 1.9.5
 - The popup checks the saved pairing with the HyperFetch app as it opens,
   and pairs again when the app no longer knows it. It used to say "paired"

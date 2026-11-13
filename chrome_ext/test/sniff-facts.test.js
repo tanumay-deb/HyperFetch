@@ -101,13 +101,17 @@ async function test(name, fn) {
   const MPD = 'https://vod-adaptive-ak.vimeocdn.com/e/sub/playlist.mpd?omit=av1';
   for (const [browser, asker] of [['Chrome', { initiator: 'https://player.vimeo.com' }],
                                   ['Firefox', { documentUrl: 'https://player.vimeo.com/video/76979871?autoplay=1' }]]) {
-    await test('a player frame on a yt-dlp site offers none of its pieces (' + browser + ')', async () => {
+    await test('a player frame on a yt-dlp site offers its playlist, not a piece (' + browser + ')', async () => {
       const { state } = load();
       state.onResponse(response(PIECE, Object.assign({ frameId: 6, type: 'video/mp4', length: 2112441 }, asker)));
+      await settle();
+      assert.deepStrictEqual(state.sent, [], 'a plain file from such a player is one piece');
+      // The playlist stays: the app hands a .mpd to yt-dlp, which fetches the
+      // whole video. yt-dlp finds no embedded tweet, Reddit or Twitch player
+      // from the page around it, so the right-click item is no way there.
       state.onResponse(response(MPD, Object.assign({ frameId: 6, type: 'application/dash+xml' }, asker)));
       await settle();
-      assert.deepStrictEqual(state.sent, [], 'the right-click "Download video on this page" is the way');
-      assert.deepStrictEqual(state.fetched, [], 'not even read');
+      assert.deepStrictEqual(state.sent.map((s) => [s.msg.url, s.opts.frameId]), [[MPD, 6], [MPD, 0]]);
     });
   }
 
