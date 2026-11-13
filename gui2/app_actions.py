@@ -225,7 +225,15 @@ class ActionsMixin:
             return
 
         name = os.path.basename(cur) or t.filename
-        target = utils.unique_path(dest_dir, name)
+        if _torrent.is_torrent_task(t.url, t.filename):
+            # a torrent's files keep their names - its seeding finds them by
+            # them - so no shortened name and no "(1)": a taken one is refused
+            target = os.path.join(dest_dir, name)
+            if t.status == T.COMPLETED and os.path.exists(target):
+                self._toasts.show("error", "Move failed", f"“{name}” is already in {dest_dir}")
+                return
+        else:
+            target = utils.unique_path(dest_dir, name)
 
         if _torrent.is_torrent_task(t.url, t.filename) and t.status != T.COMPLETED:
             running = t.status in (T.DOWNLOADING, T.QUEUED)

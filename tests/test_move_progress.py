@@ -281,6 +281,38 @@ def test_an_unfinished_torrent_will_not_take_a_name_already_there(window, tmp_pa
     assert window.resumed == [t], "paused for the move, and left paused"
 
 
+def _finished_torrent(tmp_path, name):
+    old = tmp_path / "torrentsx"            # as long as "elsewhere": both paths fit 260
+    (old / name).mkdir(parents=True)
+    (old / name / "e1.mkv").write_bytes(DATA)
+    t = T.DownloadTask("magnet:?xt=urn:btih:" + "a" * 40, str(old / name), filename=name)
+    t.status = T.COMPLETED
+    return t, old
+
+
+def test_a_finished_torrent_keeps_its_long_name(window, tmp_path):
+    """A torrent's files keep their names: its seeding finds them by them. The
+    target came from unique_path, which shortens a name past 232 characters
+    of path (round 1 #20) - the folder was renamed (round 2 #6)."""
+    name = "P" * (240 - len(str(window.dest)) - 1)
+    t, old = _finished_torrent(tmp_path, name)
+    window._move_task_files(t)
+    _landed(window)
+    assert window.toasts[-1][1] == "Moved", window.toasts
+    assert (window.dest / name / "e1.mkv").exists()
+    assert t.save_path == str(window.dest / name) and t.filename == name
+
+
+def test_a_finished_torrent_will_not_take_a_name_already_there(window, tmp_path):
+    """unique_path made it "Pack (1)": refused, as an unfinished one is."""
+    t, old = _finished_torrent(tmp_path, "Pack")
+    (window.dest / "Pack").mkdir()
+    window._move_task_files(t)
+    assert window.toasts[-1][1] == "Move failed" and "Pack" in window.toasts[-1][2]
+    assert (old / "Pack" / "e1.mkv").exists() and t.save_path == str(old / "Pack")
+    assert os.listdir(window.dest) == ["Pack"] and not getattr(t, "moving", False)
+
+
 def test_the_card_shows_how_far_the_move_is():
     from PySide6.QtWidgets import QApplication
     from gui2.download_card import DownloadCardWidget
