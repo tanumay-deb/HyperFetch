@@ -2,6 +2,7 @@
 pure; run() is driven against a fake aria2c subprocess (no real swarm/network)."""
 import os
 import subprocess
+import time
 
 import pytest
 
@@ -401,7 +402,51 @@ def test_removing_a_paused_torrent_drops_it_from_aria2(tmp_path, monkeypatch):
                        filename="Show", status=T.PAUSED)
     q.add_task(t, start=False)
     q.remove_task(t)
+    _until(lambda: ("aria2.removeDownloadResult", ("paused-gid",)) in calls)
     assert ("aria2.forceRemove", ("paused-gid",)) in calls
     assert ("aria2.removeDownloadResult", ("paused-gid",)) in calls
     assert slept == [], "removing a paused torrent must not wait in _let_go's 15 s loop"
+
+
+def _until(cond, limit=5.0):
+    # perf_counter and Event.wait: a test here fakes time.monotonic and time.sleep
+    import threading
+    end = time.perf_counter() + limit
+    while not cond() and time.perf_counter() < end:
+        threading.Event().wait(0.02)
+
+
+def test_removing_a_paused_torrent_does_not_wait_for_aria2(tmp_path, monkeypatch):
+    """Remove runs on the window's thread; each aria2 call may take its 15 s
+    timeout when the daemon is busy (round 2 #1). The drop goes on a thread -
+    dropping a paused download writes no control file again (measured on
+    1.37.0), so its files are cleaned up first."""
+    import aria2d
+    import threading
+    from queue_manager import QueueManager
+    ih, answer, calls = "b" * 40, threading.Event(), []
+
+    class _Hung:
+        def alive(self):
+            return True
+
+        def call(self, method, *params):
+            answer.wait(5)                    # aria2 taking its time
+            calls.append(method)
+            if method == "aria2.tellActive":
+                return [{"gid": "g", "infoHash": ih, "status": "paused"}]
+            return []
+
+    monkeypatch.setattr(aria2d, "DAEMON", _Hung())
+    q = QueueManager()
+    q.shutdown()
+    t = T.DownloadTask(f"magnet:?xt=urn:btih:{ih}&dn=Show", str(tmp_path / "Show"),
+                       filename="Show", status=T.PAUSED)
+    q.add_task(t, start=False)
+    began = time.monotonic()
+    q.remove_task(t)
+    assert time.monotonic() - began < 1.0, "Remove waited for aria2"
+    answer.set()
+    _until(lambda: "aria2.forceRemove" in calls)
+    assert "aria2.forceRemove" in calls, "the torrent is still dropped, afterwards"
 

@@ -1251,7 +1251,14 @@ def cleanup_artifacts(task, drop_rpc=True):
     files belonging to THIS task — a blind sweep could delete the control file
     of a torrent another client (or another of our tasks) is still resuming."""
     if drop_rpc and not getattr(task, "_worker_alive", False):
-        _let_go(task, wait=0)
+        # on a thread: Remove runs on the window's, and a busy aria2 takes up
+        # to 15 s a call. Dropping a paused download writes no control file
+        # again (measured on 1.37.0), so the files below may go first.
+        # shortcut: the same torrent added again before the drop ends could be
+        # found by it and dropped too; a person cannot re-add that fast unless
+        # aria2 is that slow - then guard the next add if it is ever seen.
+        threading.Thread(target=_let_go, args=(task,), kwargs={"wait": 0},
+                         name="aria2-drop", daemon=True).start()
     save = getattr(task, "save_path", "") or ""
     folder = os.path.dirname(save) or "."
     removed = []
