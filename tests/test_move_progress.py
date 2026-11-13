@@ -355,3 +355,25 @@ def test_an_unfinished_download_to_another_drive_takes_its_partial_along(window,
     assert not os.path.exists(old_temp) and os.listdir(old) == []
     assert window.resumed == ([t] if status == T.DOWNLOADING else [])
 
+
+def test_a_partial_in_the_unfinished_downloads_folder_stays_there(window, tmp_path,
+                                                                  monkeypatch):
+    """With an unfinished-downloads folder set, a partial is kept there
+    whatever the destination: the move "moved" it onto itself on a thread,
+    the card saying "Moving…" (round 2 #5)."""
+    monkeypatch.setattr(utils, "same_drive",
+                        lambda a, b: os.path.abspath(a) == os.path.abspath(b))
+    monkeypatch.setattr(utils, "INCOMPLETE_DIR", str(tmp_path / "unfinished"))
+    t = T.DownloadTask("https://a.example/big.bin", str(tmp_path / "big.bin"),
+                       filename="big.bin")
+    t.status, t.downloaded = T.PAUSED, len(DATA)
+    partial = utils.temp_download_path(t)
+    open(partial, "wb").write(DATA)
+    assert os.path.dirname(os.path.dirname(partial)) == str(tmp_path / "unfinished")
+
+    window._move_task_files(t)
+
+    assert not getattr(t, "moving", False), "nothing to move: it stays where it is"
+    assert t.save_path == str(window.dest / "big.bin")
+    assert utils.temp_download_path(t) == partial and open(partial, "rb").read() == DATA
+

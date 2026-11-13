@@ -273,7 +273,9 @@ class ActionsMixin:
             threading.Thread(target=move, name="move", daemon=True).start()
             self.refresh()
             return
-        partial = utils.existing_temp_path(t) if not own else ""
+        # with an unfinished-downloads folder set the partial stays in it,
+        # whatever the destination
+        partial = utils.existing_temp_path(t) if not own and not utils.INCOMPLETE_DIR else ""
         if partial and not utils.same_drive(os.path.dirname(partial), dest_dir):
             running = t.status in (T.DOWNLOADING, T.QUEUED)
             if running:
