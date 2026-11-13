@@ -377,6 +377,35 @@ def test_held_downloads_go_back_in_line_once_the_proxy_is_put_right(monkeypatch)
     assert init.index("self._release_proxy_holds()") > init.index("self._load_state()")
 
 
+def test_the_status_bar_theme_button_keeps_the_chosen_accent(monkeypatch):
+    """apply_theme sets gui.theme's accent to the theme's own; the Settings
+    paths set the chosen one after it, the status bar's button did not, and
+    toggles and accent icons went back to purple until the next save."""
+    import gui.theme as gtheme
+    from gui2 import app_settings, palette
+
+    class Window:
+        theme = "dark"
+
+        def _save_settings(self):
+            pass
+
+        def _reskin(self):
+            pass
+
+    monkeypatch.setattr(app_settings.QTimer, "singleShot", lambda *a: None)
+    try:
+        gtheme.apply_theme(palette.set_theme("dark"))
+        palette.set_accent("green")
+        app_settings.SettingsMixin._toggle_theme(Window())
+        assert gtheme.THEME == "light"
+        assert gtheme.ACCENT == palette.ACCENTS["green"] == palette.COLORS["accent"]
+    finally:
+        gtheme.apply_theme("dark")
+        palette.set_theme("dark")
+        palette.set_accent("purple")
+
+
 def test_system_theme_on_light_windows_and_accent_reach_gui_theme(monkeypatch):
     """'system' on a light-mode Windows gives gui.theme.TEXT the light theme's
     text colour, and a new accent reaches gui.theme.ACCENT."""

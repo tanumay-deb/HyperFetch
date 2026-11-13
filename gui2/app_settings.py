@@ -142,6 +142,7 @@ class SettingsMixin:
         """The status bar's button: dark <-> light."""
         self.theme = "light" if palette.active_theme() == "dark" else "dark"
         apply_theme(palette.set_theme(self.theme))
+        palette.set_accent(palette.COLORS["accent"])   # apply_theme put the theme's own back
         self._save_settings()
         # after the click that asked: the button is one of what goes
         QTimer.singleShot(0, self._reskin)
