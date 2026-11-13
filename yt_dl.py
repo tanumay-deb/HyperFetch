@@ -161,7 +161,8 @@ def _deno():
     """Where deno is, "" when nowhere: on this process's PATH, else on the
     system's PATH as it is now, else where Deno's own installer puts it.
     A miss is cached for a minute so NameScout's 3 s poll does not re-read
-    the registry and re-scan PATH on every tick."""
+    the registry and re-scan PATH on every tick; starting or resuming a
+    download clears the miss so "install Deno, then Resume" works at once."""
     global _deno_miss
     import shutil
     env_key = (os.environ.get("PATH"), os.path.expanduser("~"), _system_path)
@@ -217,10 +218,15 @@ def explain(err, t, unsolved=False, ffdir=""):
     The download's card and the log of a video that waits say the same.
     `unsolved`: yt-dlp said it could not solve YouTube's challenge
     (_YtLog.unsolved). `ffdir`: where ffmpeg is - None when nowhere."""
+    global _deno_miss
     import re
     low = re.sub(r"\x1b\[[0-9;]*m", "", str(err)).strip().lower()
     youtube = "youtu" in (t.url or "").lower()
+    if unsolved:
+        _deno_miss = (0.0, None)
     needs_deno = unsolved and not _deno()
+    if needs_deno:
+        _deno_miss = (0.0, None)
     if youtube and _refused(low):
         # a signed-in try that found no formats (nothing to solve the
         # challenge) and a retry without cookies that met the bot check
@@ -315,13 +321,14 @@ def _named(t, info):
     return info
 
 
-def _choosing_opts(t, out_dir):
+def _choosing_opts(t, out_dir, cached_deno=False):
     """The yt-dlp options that decide which format is picked and what the file
     is called, and where ffmpeg is: ``(opts, ffdir)``.
 
     Shared by the download and by the look a waiting download gets (look_up),
     so the name a video is given while it waits is the name its download
     gives it."""
+    global _deno_miss
     import re
     opts = {
         "outtmpl": os.path.join(out_dir.replace("%", "%%"),
@@ -336,6 +343,8 @@ def _choosing_opts(t, out_dir):
     ffdir = _ffmpeg_dir()
     if ffdir:
         opts["ffmpeg_location"] = ffdir
+    if not cached_deno:
+        _deno_miss = (0.0, None)
     deno = _deno()
     if deno:                # yt-dlp looks on this process's PATH only
         opts["js_runtimes"] = {"deno": {"path": deno}}
@@ -988,6 +997,8 @@ class YtDlpDownloader:
                 self.t.downloaded = parts["done"]
                 final["path"] = d.get("filename") or final["path"]
 
+        global _deno_miss
+        _deno_miss = (0.0, None)
         opts, ffdir = _choosing_opts(self.t, out_dir)
         opts.update({
             "progress_hooks": [hook],
@@ -1112,7 +1123,8 @@ def look_up(t, give_up=lambda: False):
     own, as in can_extract, and an answer nobody waits for is dropped. Raises
     what yt-dlp raised, and TimeoutError past EXTRACT_TIMEOUT.
     """
-    opts, ffdir = _choosing_opts(t, os.path.dirname(t.save_path) or ".")
+    opts, ffdir = _choosing_opts(t, os.path.dirname(t.save_path) or ".",
+                                 cached_deno=True)
     opts.update({"extract_flat": "in_playlist", "playlist_items": "1",
                  "socket_timeout": 15})
     url, box = t.url, {}

@@ -468,3 +468,51 @@ def test_a_video_id_containing_403_does_not_read_as_stale_ytdlp(tmp_path):
     assert yt_dl.explain(RuntimeError("ERROR: [youtube] abc403defgh: Video unavailable"), t) == ""
     assert "stale" in yt_dl.explain(RuntimeError("HTTP Error 403: Forbidden"), t)
 
+
+def test_installing_deno_and_resuming_within_a_minute_finds_it(tmp_path, monkeypatch):
+    """A download fails with 'Install Deno, then Resume' (or NameScout caches a
+    miss); the user installs Deno and hits Resume within 60 s. The 1-minute
+    NameScout miss cache must not hide the newly installed Deno from Resume."""
+    import os
+    home = tmp_path / "home"
+    deno_bin = home / ".deno" / "bin"
+    deno_bin.mkdir(parents=True)
+    monkeypatch.setenv("PATH", str(tmp_path / "nothing"))
+    monkeypatch.setenv("USERPROFILE", str(home))
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setattr(yt_dl, "_system_path", lambda: "", raising=False)
+
+    seen_runtimes = []
+
+    class _NeedDenoYDL(_FakeYDL):
+        def extract_info(self, url, download=True):
+            seen_runtimes.append(self.opts.get("js_runtimes"))
+            if not (self.opts.get("js_runtimes") or {}).get("deno", {}).get("path"):
+                self.opts["logger"].warning(UNSOLVED)
+                raise RuntimeError("ERROR: [youtube] abc: Requested format is not available.")
+            out = str(tmp_path / "video.mp4")
+            open(out, "wb").write(b"ok")
+            return {"id": "abc", "title": "video", "ext": "mp4"}
+
+    mod = types.ModuleType("yt_dlp")
+    mod.YoutubeDL = lambda opts: _NeedDenoYDL(opts, [], lambda h: False)
+    monkeypatch.setitem(sys.modules, "yt_dlp", mod)
+
+    t = _task(tmp_path, {})
+    yt_dl.YtDlpDownloader(t).run()
+    assert t.status == T.ERROR and "Deno" in t.error
+
+    # Even if NameScout also ticked while Deno was missing (caching the miss):
+    assert yt_dl._deno() == ""
+
+    # User installs Deno within the same minute and clicks Resume:
+    exe = deno_bin / ("deno.exe" if os.name == "nt" else "deno")
+    exe.write_bytes(b"")
+    exe.chmod(0o755)
+
+    yt_dl.YtDlpDownloader(t).run()
+    assert t.status == T.COMPLETED, t.error
+    given = (seen_runtimes[-1] or {}).get("deno", {}).get("path", "")
+    assert os.path.normcase(given) == os.path.normcase(str(exe))
+
+
