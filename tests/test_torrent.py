@@ -375,6 +375,7 @@ def test_removing_a_paused_torrent_drops_it_from_aria2(tmp_path, monkeypatch):
     from queue_manager import QueueManager
     ih = "a" * 40
     calls = []
+    slept = []
 
     class _Daemon:
         def alive(self):
@@ -382,13 +383,18 @@ def test_removing_a_paused_torrent_drops_it_from_aria2(tmp_path, monkeypatch):
 
         def call(self, method, *params):
             calls.append((method, params))
-            if method == "aria2.tellWaiting":
-                return [{"gid": "paused-gid", "infoHash": ih, "status": "paused"}]
+            if method == "aria2.tellActive":
+                # aria2.pause returns before the download has stopped (it tells
+                # the tracker first), so a just-paused torrent still reads active.
+                return [{"gid": "paused-gid", "infoHash": ih, "status": "active"}]
             if method == "aria2.tellStatus":
-                return {"status": "paused"}
+                return {"status": "active"}
             return []
 
+    now = [100.0]
     monkeypatch.setattr(aria2d, "DAEMON", _Daemon())
+    monkeypatch.setattr(torrent.time, "monotonic", lambda: now[0])
+    monkeypatch.setattr(torrent.time, "sleep", lambda s: (slept.append(s), now.__setitem__(0, now[0] + s)))
     q = QueueManager()
     q.shutdown()
     t = T.DownloadTask(f"magnet:?xt=urn:btih:{ih}&dn=Show", str(tmp_path / "Show"),
@@ -397,3 +403,5 @@ def test_removing_a_paused_torrent_drops_it_from_aria2(tmp_path, monkeypatch):
     q.remove_task(t)
     assert ("aria2.forceRemove", ("paused-gid",)) in calls
     assert ("aria2.removeDownloadResult", ("paused-gid",)) in calls
+    assert slept == [], "removing a paused torrent must not wait in _let_go's 15 s loop"
+

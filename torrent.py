@@ -1251,7 +1251,7 @@ def cleanup_artifacts(task, drop_rpc=True):
     files belonging to THIS task — a blind sweep could delete the control file
     of a torrent another client (or another of our tasks) is still resuming."""
     if drop_rpc and not getattr(task, "_worker_alive", False):
-        _let_go(task)
+        _let_go(task, wait=0)
     save = getattr(task, "save_path", "") or ""
     folder = os.path.dirname(save) or "."
     removed = []
@@ -1659,18 +1659,19 @@ def _let_go(task, wait=15.0):
     gid = td._rpc_find_existing(d, live_only=False) or getattr(task, "gid", "") or ""
     if not gid:
         return
-    try:
-        d.call("aria2.forcePause", gid)
-    except Exception:
-        pass                                 # paused already
-    end = time.monotonic() + wait
-    while time.monotonic() < end:
+    if wait > 0:
         try:
-            if d.call("aria2.tellStatus", gid, ["status"]).get("status") != "active":
-                break
+            d.call("aria2.forcePause", gid)
         except Exception:
-            break
-        time.sleep(0.1)
+            pass                                 # paused already
+        end = time.monotonic() + wait
+        while time.monotonic() < end:
+            try:
+                if d.call("aria2.tellStatus", gid, ["status"]).get("status") != "active":
+                    break
+            except Exception:
+                break
+            time.sleep(0.1)
     td._rpc_remove(d, gid, force=True)
     task.gid = None
 
