@@ -55,6 +55,7 @@ from gui2.app_actions import ActionsMixin
 from gui2.app_shortcuts import ShortcutsMixin
 from gui2.app_system import SystemMixin
 from gui2.app_update import UpdateMixin
+from gui2.dialogs import whats_new
 
 
 
@@ -216,6 +217,26 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, Up
 
         if not self._extras.get("welcomed"):     # first run -> pairing onboarding
             QTimer.singleShot(500, self._show_welcome)
+        # First start after an update -> its notes. Recorded only as they show:
+        # --selftest (real app-data, no event loop) uses nothing up.
+        if whats_new.due(self._extras, utils.APP_VERSION):
+            QTimer.singleShot(800, self._show_whats_new)
+        elif self._extras.get("last_version") != utils.APP_VERSION:
+            self._extras["last_version"] = utils.APP_VERSION
+            self._save_settings()
+
+    def _show_whats_new(self):
+        version = utils.APP_VERSION
+        self._extras["last_version"] = version
+        self._save_settings()
+        text = whats_new.notes_for(version)
+        if not text:
+            return
+        dlg = whats_new.WhatsNewDialog(self, version, text)
+        dlg.setAttribute(Qt.WA_DeleteOnClose)
+        dlg.setWindowModality(Qt.NonModal)       # shown, never exec()'d
+        self._whats_new = dlg
+        dlg.show()
 
     def _flash_taskbar(self):
         """Make the taskbar button glow when something finishes or fails.

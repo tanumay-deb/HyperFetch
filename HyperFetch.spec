@@ -76,6 +76,7 @@ a = Analysis(
            ('assets/icons', 'assets/icons'),
            ('LICENSE', '.'),                                # About -> License
            ('licenses', 'licenses'),     # the GPL programs' licences + where their source is
+           ('notes', 'notes'),           # each version's notes: the What's new window
            ] + extra_datas + crypto_datas + ytdlp_datas + ejs_datas,
     hiddenimports=hidden,
     hookspath=[],
