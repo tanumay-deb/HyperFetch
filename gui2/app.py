@@ -226,7 +226,12 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, Up
             self._save_settings()
 
     def _show_whats_new(self):
+        # Start in tray / minimized (with Windows, at login): not a window
+        # alone on the desktop - it waits for the main window to open
+        self._whats_new_waiting = not self.isVisible() or self.isMinimized()
         version = utils.APP_VERSION
+        if self._whats_new_waiting or self._extras.get("last_version") == version:
+            return                                   # out of sight, or shown already
         self._extras["last_version"] = version
         self._save_settings()
         text = whats_new.notes_for(version)
@@ -1718,9 +1723,16 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, Up
         if e.type() == QEvent.WindowStateChange and self.isMinimized():
             if self.tray and self.tray.isVisible() and self._extras.get("minimize_tray", True):
                 QTimer.singleShot(0, self.hide)
+        elif e.type() == QEvent.WindowStateChange and getattr(self, "_whats_new_waiting", False):
+            QTimer.singleShot(300, self._show_whats_new)      # restored
         elif e.type() == QEvent.ActivationChange and self.isActiveWindow():
             self._check_clipboard()
         super().changeEvent(e)
+
+    def showEvent(self, e):
+        super().showEvent(e)
+        if getattr(self, "_whats_new_waiting", False):        # opened from the tray
+            QTimer.singleShot(300, self._show_whats_new)
 
     def closeEvent(self, e):
         # explicit Quit (tray menu) always exits

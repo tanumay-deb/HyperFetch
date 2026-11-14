@@ -78,12 +78,26 @@ START = textwrap.dedent('''
     # Welcome is exec()'d: it would wait for a click forever
     appmod.DownloadAppV2._show_welcome = lambda self: print("WELCOME", flush=True)
     import time
+    def spin(s):
+        end = time.time() + s
+        while time.time() < end:
+            app.processEvents(); time.sleep(0.05)
+    def on_screen():
+        return [w for w in app.topLevelWidgets() if isinstance(w, WhatsNewDialog) and w.isVisible()]
     win = appmod.DownloadAppV2()
-    win.show()
-    end = time.time() + 2.5
-    while time.time() < end:
-        app.processEvents(); time.sleep(0.05)
-    shown = [w for w in app.topLevelWidgets() if isinstance(w, WhatsNewDialog) and w.isVisible()]
+    if sys.argv[2] == "tray":                 # "Start in tray": opened later from the tray
+        spin(1.5)
+        print("WAITING", len(on_screen()), win._extras.get("last_version"), flush=True)
+        win.show()
+    elif sys.argv[2] == "minimized":          # "Start minimized": restored later
+        win.showMinimized()
+        spin(1.5)
+        print("WAITING", len(on_screen()), win._extras.get("last_version"), flush=True)
+        win.showNormal()
+    else:
+        win.show()
+    spin(2.5)
+    shown = on_screen()
     for w in shown:
         print("SHOWN", repr(w.windowTitle()), w.windowModality() == Qt.NonModal, flush=True)
     print("COUNT", len(shown), flush=True)
@@ -110,6 +124,7 @@ def _start(tmp_path, settings, mode="window", version="2.8.9"):
 def test_an_update_shows_its_notes_once(tmp_path):
     r, saved = _start(tmp_path, {"welcomed": True})
     assert "SHOWN \"What's new in 2.8.9\" True" in r.stdout, r.stdout + r.stderr[-2000:]
+    assert "COUNT 1" in r.stdout, r.stdout
     assert saved.get("last_version") == "2.8.9"
     r, _ = _start(tmp_path, None)                  # the same settings, started again
     assert "COUNT 0" in r.stdout, r.stdout + r.stderr[-2000:]
@@ -133,3 +148,15 @@ def test_the_selftest_fails_a_build_without_this_versions_notes(tmp_path):
     r, _ = _start(tmp_path, {"welcomed": True}, mode="selftest", version="9.9.9")
     assert "notes/9.9.9.md is missing" in r.stdout, r.stdout + r.stderr[-2000:]
     assert "selftest OK" not in r.stdout
+
+
+@pytest.mark.parametrize("mode", ["tray", "minimized"])
+def test_a_window_started_out_of_sight_shows_the_notes_when_it_opens(tmp_path, mode):
+    """Start in tray / Start minimized with Windows: the notes waited for no
+    one and popped up alone at login. They wait for the window, and are
+    recorded only once seen."""
+    r, saved = _start(tmp_path, {"welcomed": True, "last_version": "2.8.8"}, mode=mode)
+    assert "WAITING 0 2.8.8" in r.stdout, r.stdout + r.stderr[-2000:]
+    assert "SHOWN \"What's new in 2.8.9\" True" in r.stdout, r.stdout + r.stderr[-2000:]
+    assert "COUNT 1" in r.stdout, r.stdout
+    assert saved.get("last_version") == "2.8.9"
