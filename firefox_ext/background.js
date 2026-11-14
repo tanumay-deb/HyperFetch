@@ -800,6 +800,16 @@ async function probeViaFetch(url) {
   };
 }
 
+// A DASH playlist that declares DRM (<ContentProtection>) cannot be saved:
+// yt-dlp stops with "This video is DRM protected" (Vimeo's player playlists,
+// measured 2026-11-13). One that cannot be read is offered, as before.
+async function drmProtected(url) {
+  try {
+    const text = await (await fetch(url, { credentials: "include" })).text();
+    return /<(?:\w+:)?ContentProtection\b/i.test(text);
+  } catch (e) { return false; }
+}
+
 // A sniffed stream goes to the frame that asked for it - an embedded player's
 // script picks its button from it (the page script runs in every frame since
 // 1.9.6) - and, from a frame, to the page too: the page's "Download Media"
@@ -814,7 +824,7 @@ function tellFrames(tabId, msg, frameId) {
 // Resolve a sniffed .m3u8 into a quality picker (master) or a single row. The
 // page is told the frame that asked for it, its length and whether it is live:
 // that is how the badge tells a player's own stream from another's.
-async function handleHls(url, tabId, fallbackName, referer, storeId, frameId) {
+async function handleHls(url, tabId, fallbackName, referer, storeId, frameId, dash) {
   // the frame is this request's, not the playlist's: a cached answer goes to
   // the next page with the frame that asked there
   const deliver = (payload) => {
@@ -828,6 +838,7 @@ async function handleHls(url, tabId, fallbackName, referer, storeId, frameId) {
   if (inFlightHls.has(url)) return;
   inFlightHls.add(url);
   try {
+    if (dash && await drmProtected(url)) return;
     let probed = await probeViaApp(url, referer, storeId);   // app-side (auth path)
     const appAnswered = probed !== null;
     if (!appAnswered) probed = await probeViaFetch(url);    // SW fallback
@@ -904,7 +915,7 @@ chrome.webRequest.onResponseStarted.addListener(
     if (kind === "hls") {
       const referer = details.documentUrl || details.originUrl || details.initiator || "";
       handleHls(details.url, details.tabId, filename, referer, details.cookieStoreId,
-                details.frameId);
+                details.frameId, /dash\+xml/i.test(contentType) || /\.mpd$/i.test(urlNoQ));
       return;
     }
 

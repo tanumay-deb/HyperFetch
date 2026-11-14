@@ -115,6 +115,22 @@ async function test(name, fn) {
     });
   }
 
+  // Vimeo's player playlist declares DRM: yt-dlp stops with "This video is
+  // DRM protected" (measured 2026-11-13, every format of the video).
+  const DASH = (protection) => '<?xml version="1.0"?><MPD xmlns="urn:mpeg:dash:schema:mpd:2011"><Period>'
+    + '<AdaptationSet mimeType="video/mp4">' + protection + '<Representation id="v" height="360"/>'
+    + '</AdaptationSet></Period></MPD>';
+  await test('a DASH playlist that declares DRM is offered to nobody; one without is', async () => {
+    const locked = DASH('<ContentProtection schemeIdUri="urn:mpeg:dash:mp4protection:2011" value="cenc"/>');
+    const { state } = load({ files: { [MPD]: locked, 'https://cdn.x/open.mpd': DASH('') } });
+    state.onResponse(response(MPD, { frameId: 6, type: 'application/dash+xml', initiator: 'https://player.vimeo.com' }));
+    state.onResponse(response('https://cdn.x/open.mpd', { frameId: 0, type: 'application/dash+xml' }));
+    await settle();
+    assert.deepStrictEqual(state.sent.map((s) => s.msg.url), ['https://cdn.x/open.mpd'],
+                           'the locked one is not offered');
+    assert.ok(state.fetched.includes(MPD), 'it was read to find out');
+  });
+
   for (const asker of [{ initiator: 'https://myvimeo.com' }, { documentUrl: 'https://embed.example/e/1' }]) {
     await test('a player frame on another site is offered its file: ' + JSON.stringify(asker), async () => {
       const { state } = load();
