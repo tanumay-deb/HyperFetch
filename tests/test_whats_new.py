@@ -66,7 +66,7 @@ START = textwrap.dedent('''
     from PySide6.QtWidgets import QApplication
     app = QApplication([])
     import utils
-    utils.APP_VERSION = "2.8.9"
+    utils.APP_VERSION = sys.argv[3]
     import gui2.app as appmod
     from gui2.dialogs.whats_new import WhatsNewDialog
     from PySide6.QtCore import Qt
@@ -92,7 +92,7 @@ START = textwrap.dedent('''
 ''')
 
 
-def _start(tmp_path, settings, mode="window"):
+def _start(tmp_path, settings, mode="window", version="2.8.9"):
     appdata = tmp_path / "appdata"
     (appdata / "HyperFetch").mkdir(parents=True, exist_ok=True)
     path = appdata / "HyperFetch" / "settings.json"
@@ -101,7 +101,7 @@ def _start(tmp_path, settings, mode="window"):
     script = tmp_path / "start.py"
     script.write_text(START, encoding="utf-8")
     env = dict(os.environ, QT_QPA_PLATFORM="offscreen", APPDATA=str(appdata), HOME=str(appdata))
-    r = subprocess.run([sys.executable, str(script), ROOT, mode], env=env, cwd=ROOT,
+    r = subprocess.run([sys.executable, str(script), ROOT, mode, version], env=env, cwd=ROOT,
                        capture_output=True, text=True, timeout=90)
     saved = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
     return r, saved
@@ -125,3 +125,11 @@ def test_the_selftest_uses_nothing_up(tmp_path):
     r, saved = _start(tmp_path, {"welcomed": True, "last_version": "2.8.7"}, mode="selftest")
     assert "selftest OK" in r.stdout, r.stdout + r.stderr[-2000:]
     assert saved.get("last_version") == "2.8.7"
+
+
+def test_the_selftest_fails_a_build_without_this_versions_notes(tmp_path):
+    """CI runs the BUILT app's --selftest: a build that lost notes/ (a spec
+    change) would never show the window, and nothing else would fail."""
+    r, _ = _start(tmp_path, {"welcomed": True}, mode="selftest", version="9.9.9")
+    assert "notes/9.9.9.md is missing" in r.stdout, r.stdout + r.stderr[-2000:]
+    assert "selftest OK" not in r.stdout

@@ -1863,5 +1863,12 @@ def _self_test_v2():
         print("selftest: YouTube's challenge solver (yt-dlp-ejs) is missing")
         return 1
 
+    # the What's new window's text is in the build (2.8.8 and before had none)
+    import updater
+    version = utils.APP_VERSION
+    if updater._parse_semver(version) > (2, 8, 8) and not whats_new.notes_for(version):
+        print(f"selftest: notes/{version}.md is missing")
+        return 1
+
     print(f"v2 selftest OK v{APP_VERSION}")
     return 0
