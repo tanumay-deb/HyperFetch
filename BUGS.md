@@ -89,3 +89,26 @@ Severity: **Must** = wrong result, data loss, or a crash users hit. **Should**
 - **Expected:** no crash. If the nested loop is the cause, the app can hit it
   too: then fetch the `.torrent` without a nested loop (a thread and a signal).
 - **Test:** the name-order run above passes 10 times in a row.
+
+## B4 - Should - A delete the app did not finish before closing can delete a different file at the next start
+
+- **Where:** `gui2/app_shortcuts.py`: "Delete from disk" records the paths in
+  `pending_deletes.json` (`_note_pending`, about line 121); the next start
+  deletes every path still listed (`_resume_deletes`, about line 125) unless a
+  download in the list now points at it.
+- **What happens:** the delete waits for the download's engine to let go (up
+  to 60 s, then 10 tries 0.5 s apart). Close HyperFetch in that time and the
+  paths stay listed. If before the next start the user saves ANOTHER file of
+  that name there - the browser downloads `report.pdf` again into the same
+  folder, say - HyperFetch's next start deletes it: the list holds only the
+  path, so a new file there looks like the old one.
+- **Expected:** at the next start, delete only what is still the file that was
+  asked for. Record each path's size and modification time (for a folder, the
+  newest file's time) when the delete is asked; at start, delete a path only
+  when they still match, and drop it from the list otherwise (with a log line).
+  An unfinished download is still being written when the delete is asked:
+  record what is there at that moment, after its engine has let go if possible.
+- **Test:** ask a delete, close before it is done (call `_note_pending` as
+  `_delete_files` would and stop there); replace the file with different
+  content; start again (`_resume_deletes`): the new file is still there. And:
+  left unchanged, it is deleted.
