@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, Signal, QPropertyAnimation, QEasingCurve, QPoint, QSize, QTimer, QEvent
 from PySide6.QtGui import QPainter, QPen, QColor, QPainterPath
 
+import lines
 import task as T
 import utils
 import torrent as _torrent
@@ -2086,7 +2087,13 @@ class DetailsDrawer(QFrame):
         if is_tor:
             self.ov_conns.setText(str(getattr(t, "tor_conns", 0)))
         else:
-            self.ov_conns.setText(str(getattr(t, "http_conns", 0)) if t.status == T.DOWNLOADING else "0")
+            per_line = getattr(t, "line_conns", None) or {}
+            if t.status != T.DOWNLOADING:
+                self.ov_conns.setText("0")
+            elif len(per_line) > 1:             # spread over several internet connections
+                self.ov_conns.setText(lines.describe(per_line))
+            else:
+                self.ov_conns.setText(str(getattr(t, "http_conns", 0)))
         self.files_fresh.setText(self._files_freshness(t))
         # peers/segments only matter while the Connections tab is on screen —
         # getPeers is an RPC round trip and this runs on the 500ms tick

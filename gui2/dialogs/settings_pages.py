@@ -8,7 +8,7 @@ the dialog behaviour (nav, search, values).
 from PySide6.QtWidgets import (
     QHBoxLayout, QVBoxLayout, QGridLayout, QLabel, QPushButton, QLineEdit,
     QComboBox, QSlider, QSpinBox, QDoubleSpinBox, QWidget, QFrame, QFileDialog, QTimeEdit,
-    QScrollArea, QApplication, QSizePolicy, QMenu
+    QScrollArea, QApplication, QSizePolicy, QMenu, QCheckBox
 )
 from PySide6.QtCore import Qt, QTime, QTimer
 
@@ -263,6 +263,7 @@ class PageBuilderMixin:
         self.max_conn = self._slider(1, 64, min(64, int(ex.get("max_connections", 16) or 16)))
         self._row(g, "Max Connections", "Ceiling on parallel connections per download",
                   self.max_conn)
+        self._lines_row(g, ex)
         self._proxy_url = (ex.get("proxy") or "").strip()
         self.proxy_btn = QPushButton("Configure" if not self._proxy_url else "Edit")
         self.proxy_btn.clicked.connect(self._config_proxy)
@@ -289,6 +290,49 @@ class PageBuilderMixin:
         self._row(g, "Per-host rules", "Override segments / force yt-dlp per host", self.hostrules_btn)
         v.addWidget(f); v.addStretch()
         return sa
+
+    def _lines_row(self, g, ex):
+        """Several internet connections for one download (lines.py; specs/
+        2026-11-13-multi-line-downloads-design.md): the switch, and a tick for
+        each line found. A saved line not plugged in now keeps its tick
+        (chosen_lines); none saved yet ticks every one."""
+        import lines
+        label = "Use more than one internet connection"
+        desc = ("Adds speed only when each is its own internet line - a phone, "
+                "another router. A phone's data counts against its plan.")
+        self.multi_line = self._toggle(ex.get("multi_line", False))
+        self._row(g, label, desc, self.multi_line)
+        saved = ex.get("lines")
+        self._lines_saved = list(saved or [])
+        self._line_ticks = {}
+        box = QVBoxLayout(); box.setSpacing(4)
+        by_router = {}
+        for name, ip, gw in lines.available():
+            text = f"{name} ({ip})"
+            if gw in by_router:
+                text += f" - same router as {by_router[gw]}: adds no speed"
+            else:
+                by_router[gw] = name
+            cb = QCheckBox(text)
+            cb.setChecked(saved is None or name in self._lines_saved)
+            self._line_ticks[name] = cb
+            box.addWidget(cb)
+        if len(self._line_ticks) < 2:
+            none = QLabel("No second connection found")
+            none.setStyleSheet(f"color:{COLORS['muted']};background:transparent;")
+            box.addWidget(none)
+        self._row_more(g, label, desc, box)
+        self.multi_line.toggled.connect(self._lines_enabled)
+        self._lines_enabled(self.multi_line.isChecked())
+
+    def _lines_enabled(self, on):
+        for cb in self._line_ticks.values():
+            cb.setEnabled(bool(on))
+
+    def chosen_lines(self):
+        """The ticked lines, then the saved ones not found now."""
+        return ([n for n, cb in self._line_ticks.items() if cb.isChecked()]
+                + [n for n in self._lines_saved if n not in self._line_ticks])
 
     def _open_host_rules(self):
         from gui2.dialogs.host_rules import HostRulesDialog

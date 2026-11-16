@@ -296,6 +296,7 @@ class SettingsMixin:
         ex = self._extras
         mc = ex.get("max_connections")
         utils.MAX_CONNECTIONS = int(mc) if mc else 0
+        utils.LINES = list(ex.get("lines") or []) if ex.get("multi_line") else []
         utils.LISTEN_PORT = int(ex.get("listen_port", 0) or 0)
         utils.DISK_CACHE = bool(ex.get("disk_cache", True))
         utils.PREALLOCATE = bool(ex.get("preallocate", False))
