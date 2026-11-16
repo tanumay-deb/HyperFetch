@@ -69,7 +69,11 @@ still has 1.9.3, 1.9.5's and 1.9.4's notes are kept below it.
   yt-dlp is never offered one piece of its video (Vimeo's loads it in pieces
   of a few MB), only its playlist.
 - A video protected by DRM, which HyperFetch cannot save, gets no button:
-  the worker reads a DASH playlist and leaves out one that declares DRM.
+  a DASH playlist that declares DRM, or an HLS stream HyperFetch 2.8.9 calls
+  locked (FairPlay, PlayReady, Widevine), is left out.
+- A quality clicked in the first second goes with the playlist it was picked
+  from, and a video inside a player is named after the player's title, not
+  a hidden caption.
 1.9.5
 - The popup checks the saved pairing with the HyperFetch app as it opens,
   and pairs again when the app no longer knows it. It used to say "paired"
