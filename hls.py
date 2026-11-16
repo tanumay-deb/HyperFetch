@@ -94,6 +94,11 @@ def probe_variants(url, headers=None):
     return probe(url, headers)["variants"]
 
 
+# A key this engine cannot use: anything but AES-128 (FairPlay, PlayReady,
+# Widevine, SAMPLE-AES) - _decrypt stops with "unsupported HLS encryption".
+_LOCKED = re.compile(r"#EXT-X-(?:SESSION-)?KEY:[^\r\n]*METHOD=(?!NONE\b|AES-128\b)", re.I)
+
+
 def probe(url, headers=None):
     """What the extension's /probe says of a playlist::
 
@@ -118,7 +123,7 @@ def probe(url, headers=None):
     if "#EXT-X-STREAM-INF" not in text:
         # media playlist — single quality
         seconds, live = _playlist_facts(text)
-        return {"variants": [], "duration": seconds, "live": live}
+        return _locked({"variants": [], "duration": seconds, "live": live}, text)
 
     lines = text.splitlines()
     variants = []
@@ -145,10 +150,11 @@ def probe(url, headers=None):
     variants.sort(key=lambda v: (v["height"], v["bandwidth"]), reverse=True)
 
     # estimate sizes from the top variant's total duration (one extra fetch)
-    duration, live = 0.0, False
+    duration, live, best = 0.0, False, ""
     if variants:
         try:
-            duration, live = _playlist_facts(_playlist_text(_get(sess, variants[0]["url"], base)))
+            best = _playlist_text(_get(sess, variants[0]["url"], base))
+            duration, live = _playlist_facts(best)
         except requests.RequestException:
             duration, live = 0.0, False
 
@@ -163,7 +169,16 @@ def probe(url, headers=None):
         size = int(v["bandwidth"] / 8 * duration) if (duration and v["bandwidth"]) else 0
         out.append({"label": label, "height": v["height"],
                     "bandwidth": v["bandwidth"], "url": v["url"], "size": size})
-    return {"variants": out, "duration": duration, "live": live}
+    # a master is judged by its best rendition (and its own session keys)
+    return _locked({"variants": out, "duration": duration, "live": live}, text + best)
+
+
+def _locked(found, text):
+    """`found` with "locked": True when `text` is keyed so this engine cannot
+    decrypt it; the key is left out otherwise, so the answer is what it was."""
+    if _LOCKED.search(text):
+        found["locked"] = True
+    return found
 
 
 def _playlist_text(r):

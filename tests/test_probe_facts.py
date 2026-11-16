@@ -38,6 +38,11 @@ def media(first=0, count=5, seconds=4.0, endlist=True, ptype=None, seq_tag=True)
     return "\n".join(out) + "\n"
 
 
+def keyed(key):
+    """A finished media playlist encrypted with `key` (an #EXT-X-KEY line)."""
+    return media(count=5).replace("#EXT-X-MEDIA-SEQUENCE:0", "#EXT-X-MEDIA-SEQUENCE:0\n" + key)
+
+
 MASTER = ("#EXTM3U\n"
           "#EXT-X-STREAM-INF:BANDWIDTH=800000,RESOLUTION=854x480\nlow.m3u8\n"
           "#EXT-X-STREAM-INF:BANDWIDTH=2400000,RESOLUTION=1280x720\nhigh.m3u8\n")
@@ -56,6 +61,10 @@ def playlists():
         "high.m3u8": media(count=6, seconds=5.0),                       # 30 s
         "low.m3u8": media(count=6, seconds=5.0),
         "livemaster.m3u8": MASTER.replace("high.m3u8", "ad.m3u8"),
+        "fairplay.m3u8": keyed('#EXT-X-KEY:METHOD=SAMPLE-AES,URI="skd://k42",'
+                               'KEYFORMAT="com.apple.streamingkeydelivery"'),
+        "lockedmaster.m3u8": MASTER.replace("high.m3u8", "fairplay.m3u8"),
+        "aes.m3u8": keyed('#EXT-X-KEY:METHOD=AES-128,URI="key.bin"'),
     }
     hits = []
 
@@ -150,3 +159,24 @@ def test_the_endpoint_passes_length_and_live_on(playlists, tmp_path):
     body = r.get_json()
     assert body["duration"] == 30.0 and body["live"] is False
     assert [v["label"] for v in body["variants"]] == ["720p", "480p"]
+
+
+# ---- a stream the app cannot save ----------------------------------------------
+# The engine decrypts AES-128 only ("unsupported HLS encryption" otherwise):
+# FairPlay, PlayReady, Widevine and SAMPLE-AES streams get no button
+# (extension 1.9.6 drops a playlist the probe calls locked).
+def test_a_stream_locked_by_drm_says_so(playlists):
+    assert hls.probe(playlists.url("fairplay.m3u8"))["locked"] is True
+    got = hls.probe(playlists.url("lockedmaster.m3u8"))
+    assert got["locked"] is True, "a master is judged by its best rendition"
+    assert playlists.hits[-2:] == ["lockedmaster.m3u8", "fairplay.m3u8"], "no fetch more than before"
+
+
+def test_an_aes_128_or_plain_stream_is_not_locked(playlists):
+    assert "locked" not in hls.probe(playlists.url("aes.m3u8"))
+    assert "locked" not in hls.probe(playlists.url("master.m3u8"))
+
+
+def test_the_endpoint_passes_locked_on(playlists, tmp_path):
+    c = create_app(_Queue(), str(tmp_path), pending=deque()).test_client()
+    assert c.post("/probe", json={"url": playlists.url("fairplay.m3u8")}).get_json()["locked"] is True

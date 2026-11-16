@@ -131,6 +131,25 @@ async function test(name, fn) {
     assert.ok(state.fetched.includes(MPD), 'it was read to find out');
   });
 
+  // The app's HLS engine decrypts AES-128 only ("unsupported HLS encryption"
+  // otherwise); FairPlay, PlayReady, Widevine and SAMPLE-AES streams fail there.
+  const keyed = (key) => VOD.replace('#EXT-X-MEDIA-SEQUENCE:0', '#EXT-X-MEDIA-SEQUENCE:0\n' + key);
+  await test('an HLS stream locked by DRM is offered to nobody; AES-128 and plain ones are', async () => {
+    const fairplay = '#EXT-X-KEY:METHOD=SAMPLE-AES,URI="skd://key42",KEYFORMAT="com.apple.streamingkeydelivery"';
+    const files = {
+      'https://cdn.x/fp/index.m3u8': keyed(fairplay),
+      'https://cdn.x/wv/master.m3u8': MASTER.replace(/720\/index|480\/index/g, (m) => 'wv' + m),
+      'https://cdn.x/wv/wv720/index.m3u8': keyed('#EXT-X-KEY:METHOD=SAMPLE-AES-CTR,URI="data:text/plain;base64,AAAA",KEYFORMAT="urn:uuid:edef8ba9-79d6-4ace-a3c8-27dcd51d21ed"'),
+      'https://cdn.x/aes/index.m3u8': keyed('#EXT-X-KEY:METHOD=AES-128,URI="key.bin"'),
+      'https://cdn.x/open/index.m3u8': VOD,
+    };
+    const { state } = load({ files });
+    for (const u of Object.keys(files).filter((u) => !u.includes('wv720'))) state.onResponse(response(u));
+    for (let i = 0; i < 5; i++) await settle();
+    assert.deepStrictEqual(state.sent.map((s) => s.msg.url).sort(),
+                           ['https://cdn.x/aes/index.m3u8', 'https://cdn.x/open/index.m3u8']);
+  });
+
   for (const asker of [{ initiator: 'https://myvimeo.com' }, { documentUrl: 'https://embed.example/e/1' }]) {
     await test('a player frame on another site is offered its file: ' + JSON.stringify(asker), async () => {
       const { state } = load();
@@ -187,6 +206,24 @@ async function test(name, fn) {
     assert.strictEqual(m.live, false);
     assert.strictEqual(m.frameId, 0);
     assert.strictEqual(m.variants.length, 2);
+  });
+
+  await test('a stream the app calls locked is offered to nobody, and not asked about again', async () => {
+    const url = 'https://gated.x/fp/index.m3u8';
+    let asked = 0;
+    const probeImpl = () => {
+      asked++;
+      return Promise.resolve({ ok: true, json: () => Promise.resolve(
+        { variants: [], duration: 20, live: false, locked: true }) });
+    };
+    const { state } = load({ probeImpl });
+    state.onResponse(response(url, { frameId: 2 }));
+    await settle();
+    state.onResponse(response(url, { frameId: 2 }));   // a player refreshing it
+    await settle();
+    assert.deepStrictEqual(state.sent, []);
+    assert.strictEqual(asked, 1);
+    assert.deepStrictEqual(state.fetched, [], 'the app answered; the worker must not fetch as well');
   });
 
   await test("the app's answer is passed on: length and live", async () => {

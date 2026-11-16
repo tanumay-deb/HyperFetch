@@ -785,6 +785,7 @@ function probeViaApp(url, referer, storeId) {
             variants: Array.isArray(j.variants) ? j.variants : [],
             duration: Number(j.duration) || 0,
             live: !!j.live,
+            locked: !!j.locked,          // an app before 2.8.9 never says so
           } : null))
           .catch(() => resolve(null));   // app offline -> fall back
       });
@@ -800,12 +801,13 @@ async function probeViaFetch(url) {
   catch (e) { return null; }            // couldn't read it at all
   const variants = parseHlsVariants(text, url);
   if (!variants.length) {               // single-quality / unreadable-as-master
-    return Object.assign({ variants: [] }, mediaPlaylistFacts(text));
+    return Object.assign({ variants: [], locked: HLS_LOCKED.test(text) }, mediaPlaylistFacts(text));
   }
   let facts = { duration: 0, live: false };
+  let best = "";                        // a master is judged by its best quality
   try {
-    facts = mediaPlaylistFacts(
-      await (await fetch(variants[0].url, { credentials: "include" })).text());
+    best = await (await fetch(variants[0].url, { credentials: "include" })).text();
+    facts = mediaPlaylistFacts(best);
   } catch (e) { /* sizes omitted */ }
   const duration = facts.duration;
   return {
@@ -817,6 +819,7 @@ async function probeViaFetch(url) {
     })),
     duration,
     live: facts.live,
+    locked: HLS_LOCKED.test(text + best),
   };
 }
 
@@ -829,6 +832,13 @@ async function drmProtected(url) {
     return /<(?:\w+:)?ContentProtection\b/i.test(text);
   } catch (e) { return false; }
 }
+// An HLS stream keyed with anything but AES-128 - FairPlay, PlayReady,
+// Widevine, SAMPLE-AES - cannot be saved either: the app's engine stops with
+// "unsupported HLS encryption". The app's /probe says "locked" (hls._LOCKED);
+// the worker's own read below asks the same of what it reads. Remembered,
+// so a live one is not probed again on every refresh.
+const HLS_LOCKED = /#EXT-X-(?:SESSION-)?KEY:[^\r\n]*METHOD=(?!NONE\b|AES-128\b)/i;
+const lockedHls = new Set();
 
 // A sniffed stream goes to the frame that asked for it - an embedded player's
 // script picks its button from it (the page script runs in every frame since
@@ -850,6 +860,7 @@ async function handleHls(url, tabId, fallbackName, referer, storeId, frameId, da
   const deliver = (payload) => {
     if (tabId >= 0) tellFrames(tabId, Object.assign({}, payload, { frameId }), frameId);
   };
+  if (lockedHls.has(url)) return;
   const cached = parsedHls.get(url);   // re-deliver to a new tab, no re-probe
   if (cached) {
     deliver(cached);
@@ -864,6 +875,7 @@ async function handleHls(url, tabId, fallbackName, referer, storeId, frameId, da
     if (!appAnswered) probed = await probeViaFetch(url);    // SW fallback
     const definite = appAnswered || probed !== null;        // got a real answer?
     const variants = probed ? probed.variants : null;
+    if (probed && probed.locked) { lockedHls.add(url); return; }
     const facts = { duration: (probed && probed.duration) || 0, live: !!(probed && probed.live) };
 
     if (!variants || !variants.length) {
