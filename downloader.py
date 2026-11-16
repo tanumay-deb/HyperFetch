@@ -11,6 +11,8 @@ import time
 import shutil
 import logging
 import collections
+import ipaddress
+import socket
 import tempfile
 import threading
 import urllib.parse
@@ -21,13 +23,28 @@ import requests
 import urllib3
 from requests.adapters import HTTPAdapter
 
+import lines
 import utils
 import task as T
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 
-def _make_session(pool):
+class _BoundAdapter(HTTPAdapter):
+    """Connections from one local address: one internet connection ("line")
+    of several. Windows sends a connection bound to an adapter's address out
+    of that adapter when it has its own default gateway."""
+
+    def __init__(self, source, **kw):
+        self._source = source
+        super().__init__(**kw)
+
+    def init_poolmanager(self, *a, **kw):
+        kw["source_address"] = (self._source, 0)
+        super().init_poolmanager(*a, **kw)
+
+
+def _make_session(pool, source=None):
     """A keep-alive session whose connection pool is sized to the segment count.
     Reusing one session across a download's segments and retries avoids a fresh
     TCP+TLS handshake per request — the biggest single throughput win on HTTPS
@@ -35,7 +52,8 @@ def _make_session(pool):
     GETs; sizing the pool to the segment count avoids 'pool is full' churn that
     would silently discard (and not reuse) connections."""
     s = requests.Session()
-    ad = HTTPAdapter(pool_connections=pool, pool_maxsize=pool, max_retries=0)
+    kw = dict(pool_connections=pool, pool_maxsize=pool, max_retries=0)
+    ad = _BoundAdapter(source, **kw) if source else HTTPAdapter(**kw)
     s.mount("http://", ad)
     s.mount("https://", ad)
     return s
@@ -46,6 +64,7 @@ def _make_session(pool):
 # Over loopback, server in the same process, the smaller reads still moved
 # 2.7 Gbit/s (1 MiB: 4.8).
 CHUNK = 65536
+MiB = 1024 * 1024
 DEFAULT_SEGMENTS = 8   # parallel connections when the server supports ranges
 HEADERS = utils.DEFAULT_HEADERS
 CONNECT_TIMEOUT = 15
@@ -303,6 +322,15 @@ class Downloader:
         self._dead = set()              # links dropped in this run
         self._to_own = set()            # segments an extra link was too busy for
         self._handed = collections.Counter()  # parts each extra link handed back
+        # internet connections this download is spread over (_pick_lines):
+        # (name, address) in Settings' order, a session bound to each, and
+        # per line the requests running, the streams, failures in a row
+        self._lines = []
+        self._line_sessions = {}
+        self._line_running = collections.Counter()
+        self._line_streams = collections.Counter()
+        self._line_fails = collections.Counter()
+        self._line_dead = set()
         # one keep-alive session for this download's probe + all segment threads.
         # Auto mode (num_segments==0) can fan out to 32 segments, so size for that.
         self._session = _make_session(max(8, self.num_segments or 32))
@@ -350,11 +378,14 @@ class Downloader:
                 self._max_conns += 1
                 self._conn_cv.notify_all()
 
-    def _streams(self, n, src):
+    def _streams(self, n, src, line=None):
         with self._conn_cv:
             self._streaming += n
             self.t.http_conns = self._streaming     # what the window shows
             self._link_streams[src] += n
+            if line is not None:
+                self._line_streams[line] += n
+                self.t.line_conns = {name: self._line_streams[name] for name, _ in self._lines}
             if n > 0:
                 self._served.add(src)
                 self._link_ok |= src == self.url
@@ -406,6 +437,77 @@ class Downloader:
                 held += sum(1 for s, t in self._ends if s == src and t >= sent - PUSHBACK_LAG)
             self._max_conns = max(1, min(self._max_conns, held))
             return True
+
+    # ------------------------------------------------------------ lines
+    def _pick_lines(self):
+        """The internet connections this download is spread over: [] unless
+        two or more of those ticked in Settings are there now, and this is a
+        file fetched in parts straight from its server. A proxy or the relay
+        ("Get past provider blocks") is one place to connect to; videos,
+        streams and torrents keep one line (specs/2026-11-13-multi-line-
+        downloads-design.md)."""
+        if (not utils.LINES or self._media or not self.t.supports_range
+                or self.t.total_size < 2 * MiB):
+            return []
+        if utils.PROXIES or (utils.PROXIES is None
+                             and requests.utils.get_environ_proxies(self.url)):
+            return []
+        parts = urllib.parse.urlsplit(self.url)
+        host = parts.hostname or ""
+        try:
+            ipaddress.ip_address(host)
+        except ValueError:
+            # a name the relay carries resolves to it, on loopback; a lookup
+            # without a port is given the real address (doh._tcp_port)
+            port = parts.port or (443 if parts.scheme == "https" else 80)
+            try:
+                found = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
+            except OSError:
+                found = []
+            if any(ipaddress.ip_address(f[4][0]).is_loopback for f in found):
+                return []
+        found = lines.addresses(utils.LINES)
+        return found if len(found) >= 2 else []
+
+    def _take_line(self):
+        """The line for the next request: the one with the fewest running,
+        the first in Settings' order of equals. None once every line has
+        been dropped: the request goes out unbound, as with one line."""
+        with self._conn_cv:
+            live = [name for name, _ in self._lines if name not in self._line_dead]
+            if not live:
+                return None
+            name = min(live, key=lambda n: self._line_running[n])
+            self._line_running[name] += 1
+            return name
+
+    def _leave_line(self, name):
+        if name is not None:
+            with self._conn_cv:
+                self._line_running[name] -= 1
+
+    def _line_failed(self, name, why):
+        """A request on line `name` failed before it streamed. Two in a row
+        and the line is dropped for this run (unplugged, no route, or a link
+        tied to another address). True while another line is live: the part
+        just goes again, so a line never fails a download another can finish."""
+        with self._conn_cv:
+            self._line_fails[name] += 1
+            dropped = self._line_fails[name] >= 2 and name not in self._line_dead
+            if dropped:
+                self._line_dead.add(name)
+            others = any(n != name and n not in self._line_dead for n, _ in self._lines)
+        if dropped:
+            self.t.log_event(f"Stopped using {name}: {why}", level="WARNING")
+            log.warning("line %s dropped for %s: %s", name, self.t.filename, why)
+        return others
+
+    def _close_sessions(self):
+        for s in [self._session, *self._line_sessions.values()]:
+            try:
+                s.close()
+            except Exception:
+                pass
 
     # ------------------------------------------------------------------ probe
     def _capture_response(self, r):
@@ -557,6 +659,10 @@ class Downloader:
             return
 
         n = parts_for(self.t.total_size, self.num_segments)
+        if self._lines:
+            # more parts than connections, so a line that finishes its parts
+            # sooner takes the next ones: the faster line fetches more
+            n = min(4 * n * len(self._lines), max(1, self.t.total_size // MiB))
 
         part = self.t.total_size // n
         segs = []
@@ -632,6 +738,8 @@ class Downloader:
                 headers = {**HEADERS, "Range": headers["Range"]}
             if not self._acquire_conn():
                 return  # paused while waiting for a connection slot
+            line = self._take_line() if self._lines else None
+            session = self._line_sessions.get(line, self._session)
             retry_exc = None
             wait_attempt = attempts
             accepted = False
@@ -640,7 +748,7 @@ class Downloader:
             try:
                 # with-block guarantees the response/socket closes on every
                 # path — incl. raise_for_status() failures and mid-stream errors
-                with self._session.get(src, headers=headers, stream=True,
+                with session.get(src, headers=headers, stream=True,
                                   allow_redirects=True, timeout=CONNECT_TIMEOUT,
                                   verify=utils.VERIFY_TLS, proxies=utils.PROXIES) as r:
                     r.raise_for_status()
@@ -667,7 +775,9 @@ class Downloader:
                                         seg.index, self.t.filename, r.status_code, cr or "no range")
                         return
                     accepted = True
-                    self._streams(+1, src)
+                    if line is not None:
+                        self._line_fails[line] = 0
+                    self._streams(+1, src, line)
                     try:
                         self._grow_conns()          # stream accepted -> ramp up one more slot
                         self._capture_response(r)   # for the drawer's Headers tab
@@ -689,7 +799,7 @@ class Downloader:
                                     f.flush()
                                     seg.downloaded += len(chunk)
                     finally:
-                        self._streams(-1, src)
+                        self._streams(-1, src, line)
                 if self.t.supports_range and not seg.complete:
                     # A server may answer a range with less than was asked:
                     # the rest is asked for. The part stopped there, and the
@@ -709,6 +819,9 @@ class Downloader:
             except (requests.RequestException, MirrorMismatch) as e:
                 resp = getattr(e, "response", None)
                 code = resp.status_code if resp is not None else None
+                if (line is not None and not accepted and not isinstance(e, MirrorMismatch)
+                        and self._line_failed(line, f"HTTP {code}" if code else "could not connect")):
+                    continue            # another line takes the part, at once
                 if src != self.url:
                     busy = not isinstance(e, MirrorMismatch) and code in (403, 429, None)
                     if busy and not self._link_streams[src] and src not in self._served:
@@ -807,6 +920,7 @@ class Downloader:
                 # up to 60 s of sleep would re-create the cross-task starvation the
                 # global cap was added to prevent.
                 self._release_conn()
+                self._leave_line(line)
             if retry_exc is not None:
                 self._backoff_sleep(retry_exc, wait_attempt)
 
@@ -841,10 +955,7 @@ class Downloader:
         try:
             self._run()
         finally:
-            try:
-                self._session.close()
-            except Exception:
-                pass
+            self._close_sessions()
 
     def _run(self):
         # magnet / .torrent -> aria2c sidecar engine, not an HTTP byte download
@@ -892,8 +1003,10 @@ class Downloader:
                         and ext not in ("", ".html", ".htm")):
                     self._web_page()
                     return
+                self._lines = self._pick_lines()
                 self._build_segments()
             else:
+                self._lines = self._pick_lines()        # read afresh at each start
                 if self.t.total_size > 0 and not os.path.exists(temp_path):
                     for seg in self.t.segments:
                         seg.downloaded = 0
@@ -930,10 +1043,7 @@ class Downloader:
         try:
             return self._run_media()
         finally:
-            try:
-                self._session.close()
-            except Exception:
-                pass
+            self._close_sessions()
 
     def _run_media(self):
         temp_path = utils.temp_download_path(self.t)
@@ -1000,9 +1110,21 @@ class Downloader:
         # _run_media); each stream that connects grows the gate by 1 (up to
         # the real segment count), and 429s/resets halve it — the task
         # self-tunes to what the server tolerates instead of failing.
+        # The cap: the connections the setting gives, on each line; never more
+        # than parts. Parts cut for two lines and resumed with one stay on one
+        # line's count (it was one connection per part).
         n = max(1, len(self.t.segments))
-        self._conn_cap = n
-        self._max_conns = min(first, n)
+        per_line = parts_for(self.t.total_size, self.num_segments) if self.t.supports_range else 1
+        self._conn_cap = min(n, max(1, per_line) * max(1, len(self._lines)))
+        self._max_conns = min(first, self._conn_cap)
+        if self._lines:
+            for name, ip in self._lines:
+                s = _make_session(max(8, self._conn_cap), source=ip)
+                s.cookies.update(self._session.cookies)
+                self._line_sessions[name] = s
+            names = ", ".join(name for name, _ in self._lines)
+            self.t.log_event(f"Using {len(self._lines)} internet connections: {names}")
+            log.info("%s over %d lines: %s", self.t.filename, len(self._lines), names)
 
         self.t.recompute_downloaded()
         log.info("HTTP %s: %d segment(s), %d bytes, range=%s",
@@ -1023,6 +1145,7 @@ class Downloader:
         for th in threads:
             th.join()
         self.t.recompute_downloaded()
+        self.t.line_conns = {}
 
         # ---- decide final state ----
         if self.t.cancel_requested:

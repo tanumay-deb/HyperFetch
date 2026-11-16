@@ -183,6 +183,8 @@ class DownloadTask:
         # connections streaming now, set by the HTTP engine (transient): a big
         # file has 32 unfinished parts and starts on one connection
         self.http_conns = 0
+        # the same per internet connection, when it runs on several (transient)
+        self.line_conns = {}
 
         # live torrent swarm stats (transient; set by TorrentDownloader's reader)
         self.tor_conns = 0          # connected peers
