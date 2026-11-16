@@ -34,7 +34,7 @@ ejs_datas, ejs_binaries, ejs_hidden = collect_all('yt_dlp_ejs')
 hidden = (
     # local modules reached via lazy `import` inside functions
     ['hls', 'downloader', 'queue_manager', 'api_server', 'task', 'utils',
-     'crash_reporter', 'updater', 'torrent', 'aria2d', 'yt_dl', 'doh', 'unblock', 'upnp',
+     'crash_reporter', 'updater', 'torrent', 'aria2d', 'yt_dl', 'doh', 'unblock', 'upnp', 'lines',
      'history', 'trackers', 'scrape', 'swarm', 'third_party',
      'gui2.dialogs.history', 'gui2.dialogs.queues', 'gui2.dialogs.console',
      'gui2.dialogs.host_rules', 'gui2.dialogs.welcome']

@@ -33,7 +33,7 @@ hyperfetch = "main:main"
 [tool.setuptools]
 py-modules = [
     "main", "api_server", "aria2d", "crash_reporter", "doh", "downloader", "history",
-    "hls", "pairing", "plain_errors", "queue_manager", "scrape", "swarm", "task",
+    "hls", "lines", "pairing", "plain_errors", "queue_manager", "scrape", "swarm", "task",
     "third_party", "torrent", "trackers", "unblock", "updater", "upnp", "utils",
     "web_auth", "yt_dl",
 ]
