@@ -52,7 +52,7 @@ function load({ files = {}, probeImpl, answer } = {}) {
         : Promise.reject(new Error('unreadable'));
     },
     navigator: { userAgent: 'test' },
-    console,
+    console, setTimeout, clearTimeout,
   };
   vm.runInContext(BG, vm.createContext(sandbox), { filename: 'background.js' });
   return { sb: sandbox, state };
@@ -272,6 +272,37 @@ async function test(name, fn) {
                       url: 'https://embed.example/player/abc' }, () => {});
     assert.strictEqual(calls[0][2], 'https://embed.example/player/abc',
       'the video server sees the page the player is on, not the site around it');
+  });
+
+  // Edge, ~1 run in 3 (2026-11-13): a click in the first second sent the
+  // quality hls.js had fetched, before the worker had read its master - and
+  // without the master the app cannot find a sound kept in its own playlist.
+  await test('a quality clicked before its master is read goes with its master', async () => {
+    const master = 'https://cdn.x/film/master.m3u8';
+    const q720 = 'https://cdn.x/film/720/index.m3u8';
+    const { sb, state } = load({ files: { [master]: MASTER, [q720]: VOD } });
+    const calls = [];
+    sb.sendToApp = (...a) => calls.push(a);
+    state.onResponse(response(master, { frameId: 6 }));
+    state.onResponse(response(q720, { frameId: 6 }));
+    state.onMessage({ type: 'DOWNLOAD_URL', url: q720, filename: 'Film.m3u8' },
+                    { tab: { id: 4, url: 'https://site.example/w' }, frameId: 6,
+                      url: 'https://embed.example/player/1' }, () => {});
+    for (let i = 0; i < 50 && !calls.length; i++) await settle();
+    assert.strictEqual(calls.length, 1);
+    assert.strictEqual(calls[0][0], q720);
+    assert.strictEqual(calls[0][4].hlsMaster, master, 'sent without the master it was picked from');
+  });
+
+  await test('a stream with no master known is sent at once, as before', async () => {
+    const { sb, state } = load();
+    const calls = [];
+    sb.sendToApp = (...a) => calls.push(a);
+    state.onMessage({ type: 'DOWNLOAD_URL', url: 'https://cdn.x/clip.mp4', filename: 'c.mp4' },
+                    { tab: { id: 4, url: 'https://site.example/w' }, frameId: 0 }, () => {});
+    await settle();
+    assert.strictEqual(calls.length, 1);
+    assert.strictEqual(calls[0][4].hlsMaster, undefined);
   });
 
   // ---- the page's list sends a frame's stream: that frame's address --------

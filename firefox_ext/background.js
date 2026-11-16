@@ -532,15 +532,25 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     // asked (the worker keeps no record of frames, and may have been restarted);
     // it answers only for a stream it was told of, else the page's address goes.
     const tabId = sender && sender.tab ? sender.tab.id : -1;
-    if (Number.isInteger(msg.frameId) && msg.frameId > 0 && tabId >= 0 &&
-        msg.frameId !== sender.frameId) {
-      chrome.tabs.sendMessage(tabId, { type: "HYPERFETCH_ADDRESS", url: msg.hlsMaster || msg.url },
-        { frameId: msg.frameId }, (res) => {
-          ignoreErr();
-          send(res && webLink(res.href) ? res.href : own);
-        });
+    const go = () => {
+      if (!webLink(msg.hlsMaster) && variantMaster.has(msg.url)) msg.hlsMaster = variantMaster.get(msg.url);
+      if (Number.isInteger(msg.frameId) && msg.frameId > 0 && tabId >= 0 &&
+          msg.frameId !== sender.frameId) {
+        chrome.tabs.sendMessage(tabId, { type: "HYPERFETCH_ADDRESS", url: msg.hlsMaster || msg.url },
+          { frameId: msg.frameId }, (res) => {
+            ignoreErr();
+            send(res && webLink(res.href) ? res.href : own);
+          });
+      } else {
+        send(own);
+      }
+    };
+    // a quality whose master may still be being read (see variantMaster)
+    if (!webLink(msg.hlsMaster) && !variantMaster.has(msg.url) && hlsReading.size) {
+      Promise.race([Promise.allSettled([...hlsReading]),
+                    new Promise((r) => setTimeout(r, HLS_WAIT_MS))]).then(go);
     } else {
-      send(own);
+      go();
     }
     return true; // keep the message channel open for the async response
   }
@@ -686,6 +696,13 @@ const SEGMENT_CT = /(mp2t|iso\.segment)/i;
 // webRequest hits will retry naturally.
 const parsedHls = new Map();
 const inFlightHls = new Set();
+// Which master each quality came from, and the playlists being read now. A
+// quality clicked in the first second - fetched by the player before its
+// master had been read here - waits up to HLS_WAIT_MS for that and goes with
+// its master (Edge, ~1 run in 3 sent it without).
+const variantMaster = new Map();
+const hlsReading = new Set();
+const HLS_WAIT_MS = 3000;
 
 function resolveUrl(u, base) {
   try { return new URL(u, base).href; } catch (e) { return u; }
@@ -856,6 +873,7 @@ async function handleHls(url, tabId, fallbackName, referer, storeId, frameId, da
       return;
     }
 
+    variants.forEach((v) => variantMaster.set(v.url, url));
     const payload = Object.assign({ type: "SNIFFED_HLS_MASTER", url,
                                     filename: fallbackName, variants }, facts);
     if (tabId >= 0) {
@@ -914,8 +932,11 @@ chrome.webRequest.onResponseStarted.addListener(
     // Pass the page URL so the app can send a real Referer to gated CDNs.
     if (kind === "hls") {
       const referer = details.documentUrl || details.originUrl || details.initiator || "";
-      handleHls(details.url, details.tabId, filename, referer, details.cookieStoreId,
-                details.frameId, /dash\+xml/i.test(contentType) || /\.mpd$/i.test(urlNoQ));
+      const reading = handleHls(details.url, details.tabId, filename, referer,
+        details.cookieStoreId, details.frameId,
+        /dash\+xml/i.test(contentType) || /\.mpd$/i.test(urlNoQ));
+      hlsReading.add(reading);
+      reading.finally(() => hlsReading.delete(reading));
       return;
     }
 
