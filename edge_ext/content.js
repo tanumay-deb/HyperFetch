@@ -728,12 +728,17 @@ function videoTitle(video) {
     const c = sanitizeName(a);
     if (c) return c;
   }
-  // climb a few ancestors looking for a caption/heading/title element
+  // climb a few ancestors looking for a caption/heading/title element - one
+  // that can be seen: Vimeo's player keeps a hidden "Playing in
+  // picture-in-picture" notice with "title" in its class
+  const seen = (c) => typeof c.checkVisibility !== 'function' ||
+    c.checkVisibility({ opacityProperty: true, visibilityProperty: true });
   let el = video;
   for (let depth = 0; el && depth < 5; depth++, el = el.parentElement) {
-    const cap = el.querySelector &&
-      el.querySelector('figcaption, h1, h2, [itemprop="name"], [class*="title" i]');
-    if (cap) {
+    const caps = el.querySelectorAll ?
+      el.querySelectorAll('figcaption, h1, h2, [itemprop="name"], [class*="title" i]') : [];
+    for (const cap of caps) {
+      if (!seen(cap)) continue;
       const c = sanitizeName(cap.textContent);
       if (c && c.length > 1) return c;
     }

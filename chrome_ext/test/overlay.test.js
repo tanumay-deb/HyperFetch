@@ -147,6 +147,28 @@ async function test(name, fn) {
     assert.strictEqual(state.sent.filename, 'Episode 1 Pilot - SomeSite.m3u8');
   });
 
+  // Vimeo's player (2026-11-13): its hidden picture-in-picture notice has
+  // "title" in its class, and the video was saved as "Playing in
+  // picture-in-picture". checkVisibility() said false for it; jsdom has none.
+  await test('a caption the player hides does not name the video', async () => {
+    for (const [seen, want] of [[false, 'The New Player.mp4'], [true, 'Playing in picture-in-picture.mp4']]) {
+      const { win, state } = makeEnv({ openShadow: true });
+      win.document.title = 'The New Player';
+      const box = win.document.createElement('div');
+      const note = win.document.createElement('div');
+      note.className = 'PipOverlay_module_title__82a6be37';
+      note.textContent = 'Playing in picture-in-picture';
+      note.checkVisibility = () => seen;
+      const v = mkVideo(win, { src: 'https://cdn.x/v.mp4' });
+      box.append(note, v);
+      win.document.body.appendChild(box);
+      await wait(300);
+      badges(win)[0].shadowRoot.querySelector('button')
+        .dispatchEvent(new win.MouseEvent('click', { bubbles: true }));
+      assert.strictEqual(state.sent.filename, want, 'seen: ' + seen);
+    }
+  });
+
   await test('element title/aria-label beats the page title', async () => {
     const { win, state } = makeEnv({ openShadow: true });
     win.document.title = 'Generic Page Title';
