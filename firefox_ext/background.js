@@ -617,8 +617,11 @@ if (chrome.downloads && chrome.downloads.onDeterminingFilename) {
             // Cancel before letting go. Releasing first would let Chrome start
             // saving the file we are about to take away from it.
             chrome.downloads.cancel(item.id, () => {
-              ignoreErr();
-              release();
+              // Cancelled, it is gone: suggest() on it is Chrome's "Unchecked
+              // runtime.lastError: Download must be in progress". Not
+              // cancelled (it got past us), it is still Chrome's: let it go on.
+              if (chrome.runtime.lastError) release();
+              else { released = true; clearTimeout(timer); }
               chrome.downloads.erase({ id: item.id }, () => { ignoreErr(); settle(); });
             });
           } else {

@@ -23,7 +23,7 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 function makeEnv({ online = true, port = 21456, reply = 'ok', delayMs = 0,
                    hang = false, patchSource = null, firefox = false,
                    pairRefused = false, requireToken = false,
-                   pairAnswer = 'unavailable', stranger = 0 } = {}) {
+                   pairAnswer = 'unavailable', stranger = 0, cancelFails = false } = {}) {
   const state = {
     stored: { token: 'tok', enabled: true },
     posts: [],           // download POSTs that reached the "app"
@@ -140,7 +140,14 @@ function makeEnv({ online = true, port = 21456, reply = 'ok', delayMs = 0,
         // Chrome has both events and must be captured through only the one;
         // Firefox has onCreated alone.
         onCreated: { addListener: (cb) => { state.createdHandler = cb; } },
-        cancel: (id, cb) => { state.cancelled.push(id); state.order.push('cancel'); cb && cb(); },
+        // cancelFails: Chrome's answer for a download that is no longer in progress
+        cancel: (id, cb) => {
+          state.order.push('cancel');
+          if (cancelFails) ctx.chrome.runtime.lastError = { message: 'Download must be in progress' };
+          else state.cancelled.push(id);
+          cb && cb();
+          ctx.chrome.runtime.lastError = null;
+        },
         erase: (q, cb) => { state.erased.push(q.id); cb && cb(); },
       }, firefox ? {} : {
         onDeterminingFilename: { addListener: (cb) => { state.filenameHandler = cb; } },
@@ -372,10 +379,23 @@ function capture(state, item) {
       'the capture never reached the app');
     assert.deepStrictEqual(state.cancelled, [9], "Chrome's copy was not cancelled");
     assert.deepStrictEqual(state.erased, [9], 'the cancelled entry was left in the list');
-    assert.strictEqual(calls.length, 1, 'suggest() must be called exactly once');
-    assert.deepStrictEqual(state.order, ['cancel', 'suggest'],
-      'released before cancelling — Chrome would start saving the file first');
-    console.log('  ok  a queued capture is cancelled in Chrome, then released');
+    // A cancelled download is gone: suggest() on it is Chrome's "Unchecked
+    // runtime.lastError: Download must be in progress", once per capture
+    // (seen in Edge and Chrome, 2026-11-13).
+    assert.strictEqual(calls.length, 0, 'suggest() was called on the cancelled download');
+    assert.deepStrictEqual(state.order, ['cancel']);
+    console.log('  ok  a queued capture is cancelled in Chrome, and not handed back');
+  }
+
+  // ---- the app took it, but Chrome could not cancel: Chrome keeps it --------
+  {
+    const { state } = makeEnv({ online: true, reply: 'queued', cancelFails: true });
+    await wait(10);
+    const { calls } = capture(state, { id: 10, url: 'https://x/done.bin', filename: 'done.bin' });
+    await wait(40);
+    assert.strictEqual(calls.length, 1, 'a download Chrome still has was never handed back');
+    assert.deepStrictEqual(state.order, ['cancel', 'suggest']);
+    console.log('  ok  a capture Chrome could not cancel is handed back to it');
   }
 
   // ---- a type the app does not take goes straight back to Chrome -----------
@@ -671,10 +691,10 @@ function capture(state, item) {
     await wait(100);
     assert.strictEqual(state.reloads, 0, 'reloaded while a download was being handed over');
     await wait(400);
-    assert.strictEqual(calls.length, 1, 'the download was not released exactly once');
+    assert.strictEqual(calls.length, 0, 'suggest() was called on the cancelled download');
     assert.deepStrictEqual(state.cancelled, [21], "Chrome's copy was not cancelled");
     assert.strictEqual(state.reloads, 1, 'the update was never applied after the handoff');
-    assert.deepStrictEqual(state.order, ['cancel', 'suggest', 'reload'],
+    assert.deepStrictEqual(state.order, ['cancel', 'reload'],
       'reloaded before the handoff had finished');
     console.log('  ok  an update waits for a capture to finish, then applies');
   }
