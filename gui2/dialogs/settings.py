@@ -19,7 +19,7 @@ except Exception:                       # fallback if unavailable
 from gui2.palette import COLORS, fpx, ACCENTS, set_accent
 from gui.icons import themed_icon
 from gui2.brand import BrandLogo
-from gui2.dialogs.settings_pages import PageBuilderMixin
+from gui2.dialogs.settings_pages import EVERYDAY, PageBuilderMixin
 
 _SECTIONS = ["General", "Downloads", "Network", "Torrents", "Browser", "Browser Access",
              "Appearance", "Advanced", "About"]
@@ -28,7 +28,7 @@ _SECTIONS = ["General", "Downloads", "Network", "Torrents", "Browser", "Browser 
 class SettingsDialogV2(PageBuilderMixin, QDialog):
     def __init__(self, parent, *, save_dir, max_concurrent, segments, verify_tls,
                  pair_token, theme, accent, sched_en, sched_start, sched_stop, extras=None,
-                 pair_requests=None, queues=None):
+                 pair_requests=None, queues=None, on_show_all=None):
         super().__init__(parent)
         self._queue_names = list(queues or ["Main"])    # for Default Queue
         self.setWindowTitle("Settings")
@@ -61,6 +61,18 @@ class SettingsDialogV2(PageBuilderMixin, QDialog):
             item = QListWidgetItem(themed_icon(ic, "muted"), s)
             self.nav.addItem(item)
         nv_lay.addWidget(self.nav, 1)
+
+        # the everyday options first; this shows the rest, in place (EVERYDAY)
+        sw = QHBoxLayout(); sw.setContentsMargins(8, 0, 4, 2)
+        sw_lbl = QLabel("Show all settings")
+        sw_lbl.setStyleSheet(f"color:{COLORS['muted']};font-weight:600;font-size:{fpx(12)};"
+                             "background:transparent;border:none;")
+        self.show_all = self._toggle(bool(ex.get("settings_show_all", False)))
+        self.show_all.toggled.connect(self._do_search)
+        if on_show_all is not None:          # kept as it is flipped, not only on Save
+            self.show_all.toggled.connect(on_show_all)
+        sw.addWidget(sw_lbl); sw.addStretch(); sw.addWidget(self.show_all)
+        nv_lay.addLayout(sw)
 
         # stats card — identical to the main-window sidebar (graph + readout)
         from gui2.speed_gauge import SpeedGraph
@@ -148,12 +160,15 @@ class SettingsDialogV2(PageBuilderMixin, QDialog):
     def _apply_search(self):
         """Filter settings across ALL sections: hide non-matching rows, hide
         panels left empty, narrow the nav to sections with a hit, and jump to
-        the first matching section when the current one has none."""
+        the first shown section when the current one has none. With no search,
+        the "Show all settings" switch decides: off, only the EVERYDAY rows
+        (and panels marked everyday) show. A search looks through every row."""
         if getattr(self, "_searching", False):
             return
         self._searching = True
         try:
             q = self.search.text().strip().lower()
+            show_all = self.show_all.isChecked()
             first_match = None
             for i in range(self.stack.count()):
                 inner = self.stack.widget(i).widget()
@@ -161,25 +176,29 @@ class SettingsDialogV2(PageBuilderMixin, QDialog):
                 for panel in inner.findChildren(QFrame):
                     if panel.objectName() != "panel":
                         continue
+                    kept = not q and bool(panel.property("everyday"))
                     rows = panel.findChildren(QWidget, "settingRow")
                     if rows:
-                        shown = False
+                        shown = kept
                         for rw in rows:
-                            m = (not q) or (q in (rw.property("searchText") or ""))
+                            m = (q in (rw.property("searchText") or "")) if q else (
+                                show_all or rw.property("label") in EVERYDAY)
                             rw.setVisible(m)
                             shown = shown or m
                         panel.setVisible(shown)
                         page_match = page_match or shown
                     else:   # panel without tagged rows (e.g. accent swatches)
-                        m = (not q) or any(q in l.text().lower() for l in panel.findChildren(QLabel))
+                        m = any(q in l.text().lower() for l in panel.findChildren(QLabel)) \
+                            if q else (show_all or kept)
                         panel.setVisible(m)
                         page_match = page_match or m
-                self.nav.setRowHidden(i, bool(q) and not page_match)
+                self.nav.setRowHidden(i, not page_match and (bool(q) or not show_all))
                 if page_match and first_match is None:
                     first_match = i
             cur = self.nav.currentRow()
-            if q and first_match is not None and (cur < 0 or self.nav.isRowHidden(cur)):
+            if first_match is not None and (cur < 0 or self.nav.isRowHidden(cur)):
                 self.nav.setCurrentRow(first_match)
+                self.stack.setCurrentIndex(first_match)
         finally:
             self._searching = False
 
@@ -192,6 +211,7 @@ class SettingsDialogV2(PageBuilderMixin, QDialog):
 
     def values(self):
         return {
+            "settings_show_all": self.show_all.isChecked(),
             "save_dir": self.dir_lbl.text(),
             "incomplete_dir": self.incomplete_dir,
             "max_concurrent": self.conc._slider.value(),

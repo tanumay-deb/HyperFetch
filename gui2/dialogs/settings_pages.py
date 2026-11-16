@@ -26,6 +26,16 @@ except Exception:                       # fallback if unavailable
 from gui2.palette import COLORS, fpx, ACCENTS, set_accent
 from gui.icons import themed_icon
 
+# The options Settings shows before "Show all settings", by row label: the
+# rest is tucked away in place (2026-11-16, specs/2026-11-16-settings-show-
+# all-design.md). A new row is tucked away unless it is named here.
+EVERYDAY = frozenset({
+    "Default Download Folder", "Check for updates automatically", "Close button behavior",
+    "Concurrent Downloads", "Download Speed Limit", "When download is complete",
+    "Ask before adding a download", "Seed after completing", "Upload speed limit",
+    "Browser Extension", "Paired Firefox browsers", "Font Size",
+})
+
 _SLIDER_QSS = (
     "QSlider::groove:horizontal{height:5px;background:%(b)s;border-radius:3px;}"
     "QSlider::sub-page:horizontal{background:%(a)s;border-radius:3px;}"
@@ -53,6 +63,7 @@ class PageBuilderMixin:
         # tag it with its searchable text (label + description).
         rw = QWidget(); rw.setObjectName("settingRow")
         rw.setProperty("searchText", f"{label} {desc or ''}".lower())
+        rw.setProperty("label", label)                 # EVERYDAY is by label
         r = QHBoxLayout(rw); r.setContentsMargins(0, 0, 0, 0); r.setSpacing(12)
         col = QVBoxLayout(); col.setSpacing(1)
         l = QLabel(label); l.setWordWrap(True)
@@ -70,6 +81,17 @@ class PageBuilderMixin:
         widget.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Preferred)
         r.addWidget(widget, 0, Qt.AlignRight | Qt.AlignVCenter)
         layout.addWidget(rw)
+
+    def _row_more(self, layout, label, desc, inner):
+        """A second line of controls for the row `label` (its time window,
+        say): tagged as that row, so search and "Show all settings" hide,
+        show and find it with it. Added loose, it stayed when its row went."""
+        w = QWidget(); w.setObjectName("settingRow")
+        w.setProperty("searchText", f"{label} {desc or ''}".lower())
+        w.setProperty("label", label)
+        inner.setContentsMargins(0, 0, 0, 0)
+        w.setLayout(inner)
+        layout.addWidget(w)
 
     def _toggle(self, on):
         t = AnimatedToggle()
@@ -210,7 +232,8 @@ class PageBuilderMixin:
                   "For everything HyperFetch downloads, torrents included. "
                   "Pick one or type your own, in Mb/s.", self.speed_limit)
         self.throttle_en = self._toggle(ex.get("throttle_enabled", False))
-        self._row(g, "Scheduled speed limit", "Throttle to a slower speed during a daily time window", self.throttle_en)
+        thr_desc = "Throttle to a slower speed during a daily time window"
+        self._row(g, "Scheduled speed limit", thr_desc, self.throttle_en)
         trow = QHBoxLayout()
         self.thr_start = QTimeEdit(QTime.fromString(ex.get("throttle_start", "09:00"), "HH:mm")); self.thr_start.setDisplayFormat("HH:mm")
         self.thr_stop = QTimeEdit(QTime.fromString(ex.get("throttle_stop", "17:00"), "HH:mm")); self.thr_stop.setDisplayFormat("HH:mm")
@@ -218,7 +241,7 @@ class PageBuilderMixin:
         trow.addWidget(QLabel("From")); trow.addWidget(self.thr_start)
         trow.addSpacing(8); trow.addWidget(QLabel("to")); trow.addWidget(self.thr_stop)
         trow.addSpacing(12); trow.addWidget(QLabel("limit")); trow.addWidget(self.thr_limit); trow.addStretch()
-        g.addLayout(trow)
+        self._row_more(g, "Scheduled speed limit", thr_desc, trow)
         self.when_complete = self._combo(["Show notification", "Open file", "Open folder",
                                           "Shut down PC", "Sleep", "Do nothing"],
                                          ex.get("when_complete"))
@@ -373,6 +396,7 @@ class PageBuilderMixin:
                   self.badge_corner)
         v.addWidget(f2)
         f3, g3 = self._card()
+        f3.setProperty("everyday", True)               # the pairing token: shown always
         trow = QHBoxLayout()
         tok = QLineEdit(self._token); tok.setReadOnly(True)
         copy = self._copy_button(lambda: self._token)
@@ -611,7 +635,7 @@ class PageBuilderMixin:
         self.t_stop = QTimeEdit(QTime.fromString(sstop, "HH:mm")); self.t_stop.setDisplayFormat("HH:mm")
         srow.addWidget(QLabel("Start")); srow.addWidget(self.t_start)
         srow.addSpacing(12); srow.addWidget(QLabel("Stop")); srow.addWidget(self.t_stop); srow.addStretch()
-        g.addLayout(srow)
+        self._row_more(g, "Scheduler", "Enable time-based scheduling", srow)
         self.hash_check = self._toggle(ex.get("hash_check", False))
         self._row(g, "Enable hash verification", "Verify file integrity after download", self.hash_check)
         self.debug_log = self._toggle(ex.get("debug_log", False))
@@ -653,6 +677,7 @@ class PageBuilderMixin:
     def _p_about(self):
         sa, v = self._page("About", "")
         f, g = self._card()
+        f.setProperty("everyday", True)
         title = QLabel(f"HyperFetch v{APP_VERSION}"); title.setStyleSheet(f"font-weight:800;font-size:{fpx(15)};background:transparent;")
         desc = QLabel(utils.TAGLINE); desc.setStyleSheet(f"color:{COLORS['muted']};background:transparent;")
         g.addWidget(title); g.addWidget(desc)

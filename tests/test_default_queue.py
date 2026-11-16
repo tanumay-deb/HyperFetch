@@ -53,6 +53,7 @@ def test_the_window_hands_settings_its_queues(monkeypatch):
         save_dir=".", max_concurrent=3, segments=8, verify_tls=True, pair_token="T",
         theme="Dark", scheduler_enabled=False, scheduler_start="00:00",
         scheduler_stop="06:00", _extras={}, pair_requests=None,
-        queue=types.SimpleNamespace(queues={"Main": None, "Night": None}))
+        queue=types.SimpleNamespace(queues={"Main": None, "Night": None}),
+        _remember_show_all=lambda on: None)
     app_mod.DownloadAppV2._open_settings(win)
     assert got["queues"] == ["Main", "Night"]

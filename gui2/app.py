@@ -1602,13 +1602,20 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, Up
             theme=self.theme, accent=cur_accent, sched_en=self.scheduler_enabled,
             sched_start=self.scheduler_start, sched_stop=self.scheduler_stop,
             extras=getattr(self, "_extras", {}), pair_requests=self.pair_requests,
-            queues=list(self.queue.queues.keys()))
+            queues=list(self.queue.queues.keys()), on_show_all=self._remember_show_all)
         self._active_settings_dlg = dlg
         res = dlg.exec()
         self._active_settings_dlg = None
         if res != QDialog.Accepted:
             return
         self._apply_settings(dlg.values())
+
+    def _remember_show_all(self, on):
+        """Settings' "Show all settings" switch, saved as it is flipped: kept
+        only by Save Changes, a close with Reset brought it back off (asked
+        2026-11-16). A bound method, not a closure (CLAUDE.md, Qt slots)."""
+        self._extras["settings_show_all"] = bool(on)
+        self._save_settings()
 
     def _position_action_bar(self):
         """Float the bulk-action bar near the bottom-centre of the list, clear of
