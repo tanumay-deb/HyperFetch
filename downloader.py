@@ -467,7 +467,16 @@ class Downloader:
             if any(ipaddress.ip_address(f[4][0]).is_loopback for f in found):
                 return []
         found = lines.addresses(utils.LINES)
-        return found if len(found) >= 2 else []
+        if len(found) < 2:
+            return []
+        via = lines.route_address()
+        if via and via not in {ip for _, ip in found}:
+            # a VPN or tunnel adapter carries this PC's traffic: connections
+            # bound to the lines would go around it (2026-11-17)
+            self.t.log_event("One internet connection: this PC's traffic goes through "
+                             "another adapter (a VPN?), and splitting would go around it")
+            return []
+        return found
 
     def _take_line(self):
         """The line for the next request: the one with the fewest running,

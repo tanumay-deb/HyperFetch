@@ -50,3 +50,14 @@ def test_real_call_gives_addresses_this_pc_has():
             s.bind((ip, 0))                 # an address of this PC binds
         finally:
             s.close()
+
+
+def test_route_address_is_an_address_of_this_pc():
+    ip = lines.route_address()
+    if not ip:
+        pytest.skip("no route out of this machine")
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        s.bind((ip, 0))
+    finally:
+        s.close()

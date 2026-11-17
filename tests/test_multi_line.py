@@ -107,6 +107,7 @@ def two_lines(monkeypatch):
         found = [("A", a), ("B", b)]
         monkeypatch.setattr(lines, "addresses",
                             lambda names: [x for x in found if x[0] in names])
+        monkeypatch.setattr(lines, "route_address", lambda: a)     # traffic leaves by A
         monkeypatch.setattr(utils, "LINES", ["A", "B"])
     return use
 
@@ -222,3 +223,17 @@ def test_proxy_or_relay_keeps_one_line(two_lines, monkeypatch, tmp_path):
     monkeypatch.setattr(socket, "getaddrinfo",
                         lambda *a, **k: [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("127.0.0.1", 50123))])
     assert Downloader(t, segments=8)._pick_lines() == []
+
+
+def test_traffic_through_another_adapter_keeps_one_line(two_lines, monkeypatch, tmp_path):
+    """A VPN or tunnel adapter that carries this PC's traffic (2026-11-17: one
+    named "net-merge" held the default route) would be gone around by
+    connections bound to the lines: the download stays on one, and says why."""
+    two_lines()
+    monkeypatch.setattr(lines, "route_address", lambda: "198.18.0.1")
+    t = T.DownloadTask("http://127.0.0.1:9/f.bin", str(tmp_path / "f.bin"))
+    t.total_size, t.supports_range = 64 * MiB, True
+    assert Downloader(t, segments=8)._pick_lines() == []
+    assert _said(t, "another adapter")
+    monkeypatch.setattr(lines, "route_address", lambda: "")     # cannot tell: lines kept
+    assert len(Downloader(t, segments=8)._pick_lines()) == 2

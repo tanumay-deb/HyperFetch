@@ -114,6 +114,20 @@ def addresses(names):
     return [(n, now[n]) for n in names if n in now]
 
 
+def route_address():
+    """The IPv4 address this PC's traffic leaves from now - the default
+    route's - or "" when there is none. A connected UDP socket sends nothing;
+    it only asks Windows which way it would go."""
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        s.connect(("8.8.8.8", 53))
+        return s.getsockname()[0]
+    except OSError:
+        return ""
+    finally:
+        s.close()
+
+
 def describe(conns):
     """Connections per line for the window: "Wi-Fi 6 · Phone 4"."""
     return " · ".join(f"{n} {c}" for n, c in conns.items())
