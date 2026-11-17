@@ -212,6 +212,43 @@ def test_a_paused_torrent_goes_on_from_where_it_was(swarm, daemon, tmp_path, mon
     assert (out / "Payload.bin").read_bytes() == swarm["payload"]
 
 
+@pytest.mark.parametrize("picked", ["", "1"])
+def test_a_seeding_torrent_removed_leaves_no_control_file(request, daemon, tmp_path, monkeypatch, picked):
+    """aria2 writes the control file as a download stops when some of its
+    pieces were never fetched - files left unticked. The cancel told it to
+    stop and removed the file at once, so it came back: a seeding torrent
+    removed from the list left <name>.aria2 beside its files (2026-11-17)."""
+    pack = request.getfixturevalue("pack")
+    out = tmp_path / "downloads"
+    out.mkdir()
+    monkeypatch.setattr(utils, "SEED_ENABLED", True)
+    monkeypatch.setattr(utils, "SEED_RATIO", 0.0)
+    monkeypatch.setattr(utils, "SEED_MINUTES", 60)
+    t = T.DownloadTask(pack["torrent"], str(out / "Pack.torrent"))
+    t.selected_files = picked
+    done = threading.Event()
+    threading.Thread(target=lambda: (torrent.TorrentDownloader(t).run(), done.set()),
+                     daemon=True).start()
+    try:
+        assert _wait(lambda: t.seeding and not t.verifying, 90), (t.status, t.error)
+        assert (out / "Pack" / "first.bin").read_bytes() == pack["payload"][:4 * PIECE]
+        # a busy aria2 - five torrents, a slow drive - gets to a remove late,
+        # after the app has gone on; on a quiet one the stop beat the delete
+        real = daemon.call
+
+        def late_remove(method, *a, **k):
+            if method == "aria2.forceRemove":
+                threading.Timer(0.5, real, (method, *a), k).start()
+                return "OK"
+            return real(method, *a, **k)
+        monkeypatch.setattr(daemon, "call", late_remove)
+    finally:
+        t.request_cancel()                          # what Remove does to a running one
+        assert done.wait(30)
+    time.sleep(1.0)                                 # anything aria2 writes late is there by now
+    assert sorted(p.name for p in out.iterdir()) == ["Pack"]
+
+
 def test_a_torrent_held_with_the_old_allocation_is_added_again(swarm, daemon, tmp_path, monkeypatch):
     """Registered with file-allocation=none (before trunc), a torrent writes
     zeros into every gap on NTFS for as long as aria2 holds it: a changeOption

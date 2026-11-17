@@ -1660,7 +1660,7 @@ def move_unfinished(task, dest_dir):
     return True
 
 
-def _let_go(task, wait=15.0):
+def _let_go(task, wait=15.0, gid=""):
     """aria2 lets go of a torrent it holds: stopped - its control file
     written, its files closed - and forgotten, so the next run adds it
     afresh where it now is. aria2.pause returns before the download has
@@ -1671,7 +1671,7 @@ def _let_go(task, wait=15.0):
     if not getattr(d, "alive", lambda: False)():
         return                               # no daemon of ours: nothing holds it
     td = TorrentDownloader(task)
-    gid = td._rpc_find_existing(d, live_only=False) or getattr(task, "gid", "") or ""
+    gid = gid or td._rpc_find_existing(d, live_only=False) or getattr(task, "gid", "") or ""
     if not gid:
         return
     if wait > 0:
@@ -2502,7 +2502,13 @@ class TorrentDownloader:
         first_delay = (sum(ord(c) for c in str(self.t.id)) % 100) / 100.0 * STATUS_POLL
         while True:
             if self.t.cancel_requested:
-                self._rpc_remove(d, cur, force=True)
+                # stopped before its files go: aria2 writes the control file as
+                # it stops when pieces were never fetched (files unticked), and
+                # one deleted first came back - a busy aria2 stops late, and a
+                # seeding torrent removed from the list left <name>.aria2
+                # behind (2026-11-17)
+                _let_go(self.t, gid=cur)
+                self._rpc_remove(d, cur, force=True)    # a daemon _let_go does not see as ours
                 cleanup_artifacts(self.t, drop_rpc=False)
                 self.t.status = T.CANCELLED
                 return top
