@@ -1778,8 +1778,18 @@ class TorrentDownloader:
         # run's polls overwrite it (aria2 refusing an add reports 0)
         had_bytes = int(self.t.downloaded or 0) > 0
 
-        # display name, same rules as the subprocess path
-        if is_magnet(self.t.url):
+        # What the torrent is decides where it goes and whom it may talk to, and
+        # both have to be said with the add. A .torrent, or a magnet resolved
+        # earlier, says so now; a magnet nobody has resolved says so when its
+        # metadata arrives (_hand_over).
+        meta = self._known_metadata()
+        # display name: the payload's own once the metadata says it. A
+        # placeholder stood on the card until the first status read came
+        # back - a minute while aria2 was busy (2026-11-17).
+        named = torrent_top_name(meta) if meta else ""
+        if named:
+            self.t.filename = named
+        elif is_magnet(self.t.url):
             self.t.filename = magnet_name(self.t.url) or "torrent"
         elif (not self.t.filename or is_magnet(self.t.filename)
               or self.t.filename.endswith((".torrent", ".bin"))):
@@ -1787,11 +1797,6 @@ class TorrentDownloader:
 
         d = aria2d.DAEMON
         d.ensure()                                   # raises -> caller falls back
-        # What the torrent is decides where it goes and whom it may talk to, and
-        # both have to be said with the add. A .torrent, or a magnet resolved
-        # earlier, says so now; a magnet nobody has resolved says so when its
-        # metadata arrives (_hand_over).
-        meta = self._known_metadata()
         if meta:
             remember_files(self.t, parse_torrent_files(meta))
         sort_into_category(self.t, meta)

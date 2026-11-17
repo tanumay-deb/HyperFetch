@@ -127,6 +127,20 @@ def test_a_public_torrent_file_is_added_as_before(tmp_path, monkeypatch):
     assert d.added == [("torrent", dict(NO_COPY, dir=str(tmp_path), **TRUNC))]
 
 
+def test_a_torrent_file_shows_its_own_name_from_the_start(tmp_path, monkeypatch):
+    """Start now swapped a .torrent's name for "torrent" until the first
+    status read came back - a minute while aria2 was busy (2026-11-17). The
+    metadata it reads at the start has the name."""
+    src = make_torrent(tmp_path / "r.torrent", "Road.Movie.2000.mkv", length=500)
+    t = T.DownloadTask(src, str(tmp_path / "torrent"), filename="Road Movie (2000) [720p].torrent")
+    d = _Daemon([_done(str(tmp_path / "Road.Movie.2000.mkv"))])
+    seen = []
+    d.ensure = lambda: seen.append(t.filename) or True
+    _start(t, d, tmp_path, monkeypatch)
+    assert seen and set(seen) == {"Road.Movie.2000.mkv"}
+    assert t.status == T.COMPLETED
+
+
 def test_a_torrent_file_the_app_sorts_starts_in_its_category_folder(tmp_path, monkeypatch):
     base = tmp_path / "dl"
     base.mkdir()
