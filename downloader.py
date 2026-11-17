@@ -353,6 +353,7 @@ class Downloader:
         self._base_headers = {**HEADERS, **headers}
         self._probe_ctype = ""
         self._probe_name = ""           # the server's name for the file (Content-Disposition)
+        self._ended_whole = False       # a file sent whole (no ranges) was read to its end
         self._media = False             # set by run_media
         # run_media's file is on disk whole. The task is not Completed on that:
         # yt-dlp still has the file (its post-processors), and the window acts
@@ -921,6 +922,8 @@ class Downloader:
                                           seg.index, self.t.filename, attempts)
                             return
                     continue
+                # one answer, read to its end: the whole file, even of no bytes
+                self._ended_whole = not self.t.supports_range
                 return
             except (requests.RequestException, MirrorMismatch) as e:
                 resp = getattr(e, "response", None)
@@ -1277,7 +1280,8 @@ class Downloader:
                 return
             all_done = True
         else:
-            all_done = self.t.downloaded > 0
+            # an empty file is a finished one: it ended "Paused", no reason
+            all_done = self.t.downloaded > 0 or self._ended_whole
         if all_done:
             # cross-volume-safe atomic finalize (shared helper); on failure leave
             # temp_path in %TEMP% for a retry and never mark COMPLETED.

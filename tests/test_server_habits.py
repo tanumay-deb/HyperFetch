@@ -229,3 +229,25 @@ def test_which_redirects_keep_the_sign_in(before, after, kept):
     nxt = requests.Request("GET", after).prepare()
     _Session().rebuild_auth(nxt, resp)
     assert ("sid=1" in nxt.headers.get("Cookie", "")) == kept
+
+
+@pytest.mark.parametrize("length", ["0", None])    # said, or a stream that ends at once
+def test_an_empty_file_is_a_finished_download(server, tmp_path, length):
+    """A file of no bytes - a placeholder, an empty .txt - ended "Paused" with
+    no reason, and every Resume the same."""
+    srv = server(b"")
+
+    def answer(h, head):
+        h.send_response(200)
+        h.send_header("Content-Type", "text/plain")
+        if length is not None:
+            h.send_header("Content-Length", length)
+        else:
+            h.send_header("Connection", "close")
+        h.end_headers()
+        return True
+    srv.answer = answer
+    t = T.DownloadTask(srv.url("/empty.txt"), str(tmp_path / "empty.txt"), filename="empty.txt")
+    Downloader(t, segments=8).run()
+    assert t.status == T.COMPLETED, (t.status, t.error)
+    assert os.path.getsize(t.save_path) == 0
