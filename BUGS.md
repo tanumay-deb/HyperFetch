@@ -72,6 +72,13 @@ Severity: **Must** = wrong result, data loss, or a crash users hit. **Should**
   `tests/test_start_with_saved_state.py` does, no local server): put a browser
   item (ask True) then a web item (ask False) in `pending`; with the New
   Download window left open, after a refresh the web item is in the list.
+- **Also (2026-11-17):** `_drain_pending` has no guard against itself. While
+  one add waits in a nested loop - the New Download window's `exec()`, or
+  `_fetch_torrent`'s `QEventLoop` while a web `.torrent` link is fetched - the
+  500 ms timer runs `_drain_pending` again, and the next item is added inside
+  the first. Two hand-overs of the same `.torrent` link in a row (a double
+  click) can then both pass the duplicate check, which runs before either
+  is kept. Not reproduced; read from the code.
 
 ## B3 - Should - The test suite sometimes crashes (Windows access violation) in `tests/test_torrent_duplicates.py`
 
@@ -84,10 +91,20 @@ Severity: **Must** = wrong result, data loss, or a crash users hit. **Should**
   An idle full run passes; the file alone passes. Seen again 2026-11-16 (a
   full run while other work loaded the PC; the next run passed).
 - **Ruled out** (CLAUDE.md "OPEN:"): a leftover gc_guard timer; a real window
-  in the test process. **Suspect:** an earlier test's pending `deleteLater()` or
-  timer delivered inside that nested loop.
+  in the test process. 2026-11-17, when it crashed 4 local full runs in a row
+  (always in this nested loop): pending `deleteLater()`s - all of them
+  delivered (`sendPostedEvents(None, DeferredDelete)`, then
+  `processEvents()`) before the file's first test, and it still crashed;
+  threads other tests left running - every QueueManager shut down and every
+  task cancelled first (3 threads left), and it still crashed; no other
+  thread was in Qt code at the crash (faulthandler, all threads). The 56
+  Qt-using test files before it, plus it: passed twice. Those plus either
+  half of the other 73 files: passed. **Suspect:** state an earlier
+  in-process Qt test leaves (a timer, a connection to a dead Python object)
+  that only a run of most of the suite builds up.
 - **Expected:** no crash. If the nested loop is the cause, the app can hit it
-  too: then fetch the `.torrent` without a nested loop (a thread and a signal).
+  too: then fetch the `.torrent` without a nested loop (a thread and a signal)
+  - which also ends B2's re-entry for this path.
 - **Test:** the name-order run above passes 10 times in a row.
 
 ## B4 - Should - A delete the app did not finish before closing can delete a different file at the next start
@@ -112,3 +129,23 @@ Severity: **Must** = wrong result, data loss, or a crash users hit. **Should**
   `_delete_files` would and stop there); replace the file with different
   content; start again (`_resume_deletes`): the new file is still there. And:
   left unchanged, it is deleted.
+
+## B5 - Nice - Tests leave queues and downloads running for the rest of the suite
+
+- **Where:** tests that make a `QueueManager` and add downloads without
+  `shutdown()` - found 2026-11-17 by listing threads at each teardown:
+  `test_one_worker_per_task.py` (9 tests), `test_queue_manager.py`,
+  `test_queue_restore.py`, `test_serial_numbers.py`, `test_stall_yield.py`,
+  `test_torrent_speed_limit.py`. By `test_torrent_duplicates.py` 37 queues
+  and 86 tasks are alive; their downloads retry against servers that are
+  gone, sleeping in their backoff.
+- **What happens:** a test that patches `time.sleep` or `time.monotonic` for
+  the whole process sees their calls:
+  `test_removing_a_paused_torrent_drops_it_from_aria2` failed on CI ubuntu
+  py3.12 three times for it (fixed in the test, 9230fe2). They also cost CPU
+  and log lines for the rest of the run.
+- **Expected:** each of those tests shuts its queue down (a fixture that
+  does so at teardown), so no test's work outlives it.
+- **Test:** a conftest check at teardown that no `_execute` / `_worker`
+  thread started by the test is still alive.
+
