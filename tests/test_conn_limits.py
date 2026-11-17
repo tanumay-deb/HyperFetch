@@ -135,3 +135,17 @@ def test_a_link_refused_with_nothing_streaming_still_fails_at_once(media_server,
     assert t.status == T.ERROR
     assert "403" in t.error
     assert time.monotonic() - t0 < 3, "a dead link was retried"
+
+
+@pytest.mark.parametrize("code", [429, 503])
+def test_a_refusal_waits_as_long_as_retry_after_asks(code):
+    """RFC 9110 gives Retry-After to 503 as to 429: "come back in 7 s"."""
+    import requests
+    from downloader import Downloader as D
+    r = requests.Response()
+    r.status_code, r.headers["Retry-After"] = code, "7"
+    e = requests.HTTPError(response=r)
+    assert D._retry_wait(e, None) == 7          # refused while others stream
+    assert D._retry_wait(e, 1) == 7             # an ordinary retry
+    r.headers["Retry-After"] = "600"
+    assert D._retry_wait(e, 1) == 60            # capped

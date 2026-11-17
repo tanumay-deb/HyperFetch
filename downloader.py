@@ -961,11 +961,11 @@ class Downloader:
 
     @staticmethod
     def _retry_wait(exc, attempt):
-        """Seconds to wait before a retry; honors Retry-After on 429.
+        """Seconds to wait before a retry; honors Retry-After on 429 and 503.
         attempt None: a pushed-back range, which waits a moment, or as long
         as Retry-After asks, and leaves the rest to the gate."""
         resp = getattr(exc, "response", None)
-        if resp is not None and resp.status_code == 429:
+        if resp is not None and resp.status_code in (429, 503):
             ra = resp.headers.get("Retry-After", "")
             if ra.isdigit():
                 return min(int(ra), 60)
