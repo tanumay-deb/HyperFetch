@@ -2,6 +2,7 @@
 pure; run() is driven against a fake aria2c subprocess (no real swarm/network)."""
 import os
 import subprocess
+import threading
 import time
 
 import pytest
@@ -393,9 +394,18 @@ def test_removing_a_paused_torrent_drops_it_from_aria2(tmp_path, monkeypatch):
             return []
 
     now = [100.0]
+    real_sleep = time.sleep
+
+    def sleep(s):
+        # time.sleep is the whole process's: a download another test left
+        # retrying sleeps too, and was counted (CI, ubuntu py3.12, 2026-11-17)
+        if threading.current_thread().name != "aria2-drop":
+            return real_sleep(s)
+        slept.append(s)
+        now[0] += s
     monkeypatch.setattr(aria2d, "DAEMON", _Daemon())
     monkeypatch.setattr(torrent.time, "monotonic", lambda: now[0])
-    monkeypatch.setattr(torrent.time, "sleep", lambda s: (slept.append(s), now.__setitem__(0, now[0] + s)))
+    monkeypatch.setattr(torrent.time, "sleep", sleep)
     q = QueueManager()
     q.shutdown()
     t = T.DownloadTask(f"magnet:?xt=urn:btih:{ih}&dn=Show", str(tmp_path / "Show"),
