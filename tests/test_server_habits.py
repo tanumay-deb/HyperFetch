@@ -251,3 +251,59 @@ def test_an_empty_file_is_a_finished_download(server, tmp_path, length):
     Downloader(t, segments=8).run()
     assert t.status == T.COMPLETED, (t.status, t.error)
     assert os.path.getsize(t.save_path) == 0
+
+
+def _leads_to(srv, to):
+    def answer(h, head):
+        if not h.path.startswith(to.split("?")[0]):
+            h.send_response(302)
+            h.send_header("Location", to)
+            h.send_header("Content-Length", "0")
+            h.end_headers()
+            return True
+        srv.send(h, srv.data, head, [("Content-Type", "application/octet-stream")])
+        return True
+    srv.answer = answer
+
+
+@pytest.mark.parametrize("link, to, name", [
+    # download.mozilla.org/?product=... and go.microsoft.com/fwlink/?linkid=...
+    ("/?product=firefox-latest&os=win64", "/pub/Firefox%20Setup%20133.0.exe",
+     "Firefox Setup 133.0.exe"),
+    ("/fwlink/?linkid=2084649", "/vs/vs_Community.exe", "vs_Community.exe"),
+    # where it leads names no type: the link's name stays
+    ("/fwlink/?linkid=7", "/blob/a81f0c", "download.bin"),
+])
+def test_a_link_that_leads_to_a_file_takes_its_name(server, make_payload, tmp_path, link, to, name):
+    """No Content-Disposition: the browser names the file by where the link
+    leads, and so does HyperFetch now - it was "download.bin"."""
+    srv = server(make_payload(2 * 1024 * 1024))
+    _leads_to(srv, to)
+    import utils
+    url = srv.url(link)
+    fn = utils.filename_from_url(url)
+    folder, sort_base = utils.place_download(str(tmp_path), url, fn)
+    t = T.DownloadTask(url, str(utils.unique_path(folder, fn)), filename=fn)
+    t.sort_base = sort_base
+    Downloader(t, segments=4).run()
+    assert t.status == T.COMPLETED, t.error
+    assert t.filename == name
+    assert open(t.save_path, "rb").read() == srv.data
+
+
+def test_a_link_led_to_a_sign_in_page_keeps_its_name(server, tmp_path):
+    srv = server(b"<html>sign in</html>")
+
+    def answer(h, head):
+        if not h.path.startswith("/login.php"):
+            h.send_response(302)
+            h.send_header("Location", "/login.php?next=/report")
+            h.send_header("Content-Length", "0")
+            h.end_headers()
+            return True
+        srv.send(h, srv.data, head, [("Content-Type", "text/html")])
+        return True
+    srv.answer = answer
+    t = T.DownloadTask(srv.url("/report"), str(tmp_path / "report.bin"), filename="report.bin")
+    Downloader(t, segments=4).run()
+    assert t.filename == "report.bin"

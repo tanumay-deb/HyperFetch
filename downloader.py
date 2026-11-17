@@ -353,6 +353,7 @@ class Downloader:
         self._base_headers = {**HEADERS, **headers}
         self._probe_ctype = ""
         self._probe_name = ""           # the server's name for the file (Content-Disposition)
+        self._probe_final = ""          # where the link led, after redirects
         self._ended_whole = False       # a file sent whole (no ranges) was read to its end
         self._media = False             # set by run_media
         # run_media's file is on disk whole. The task is not Completed on that:
@@ -645,6 +646,7 @@ class Downloader:
             accept = r.headers.get("Accept-Ranges", "none").lower()
             self._probe_ctype = r.headers.get("Content-Type", "").split(";")[0].strip().lower()
             self._probe_name = disposition_name(r.headers.get("Content-Disposition"))
+            self._probe_final = r.url or ""
         except requests.RequestException:
             size, accept = 0, "none"
 
@@ -672,6 +674,7 @@ class Downloader:
                     self._probe_ctype = ctype
                 self._probe_name = (disposition_name(r.headers.get("Content-Disposition"))
                                     or self._probe_name)
+                self._probe_final = r.url or self._probe_final
                 r.close()
             except requests.RequestException:
                 pass
@@ -680,9 +683,17 @@ class Downloader:
     def _take_server_name(self):
         """The name the server gives the file, when its name came from the
         link: not typed (name_chosen), not the browser's - the browser read
-        this header itself. Only before anything of it is on disk. Filed by
-        the new name where the app chose the folder (sort_base)."""
+        this header itself. Else, as a browser does, the name of where the
+        link led, when that names a type: download.mozilla.org/?product=...
+        and go.microsoft.com/fwlink/?linkid=... were saved as download.bin.
+        Only before anything of it is on disk. Filed by the new name where
+        the app chose the folder (sort_base)."""
         name = utils.typed_filename(os.path.basename(self._probe_name.replace("\\", "/")))
+        led = urllib.parse.unquote(os.path.basename(urllib.parse.urlsplit(self._probe_final).path))
+        if (not name and self._probe_final and self._probe_final != self.url
+                and "." in led.strip(".")
+                and not self._probe_ctype.startswith("text/html")):    # a sign-in page is no name
+            name = utils.filename_from_url(self._probe_final)
         if (not name or name == self.t.filename or getattr(self.t, "name_chosen", "")
                 or self.t.filename != utils.filename_from_url(self.t.url)):
             return
