@@ -477,9 +477,11 @@ class Downloader:
         if len(found) < 2:
             return []
         via = lines.route_address()
-        if via and via not in {ip for _, ip in found}:
-            # a VPN or tunnel adapter carries this PC's traffic: connections
-            # bound to the lines would go around it (2026-11-17)
+        if via and via not in {ip for _, ip, _ in lines.available()}:
+            # a VPN or tunnel adapter (no gateway: not a line) carries this
+            # PC's traffic: connections bound to the lines would go around it
+            # (2026-11-17). A line not ticked is still a line - one Settings
+            # calls "same router as ...: adds no speed" can be the one used
             self.t.log_event("One internet connection: this PC's traffic goes through "
                              "another adapter (a VPN?), and splitting would go around it")
             return []

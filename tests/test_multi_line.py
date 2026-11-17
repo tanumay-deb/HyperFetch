@@ -122,11 +122,13 @@ def line_server(make_payload):
 
 @pytest.fixture
 def two_lines(monkeypatch):
-    """Lines "A" and "B" at the addresses given."""
+    """Lines "A" and "B" at the addresses given, and "C" (not ticked)."""
     def use(a="127.0.0.1", b="127.0.0.2"):
         found = [("A", a), ("B", b)]
         monkeypatch.setattr(lines, "addresses",
                             lambda names: [x for x in found if x[0] in names])
+        monkeypatch.setattr(lines, "available", lambda: [
+            ("A", a, "192.168.1.1"), ("B", b, "192.168.42.129"), ("C", "10.9.9.9", "192.168.1.1")])
         monkeypatch.setattr(lines, "route_address", lambda: a)     # traffic leaves by A
         monkeypatch.setattr(utils, "LINES", ["A", "B"])
     return use
@@ -272,3 +274,16 @@ def test_traffic_through_another_adapter_keeps_one_line(two_lines, monkeypatch, 
     assert _said(t, "another adapter")
     monkeypatch.setattr(lines, "route_address", lambda: "")     # cannot tell: lines kept
     assert len(Downloader(t, segments=8)._pick_lines()) == 2
+
+
+def test_traffic_through_a_line_not_ticked_keeps_the_lines(two_lines, monkeypatch, tmp_path):
+    """Ethernet and Wi-Fi to one router: Settings calls the second "same router
+    as ...: adds no speed", and the user unticks it. When Windows sends traffic
+    by that one (a cable's lower metric), it is still a line, not a VPN: the
+    ticked lines are used."""
+    two_lines()
+    monkeypatch.setattr(lines, "route_address", lambda: "10.9.9.9")    # by C
+    t = T.DownloadTask("http://127.0.0.1:9/f.bin", str(tmp_path / "f.bin"))
+    t.total_size, t.supports_range = 64 * MiB, True
+    assert len(Downloader(t, segments=8)._pick_lines()) == 2
+    assert not _said(t, "another adapter")
