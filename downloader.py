@@ -66,7 +66,10 @@ def _make_session(pool, source=None):
 CHUNK = 65536
 MiB = 1024 * 1024
 DEFAULT_SEGMENTS = 8   # parallel connections when the server supports ranges
-HEADERS = utils.DEFAULT_HEADERS
+# the file as it is stored: requests asks for gzip by default, and a server
+# with a ready-compressed copy (nginx gzip_static) then serves ranges of THAT,
+# which cannot be unpacked a part at a time - "Connection lost" (2026-11-17)
+HEADERS = {**utils.DEFAULT_HEADERS, "Accept-Encoding": "identity"}
 CONNECT_TIMEOUT = 15
 MAX_RETRIES = 5        # per-segment attempts before the task errors
 SIDECAR_MAX = 8192     # bytes of a .sha256 answer read: the line, never a file
