@@ -28,8 +28,11 @@ class _LineServer:
         self.data = data
         self.rate = {}                          # client ip -> bytes/s
         self.refuse = set()                     # client ips answered 403
+        self.cap = 0                            # connections per client ip (0 = any)
+        self.active = collections.Counter()     # client ip -> connections served now
         self.sent = collections.Counter()       # client ip -> bytes
         self.ranges = collections.Counter()     # client ip -> range requests
+        lock = threading.Lock()
         srv = self
 
         class H(http.server.BaseHTTPRequestHandler):
@@ -45,6 +48,23 @@ class _LineServer:
                     self.send_header("Content-Length", "0")
                     self.end_headers()
                     return
+                if not head and srv.cap:
+                    with lock:
+                        over = srv.active[ip] >= srv.cap
+                        srv.active[ip] += not over
+                    if over:                    # nginx limit_conn's answer
+                        self.send_response(503)
+                        self.send_header("Content-Length", "0")
+                        self.end_headers()
+                        return
+                try:
+                    self._send(ip, head)
+                finally:
+                    if not head and srv.cap:
+                        with lock:
+                            srv.active[ip] -= 1
+
+            def _send(self, ip, head):
                 d = srv.data
                 rng = self.headers.get("Range")
                 if rng:
@@ -156,6 +176,21 @@ def test_a_line_the_server_refuses_is_dropped_not_an_error(line_server, two_line
     assert t.status == T.COMPLETED, t.error
     assert open(t.save_path, "rb").read() == srv.data
     assert _said(t, "Stopped using B")
+
+
+def test_a_server_limit_per_address_keeps_both_lines(line_server, two_lines, tmp_path):
+    """A server that serves two connections per address and refuses the rest
+    (503) refuses each line now and then while that line streams: its limit,
+    not a dead line. Both lines stay, and each is served its two."""
+    srv = line_server(16 * MiB)
+    srv.rate = {"127.0.0.1": 4 * MiB, "127.0.0.2": 4 * MiB}
+    srv.cap = 2
+    two_lines()
+    t, _ = _run(srv, tmp_path)
+    assert t.status == T.COMPLETED, t.error
+    assert open(t.save_path, "rb").read() == srv.data
+    assert not _said(t, "Stopped using")
+    assert srv.sent["127.0.0.2"] >= 4 * MiB, srv.sent
 
 
 def test_every_line_dropped_goes_on_unbound(line_server, two_lines, tmp_path):

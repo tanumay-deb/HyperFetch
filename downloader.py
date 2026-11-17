@@ -335,6 +335,7 @@ class Downloader:
         self._line_streams = collections.Counter()
         self._line_fails = collections.Counter()
         self._line_dead = set()
+        self._line_ended = {}           # line -> when the last of its streams ended
         # one keep-alive session for this download's probe + all segment threads.
         # Auto mode (num_segments==0) can fan out to 32 segments, so size for that.
         self._session = _make_session(max(8, self.num_segments or 32))
@@ -390,6 +391,8 @@ class Downloader:
             if line is not None:
                 self._line_streams[line] += n
                 self.t.line_conns = {name: self._line_streams[name] for name, _ in self._lines}
+                if n < 0:
+                    self._line_ended[line] = time.monotonic()
             if n > 0:
                 self._served.add(src)
                 self._link_ok |= src == self.url
@@ -498,6 +501,15 @@ class Downloader:
         if name is not None:
             with self._conn_cv:
                 self._line_running[name] -= 1
+
+    def _line_serving(self, name, sent):
+        """Line `name` reaches the server: a stream on it runs now, or ended
+        as a request sent at `sent` went out (a server counts a connection a
+        moment past its last byte - _pushed_back). A refusal on it is then the
+        server's limit per address, not a fault of the line."""
+        with self._conn_cv:
+            return bool(self._line_streams[name]) or (
+                self._line_ended.get(name, float("-inf")) >= sent - PUSHBACK_LAG)
 
     def _line_failed(self, name, why):
         """A request on line `name` failed before it streamed. Two in a row
@@ -832,7 +844,10 @@ class Downloader:
             except (requests.RequestException, MirrorMismatch) as e:
                 resp = getattr(e, "response", None)
                 code = resp.status_code if resp is not None else None
+                # a refusal on a line that is serving us is the server's limit
+                # per address, met below like any other (2026-11-17)
                 if (line is not None and not accepted and not isinstance(e, MirrorMismatch)
+                        and not self._line_serving(line, sent)
                         and self._line_failed(line, f"HTTP {code}" if code else "could not connect")):
                     continue            # another line takes the part, at once
                 if src != self.url:
