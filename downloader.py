@@ -65,6 +65,27 @@ class _Session(requests.Session):
         prepared.headers["Cookie"] = "; ".join(f"{k}={v}" for k, v in pairs.items())
 
 
+def disposition_name(value):
+    """The file name a Content-Disposition header gives, "" when none.
+    filename*= (RFC 5987, any charset) before filename=, wherever it stands
+    (RFC 6266); the standard library takes whichever comes first."""
+    if not value:
+        return ""
+    m = re.search(r"filename\*\s*=\s*([\w!#$%&+^`{}~.-]+)'[^']*'([^;\s]+)", value, re.I)
+    if m:
+        try:
+            return urllib.parse.unquote(m.group(2), encoding=m.group(1), errors="strict")
+        except (LookupError, UnicodeDecodeError):
+            pass
+    from email.message import Message
+    msg = Message()
+    msg["Content-Disposition"] = value
+    try:
+        return msg.get_filename() or ""
+    except Exception:
+        return ""
+
+
 def _make_session(pool, source=None):
     """A keep-alive session whose connection pool is sized to the segment count.
     Reusing one session across a download's segments and retries avoids a fresh
@@ -330,6 +351,7 @@ class Downloader:
             headers = getattr(dtask, "headers", None) or {}
         self._base_headers = {**HEADERS, **headers}
         self._probe_ctype = ""
+        self._probe_name = ""           # the server's name for the file (Content-Disposition)
         self._media = False             # set by run_media
         # run_media's file is on disk whole. The task is not Completed on that:
         # yt-dlp still has the file (its post-processors), and the window acts
@@ -620,6 +642,7 @@ class Downloader:
             size = int(r.headers.get("Content-Length", 0))
             accept = r.headers.get("Accept-Ranges", "none").lower()
             self._probe_ctype = r.headers.get("Content-Type", "").split(";")[0].strip().lower()
+            self._probe_name = disposition_name(r.headers.get("Content-Disposition"))
         except requests.RequestException:
             size, accept = 0, "none"
 
@@ -645,10 +668,27 @@ class Downloader:
                 ctype = r.headers.get("Content-Type", "").split(";")[0].strip().lower()
                 if ctype:
                     self._probe_ctype = ctype
+                self._probe_name = (disposition_name(r.headers.get("Content-Disposition"))
+                                    or self._probe_name)
                 r.close()
             except requests.RequestException:
                 pass
         return size, accept, refused
+
+    def _take_server_name(self):
+        """The name the server gives the file, when its name came from the
+        link: not typed (name_chosen), not the browser's - the browser read
+        this header itself. Only before anything of it is on disk. Filed by
+        the new name where the app chose the folder (sort_base)."""
+        name = utils.typed_filename(os.path.basename(self._probe_name.replace("\\", "/")))
+        if (not name or name == self.t.filename or getattr(self.t, "name_chosen", "")
+                or self.t.filename != utils.filename_from_url(self.t.url)):
+            return
+        folder = (utils.place_download(self.t.sort_base, self.t.url, name)[0]
+                  if self.t.sort_base else os.path.dirname(self.t.save_path) or ".")
+        self.t.save_path = utils.unique_path(folder, name)
+        self.t.filename = os.path.basename(self.t.save_path)
+        self.t.log_event(f"Named by the server: {self.t.filename}")
 
     def _web_page(self):
         """The server answered with a web page where a file was expected.
@@ -1056,6 +1096,7 @@ class Downloader:
         try:
             if not self.t.segments:
                 self._probe()
+                self._take_server_name()
                 # a web page where the file should be: a video page yt-dlp may
                 # know, or an auth-gated host's (Google Drive etc.) login /
                 # interstitial page — never write it out as the file. A name

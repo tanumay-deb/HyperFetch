@@ -2,6 +2,7 @@
 2026-11-17): each case was measured with a stand-in server first."""
 import gzip
 import http.server
+import os
 import random
 import threading
 
@@ -159,3 +160,53 @@ def test_a_redirect_to_another_host_takes_no_sign_in(server, make_payload, tmp_p
     Downloader(t, segments=4).run()
     assert other.requests
     assert not any(hd.get("Cookie") for _, _, hd in other.requests)
+
+
+def _named_by(srv, disposition):
+    def answer(h, head):
+        srv.send(h, srv.data, head, [("Content-Type", "application/pdf"),
+                                     ("Content-Disposition", disposition)])
+        return True
+    srv.answer = answer
+
+
+@pytest.mark.parametrize("disposition, name", [
+    ('attachment; filename="Report 2026.pdf"', "Report 2026.pdf"),
+    # RFC 6266: filename* before filename, whichever comes first
+    ("attachment; filename=\"fallback.pdf\"; filename*=UTF-8''%E6%96%87%E4%BB%B6%20A.pdf",
+     "文件 A.pdf"),
+    ("attachment; filename*=UTF-8''%E6%96%87%E4%BB%B6%20A.pdf; filename=\"fallback.pdf\"",
+     "文件 A.pdf"),
+    ('attachment; filename="../../evil.exe"', "evil.exe"),     # a name, never a path
+])
+def test_a_link_takes_the_name_the_server_gives(server, make_payload, tmp_path, disposition, name):
+    """download.php?id=5 is a PDF the server calls "Report 2026.pdf"; it was
+    saved as download.php. It is filed by the name the server gives."""
+    srv = server(make_payload(2 * 1024 * 1024))
+    _named_by(srv, disposition)
+    url = srv.url("/download.php?id=5")
+    import utils
+    fn = utils.filename_from_url(url)
+    folder, sort_base = utils.place_download(str(tmp_path), url, fn)
+    t = T.DownloadTask(url, str(utils.unique_path(folder, fn)), filename=fn)
+    t.sort_base = sort_base
+    Downloader(t, segments=4).run()
+    assert t.status == T.COMPLETED, t.error
+    assert t.filename == name
+    assert t.save_path == os.path.join(utils.get_category_dir(str(tmp_path), name), name)
+    assert open(t.save_path, "rb").read() == srv.data
+
+
+@pytest.mark.parametrize("how", ["typed", "browser"])
+def test_a_name_someone_chose_is_kept(server, make_payload, tmp_path, how):
+    """A name typed in New Download, or the browser's (it read the header
+    itself), is not the link's: the server's does not replace it."""
+    srv = server(make_payload(2 * 1024 * 1024))
+    _named_by(srv, 'attachment; filename="Report 2026.pdf"')
+    name = "My copy.pdf" if how == "typed" else "Quarterly.pdf"
+    t = T.DownloadTask(srv.url("/download.php?id=5"), str(tmp_path / name), filename=name)
+    if how == "typed":
+        t.name_chosen = "My copy"
+    Downloader(t, segments=4).run()
+    assert t.status == T.COMPLETED, t.error
+    assert t.filename == name and t.save_path == str(tmp_path / name)
