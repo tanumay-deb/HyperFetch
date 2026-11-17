@@ -851,9 +851,10 @@ def fetch_torrent(url, headers=None):
         return CannotStart("Could not get the .torrent from %s: %s" % (host, why))
 
     try:
-        with requests.get(url, headers=sent, stream=True, allow_redirects=True,
-                          timeout=TORRENT_FETCH_TIMEOUT, verify=utils.VERIFY_TLS,
-                          proxies=utils.PROXIES) as r:
+        from downloader import Session     # a sign-in kept across a redirect on its site
+        with Session() as s, s.get(url, headers=sent, stream=True, allow_redirects=True,
+                                   timeout=TORRENT_FETCH_TIMEOUT, verify=utils.VERIFY_TLS,
+                                   proxies=utils.PROXIES) as r:
             if r.status_code >= 400:
                 raise failed(plain_errors.status_words(r.status_code, lower=True))
             data = b""

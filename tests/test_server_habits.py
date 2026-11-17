@@ -222,12 +222,12 @@ def test_a_name_someone_chose_is_kept(server, make_payload, tmp_path, how):
 ])
 def test_which_redirects_keep_the_sign_in(before, after, kept):
     import requests
-    from downloader import _Session
+    from downloader import Session
     prev = requests.Request("GET", before, headers={"Cookie": "sid=1"}).prepare()
     resp = requests.Response()
     resp.request = prev
     nxt = requests.Request("GET", after).prepare()
-    _Session().rebuild_auth(nxt, resp)
+    Session().rebuild_auth(nxt, resp)
     assert ("sid=1" in nxt.headers.get("Cookie", "")) == kept
 
 
@@ -326,3 +326,26 @@ def test_a_named_attachment_is_a_file_whatever_its_type(server, make_payload, tm
     assert t.status == T.COMPLETED, t.error
     assert t.filename == "backup.zip"
     assert open(t.save_path, "rb").read() == srv.data
+
+
+def test_a_signed_in_torrent_link_that_redirects_keeps_the_sign_in(server, tmp_path):
+    """A private tracker's download.php?id=... that redirects on its own
+    site to the .torrent: its fetch lost the cookie and met the sign-in page
+    ("not a .torrent")."""
+    import torrent
+    meta = (b"d8:announce18:http://t.example/a4:infod6:lengthi5e4:name5:a.txt"
+            b"12:piece lengthi16384e6:pieces20:" + b"x" * 20 + b"ee")
+    srv = server(meta)
+    _signed_in_site(srv, "/torrents/a.torrent")
+    got = torrent.fetch_torrent(srv.url("/download.php?id=5"), {"Cookie": "sid=1"})
+    assert got == meta
+
+
+def test_a_signed_in_stream_that_redirects_keeps_the_sign_in(server):
+    import hls
+    master = (b"#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=800000,RESOLUTION=640x360\n"
+              b"low.m3u8\n#EXT-X-STREAM-INF:BANDWIDTH=2400000,RESOLUTION=1280x720\nhigh.m3u8\n")
+    srv = server(master)
+    _signed_in_site(srv, "/hls/master.m3u8")
+    found = hls.probe(srv.url("/download.php?id=5"), {"Cookie": "sid=1"})
+    assert [v["height"] for v in found["variants"]] == [720, 360]

@@ -27,6 +27,7 @@ import urllib3
 
 import task as T
 import utils
+from downloader import Session     # a sign-in kept across a redirect on its site
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
@@ -113,7 +114,7 @@ def probe(url, headers=None):
     works on the referer/auth-gated CDNs the browser extension's own fetch
     can't read."""
     base = {**HEADERS, **(headers or {})}
-    sess = requests.Session()
+    sess = Session()
     try:
         r = _get(sess, url, base)
         # its links are relative to where it came from (HlsDownloader._fetch)
@@ -334,7 +335,7 @@ class HlsDownloader:
     def __init__(self, dtask: "T.DownloadTask"):
         self.t = dtask
         self.headers = {**HEADERS, **(getattr(dtask, "headers", None) or {})}
-        self.session = requests.Session()       # used for playlist/key fetches
+        self.session = Session()       # used for playlist/key fetches
         self._tls = threading.local()            # per-thread session for segments
         # retry / failure tally for the end-of-download log summary
         self._stats = {"retries": 0, "timeouts": 0, "http403": 0}
@@ -345,7 +346,7 @@ class HlsDownloader:
     def _seg_session(self):
         s = getattr(self._tls, "s", None)
         if s is None:
-            s = requests.Session()
+            s = Session()
             self._tls.s = s
         return s
 

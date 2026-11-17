@@ -44,8 +44,10 @@ class _BoundAdapter(HTTPAdapter):
         super().init_poolmanager(*a, **kw)
 
 
-class _Session(requests.Session):
-    """Keeps the browser's Cookie header on a redirect to the same host.
+class Session(requests.Session):
+    """Keeps the browser's Cookie header on a redirect to the same host
+    (every request made with a site's cookies: this engine, HLS, a web
+    .torrent link).
     requests drops it on every redirect, the same site's too: a signed-in
     link that redirected met the site's sign-in page, went to yt-dlp, and a
     PDF finished as "report.unknown_video" (2026-11-17). Another host gets
@@ -100,7 +102,7 @@ def _make_session(pool, source=None):
     and high-latency links. urllib3's pools are thread-safe for our per-thread
     GETs; sizing the pool to the segment count avoids 'pool is full' churn that
     would silently discard (and not reuse) connections."""
-    s = _Session()
+    s = Session()
     kw = dict(pool_connections=pool, pool_maxsize=pool, max_retries=0)
     ad = _BoundAdapter(source, **kw) if source else HTTPAdapter(**kw)
     s.mount("http://", ad)
@@ -155,7 +157,7 @@ def probe_info(url, headers=None):
     """Lightweight probe for the file-info dialog: size + content type."""
     info = {"size": 0, "type": ""}
     base = {**HEADERS, **(headers or {})}
-    s = _Session()                      # the sign-in kept across a redirect
+    s = Session()                      # the sign-in kept across a redirect
     try:
         r = s.head(url, headers=base, allow_redirects=True,
                    timeout=10, verify=utils.VERIFY_TLS, proxies=utils.PROXIES)
