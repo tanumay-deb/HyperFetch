@@ -195,6 +195,8 @@ def test_a_link_takes_the_name_the_server_gives(server, make_payload, tmp_path, 
     assert t.filename == name
     assert t.save_path == os.path.join(utils.get_category_dir(str(tmp_path), name), name)
     assert open(t.save_path, "rb").read() == srv.data
+    # the folder made for the link's name is not left behind empty
+    assert not os.path.isdir(folder) or os.listdir(folder) or folder == os.path.dirname(t.save_path)
 
 
 @pytest.mark.parametrize("how", ["typed", "browser"])

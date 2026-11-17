@@ -685,11 +685,17 @@ class Downloader:
         if (not name or name == self.t.filename or getattr(self.t, "name_chosen", "")
                 or self.t.filename != utils.filename_from_url(self.t.url)):
             return
+        old = os.path.dirname(self.t.save_path)
         folder = (utils.place_download(self.t.sort_base, self.t.url, name)[0]
-                  if self.t.sort_base else os.path.dirname(self.t.save_path) or ".")
+                  if self.t.sort_base else old or ".")
         self.t.save_path = utils.unique_path(folder, name)
         self.t.filename = os.path.basename(self.t.save_path)
         self.t.log_event(f"Named by the server: {self.t.filename}")
+        if self.t.sort_base and os.path.normcase(old) != os.path.normcase(folder):
+            try:
+                os.rmdir(old)           # the category folder made for the link's name, if empty
+            except OSError:
+                pass                    # holds something: not ours to take
 
     def _web_page(self):
         """The server answered with a web page where a file was expected.
