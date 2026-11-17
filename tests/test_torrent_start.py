@@ -21,6 +21,9 @@ IH = "a" * 40
 # aria2 otherwise drops a copy of every .torrent it is handed into the download
 # folder, as <sha1>.torrent, next to the payload
 NO_COPY = {"rpc-save-upload-metadata": "false"}
+# every add says its file allocation (torrent.allocation; a daemon an older
+# version started keeps the one on its command line)
+TRUNC = {"file-allocation": "trunc"}
 META_STAGE = {"status": "active", "files": [{"path": "[METADATA]abc"}]}
 
 
@@ -121,7 +124,7 @@ def test_a_public_torrent_file_is_added_as_before(tmp_path, monkeypatch):
     t = T.DownloadTask(src, str(tmp_path / "torrent"), filename="q.torrent")
     d = _Daemon([_done(str(tmp_path / "film.mkv"))])
     _start(t, d, tmp_path, monkeypatch)
-    assert d.added == [("torrent", dict(NO_COPY, dir=str(tmp_path)))]
+    assert d.added == [("torrent", dict(NO_COPY, dir=str(tmp_path), **TRUNC))]
 
 
 def test_a_torrent_file_the_app_sorts_starts_in_its_category_folder(tmp_path, monkeypatch):
@@ -142,7 +145,7 @@ def test_a_magnet_asks_aria2_to_hold_the_payload(tmp_path, monkeypatch):
     t = _magnet_task(tmp_path)
     d = _Daemon([_done(str(tmp_path / "x.mkv"))])
     _start(t, d, tmp_path, monkeypatch)
-    assert d.added[0] == ("magnet", {"dir": str(tmp_path), "pause-metadata": "true"})
+    assert d.added[0] == ("magnet", {"dir": str(tmp_path), "pause-metadata": "true", **TRUNC})
 
 
 def test_a_magnet_is_filed_when_its_metadata_arrives_and_only_then_started(tmp_path, monkeypatch):
@@ -154,7 +157,7 @@ def test_a_magnet_is_filed_when_its_metadata_arrives_and_only_then_started(tmp_p
                  _done(str(base / "Video" / "Show.S01" / "ep1.mkv"))])
     _start(t, d, tmp_path, monkeypatch)
     assert [k for k, _ in d.added] == ["magnet", "torrent"]
-    assert d.added[1][1] == dict(NO_COPY, dir=str(base / "Video")), \
+    assert d.added[1][1] == dict(NO_COPY, dir=str(base / "Video"), **TRUNC), \
         "the payload should be added again in its category folder, as an ordinary torrent"
     assert d.did("aria2.forceRemove", "held"), "the held payload was left in the daemon"
     assert not d.did("aria2.unpause", "held"), "it was started in the wrong folder first"

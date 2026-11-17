@@ -5,6 +5,7 @@ import sys
 import pytest
 
 import aria2d
+import task as T
 import torrent
 import utils
 
@@ -120,9 +121,19 @@ def test_preallocation_uses_falloc_not_prealloc(monkeypatch):
     assert torrent.allocation_opt() == "--file-allocation=falloc"
 
 
-def test_preallocation_off_allocates_nothing(monkeypatch):
+def test_preallocation_off_writes_no_zeros(monkeypatch):
+    """Off is trunc, not none: with none NTFS writes zeros up to a piece
+    written far into a file, and aria2 froze for 3-19 s at a time while it did
+    (2026-11-17). trunc marks the file sparse (measured on 1.37.0)."""
     monkeypatch.setattr(utils, "PREALLOCATE", False, raising=False)
-    assert torrent.allocation_opt() == "--file-allocation=none"
+    assert torrent.allocation_opt() == "--file-allocation=trunc"
+
+
+def test_each_add_says_the_allocation(monkeypatch, tmp_path):
+    """A daemon an older version started keeps its own command line."""
+    monkeypatch.setattr(utils, "PREALLOCATE", False, raising=False)
+    t = T.DownloadTask("magnet:?xt=urn:btih:" + "a" * 40, str(tmp_path / "download.bin"))
+    assert torrent.TorrentDownloader(t)._add_opts(str(tmp_path), "")["file-allocation"] == "trunc"
 
 
 def test_the_daemon_uses_the_allocation_setting(monkeypatch):
@@ -148,10 +159,10 @@ def test_each_setting_is_said_outright_so_one_switched_off_goes_off(monkeypatch)
                SEED_ENABLED=True, SEED_RATIO=2.0, SEED_MINUTES=30)
     assert on == {"max-overall-upload-limit": str(100 * 1024),
                   "bt-prioritize-piece": "head,tail", "seed-ratio": "2", "seed-time": "30",
-                  "file-allocation": "none", "all-proxy": ""}
+                  "file-allocation": "trunc", "all-proxy": ""}
     off = _live(monkeypatch, MAX_UPLOAD_BPS=0, TORRENT_PREVIEW=False, SEED_ENABLED=False)
     assert off == {"max-overall-upload-limit": "0", "bt-prioritize-piece": "",
-                   "seed-time": "0", "file-allocation": "none", "all-proxy": ""}
+                   "seed-time": "0", "file-allocation": "trunc", "all-proxy": ""}
 
 
 def test_pre_allocation_and_the_proxy_are_said_too(monkeypatch):

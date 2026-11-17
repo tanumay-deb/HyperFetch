@@ -212,6 +212,52 @@ def test_a_paused_torrent_goes_on_from_where_it_was(swarm, daemon, tmp_path, mon
     assert (out / "Payload.bin").read_bytes() == swarm["payload"]
 
 
+def test_a_torrent_held_with_the_old_allocation_is_added_again(swarm, daemon, tmp_path, monkeypatch):
+    """Registered with file-allocation=none (before trunc), a torrent writes
+    zeros into every gap on NTFS for as long as aria2 holds it: a changeOption
+    is taken and changes nothing (measured on 1.37.0). Its next start adds it
+    again, and it goes on from its control file with its file sparse."""
+    out = tmp_path / "downloads"
+    out.mkdir()
+    t = T.DownloadTask(swarm["torrent"], str(out / "Payload.torrent"))
+    trunc = torrent.allocation
+    monkeypatch.setattr(torrent, "allocation", lambda: "none")    # as an older version added it
+
+    def pause_when_started():
+        end = time.monotonic() + 60
+        while time.monotonic() < end and t.downloaded < PIECE:
+            time.sleep(0.05)
+        t.request_pause()
+
+    was = utils.global_limiter.limit_bps
+    utils.global_limiter.set_limit(256 * 1024)
+    try:
+        threading.Thread(target=pause_when_started, daemon=True).start()
+        _run(t)
+    finally:
+        utils.global_limiter.set_limit(was)
+    assert t.status == T.PAUSED, (t.status, t.error)
+    held, = [w["gid"] for w in daemon.call("aria2.tellWaiting", 0, 100, ["gid", "status"])
+             if w["status"] == "paused"]
+    assert daemon.call("aria2.getOption", held)["file-allocation"] == "none"
+    if sys.platform == "win32":
+        assert not os.stat(out / "Payload.bin").st_file_attributes & 0x200
+
+    monkeypatch.setattr(torrent, "allocation", trunc)
+    t.clear_pause()
+    t.status = T.QUEUED
+    _run(t)
+    assert t.status == T.COMPLETED, (t.status, t.error)
+    with pytest.raises(aria2d.Aria2Error):            # dropped and added again,
+        daemon.call("aria2.getOption", held)          # not re-attached as it was
+    assert (out / "Payload.bin").read_bytes() == swarm["payload"]
+    # added again with the setting's allocation (a file already whole-length
+    # before the re-add stays as it is: only gaps still to come go sparse)
+    gids = [x["gid"] for x in daemon.call("aria2.tellStopped", 0, 100, ["gid"])]
+    gids += [x["gid"] for x in daemon.call("aria2.tellActive", ["gid"])]
+    assert [daemon.call("aria2.getOption", g)["file-allocation"] for g in gids] == ["trunc"]
+
+
 # ---- the unfinished-downloads folder (utils.INCOMPLETE_DIR) ---------------------
 def _wait(cond, limit=60):
     end = time.monotonic() + limit

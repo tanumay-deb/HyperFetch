@@ -150,8 +150,16 @@ def allocation():
     (this is the MinGW build) is near-instant, per aria2's own documentation.
     On a legacy filesystem it degrades to prealloc's behaviour — no worse than
     what it replaces.
+
+    Off, trunc - never none. With none a piece written far into a file makes
+    NTFS write zeros up to it first, and aria2 waits for that: its RPC froze
+    for 3-19 s at a time and the speed spiked after each freeze (2026-11-17,
+    a 194 GB torrent on a USB SSD: 3.2 GB fetched, 102 GB already written).
+    trunc marks each file sparse on Windows, so a gap takes no disk and no
+    time: measured with the bundled 1.37.0, a 2 GiB file written at 4 places
+    had 1.50 GiB of zeros under none and 0 under trunc.
     """
-    return "falloc" if getattr(utils, "PREALLOCATE", False) else "none"
+    return "falloc" if getattr(utils, "PREALLOCATE", False) else "trunc"
 
 
 def proxy_url():
@@ -2023,7 +2031,9 @@ class TorrentDownloader:
 
     def _add_opts(self, out_dir, meta):
         """The options this torrent is added with, as the task stands now."""
-        opts = {"dir": out_dir}
+        # said with each add, not left to the daemon's command line: a daemon
+        # an older version started keeps the allocation it was started with
+        opts = {"dir": out_dir, "file-allocation": allocation()}
         opts.update(tracker_opts(self.t, meta))
         if is_magnet(self.t.url):
             # aria2 holds the payload it makes from the metadata instead of
@@ -2258,6 +2268,13 @@ class TorrentDownloader:
         if existing and not self._entry_trackers_fit(d, existing, opts):
             # A private torrent registered before the app knew it was one. Its
             # tracker list is fixed at add time too, so it is added again.
+            self._rpc_remove(d, existing, force=True)
+            existing = ""
+        if existing and not self._entry_allocation_fits(d, existing):
+            # Registered with file-allocation=none (before trunc): it writes
+            # zeros into every gap until it is added again. A changeOption is
+            # taken and changes nothing (measured on 1.37.0); a re-add goes on
+            # from the control file, its file sparse from then on.
             self._rpc_remove(d, existing, force=True)
             existing = ""
         if existing:
@@ -2845,6 +2862,19 @@ class TorrentDownloader:
                 return top
 
             time.sleep(POLL)
+
+    @staticmethod
+    def _entry_allocation_fits(d, gid):
+        """False for a registration with another file-allocation than the
+        setting's that still has bytes to write; a finished one writes no more.
+        True when aria2 cannot say: nothing is dropped on a guess."""
+        try:
+            if (d.call("aria2.getOption", gid) or {}).get("file-allocation", allocation()) == allocation():
+                return True
+            st = d.call("aria2.tellStatus", gid, ["completedLength", "totalLength"]) or {}
+            return int(st.get("completedLength") or 0) >= int(st.get("totalLength") or 0)
+        except Exception:
+            return True
 
     @staticmethod
     def _rpc_remove(d, gid, force=False):
