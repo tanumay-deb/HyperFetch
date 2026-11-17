@@ -487,8 +487,9 @@ class Downloader:
             # route: a VPN may carry some addresses only. A line not ticked is
             # still a line - one Settings calls "same router as ...: adds no
             # speed" can be the one used
-            self.t.log_event("One internet connection: the way to this server is through "
-                             "another adapter (a VPN?), and splitting would go around it")
+            if not ipaddress.ip_address(via).is_loopback:   # a server on this PC
+                self.t.log_event("One internet connection: the way to this server is through "
+                                 "another adapter (a VPN?), and splitting would go around it")
             return []
         return found
 

@@ -307,3 +307,14 @@ def test_a_server_only_a_vpn_reaches_keeps_one_line(two_lines, monkeypatch, tmp_
     # a server reached by a line: the lines are used
     monkeypatch.setattr(lines, "route_address", lambda dest="": "127.0.0.1")
     assert len(Downloader(t, segments=8)._pick_lines()) == 2
+
+
+def test_a_server_on_this_pc_keeps_one_line_without_blaming_a_vpn(two_lines, monkeypatch, tmp_path):
+    """http://127.0.0.1/...: the way there is loopback, no line - one
+    connection, and the log names no VPN."""
+    two_lines(a="127.0.0.2", b="127.0.0.3")
+    monkeypatch.setattr(lines, "route_address", lambda dest="": "127.0.0.1")
+    t = T.DownloadTask("http://127.0.0.1:9/f.bin", str(tmp_path / "f.bin"))
+    t.total_size, t.supports_range = 64 * MiB, True
+    assert Downloader(t, segments=8)._pick_lines() == []
+    assert not _said(t, "another adapter")
