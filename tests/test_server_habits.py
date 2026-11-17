@@ -307,3 +307,22 @@ def test_a_link_led_to_a_sign_in_page_keeps_its_name(server, tmp_path):
     t = T.DownloadTask(srv.url("/report"), str(tmp_path / "report.bin"), filename="report.bin")
     Downloader(t, segments=4).run()
     assert t.filename == "report.bin"
+
+
+def test_a_named_attachment_is_a_file_whatever_its_type(server, make_payload, tmp_path):
+    """A download.php that names its file but leaves PHP's default type
+    (text/html): the browser saves it - an attachment is a file. It failed
+    "Server sent a web page"."""
+    srv = server(make_payload(2 * 1024 * 1024))
+
+    def answer(h, head):
+        srv.send(h, srv.data, head, [("Content-Type", "text/html; charset=UTF-8"),
+                                     ("Content-Disposition", 'attachment; filename="backup.zip"')])
+        return True
+    srv.answer = answer
+    url = srv.url("/download.php?id=9")
+    t = T.DownloadTask(url, str(tmp_path / "download.php"), filename="download.php")
+    Downloader(t, segments=4).run()
+    assert t.status == T.COMPLETED, t.error
+    assert t.filename == "backup.zip"
+    assert open(t.save_path, "rb").read() == srv.data

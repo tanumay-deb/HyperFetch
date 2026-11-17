@@ -87,6 +87,12 @@ def disposition_name(value):
         return ""
 
 
+def _is_attachment(r):
+    """The server says "save this": a file, whatever Content-Type says - a
+    PHP download script that sets no type sends text/html."""
+    return (r.headers.get("Content-Disposition") or "").strip().lower().startswith("attachment")
+
+
 def _make_session(pool, source=None):
     """A keep-alive session whose connection pool is sized to the segment count.
     Reusing one session across a download's segments and retries avoids a fresh
@@ -354,6 +360,7 @@ class Downloader:
         self._probe_ctype = ""
         self._probe_name = ""           # the server's name for the file (Content-Disposition)
         self._probe_final = ""          # where the link led, after redirects
+        self._attachment = False        # Content-Disposition: attachment - a file, whatever its type
         self._ended_whole = False       # a file sent whole (no ranges) was read to its end
         self._media = False             # set by run_media
         # run_media's file is on disk whole. The task is not Completed on that:
@@ -647,6 +654,7 @@ class Downloader:
             self._probe_ctype = r.headers.get("Content-Type", "").split(";")[0].strip().lower()
             self._probe_name = disposition_name(r.headers.get("Content-Disposition"))
             self._probe_final = r.url or ""
+            self._attachment = _is_attachment(r)
         except requests.RequestException:
             size, accept = 0, "none"
 
@@ -675,6 +683,7 @@ class Downloader:
                 self._probe_name = (disposition_name(r.headers.get("Content-Disposition"))
                                     or self._probe_name)
                 self._probe_final = r.url or self._probe_final
+                self._attachment = self._attachment or _is_attachment(r)
                 r.close()
             except requests.RequestException:
                 pass
@@ -1123,7 +1132,7 @@ class Downloader:
                 # interstitial page — never write it out as the file. A name
                 # ending .html/.htm asked for the page itself.
                 ext = os.path.splitext(self.t.save_path)[1].lower()
-                if (self._probe_ctype.startswith("text/html")
+                if (self._probe_ctype.startswith("text/html") and not self._attachment
                         and ext not in ("", ".html", ".htm")):
                     self._web_page()
                     return
