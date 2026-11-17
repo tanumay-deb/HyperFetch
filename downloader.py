@@ -667,37 +667,41 @@ class Downloader:
         except requests.RequestException:
             size, accept = 0, "none"
 
-        # Some servers lie on HEAD; confirm with a tiny ranged GET.
-        if size == 0 or accept == "none":
-            try:
-                r = self._session.get(url,
-                                 headers={**headers, "Range": "bytes=0-0"},
-                                 stream=True, allow_redirects=True,
-                                 timeout=CONNECT_TIMEOUT, verify=utils.VERIFY_TLS, proxies=utils.PROXIES)
-                if r.status_code in (403, 410):
-                    refused = r.status_code
-                if r.status_code == 206:
-                    accept = "bytes"
-                    cr = r.headers.get("Content-Range", "")
-                    if "/" in cr:
-                        try:
-                            size = int(cr.split("/")[-1])
-                        except ValueError:
-                            pass
-                if size == 0 and r.status_code == 200:
-                    # a 206's length is the one byte asked for, never the
-                    # file's: "bytes 0-0/*" (total unknown) "completed" at 1 B
-                    size = _content_length(r)
-                ctype = r.headers.get("Content-Type", "").split(";")[0].strip().lower()
-                if ctype:
-                    self._probe_ctype = ctype
-                self._probe_name = (disposition_name(r.headers.get("Content-Disposition"))
-                                    or self._probe_name)
-                self._probe_final = r.url or self._probe_final
-                self._attachment = self._attachment or _is_attachment(r)
-                r.close()
-            except requests.RequestException:
-                pass
+        # Some servers lie on HEAD; confirm with a tiny ranged GET - always:
+        # one that promised ranges there and sent the whole file to a range
+        # failed "no longer sends this file in parts", Restart the same
+        # (2026-11-17). A whole answer means one piece.
+        try:
+            r = self._session.get(url,
+                             headers={**headers, "Range": "bytes=0-0"},
+                             stream=True, allow_redirects=True,
+                             timeout=CONNECT_TIMEOUT, verify=utils.VERIFY_TLS, proxies=utils.PROXIES)
+            if r.status_code in (403, 410):
+                refused = r.status_code
+            if r.status_code == 200:
+                accept = "none"
+            if r.status_code == 206:
+                accept = "bytes"
+                cr = r.headers.get("Content-Range", "")
+                if "/" in cr:
+                    try:
+                        size = int(cr.split("/")[-1])
+                    except ValueError:
+                        pass
+            if size == 0 and r.status_code == 200:
+                # a 206's length is the one byte asked for, never the
+                # file's: "bytes 0-0/*" (total unknown) "completed" at 1 B
+                size = _content_length(r)
+            ctype = r.headers.get("Content-Type", "").split(";")[0].strip().lower()
+            if ctype:
+                self._probe_ctype = ctype
+            self._probe_name = (disposition_name(r.headers.get("Content-Disposition"))
+                                or self._probe_name)
+            self._probe_final = r.url or self._probe_final
+            self._attachment = self._attachment or _is_attachment(r)
+            r.close()
+        except requests.RequestException:
+            pass
         return size, accept, refused
 
     def _take_server_name(self):

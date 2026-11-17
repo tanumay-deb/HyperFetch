@@ -405,3 +405,24 @@ def test_a_range_of_unknown_total_is_not_the_file(server, make_payload, tmp_path
     Downloader(t, segments=4).run()
     assert t.status == T.COMPLETED, t.error
     assert open(t.save_path, "rb").read() == srv.data
+
+
+def test_ranges_promised_but_not_kept_fetch_the_file_whole(server, make_payload, tmp_path):
+    """HEAD says Accept-Ranges, the GET ignores Range and sends the whole
+    file (a download script, a proxy that drops Range): the first run failed
+    "no longer sends this file in parts - Restart", and Restart did the same."""
+    srv = server(make_payload(6 * 1024 * 1024))
+
+    def answer(h, head):
+        h.send_response(200)
+        h.send_header("Accept-Ranges", "bytes")
+        h.send_header("Content-Length", str(len(srv.data)))
+        h.end_headers()
+        if not head:
+            h.wfile.write(srv.data)
+        return True
+    srv.answer = answer
+    t = T.DownloadTask(srv.url("/f.zip"), str(tmp_path / "f.zip"), filename="f.zip")
+    Downloader(t, segments=4).run()
+    assert t.status == T.COMPLETED, t.error
+    assert open(t.save_path, "rb").read() == srv.data
