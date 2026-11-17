@@ -44,6 +44,27 @@ class _BoundAdapter(HTTPAdapter):
         super().init_poolmanager(*a, **kw)
 
 
+class _Session(requests.Session):
+    """Keeps the browser's Cookie header on a redirect to the same host.
+    requests drops it on every redirect, the same site's too: a signed-in
+    link that redirected met the site's sign-in page, went to yt-dlp, and a
+    PDF finished as "report.unknown_video" (2026-11-17). Another host gets
+    no cookies, as before. Cookies the redirect itself set are kept too."""
+
+    def rebuild_auth(self, prepared, response):
+        super().rebuild_auth(prepared, response)
+        sent = response.request.headers.get("Cookie")
+        if not sent or (urllib.parse.urlsplit(prepared.url).hostname
+                        != urllib.parse.urlsplit(response.request.url).hostname):
+            return
+        pairs = {}                                  # by name; the redirect's own win
+        for part in f"{sent};{prepared.headers.get('Cookie', '')}".split(";"):
+            name, eq, value = part.strip().partition("=")
+            if name and eq:
+                pairs[name] = value
+        prepared.headers["Cookie"] = "; ".join(f"{k}={v}" for k, v in pairs.items())
+
+
 def _make_session(pool, source=None):
     """A keep-alive session whose connection pool is sized to the segment count.
     Reusing one session across a download's segments and retries avoids a fresh
@@ -51,7 +72,7 @@ def _make_session(pool, source=None):
     and high-latency links. urllib3's pools are thread-safe for our per-thread
     GETs; sizing the pool to the segment count avoids 'pool is full' churn that
     would silently discard (and not reuse) connections."""
-    s = requests.Session()
+    s = _Session()
     kw = dict(pool_connections=pool, pool_maxsize=pool, max_retries=0)
     ad = _BoundAdapter(source, **kw) if source else HTTPAdapter(**kw)
     s.mount("http://", ad)
@@ -106,9 +127,10 @@ def probe_info(url, headers=None):
     """Lightweight probe for the file-info dialog: size + content type."""
     info = {"size": 0, "type": ""}
     base = {**HEADERS, **(headers or {})}
+    s = _Session()                      # the sign-in kept across a redirect
     try:
-        r = requests.head(url, headers=base, allow_redirects=True,
-                          timeout=10, verify=utils.VERIFY_TLS, proxies=utils.PROXIES)
+        r = s.head(url, headers=base, allow_redirects=True,
+                   timeout=10, verify=utils.VERIFY_TLS, proxies=utils.PROXIES)
         info["size"] = int(r.headers.get("Content-Length", 0))
         info["type"] = r.headers.get("Content-Type", "").split(";")[0].strip()
     except (requests.RequestException, ValueError):
@@ -118,9 +140,9 @@ def probe_info(url, headers=None):
     # 1-byte ranged GET and read the size from Content-Range.
     if info["size"] == 0:
         try:
-            with requests.get(url, headers={**base, "Range": "bytes=0-0"},
-                              stream=True, allow_redirects=True,
-                              timeout=10, verify=utils.VERIFY_TLS, proxies=utils.PROXIES) as r:
+            with s.get(url, headers={**base, "Range": "bytes=0-0"},
+                       stream=True, allow_redirects=True,
+                       timeout=10, verify=utils.VERIFY_TLS, proxies=utils.PROXIES) as r:
                 cr = r.headers.get("Content-Range", "")
                 if "/" in cr:
                     total = cr.split("/")[-1]
@@ -132,6 +154,7 @@ def probe_info(url, headers=None):
                     info["type"] = r.headers.get("Content-Type", "").split(";")[0].strip()
         except (requests.RequestException, ValueError):
             pass
+    s.close()
     return info
 
 

@@ -21,7 +21,7 @@ class _Server:
     """One file at any path. `.answer(handler, head)` may answer a request
     itself (return True); else the file is served with byte ranges."""
 
-    def __init__(self, data):
+    def __init__(self, data, host="127.0.0.1"):
         self.data = data
         self.requests = []
         srv = self
@@ -44,7 +44,8 @@ class _Server:
                     return
                 srv.send(self, srv.data, head)
 
-        self.httpd = http.server.ThreadingHTTPServer(("127.0.0.1", 0), H)
+        self.host = host
+        self.httpd = http.server.ThreadingHTTPServer((host, 0), H)
         threading.Thread(target=self.httpd.serve_forever, daemon=True).start()
 
     def answer(self, h, head):
@@ -70,15 +71,15 @@ class _Server:
             h.wfile.write(d[s:e + 1])
 
     def url(self, path):
-        return f"http://127.0.0.1:{self.httpd.server_address[1]}{path}"
+        return f"http://{self.host}:{self.httpd.server_address[1]}{path}"
 
 
 @pytest.fixture
 def server():
     made = []
 
-    def make(data):
-        s = _Server(data)
+    def make(data, host="127.0.0.1"):
+        s = _Server(data, host)
         made.append(s)
         return s
     yield make
@@ -107,3 +108,54 @@ def test_a_server_that_sends_a_compressed_copy_is_asked_for_the_file(server, tmp
     Downloader(t, segments=8).run()
     assert t.status == T.COMPLETED, t.error
     assert open(t.save_path, "rb").read() == raw
+
+
+def _signed_in_site(srv, to):
+    """/download.php redirects to `to`; anything else wants the sign-in cookie
+    and answers a sign-in page without it, as such a site does."""
+    def answer(h, head):
+        if h.path.startswith("/download.php"):
+            h.send_response(302)
+            h.send_header("Location", to)
+            h.send_header("Content-Length", "0")
+            h.end_headers()
+            return True
+        if "sid=1" not in (h.headers.get("Cookie") or ""):
+            page = b"<html><body>Please sign in</body></html>"
+            h.send_response(403)
+            h.send_header("Content-Type", "text/html")
+            h.send_header("Content-Length", str(len(page)))
+            h.end_headers()
+            if not head:
+                h.wfile.write(page)
+            return True
+        return False
+    srv.answer = answer
+
+
+def test_a_redirect_on_the_same_site_keeps_the_sign_in(server, make_payload, tmp_path):
+    """requests drops a Cookie header on every redirect: the engine met the
+    site's sign-in page, gave the link to yt-dlp, and the PDF finished as
+    "report.unknown_video" on one connection."""
+    srv = server(make_payload(3 * 1024 * 1024))
+    _signed_in_site(srv, "/files/report.pdf")
+    t = T.DownloadTask(srv.url("/download.php?id=5"), str(tmp_path / "report.pdf"),
+                       filename="report.pdf", headers={"Cookie": "sid=1"})
+    Downloader(t, segments=4).run()
+    assert t.status == T.COMPLETED, t.error
+    assert not t.use_ytdlp
+    assert t.save_path.endswith("report.pdf")
+    assert open(t.save_path, "rb").read() == srv.data
+    to_file = [hd for _, path, hd in srv.requests if path.startswith("/files/")]
+    assert to_file and all("sid=1" in hd.get("Cookie", "") for hd in to_file)
+
+
+def test_a_redirect_to_another_host_takes_no_sign_in(server, make_payload, tmp_path):
+    other = server(make_payload(1024 * 1024), host="127.0.0.2")
+    first = server(b"")
+    _signed_in_site(first, other.url("/f.bin"))
+    t = T.DownloadTask(first.url("/download.php?id=5"), str(tmp_path / "f.bin"),
+                       filename="f.bin", headers={"Cookie": "sid=1"})
+    Downloader(t, segments=4).run()
+    assert other.requests
+    assert not any(hd.get("Cookie") for _, _, hd in other.requests)
