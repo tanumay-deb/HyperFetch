@@ -89,6 +89,13 @@ def disposition_name(value):
         return ""
 
 
+def _content_length(r):
+    """Content-Length as a number, 0 when there is none. A proxy that repeats
+    the header gives "123, 123", and int() of that raised (2026-11-17)."""
+    v = (r.headers.get("Content-Length") or "").split(",")[0].strip()
+    return int(v) if v.isdigit() else 0
+
+
 def _is_attachment(r):
     """The server says "save this": a file, whatever Content-Type says - a
     PHP download script that sets no type sends text/html."""
@@ -161,7 +168,7 @@ def probe_info(url, headers=None):
     try:
         r = s.head(url, headers=base, allow_redirects=True,
                    timeout=10, verify=utils.VERIFY_TLS, proxies=utils.PROXIES)
-        info["size"] = int(r.headers.get("Content-Length", 0))
+        info["size"] = _content_length(r)
         info["type"] = r.headers.get("Content-Type", "").split(";")[0].strip()
     except (requests.RequestException, ValueError):
         pass
@@ -179,7 +186,7 @@ def probe_info(url, headers=None):
                     if total.isdigit():
                         info["size"] = int(total)
                 if info["size"] == 0 and r.status_code == 200:
-                    info["size"] = int(r.headers.get("Content-Length", 0))
+                    info["size"] = _content_length(r)
                 if not info["type"]:
                     info["type"] = r.headers.get("Content-Type", "").split(";")[0].strip()
         except (requests.RequestException, ValueError):
@@ -651,7 +658,7 @@ class Downloader:
             r = self._session.head(url, headers=headers,
                               allow_redirects=True,
                               timeout=CONNECT_TIMEOUT, verify=utils.VERIFY_TLS, proxies=utils.PROXIES)
-            size = int(r.headers.get("Content-Length", 0))
+            size = _content_length(r)
             accept = r.headers.get("Accept-Ranges", "none").lower()
             self._probe_ctype = r.headers.get("Content-Type", "").split(";")[0].strip().lower()
             self._probe_name = disposition_name(r.headers.get("Content-Disposition"))
@@ -678,7 +685,7 @@ class Downloader:
                         except ValueError:
                             pass
                 if size == 0:
-                    size = int(r.headers.get("Content-Length", 0))
+                    size = _content_length(r)
                 ctype = r.headers.get("Content-Type", "").split(";")[0].strip().lower()
                 if ctype:
                     self._probe_ctype = ctype

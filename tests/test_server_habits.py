@@ -349,3 +349,25 @@ def test_a_signed_in_stream_that_redirects_keeps_the_sign_in(server):
     _signed_in_site(srv, "/hls/master.m3u8")
     found = hls.probe(srv.url("/download.php?id=5"), {"Cookie": "sid=1"})
     assert [v["height"] for v in found["variants"]] == [720, 360]
+
+
+def test_a_length_said_twice_is_read(server, make_payload, tmp_path):
+    """A proxy that repeats Content-Length gives "3145728, 3145728": the
+    probe raised ValueError, and the download ended "unexpectedly"."""
+    srv = server(make_payload(3 * 1024 * 1024))
+
+    def answer(h, head):
+        if not head:
+            return False
+        h.send_response(200)
+        h.send_header("Accept-Ranges", "bytes")
+        h.send_header("Content-Length", str(len(srv.data)))
+        h.send_header("Content-Length", str(len(srv.data)))
+        h.end_headers()
+        return True
+    srv.answer = answer
+    t = T.DownloadTask(srv.url("/f.zip"), str(tmp_path / "f.zip"), filename="f.zip")
+    Downloader(t, segments=4).run()
+    assert t.status == T.COMPLETED, t.error
+    assert t.total_size == len(srv.data) and len(t.segments) > 1
+    assert open(t.save_path, "rb").read() == srv.data
