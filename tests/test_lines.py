@@ -61,3 +61,8 @@ def test_route_address_is_an_address_of_this_pc():
         s.bind((ip, 0))
     finally:
         s.close()
+
+
+def test_route_address_asks_about_the_address_given():
+    # loopback goes out by loopback, whatever the default route
+    assert lines.route_address("127.0.0.1") == "127.0.0.1"

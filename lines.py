@@ -114,13 +114,15 @@ def addresses(names):
     return [(n, now[n]) for n in names if n in now]
 
 
-def route_address():
-    """The IPv4 address this PC's traffic leaves from now - the default
-    route's - or "" when there is none. A connected UDP socket sends nothing;
-    it only asks Windows which way it would go."""
+def route_address(dest=""):
+    """The IPv4 address traffic to `dest` (an IPv4 address) leaves this PC
+    from now - for no `dest`, the default route's - or "" when there is no
+    way. A connected UDP socket sends nothing; it only asks Windows which way
+    it would go. A VPN may carry some addresses only, so ask about the one
+    that matters."""
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     try:
-        s.connect(("8.8.8.8", 53))
+        s.connect((dest or "8.8.8.8", 53))
         return s.getsockname()[0]
     except OSError:
         return ""

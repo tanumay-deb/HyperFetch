@@ -129,7 +129,7 @@ def two_lines(monkeypatch):
                             lambda names: [x for x in found if x[0] in names])
         monkeypatch.setattr(lines, "available", lambda: [
             ("A", a, "192.168.1.1"), ("B", b, "192.168.42.129"), ("C", "10.9.9.9", "192.168.1.1")])
-        monkeypatch.setattr(lines, "route_address", lambda: a)     # traffic leaves by A
+        monkeypatch.setattr(lines, "route_address", lambda dest="": a)    # traffic leaves by A
         monkeypatch.setattr(utils, "LINES", ["A", "B"])
     return use
 
@@ -267,12 +267,12 @@ def test_traffic_through_another_adapter_keeps_one_line(two_lines, monkeypatch, 
     named "net-merge" held the default route) would be gone around by
     connections bound to the lines: the download stays on one, and says why."""
     two_lines()
-    monkeypatch.setattr(lines, "route_address", lambda: "198.18.0.1")
+    monkeypatch.setattr(lines, "route_address", lambda dest="": "198.18.0.1")
     t = T.DownloadTask("http://127.0.0.1:9/f.bin", str(tmp_path / "f.bin"))
     t.total_size, t.supports_range = 64 * MiB, True
     assert Downloader(t, segments=8)._pick_lines() == []
     assert _said(t, "another adapter")
-    monkeypatch.setattr(lines, "route_address", lambda: "")     # cannot tell: lines kept
+    monkeypatch.setattr(lines, "route_address", lambda dest="": "")    # cannot tell: lines kept
     assert len(Downloader(t, segments=8)._pick_lines()) == 2
 
 
@@ -282,8 +282,28 @@ def test_traffic_through_a_line_not_ticked_keeps_the_lines(two_lines, monkeypatc
     by that one (a cable's lower metric), it is still a line, not a VPN: the
     ticked lines are used."""
     two_lines()
-    monkeypatch.setattr(lines, "route_address", lambda: "10.9.9.9")    # by C
+    monkeypatch.setattr(lines, "route_address", lambda dest="": "10.9.9.9")    # by C
     t = T.DownloadTask("http://127.0.0.1:9/f.bin", str(tmp_path / "f.bin"))
     t.total_size, t.supports_range = 64 * MiB, True
     assert len(Downloader(t, segments=8)._pick_lines()) == 2
     assert not _said(t, "another adapter")
+
+
+def test_a_server_only_a_vpn_reaches_keeps_one_line(two_lines, monkeypatch, tmp_path):
+    """A VPN that carries some addresses only (a company network) leaves the
+    default route alone: asked about 8.8.8.8, Windows names a line. The
+    server's own address is what is asked about - its way is the VPN's."""
+    import socket
+    two_lines()
+    monkeypatch.setattr(socket, "getaddrinfo", lambda *a, **k: [
+        (socket.AF_INET6, socket.SOCK_STREAM, 6, "", ("fd00::5", 80, 0, 0)),
+        (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("10.20.30.40", 80))])
+    monkeypatch.setattr(lines, "route_address",
+                        lambda dest="": "172.16.0.2" if dest == "10.20.30.40" else "127.0.0.1")
+    t = T.DownloadTask("http://files.corp.example/f.bin", str(tmp_path / "f.bin"))
+    t.total_size, t.supports_range = 64 * MiB, True
+    assert Downloader(t, segments=8)._pick_lines() == []
+    assert _said(t, "another adapter")
+    # a server reached by a line: the lines are used
+    monkeypatch.setattr(lines, "route_address", lambda dest="": "127.0.0.1")
+    assert len(Downloader(t, segments=8)._pick_lines()) == 2

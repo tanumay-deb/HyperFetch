@@ -461,8 +461,10 @@ class Downloader:
             return []
         parts = urllib.parse.urlsplit(self.url)
         host = parts.hostname or ""
+        dest = ""                       # the server's IPv4 address, when known
         try:
-            ipaddress.ip_address(host)
+            if ipaddress.ip_address(host).version == 4:
+                dest = host
         except ValueError:
             # a name the relay carries resolves to it, on loopback; a lookup
             # without a port is given the real address (doh._tcp_port)
@@ -473,16 +475,19 @@ class Downloader:
                 found = []
             if any(ipaddress.ip_address(f[4][0]).is_loopback for f in found):
                 return []
+            dest = next((f[4][0] for f in found if f[0] == socket.AF_INET), "")
         found = lines.addresses(utils.LINES)
         if len(found) < 2:
             return []
-        via = lines.route_address()
+        via = lines.route_address(dest)
         if via and via not in {ip for _, ip, _ in lines.available()}:
-            # a VPN or tunnel adapter (no gateway: not a line) carries this
-            # PC's traffic: connections bound to the lines would go around it
-            # (2026-11-17). A line not ticked is still a line - one Settings
-            # calls "same router as ...: adds no speed" can be the one used
-            self.t.log_event("One internet connection: this PC's traffic goes through "
+            # a VPN or tunnel adapter (no gateway: not a line) carries the
+            # traffic to this server: connections bound to the lines would go
+            # around it (2026-11-17). Asked about the server, not the default
+            # route: a VPN may carry some addresses only. A line not ticked is
+            # still a line - one Settings calls "same router as ...: adds no
+            # speed" can be the one used
+            self.t.log_event("One internet connection: the way to this server is through "
                              "another adapter (a VPN?), and splitting would go around it")
             return []
         return found
