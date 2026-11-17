@@ -371,3 +371,37 @@ def test_a_length_said_twice_is_read(server, make_payload, tmp_path):
     assert t.status == T.COMPLETED, t.error
     assert t.total_size == len(srv.data) and len(t.segments) > 1
     assert open(t.save_path, "rb").read() == srv.data
+
+
+def test_a_range_of_unknown_total_is_not_the_file(server, make_payload, tmp_path):
+    """No HEAD, and the one-byte look answered "bytes 0-0/*" (total not
+    known): the look's own length, 1, was taken for the file's, and the
+    download "completed" with one byte."""
+    srv = server(make_payload(3 * 1024 * 1024))
+
+    def answer(h, head):
+        if head:
+            h.send_response(405)
+            h.send_header("Content-Length", "0")
+            h.end_headers()
+            return True
+        rng = h.headers.get("Range")
+        if rng:
+            a, _, b = rng.split("=", 1)[1].partition("-")
+            s, e = int(a), min(int(b) if b else len(srv.data) - 1, len(srv.data) - 1)
+            h.send_response(206)
+            h.send_header("Content-Range", f"bytes {s}-{e}/*")
+            h.send_header("Content-Length", str(e - s + 1))
+            h.end_headers()
+            h.wfile.write(srv.data[s:e + 1])
+            return True
+        h.send_response(200)
+        h.send_header("Connection", "close")
+        h.end_headers()
+        h.wfile.write(srv.data)
+        return True
+    srv.answer = answer
+    t = T.DownloadTask(srv.url("/f.zip"), str(tmp_path / "f.zip"), filename="f.zip")
+    Downloader(t, segments=4).run()
+    assert t.status == T.COMPLETED, t.error
+    assert open(t.save_path, "rb").read() == srv.data

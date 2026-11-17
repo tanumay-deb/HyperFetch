@@ -684,7 +684,9 @@ class Downloader:
                             size = int(cr.split("/")[-1])
                         except ValueError:
                             pass
-                if size == 0:
+                if size == 0 and r.status_code == 200:
+                    # a 206's length is the one byte asked for, never the
+                    # file's: "bytes 0-0/*" (total unknown) "completed" at 1 B
                     size = _content_length(r)
                 ctype = r.headers.get("Content-Type", "").split(";")[0].strip().lower()
                 if ctype:
