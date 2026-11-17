@@ -210,3 +210,20 @@ def test_a_name_someone_chose_is_kept(server, make_payload, tmp_path, how):
     Downloader(t, segments=4).run()
     assert t.status == T.COMPLETED, t.error
     assert t.filename == name and t.save_path == str(tmp_path / name)
+
+
+@pytest.mark.parametrize("before, after, kept", [
+    ("https://site.example/a", "https://site.example/b", True),
+    ("http://site.example/a", "https://site.example/b", True),
+    ("https://site.example/a", "http://site.example/b", False),    # never in the clear
+    ("https://site.example/a", "https://cdn.example/b", False),
+])
+def test_which_redirects_keep_the_sign_in(before, after, kept):
+    import requests
+    from downloader import _Session
+    prev = requests.Request("GET", before, headers={"Cookie": "sid=1"}).prepare()
+    resp = requests.Response()
+    resp.request = prev
+    nxt = requests.Request("GET", after).prepare()
+    _Session().rebuild_auth(nxt, resp)
+    assert ("sid=1" in nxt.headers.get("Cookie", "")) == kept

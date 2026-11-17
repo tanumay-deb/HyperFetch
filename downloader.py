@@ -49,13 +49,14 @@ class _Session(requests.Session):
     requests drops it on every redirect, the same site's too: a signed-in
     link that redirected met the site's sign-in page, went to yt-dlp, and a
     PDF finished as "report.unknown_video" (2026-11-17). Another host gets
-    no cookies, as before. Cookies the redirect itself set are kept too."""
+    no cookies, as before, nor does https going down to http (they would
+    cross the network in the clear). Cookies the redirect set are kept too."""
 
     def rebuild_auth(self, prepared, response):
         super().rebuild_auth(prepared, response)
         sent = response.request.headers.get("Cookie")
-        if not sent or (urllib.parse.urlsplit(prepared.url).hostname
-                        != urllib.parse.urlsplit(response.request.url).hostname):
+        to, came = urllib.parse.urlsplit(prepared.url), urllib.parse.urlsplit(response.request.url)
+        if not sent or to.hostname != came.hostname or (came.scheme, to.scheme) == ("https", "http"):
             return
         pairs = {}                                  # by name; the redirect's own win
         for part in f"{sent};{prepared.headers.get('Cookie', '')}".split(";"):
