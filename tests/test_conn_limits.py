@@ -27,7 +27,7 @@ SIZE = 6 * 1024 * 1024
 RATE = 1.5 * 1024 * 1024          # bytes/s per connection: one connection takes 4 s
 
 
-@pytest.mark.parametrize("refuse", ["429", "reset", "403"])
+@pytest.mark.parametrize("refuse", ["429", "reset", "403", "503"])
 @pytest.mark.parametrize("link", ["file", "video"])
 def test_a_connection_limit_is_met_at_the_limit(media_server, make_payload, tmp_path,
                                                 refuse, link):

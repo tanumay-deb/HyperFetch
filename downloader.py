@@ -79,6 +79,10 @@ SIDECAR_MAX = 8192     # bytes of a .sha256 answer read: the line, never a file
 PUSHBACK_WAIT = 0.25
 PUSHBACK_WINDOW = 1.0
 PUSHBACK_LAG = 0.1
+# how a server refuses one connection too many (None = a reset); 503 is
+# nginx limit_conn's default - as an ordinary error it spent the range's
+# retries and failed the download ("Connection lost", 2026-11-17)
+REFUSED = (403, 429, 503, None)
 # an extra link (task.mirrors) that hands back this many parts without having
 # served a byte is dropped: it refuses us or is down, not merely busy
 HANDED_BACK_MAX = 3
@@ -394,7 +398,7 @@ class Downloader:
                 self._ends.append((src, self._stream_ended[src]))
 
     def _pushed_back(self, sent, src):
-        """A request was refused - 403, 429 or a reset - before it got going.
+        """A request was refused - 403, 429, 503 or a reset - before it got going.
         `sent`: when it went out (time.monotonic()).
 
         While another of this download's connections is streaming, that is the
@@ -832,7 +836,7 @@ class Downloader:
                         and self._line_failed(line, f"HTTP {code}" if code else "could not connect")):
                     continue            # another line takes the part, at once
                 if src != self.url:
-                    busy = not isinstance(e, MirrorMismatch) and code in (403, 429, None)
+                    busy = not isinstance(e, MirrorMismatch) and code in REFUSED
                     if busy and not self._link_streams[src] and src not in self._served:
                         self._handed[src] += 1
                     if self._handed[src] >= HANDED_BACK_MAX:
@@ -851,7 +855,7 @@ class Downloader:
                         self._drop_mirror(src, e)
                         continue
                     # the only link left: retried below like the first one
-                if not accepted and code in (403, 429, None) and self._pushed_back(sent, src):
+                if not accepted and code in REFUSED and self._pushed_back(sent, src):
                     # the server's limit, not the link's (see _pushed_back):
                     # the range waits a moment, then for a slot at the gate,
                     # and that is not one of its retries

@@ -216,7 +216,8 @@ def media_server():
     .put(path, data, etag=None)   serve data at /path (any query string)
     .rate        bytes/s per connection (0 = as fast as it goes)
     .limit       connections served at once; past it a request is refused
-    .refuse      how: "403", "429" or "reset" (TCP RST)
+    .refuse      how: "403", "429", "503" (nginx limit_conn's default)
+                 or "reset" (TCP RST)
     .linger      seconds a connection still counts after its last byte, as
                  a server that tracks connections counts it (0 = none)
     .tokens      when a set, /path?t=<token> must carry one of them (a signed
@@ -301,7 +302,7 @@ def media_server():
                                            struct.pack("ii", 1, 0))
                 self.connection.close()
                 return
-            return self._empty(429 if srv.refuse == "429" else 403)
+            return self._empty(int(srv.refuse))
 
         def _body(self, path, head):
             data = files[path]
