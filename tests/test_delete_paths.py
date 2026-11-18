@@ -297,7 +297,8 @@ def test_a_read_only_file_says_why_for_real(tmp_path):
 def _pending():
     import utils
     from gui2 import app_shortcuts
-    return utils.load_json(app_shortcuts._pending_path(), [])
+    return [e["path"] if isinstance(e, dict) else e
+            for e in utils.load_json(app_shortcuts._pending_path(), [])]
 
 
 def _join_deletes(timeout=30):
@@ -363,6 +364,33 @@ def test_one_a_download_in_the_list_points_at_again_is_kept(tmp_path):
     win.queue.tasks.append(again)
     _resume(win)
     assert f.read_bytes() == b"the new one"
+
+
+def test_a_file_replaced_while_the_app_was_closed_is_kept_at_the_next_start(tmp_path, caplog):
+    """If HyperFetch closed before a delete finished and the user saved a new
+    file at that path meanwhile, the next start must keep the new file and
+    drop the path from the list; left unchanged, it is deleted (B4)."""
+    from gui2 import app_shortcuts
+    replaced = tmp_path / "report.pdf"
+    replaced.write_bytes(b"old copy")
+    unchanged = tmp_path / "old.zip"
+    unchanged.write_bytes(b"still the one asked for")
+    folder = tmp_path / "Show.S01"
+    folder.mkdir()
+    (folder / "ep1.mkv").write_bytes(b"ep1")
+
+    app_shortcuts._note_pending(add=[str(replaced), str(unchanged), str(folder)])
+    replaced.write_bytes(b"new copy downloaded while the app was closed")
+    (folder / "ep2.mkv").write_bytes(b"new episode")
+
+    win = _window()
+    with caplog.at_level("INFO", logger="hyperfetch.gui"):
+        _resume(win)
+
+    assert replaced.read_bytes() == b"new copy downloaded while the app was closed"
+    assert (folder / "ep2.mkv").read_bytes() == b"new episode"
+    assert not unchanged.exists()
+    assert any("report.pdf" in r.getMessage() for r in caplog.records)
 
 
 def test_the_window_finishes_them_as_it_starts():

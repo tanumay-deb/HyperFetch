@@ -18,16 +18,56 @@ def _pending_path():
     return os.path.join(utils.app_data_dir(), "pending_deletes.json")
 
 
+def _path_stamp(path):
+    """(size, mtime) of `path` on disk — for a folder, total size and its
+    newest file's mtime — or None when `path` is not there."""
+    try:
+        if os.path.isdir(path):
+            size = 0
+            newest = None
+            for root, _, files in os.walk(path):
+                for fn in files:
+                    st = os.stat(os.path.join(root, fn))
+                    size += st.st_size
+                    if newest is None or st.st_mtime > newest:
+                        newest = st.st_mtime
+            if newest is None:
+                newest = os.stat(path).st_mtime
+            return (size, newest)
+        st = os.stat(path)
+        return (st.st_size, st.st_mtime)
+    except OSError:
+        return None
+
+
+def _entry_for(path):
+    stamp = _path_stamp(path)
+    if stamp is not None:
+        return {"path": path, "size": stamp[0], "mtime": stamp[1]}
+    return {"path": path}
+
+
 def _note_pending(add=(), done=()):
     """The paths "Delete from disk" was asked for and has not dealt with
-    yet, kept in app data. A delete waits for the download's engine to let
-    go of its files; the app closed meanwhile left them on disk and said
-    nothing (2026-11-11). The next start deals with what is listed
-    (ShortcutsMixin._resume_deletes)."""
+    yet, kept in app data with their size and modification time (B4). A
+    delete waits for the download's engine to let go of its files; the app
+    closed meanwhile left them on disk and said nothing (2026-11-11). The
+    next start deals with what is listed (ShortcutsMixin._resume_deletes)."""
     import utils
+    done_set = set(done)
+    add_list = list(add)
+    add_set = set(add_list)
     with _PENDING_LOCK:
-        left = [p for p in utils.load_json(_pending_path(), []) if isinstance(p, str)]
-        left = [p for p in left if p not in done] + [p for p in add if p not in left]
+        raw = utils.load_json(_pending_path(), [])
+        left = []
+        for e in (raw if isinstance(raw, list) else []):
+            p = e.get("path") if isinstance(e, dict) else (e if isinstance(e, str) else None)
+            if not isinstance(p, str) or p in done_set or p in add_set:
+                continue
+            left.append(e if isinstance(e, dict) else {"path": p})
+        for p in add_list:
+            if isinstance(p, str) and not any(x.get("path") == p for x in left):
+                left.append(_entry_for(p))
         if left:
             utils.save_json(_pending_path(), left)
         else:
@@ -125,19 +165,42 @@ class ShortcutsMixin:
     def _resume_deletes(self):
         """As the app starts: delete what "Delete from disk" had not dealt
         with when it last closed (_note_pending), on a thread - but nothing a
-        download in the list now points at: it was added again since."""
+        download in the list now points at, nor a path whose size or
+        modification time has changed since the delete was asked (B4)."""
         def resume():
+            import logging
             import utils
-            left = [p for p in utils.load_json(_pending_path(), []) if isinstance(p, str)]
-            if not left:
+            raw = utils.load_json(_pending_path(), [])
+            entries = []
+            for e in (raw if isinstance(raw, list) else []):
+                if isinstance(e, str):
+                    entries.append({"path": e})
+                elif isinstance(e, dict) and isinstance(e.get("path"), str):
+                    entries.append(e)
+            if not entries:
                 return
             owned = set()
             for t in list(self.queue.tasks):
                 for p in [getattr(t, "save_path", "") or ""] + self._payload_paths(t):
                     if p:
                         owned.add(os.path.normcase(os.path.abspath(p)))
-            keep = [p for p in left if os.path.normcase(os.path.abspath(p)) not in owned]
-            _note_pending(done=[p for p in left if p not in keep])
+            keep, drop = [], []
+            log = logging.getLogger("hyperfetch.gui")
+            for e in entries:
+                p = e["path"]
+                if os.path.normcase(os.path.abspath(p)) in owned:
+                    drop.append(p)
+                    continue
+                if "size" in e and "mtime" in e:
+                    now = _path_stamp(p)
+                    if now is None or now != (e["size"], e["mtime"]):
+                        log.info("skipping pending delete of %s: file on disk "
+                                 "changed since the delete was asked", p)
+                        drop.append(p)
+                        continue
+                keep.append(p)
+            if drop:
+                _note_pending(done=drop)
             if keep:
                 self._delete_files([(None, keep)])
 
@@ -167,6 +230,8 @@ class ShortcutsMixin:
                     _tor.cleanup_artifacts(t)   # aria2 writes its control file as it stops
                 except Exception:
                     pass
+            if t is not None:
+                _note_pending(add=targets)
             for path in targets:
                 err = self._remove_path(path, attempts=10, delay=0.5)
                 if err:
