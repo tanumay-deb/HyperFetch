@@ -28,31 +28,6 @@ Severity: **Must** = wrong result, data loss, or a crash users hit. **Should**
 
 ---
 
-## B1 - Should - A plain file whose link contains a video site's name is fetched by yt-dlp, and saved with the wrong type
-
-- **Where:** `yt_dl.py` `is_ytdlp_url` (about line 36): `any(d in u for d in _SITES)`
-  matches a site name ANYWHERE in the link.
-- **What happens:** measured 2026-11-16 with the real engine: a plain zip at
-  `http://<host>/fox.com-backup.zip` ("x.com" is in "fox.com") went to the
-  yt-dlp engine, ended **Completed**, and was saved as
-  `fox.com-backup.unknown_video`. The same for any link on `box.com`,
-  `dropbox.com`, `netflix.com`, `fox.com`, a file named `ok.ru.iso`, or a link
-  with `youtube.com` in its query (`?ref=youtube.com`). Such downloads also lose
-  the segmented engine (several connections, resume).
-- **Expected:** only a link whose HOST is one of `_SITES` or a subdomain of one
-  (`www.youtube.com`, `m.youtube.com`, `youtu.be`, `player.vimeo.com`) goes to
-  yt-dlp. The extension already decides this way:
-  `chrome_ext/background.js` `onYtdlpSite` (host equal to, or ending in
-  "." + a site).
-- **Test:** `is_ytdlp_url` is False for `https://app.box.com/s/x.zip`,
-  `https://www.dropbox.com/s/k/setup.exe?dl=1`,
-  `https://cdn.example.com/f.zip?ref=youtube.com`,
-  `https://mirror.example/ok.ru.iso`; True for `https://youtu.be/abc`,
-  `https://m.youtube.com/watch?v=abc`, `https://player.vimeo.com/video/1`,
-  `https://www.reddit.com/r/x/comments/1/`. Callers: `gui2/app.py`
-  (`use_ytdlp` of a new download), `gui2/dialogs/new_download.py` (the
-  "Use yt-dlp" tick), `yt_dl.is_ytdlp_task`.
-
 ## B2 - Should - The web page's downloads wait for a click at the PC while a New Download window is open
 
 - **Where:** `gui2/app.py` `_drain_pending` (the window's 500 ms timer) calls

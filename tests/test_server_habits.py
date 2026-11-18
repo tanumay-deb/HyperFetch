@@ -426,3 +426,24 @@ def test_ranges_promised_but_not_kept_fetch_the_file_whole(server, make_payload,
     Downloader(t, segments=4).run()
     assert t.status == T.COMPLETED, t.error
     assert open(t.save_path, "rb").read() == srv.data
+
+
+@pytest.mark.parametrize("url, video", [
+    ("https://app.box.com/s/x.zip", False),                     # "x.com" inside box.com
+    ("https://www.dropbox.com/s/k/setup.exe?dl=1", False),
+    ("https://cdn.example.com/f.zip?ref=youtube.com", False),
+    ("https://mirror.example/ok.ru.iso", False),
+    ("http://files.example/fox.com-backup.zip", False),
+    ("https://www.netflix.com/title/1", False),
+    ("https://youtu.be/abc", True),
+    ("https://m.youtube.com/watch?v=abc", True),
+    ("https://player.vimeo.com/video/1", True),
+    ("https://www.reddit.com/r/x/comments/1/", True),
+    ("https://x.com/user/status/1", True),
+    ("https://YOUTUBE.COM/watch?v=a", True),
+])
+def test_a_video_site_is_known_by_its_host_only(url, video):
+    """BUGS.md B1: a site's name anywhere in a link sent a plain zip to
+    yt-dlp, which saved it as .unknown_video."""
+    import yt_dl
+    assert yt_dl.is_ytdlp_url(url) is video

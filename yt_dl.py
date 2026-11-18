@@ -15,6 +15,7 @@ import os
 import time
 import logging
 import threading
+import urllib.parse
 
 import task as T
 
@@ -34,10 +35,15 @@ EXTRACT_TIMEOUT = 60
 
 
 def is_ytdlp_url(url):
+    """A link on one of _SITES: its HOST is the site or a subdomain of it, as
+    the extension decides (background.js onYtdlpSite). The name anywhere in
+    the link sent app.box.com, dropbox.com and ?ref=youtube.com to yt-dlp,
+    and a plain zip finished as .unknown_video (BUGS.md B1)."""
     u = (url or "").lower()
     if not u.startswith(("http://", "https://")):
         return False
-    return any(d in u for d in _SITES)
+    host = (urllib.parse.urlsplit(u).hostname or "").rstrip(".")
+    return any(host == d or host.endswith("." + d) for d in _SITES)
 
 
 def is_dash(url="", filename="", ctype=""):
