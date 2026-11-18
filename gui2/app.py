@@ -1262,19 +1262,25 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, Up
         dlg.activateWindow()
 
     def _drain_pending(self):
-        while self.pending:
-            item = self.pending.popleft()
-            if item.get("focus"):
-                # a second app launch asked us to come forward (single-instance)
-                self._show_from_tray()
-                continue
-            url = item.get("url", "")
-            if not url:
-                continue
-            # ask=False for the web page: nobody may be at this PC to answer
-            self._add_download(url, item.get("filename", ""), item.get("headers"), flash=True,
-                               ask=item.get("ask", True), hls_master=item.get("hls_master", ""),
-                               orig_url=item.get("orig_url", ""))
+        if getattr(self, "_draining_pending", False):
+            return
+        self._draining_pending = True
+        try:
+            while self.pending:
+                item = self.pending.popleft()
+                if item.get("focus"):
+                    # a second app launch asked us to come forward (single-instance)
+                    self._show_from_tray()
+                    continue
+                url = item.get("url", "")
+                if not url:
+                    continue
+                # ask=False for the web page: nobody may be at this PC to answer
+                self._add_download(url, item.get("filename", ""), item.get("headers"), flash=True,
+                                   ask=item.get("ask", True), hls_master=item.get("hls_master", ""),
+                                   orig_url=item.get("orig_url", ""))
+        finally:
+            self._draining_pending = False
 
     # ------------------------------------------------------------- actions
     @staticmethod
@@ -1355,23 +1361,59 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, Up
             # nothing was shown, so say something: an invisible add is
             # indistinguishable from a click that did not register
             self._toasts.show("info", "Added", _display_name(url, v["filename"]))
-        else:
-            dlg = NewDownloadDialog(self, self.save_dir, queues, self.segments,
-                                    url=url, suggested=suggested, headers=headers,
-                                    categorize=self._extras.get("categorize", True))
-            dq = self._extras.get("default_queue")      # Settings -> Downloads
-            if dq and dq in queues:
-                dlg.q.setCurrentText(dq)
-            dlg.start_now.setChecked(bool(self._extras.get("auto_start", True)))
-            if flash:
-                dlg.setWindowFlag(Qt.WindowStaysOnTopHint, True)
-                self.raise_(); self.activateWindow()
+            DownloadAppV2._continue_add_download(
+                self, v, url, suggested, ask, hls_master, orig_url)
+            return
+        dlg = NewDownloadDialog(self if isinstance(self, QWidget) else None,
+                                self.save_dir, queues, self.segments,
+                                url=url, suggested=suggested, headers=headers,
+                                categorize=self._extras.get("categorize", True))
+        dq = self._extras.get("default_queue")      # Settings -> Downloads
+        if dq and dq in queues:
+            dlg.q.setCurrentText(dq)
+        dlg.start_now.setChecked(bool(self._extras.get("auto_start", True)))
+        if flash:
+            dlg.setWindowFlag(Qt.WindowStaysOnTopHint, True)
+            self.raise_(); self.activateWindow()
+        if type(dlg).exec is not QDialog.exec or not isinstance(self, QWidget):
             if dlg.exec() != QDialog.Accepted:
                 return
             v = dlg.values()
             if v.get("skip_dialog"):
                 self._extras["skip_new_download_dialog"] = True
                 self._save_settings()
+            DownloadAppV2._continue_add_download(
+                self, v, url, suggested, ask, hls_master, orig_url)
+            return
+        dlg._add_ctx = (url, suggested, ask, hls_master, orig_url)
+        dlg.setWindowModality(Qt.NonModal)
+        if not hasattr(self, "_add_dialogs"):
+            self._add_dialogs = []
+        self._add_dialogs.append(dlg)
+        dlg.finished.connect(self._on_new_download_finished)
+        dlg.show()
+
+    def _on_new_download_finished(self, result=0):
+        dlgs = getattr(self, "_add_dialogs", None) or []
+        sender = self.sender() if hasattr(self, "sender") else None
+        dlg = sender if sender in dlgs else (dlgs[0] if dlgs else None)
+        if dlg in dlgs:
+            dlgs.remove(dlg)
+        if dlg is None:
+            return
+        ctx = getattr(dlg, "_add_ctx", None)
+        v = dlg.values() if result == QDialog.Accepted else None
+        dlg.setParent(None)
+        dlg.deleteLater()
+        if v is None or not ctx:
+            return
+        if v.get("skip_dialog"):
+            self._extras["skip_new_download_dialog"] = True
+            self._save_settings()
+        DownloadAppV2._continue_add_download(self, v, *ctx)
+
+    def _continue_add_download(self, v, url, suggested, ask=True,
+                               hls_master="", orig_url=""):
         if not v["url"]:
             return
         # One torrent is one download, however it comes - a magnet, a .torrent
@@ -1424,8 +1466,9 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, Up
             # the one in the list is what was asked for
             self._toasts.show("info", "Already in the list", existing.filename)
             return
+        create_args = (v, url, suggested, hls_master, orig_url, torrent_data, incoming_hash)
         if existing:
-            box = QMessageBox(self)
+            box = QMessageBox(self if isinstance(self, QWidget) else None)
             box.setIcon(QMessageBox.Question)
             box.setWindowTitle("Already added")
             box.setText(f"This URL is already in the list as “{existing.filename}”.")
@@ -1434,12 +1477,25 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, Up
             again_btn = box.addButton("Add Anyway", QMessageBox.DestructiveRole)
             box.addButton("Cancel", QMessageBox.RejectRole)
             box.setDefaultButton(show_btn)
+            if isinstance(self, QWidget) and isinstance(box, QMessageBox) and type(box).exec is QMessageBox.exec:
+                box._dup_ctx = ("url", existing, show_btn, again_btn, create_args)
+                box.setWindowModality(Qt.NonModal)
+                if not hasattr(self, "_dup_boxes"):
+                    self._dup_boxes = []
+                self._dup_boxes.append(box)
+                box.finished.connect(self._on_dup_box_finished)
+                box.show()
+                return
             box.exec()
             if box.clickedButton() is show_btn:
                 self._show_existing(existing)
                 return
             if box.clickedButton() is not again_btn:
                 return
+        DownloadAppV2._create_download_task(self, *create_args)
+
+    def _create_download_task(self, v, url, suggested, hls_master, orig_url,
+                              torrent_data, incoming_hash):
         # A folder typed in New Download that is not there yet is made below;
         # it was swapped for the default folder without a word (2026-11-03).
         # Only a full path: a relative one would land beside the app.
@@ -1573,11 +1629,24 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, Up
         show_btn = box.addButton("Show Existing", QMessageBox.ActionRole)
         box.addButton("Keep Existing" if load_btn else "OK", QMessageBox.RejectRole)
         box.setDefaultButton(load_btn or show_btn)
+        if isinstance(self, QWidget) and isinstance(box, QMessageBox) and type(box).exec is QMessageBox.exec:
+            box._dup_ctx = ("torrent", existing, new, load_btn, show_btn)
+            box.setWindowModality(Qt.NonModal)
+            if not hasattr(self, "_dup_boxes"):
+                self._dup_boxes = []
+            self._dup_boxes.append(box)
+            box.finished.connect(self._on_dup_box_finished)
+            box.show()
+            return
         box.exec()
-        if box.clickedButton() is show_btn:
+        DownloadAppV2._finish_torrent_again(
+            self, box.clickedButton(), existing, new, load_btn, show_btn)
+
+    def _finish_torrent_again(self, clicked, existing, new, load_btn, show_btn):
+        if clicked is show_btn:
             self._show_existing(existing)
             return
-        if load_btn is None or box.clickedButton() is not load_btn:
+        if load_btn is None or clicked is not load_btn:
             return
         # aria2 cannot be handed trackers for a download it already holds;
         # the engine adds the torrent again with them (torrent.add_trackers),
@@ -1593,6 +1662,31 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, Up
             f"Added {len(added)} tracker(s) to {existing.filename}. "
             + ("Reconnecting to use them." if now
                else "They will be used the next time it starts."))
+
+    def _on_dup_box_finished(self, *_):
+        boxes = getattr(self, "_dup_boxes", None) or []
+        sender = self.sender() if hasattr(self, "sender") else None
+        box = sender if sender in boxes else (boxes[0] if boxes else None)
+        if box in boxes:
+            boxes.remove(box)
+        if box is None:
+            return
+        ctx = getattr(box, "_dup_ctx", None)
+        clicked = box.clickedButton()
+        box.setParent(None)
+        box.deleteLater()
+        if not ctx:
+            return
+        if ctx[0] == "torrent":
+            _, existing, new, load_btn, show_btn = ctx
+            DownloadAppV2._finish_torrent_again(
+                self, clicked, existing, new, load_btn, show_btn)
+        elif ctx[0] == "url":
+            _, existing, show_btn, again_btn, create_args = ctx
+            if clicked is show_btn:
+                self._show_existing(existing)
+            elif clicked is again_btn:
+                DownloadAppV2._create_download_task(self, *create_args)
 
     def _open_settings(self):
         cur_accent = next((k for k, v in palette.ACCENTS.items() if v == palette.COLORS["accent"]), "purple")
