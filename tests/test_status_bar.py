@@ -100,3 +100,33 @@ def test_the_details_panel_and_toasts_stay_above_it():
     toasts.show("info", "Download added", "x.bin")
     toasts.reposition()
     assert toasts.items[-1].geometry().bottom() < 600 - host.status_bar.height()
+
+
+def test_a_toast_closing_after_its_host_went_out_of_scope_does_not_crash():
+    """test_the_details_panel_and_toasts_stay_above_it left ToastManager's 5 s
+    timer holding the last reference to the parentless host QWidget; when it
+    later expired inside _fetch_torrent's QEventLoop in
+    test_torrent_duplicates.py, Toast's DeferredDelete destructor released
+    ToastManager -> host and ran ~QWidget() on the parent from inside its own
+    child's ~QWidget() destructor (B3)."""
+    import gc
+    import time
+    from PySide6.QtCore import QEventLoop, QTimer
+    from gui2.toast import ToastManager
+    QApplication.instance() or QApplication([])
+
+    def show_and_leave():
+        host = QWidget()
+        host.resize(900, 600)
+        toasts = ToastManager(host)
+        toasts.show("info", "Download added", "x.bin", secs=0.05)
+
+    show_and_leave()
+    gc.collect()
+    time.sleep(0.1)
+    for _ in range(8):
+        loop = QEventLoop()
+        QTimer.singleShot(50, loop.quit)
+        loop.exec()
+        gc.collect()
+

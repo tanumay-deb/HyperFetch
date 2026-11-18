@@ -2,6 +2,8 @@
 ToastManager.show(kind, title, msg) — kind in success/error/info. Toasts slide
 in from the right with a fade, and fade out on dismiss/timeout.
 """
+import weakref
+
 from PySide6.QtWidgets import (
     QFrame, QHBoxLayout, QVBoxLayout, QLabel, QPushButton, QGraphicsOpacityEffect
 )
@@ -62,34 +64,55 @@ class Toast(QFrame):
 
 class ToastManager:
     def __init__(self, parent):
-        self.parent = parent
+        # Weak: a Toast's close button and timer hold callbacks that capture
+        # `self`. If `self` held a strong reference to `parent`, a parentless
+        # host QWidget that went out of scope would be kept alive by its child
+        # Toast and then destroyed from inside ~Toast() when t.deleteLater()
+        # ran, double-freeing the child in ~QWidget() (B3).
+        self._parent = weakref.ref(parent) if parent is not None else lambda: None
         self.items = []
 
+    @property
+    def parent(self):
+        return self._parent()
+
     def show(self, kind, title, msg, secs=5):
-        t = Toast(self.parent, kind, title, msg, lambda: self._close(t))
+        parent = self.parent
+        if parent is None:
+            return
+        t = Toast(parent, kind, title, msg, lambda: self._close(t))
         self.items.append(t)
         t.show()
         self.reposition(animate_new=t)
-        QTimer.singleShot(secs * 1000, lambda: self._close(t))
+        tm = QTimer(t)
+        tm.setSingleShot(True)
+        tm.timeout.connect(lambda: self._close(t))
+        tm.start(int(secs * 1000))
 
     def _close(self, t):
+        if self.parent is None:
+            return
         if t in self.items and not t._closing:
             t.slide_out(lambda: self._finish(t))
 
     def _finish(self, t):
         if t in self.items:
             self.items.remove(t)
-        t.deleteLater()
-        self.reposition()
+        if self.parent is not None:
+            t.deleteLater()
+            self.reposition()
 
     def reposition(self, animate_new=None):
+        parent = self.parent
+        if parent is None:
+            return
         m = 16
-        bar = getattr(self.parent, "status_bar", None)            # stays in sight
-        y = self.parent.height() - m - (bar.height() if bar else 0)
+        bar = getattr(parent, "status_bar", None)            # stays in sight
+        y = parent.height() - m - (bar.height() if bar else 0)
         for t in reversed(self.items):
             t.adjustSize()
             y -= t.height()
-            final = QPoint(self.parent.width() - t.width() - m, y)
+            final = QPoint(parent.width() - t.width() - m, y)
             if t is animate_new:
                 t.slide_in(final)
             else:
