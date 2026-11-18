@@ -82,6 +82,7 @@ def queue(monkeypatch, limit):
         t.request_cancel()
     q.shutdown()
     q.wait_active(5)
+    _wait(lambda: not any(getattr(t, "_worker_alive", False) for t in list(q.tasks)), timeout=5)
 
 
 def _running(q, *tasks):

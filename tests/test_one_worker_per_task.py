@@ -110,6 +110,8 @@ def queues():
     for q in made:
         q.wait_active(5)
     _wait(lambda: not any(_live.values()), timeout=5)
+    _wait(lambda: not any(getattr(t, "_worker_alive", False)
+                          for q in made for t in list(q.tasks)), timeout=5)
 
 
 @pytest.fixture

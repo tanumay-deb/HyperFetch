@@ -49,7 +49,11 @@ def env(tmp_path, monkeypatch):
     web_auth.set_lan(True)                  # signed in from the LAN
     assert c.post("/api/login", json={"username": "admin", "password": PW},
                   environ_overrides={"REMOTE_ADDR": LAN}).status_code == 200
-    return c, q, add
+    yield c, q, add
+    for t in list(q.tasks):
+        t.request_cancel()
+    q.shutdown()
+    q.wait_active(5)
 
 
 def _post(c, path, **kw):

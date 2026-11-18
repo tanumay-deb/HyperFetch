@@ -24,6 +24,16 @@ def appdata(tmp_path, monkeypatch):
     return tmp_path
 
 
+@pytest.fixture
+def queue():
+    q = QueueManager()
+    yield q
+    for t in list(q.tasks):
+        t.request_cancel()
+    q.shutdown()
+    q.wait_active(5)
+
+
 def _row(name, status, owner="", **kw):
     t = T.DownloadTask("https://e.test/" + name, "C:/dl/" + name, filename=name)
     t.status = status
@@ -33,49 +43,44 @@ def _row(name, status, owner="", **kw):
     return t.to_dict()
 
 
-def test_restore_brings_saved_downloads_back():
-    q = QueueManager()
-    restored, skipped = q.restore([_row("a.bin", T.PAUSED), _row("b.bin", T.COMPLETED)])
+def test_restore_brings_saved_downloads_back(queue):
+    restored, skipped = queue.restore([_row("a.bin", T.PAUSED), _row("b.bin", T.COMPLETED)])
     assert (restored, skipped) == (2, 0)
-    assert {t.filename for t in q.tasks} == {"a.bin", "b.bin"}
+    assert {t.filename for t in queue.tasks} == {"a.bin", "b.bin"}
 
 
-def test_an_in_flight_download_resumes_by_itself():
+def test_an_in_flight_download_resumes_by_itself(queue):
     """This is what only happened with a window open. A server that comes back
     with everything paused and nobody watching is not a server."""
-    q = QueueManager()
-    q.restore([_row("busy.bin", T.DOWNLOADING)])
-    t = q.tasks[0]
+    queue.restore([_row("busy.bin", T.DOWNLOADING)])
+    t = queue.tasks[0]
     assert getattr(t, "_auto_resume", False) is True
     assert t.status != T.PAUSED, "it came back paused with nothing to un-pause it"
 
 
-def test_a_site_user_s_download_waits_for_them():
+def test_a_site_user_s_download_waits_for_them(queue):
     """Decision B6: this machine should not silently resume work on behalf of
     somebody who is not here. They restart it from the page."""
-    q = QueueManager()
-    q.restore([_row("theirs.bin", T.DOWNLOADING, owner="tanumay")])
-    t = q.tasks[0]
+    queue.restore([_row("theirs.bin", T.DOWNLOADING, owner="tanumay")])
+    t = queue.tasks[0]
     assert t.status == T.PAUSED
     assert getattr(t, "_auto_resume", False) is True, "the flag itself should survive"
 
 
-def test_a_damaged_row_is_skipped_rather_than_losing_the_rest():
-    q = QueueManager()
-    restored, skipped = q.restore([
+def test_a_damaged_row_is_skipped_rather_than_losing_the_rest(queue):
+    restored, skipped = queue.restore([
         _row("good.bin", T.PAUSED),
         {"nonsense": True},
         _row("also-good.bin", T.PAUSED),
     ])
     assert restored == 2
     assert skipped == 1
-    assert len(q.tasks) == 2
+    assert len(queue.tasks) == 2
 
 
-def test_restoring_nothing_is_not_an_error():
-    q = QueueManager()
-    assert q.restore([]) == (0, 0)
-    assert q.restore(None) == (0, 0)
+def test_restoring_nothing_is_not_an_error(queue):
+    assert queue.restore([]) == (0, 0)
+    assert queue.restore(None) == (0, 0)
 
 
 def test_retention_runs_without_a_qt_event_loop(tmp_path, monkeypatch):
@@ -143,7 +148,7 @@ def test_the_renamed_section_is_there():
     assert len(settings._SECTIONS) == 9
 
 
-def test_housekeeping_without_a_sweeper_starts_no_thread(tmp_path):
+def test_housekeeping_without_a_sweeper_starts_no_thread(tmp_path, queue):
     """The desktop has no site accounts and nothing to retain. It used to start
     a thread anyway, which woke every 24 hours to sweep nothing."""
     # By name, not by count: the tests above leave their own retention threads
@@ -154,8 +159,7 @@ def test_housekeeping_without_a_sweeper_starts_no_thread(tmp_path):
                 if t.name == "hyperfetch-retention"}
 
     before = retention_threads()
-    q = QueueManager()
-    t = q.start_housekeeping(str(tmp_path), interval=0.05, delay=0.01)
+    t = queue.start_housekeeping(str(tmp_path), interval=0.05, delay=0.01)
     assert t is None, "a retention thread was started with nothing to sweep"
     time.sleep(0.15)
     # Subset, not equality: a retention thread belonging to another test may

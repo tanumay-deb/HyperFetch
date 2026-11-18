@@ -127,7 +127,10 @@ def test_a_dead_torrent_stops_blocking_the_queue(monkeypatch):
         assert dead.status == T.QUEUED
         assert dead.retry_after > time.time()
     finally:
+        for t in list(q.tasks):
+            t.request_cancel()
         q.shutdown()
+        q.wait_active(5)
 
 
 def test_the_stalled_torrent_runs_again_once_its_delay_expires(monkeypatch):
@@ -153,7 +156,10 @@ def test_the_stalled_torrent_runs_again_once_its_delay_expires(monkeypatch):
             time.sleep(0.02)
         assert ran_again, "a yielded torrent was never retried"
     finally:
+        for t in list(q.tasks):
+            t.request_cancel()
         q.shutdown()
+        q.wait_active(5)
 
 
 def test_a_backed_off_task_is_not_picked_up_early():

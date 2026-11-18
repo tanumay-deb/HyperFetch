@@ -63,6 +63,28 @@ def collect_garbage():
 
 
 @pytest.fixture(autouse=True)
+def no_stray_workers():
+    """No download worker (_execute / _worker) started by a test may outlive
+    it (B5)."""
+    def workers():
+        return {
+            th for th in threading.enumerate()
+            if th.is_alive()
+            and getattr(getattr(th, "_target", None), "__name__", "")
+            in ("_execute", "_worker")
+        }
+
+    before = workers()
+    yield
+    left = workers() - before
+    deadline = time.monotonic() + 0.1
+    while left and time.monotonic() < deadline:
+        time.sleep(0.01)
+        left = workers() - before
+    assert not left, f"download worker thread(s) left running: {left}"
+
+
+@pytest.fixture(autouse=True)
 def isolate_appdata(tmp_path, monkeypatch):
     """Redirect app-data to a temp dir for every test."""
     d = tmp_path / "appdata"

@@ -181,7 +181,10 @@ def test_move_to_queue_wakes_scheduler(fake_worker):
     q.move_to_queue(a2, "B")
     assert _wait(lambda: a2.status == T.DOWNLOADING, timeout=3), \
         "moved task did not start — scheduler not woken"
+    for t in (a1, a2):
+        t.request_cancel()
     q.shutdown()
+    q.wait_active(5)
 
 
 def test_set_max_concurrent_admits_waiting_tasks(fake_worker):
@@ -195,7 +198,10 @@ def test_set_max_concurrent_admits_waiting_tasks(fake_worker):
     q.set_max_concurrent("Main", 2)
     assert _wait(lambda: t2.status == T.DOWNLOADING, timeout=3), \
         "raising the cap did not admit the waiting task"
+    for t in (t1, t2):
+        t.request_cancel()
     q.shutdown()
+    q.wait_active(5)
 
 
 def test_move_running_task_does_not_corrupt_slot_accounting(fake_worker):
@@ -401,6 +407,8 @@ def test_a_seeding_torrent_does_not_block_the_queue(monkeypatch):
     seeder.request_pause()
     nxt.request_pause()
     q.shutdown()
+    assert _wait(lambda: not getattr(seeder, "_worker_alive", False)
+                 and not getattr(nxt, "_worker_alive", False), timeout=5)
 
 
 def test_the_slot_is_not_returned_twice(monkeypatch):
@@ -412,6 +420,7 @@ def test_the_slot_is_not_returned_twice(monkeypatch):
     t = q.add_task(T.DownloadTask("magnet:?xt=urn:btih:" + "c" * 40, "p1"))
     assert _wait(lambda: getattr(t, "seeding", False))
     t.request_pause()
+    assert _wait(lambda: not getattr(t, "_worker_alive", False), timeout=5)
     assert _wait(lambda: q.active == 0, timeout=5), f"active went to {q.active}"
     assert q.active == 0 and q.queues["Main"].active == 0, (
         f"slot accounting drifted: active={q.active} "

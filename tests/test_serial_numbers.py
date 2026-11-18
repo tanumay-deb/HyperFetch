@@ -7,6 +7,8 @@ and must not shift when the list is re-sorted or filtered. `_sl_map` only reads
 import json
 import types
 
+import pytest
+
 import task as T
 from gui2.app import DownloadAppV2
 
@@ -69,6 +71,20 @@ def test_missing_added_stamp_does_not_crash():
 
 
 # ---- state load/save safety: a failed READ must never become data loss ----
+_made_queues = []
+
+
+@pytest.fixture(autouse=True)
+def _shutdown_queues():
+    yield
+    while _made_queues:
+        q = _made_queues.pop()
+        for t in list(q.tasks):
+            t.request_cancel()
+        q.shutdown()
+        q.wait_active(15)
+
+
 def _app(tmp_path, monkeypatch):
     """A DownloadAppV2 stub with just the state plumbing under test."""
     import os
@@ -82,6 +98,7 @@ def _app(tmp_path, monkeypatch):
     # be a second copy of its contract.
     from queue_manager import QueueManager
     stub.queue = QueueManager()
+    _made_queues.append(stub.queue)
     return stub, DownloadAppV2
 
 
