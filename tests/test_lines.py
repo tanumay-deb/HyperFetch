@@ -92,3 +92,20 @@ def test_vpn_and_virtual_adapters_are_excluded_but_pppoe_is_kept(monkeypatch):
     ]
     monkeypatch.setattr(lines, "_adapters", lambda: [dict(a) for a in adapters])
     assert [n for n, _, _ in lines.available()] == ["Wi-Fi", "Fiber"]
+
+
+def test_a_hyperv_external_switch_with_a_gateway_is_kept_as_a_line(monkeypatch):
+    """B9: on a PC with a Hyper-V external virtual switch, 'vEthernet'
+    ('Hyper-V Virtual Ethernet Adapter', IfType 6, with default gateway) IS the
+    PC's real internet connection; internal/host-only switches have no gateway
+    and stay excluded by the gateway rule."""
+    adapters = [
+        {"name": "vEthernet (External)", "up": True, "ipv4": "192.168.1.10",
+         "gateway": "192.168.1.1", "if_type": 6,
+         "description": "Hyper-V Virtual Ethernet Adapter"},
+        {"name": "vEthernet (WSL)", "up": True, "ipv4": "172.25.0.1",
+         "gateway": "", "if_type": 6,
+         "description": "Hyper-V Virtual Ethernet Adapter #2"},
+    ]
+    monkeypatch.setattr(lines, "_adapters", lambda: [dict(a) for a in adapters])
+    assert lines.available() == [("vEthernet (External)", "192.168.1.10", "192.168.1.1")]

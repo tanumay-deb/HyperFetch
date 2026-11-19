@@ -31,7 +31,6 @@ _VPN_DESC_RE = re.compile(
     r"|wintun|wireguard|openvpn|nordlynx|tailscale|zerotier|mullvad"
     r"|cloudflare\s*warp|anyconnect|pangp|globalprotect|fortinet|fortissl"
     r"|pulse\s*secure|juniper|softether|hamachi|radmin|\bvpn\b"
-    r"|hyper-v|vmware|virtualbox|virtual\s+ethernet"
     r")",
     re.IGNORECASE,
 )
