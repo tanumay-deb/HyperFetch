@@ -1375,16 +1375,6 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, Up
         if flash:
             dlg.setWindowFlag(Qt.WindowStaysOnTopHint, True)
             self.raise_(); self.activateWindow()
-        if type(dlg).exec is not QDialog.exec or not isinstance(self, QWidget):
-            if dlg.exec() != QDialog.Accepted:
-                return
-            v = dlg.values()
-            if v.get("skip_dialog"):
-                self._extras["skip_new_download_dialog"] = True
-                self._save_settings()
-            DownloadAppV2._continue_add_download(
-                self, v, url, suggested, ask, hls_master, orig_url)
-            return
         dlg._add_ctx = (url, suggested, ask, hls_master, orig_url)
         dlg.setWindowModality(Qt.NonModal)
         if not hasattr(self, "_add_dialogs"):
@@ -1477,21 +1467,14 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, Up
             again_btn = box.addButton("Add Anyway", QMessageBox.DestructiveRole)
             box.addButton("Cancel", QMessageBox.RejectRole)
             box.setDefaultButton(show_btn)
-            if isinstance(self, QWidget) and isinstance(box, QMessageBox) and type(box).exec is QMessageBox.exec:
-                box._dup_ctx = ("url", existing, show_btn, again_btn, create_args)
-                box.setWindowModality(Qt.NonModal)
-                if not hasattr(self, "_dup_boxes"):
-                    self._dup_boxes = []
-                self._dup_boxes.append(box)
-                box.finished.connect(self._on_dup_box_finished)
-                box.show()
-                return
-            box.exec()
-            if box.clickedButton() is show_btn:
-                self._show_existing(existing)
-                return
-            if box.clickedButton() is not again_btn:
-                return
+            box._dup_ctx = ("url", existing, show_btn, again_btn, create_args)
+            box.setWindowModality(Qt.NonModal)
+            if not hasattr(self, "_dup_boxes"):
+                self._dup_boxes = []
+            self._dup_boxes.append(box)
+            box.finished.connect(self._on_dup_box_finished)
+            box.show()
+            return
         DownloadAppV2._create_download_task(self, *create_args)
 
     def _create_download_task(self, v, url, suggested, hls_master, orig_url,
@@ -1529,9 +1512,10 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, Up
             base, kept or v["url"], filename, v["category"],
             self._extras.get("categorize", True))
         save_path = utils.unique_path(folder, filename)
+        qname = v["queue"] if v["queue"] in self.queue.queues else "Main"
         t = T.DownloadTask(v["url"], save_path, filename=filename,
                            headers=v["headers"], priority=v["priority"],
-                           queue_name=v["queue"])
+                           queue_name=qname)
         t.sort_base = sort_base
         if incoming_hash:
             t.infohash = incoming_hash              # which torrent it is, for good
@@ -1610,7 +1594,7 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, Up
                 known.add(tr.lower())
                 new.append(tr)
         private = bool(new) and _torrent.is_private_task(existing)
-        box = QMessageBox(self)
+        box = QMessageBox(self if isinstance(self, QWidget) else None)
         box.setWindowTitle("Torrent already added")
         box.setText(f"This torrent is already in the list as '{existing.filename}'.")
         load_btn = None
@@ -1629,18 +1613,13 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, Up
         show_btn = box.addButton("Show Existing", QMessageBox.ActionRole)
         box.addButton("Keep Existing" if load_btn else "OK", QMessageBox.RejectRole)
         box.setDefaultButton(load_btn or show_btn)
-        if isinstance(self, QWidget) and isinstance(box, QMessageBox) and type(box).exec is QMessageBox.exec:
-            box._dup_ctx = ("torrent", existing, new, load_btn, show_btn)
-            box.setWindowModality(Qt.NonModal)
-            if not hasattr(self, "_dup_boxes"):
-                self._dup_boxes = []
-            self._dup_boxes.append(box)
-            box.finished.connect(self._on_dup_box_finished)
-            box.show()
-            return
-        box.exec()
-        DownloadAppV2._finish_torrent_again(
-            self, box.clickedButton(), existing, new, load_btn, show_btn)
+        box._dup_ctx = ("torrent", existing, new, load_btn, show_btn)
+        box.setWindowModality(Qt.NonModal)
+        if not hasattr(self, "_dup_boxes"):
+            self._dup_boxes = []
+        self._dup_boxes.append(box)
+        box.finished.connect(self._on_dup_box_finished)
+        box.show()
 
     def _finish_torrent_again(self, clicked, existing, new, load_btn, show_btn):
         if clicked is show_btn:

@@ -80,6 +80,7 @@ def _window(base, extras=None):
         _toasts=types.SimpleNamespace(show=lambda *a, **k: None),
         _save_state=lambda: None, refresh=lambda: None)
     win._quick_values = lambda *a: DownloadAppV2._quick_values(win, *a)
+    win._on_new_download_finished = lambda *a: DownloadAppV2._on_new_download_finished(win, *a)
     return win, added, DownloadAppV2
 
 
@@ -87,7 +88,7 @@ def _answered(monkeypatch, typed=None, ytdlp=True):
     """New Download, answered: Download pressed with the name as the dialog
     filled it in, or with `typed` in its place - and "Use yt-dlp" ticked, as
     it is for a site the app knows."""
-    from PySide6.QtWidgets import QApplication, QDialog
+    from PySide6.QtWidgets import QApplication
     from gui2 import app
     QApplication.instance() or QApplication([])
 
@@ -98,8 +99,11 @@ def _answered(monkeypatch, typed=None, ytdlp=True):
                 self.name_edit.setText(typed)
             self.use_ytdlp.setChecked(ytdlp)
 
+        def show(self):
+            self.accept()
+
         def exec(self):
-            return QDialog.Accepted
+            raise AssertionError("NewDownloadDialog.exec() must not be called")
 
     monkeypatch.setattr(app, "NewDownloadDialog", Answered)
 

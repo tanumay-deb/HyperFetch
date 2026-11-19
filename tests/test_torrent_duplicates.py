@@ -62,15 +62,28 @@ def _file(tmp_path, data, name="Movie.torrent"):
 
 
 # ---- the window --------------------------------------------------------------------
+class _Signal:
+    def __init__(self):
+        self._slots = []
+
+    def connect(self, fn):
+        self._slots.append(fn)
+
+    def emit(self, *a):
+        for fn in list(self._slots):
+            fn(*a)
+
+
 class _Box:
     """QMessageBox: records what it says and presses the button named in
-    `press` (None: closes it)."""
+    `press` (None: closes it) when shown, answering through `finished`."""
     Question = Information = AcceptRole = RejectRole = ActionRole = DestructiveRole = 0
     press = None
     shown = []
 
     def __init__(self, *a):
         self._buttons, self._said = {}, []
+        self.finished = _Signal()
         _Box.shown.append(self._said)
 
     def setText(self, s):
@@ -87,7 +100,13 @@ class _Box:
     def clickedButton(self):
         return self._buttons.get(_Box.press)
 
-    def __getattr__(self, name):                    # setIcon, exec, ...
+    def show(self):
+        self.finished.emit(0)
+
+    def exec(self):
+        raise AssertionError("QMessageBox.exec() must not be called")
+
+    def __getattr__(self, name):                    # setIcon, setParent, deleteLater, ...
         return lambda *a, **k: None
 
 
@@ -114,7 +133,8 @@ def window(monkeypatch):
         _toasts=types.SimpleNamespace(show=lambda *a, **k: toasts.append(a)),
         _save_state=lambda: None, refresh=lambda: None,
         _show_existing=shown.append)
-    for name in ("_quick_values", "_torrent_again", "_fetch_torrent"):
+    for name in ("_quick_values", "_torrent_again", "_fetch_torrent",
+                 "_on_dup_box_finished", "_on_new_download_finished"):
         setattr(win, name, (lambda n: lambda *a: getattr(DownloadAppV2, n)(win, *a))(name))
     win.add = lambda url: DownloadAppV2._add_download(win, url, "", None)
     win.added, win.toasts, win.shown = added, toasts, shown

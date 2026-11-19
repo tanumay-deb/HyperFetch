@@ -26,11 +26,12 @@ def _window(base):
         _toasts=types.SimpleNamespace(show=lambda *a, **k: None),
         _save_state=lambda: None, refresh=lambda: None)
     win._quick_values = lambda *a: DownloadAppV2._quick_values(win, *a)
+    win._on_new_download_finished = lambda *a: DownloadAppV2._on_new_download_finished(win, *a)
     return win, added, DownloadAppV2
 
 
 def _answered(monkeypatch, conns):
-    from PySide6.QtWidgets import QApplication, QDialog
+    from PySide6.QtWidgets import QApplication
     from gui2 import app
     from gui2.dialogs.new_download import NewDownloadDialog   # not an earlier stand-in
     QApplication.instance() or QApplication([])
@@ -41,8 +42,11 @@ def _answered(monkeypatch, conns):
             if conns is not None:
                 self.conns.setValue(conns)
 
+        def show(self):
+            self.accept()
+
         def exec(self):
-            return QDialog.Accepted
+            raise AssertionError("NewDownloadDialog.exec() must not be called")
 
     monkeypatch.setattr(app, "NewDownloadDialog", Answered)
 

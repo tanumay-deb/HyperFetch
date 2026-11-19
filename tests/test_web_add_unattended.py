@@ -175,8 +175,11 @@ def test_web_add_does_not_wait_while_new_download_window_is_open(tmp_path):
             boxes = [w for w in win.findChildren(QMessageBox) if w.isVisible()]
             while_dup_open = [t.filename for t in win.queue.tasks]
             if boxes:
-                boxes[0].reject()
+                again_btn = next(
+                    b for b in boxes[0].buttons() if b.text() == "Add Anyway")
+                again_btn.click()
                 app.processEvents()
+            after_add_anyway = [t.filename for t in win.queue.tasks]
 
             print("RESULT " + json.dumps({
                 "dlg_open": bool(dlgs),
@@ -184,6 +187,7 @@ def test_web_add_does_not_wait_while_new_download_window_is_open(tmp_path):
                 "after_accept": after_accept,
                 "dup_box_open": bool(boxes),
                 "while_dup_open": while_dup_open,
+                "after_add_anyway": after_add_anyway,
             }), flush=True)
             win.queue.shutdown()
             os._exit(0)
@@ -205,6 +209,48 @@ def test_web_add_does_not_wait_while_new_download_window_is_open(tmp_path):
     assert out["after_accept"] == ["web.iso", "browser.zip"], out
     assert out["dup_box_open"] is True, out
     assert out["while_dup_open"] == ["web.iso", "browser.zip", "web2.iso"], out
+    assert len(out["after_add_anyway"]) == 4, (
+        f"pressing Add Anyway on the shown box did not add the second download: {out}")
+
+
+def test_a_deleted_queue_in_new_download_falls_back_to_main(tmp_path):
+    """B2: while New Download is open, Manage Queues can delete the queue it
+    picked; pressing Download must fall back to Main rather than letting
+    QueueManager recreate the deleted queue."""
+    from gui2.app import DownloadAppV2
+    from queue_manager import QueueManager
+    q = QueueManager(queues=[{"name": "Main", "max_concurrent": 2},
+                             {"name": "Night", "max_concurrent": 1}])
+    try:
+        q.delete_queue("Night")
+        win = types.SimpleNamespace(
+            save_dir=str(tmp_path), segments=8, queue=q, _extras={"categorize": False},
+            _toasts=types.SimpleNamespace(show=lambda *a, **k: None),
+            _save_state=lambda: None, refresh=lambda: None)
+        v = {
+            "url": "https://example.test/report.pdf",
+            "filename": "report.pdf",
+            "save_dir": str(tmp_path),
+            "category": "Auto",
+            "queue": "Night",
+            "priority": 100,
+            "connections": 8,
+            "start_now": False,
+            "use_ytdlp": False,
+            "yt_format": "",
+            "headers": {},
+            "skip_dialog": False,
+        }
+        DownloadAppV2._continue_add_download(
+            win, v, v["url"], "report.pdf", ask=True)
+        assert len(q.tasks) == 1
+        assert q.tasks[0].queue_name == "Main"
+        assert "Night" not in q.queues
+    finally:
+        for t in list(q.tasks):
+            t.request_cancel()
+        q.shutdown()
+        q.wait_active(5)
 
 
 def test_drain_pending_does_not_reenter_during_torrent_fetch(window, tmp_path):

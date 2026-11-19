@@ -104,12 +104,15 @@ def test_a_tracker_it_already_has_changes_nothing():
 # ---- adding a magnet whose torrent is already listed ----------------------------
 
 class _Box:
-    """QMessageBox, with the user pressing the first button (Load Trackers)."""
+    """QMessageBox, with the user pressing the first button (Load Trackers)
+    when shown, answering through `finished`."""
     Question = Information = AcceptRole = RejectRole = ActionRole = 0
     informed = []
 
     def __init__(self, *a):
         self._buttons = []
+        self._slots = []
+        self.finished = types.SimpleNamespace(connect=self._slots.append)
 
     @staticmethod
     def information(*a):
@@ -122,7 +125,14 @@ class _Box:
     def clickedButton(self):
         return self._buttons[0]
 
-    def __getattr__(self, name):                    # setIcon, setText, exec, ...
+    def show(self):
+        for fn in list(self._slots):
+            fn(0)
+
+    def exec(self):
+        raise AssertionError("QMessageBox.exec() must not be called")
+
+    def __getattr__(self, name):                    # setIcon, setText, deleteLater, ...
         return lambda *a, **k: None
 
 
@@ -140,6 +150,7 @@ def _add_magnet_again(existing, monkeypatch):
         _save_state=lambda: saved.append(1), refresh=lambda: None)
     win._quick_values = lambda *a: DownloadAppV2._quick_values(win, *a)
     win._torrent_again = lambda *a: DownloadAppV2._torrent_again(win, *a)
+    win._on_dup_box_finished = lambda *a: DownloadAppV2._on_dup_box_finished(win, *a)
     incoming = "magnet:?xt=urn:btih:%s&tr=%s" % (IH, "udp%3A%2F%2Fnew.example%3A80")
     DownloadAppV2._add_download(win, incoming, "", None)
     return [t for t in toasts if t[1] != "Added"], saved
