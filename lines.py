@@ -9,6 +9,7 @@ there are none (specs/2026-11-13-multi-line-downloads-design.md).
 """
 import ctypes
 import logging
+import re
 import socket
 import sys
 
@@ -18,6 +19,27 @@ _AF_INET = 2
 _GAA_FLAGS = 0x2 | 0x4 | 0x8 | 0x80     # skip anycast, multicast, DNS; gateways
 _ERROR_BUFFER_OVERFLOW = 111
 _IF_OPER_UP = 1
+
+_IF_TYPE_PPP = 23
+_IF_TYPE_LOOPBACK = 24
+_IF_TYPE_PROP_VIRTUAL = 53
+_IF_TYPE_TUNNEL = 131
+
+_VPN_DESC_RE = re.compile(
+    r"(?:"
+    r"\btap[- ]?windows\b|\btap[- ]?nord|\btap[- ]?proton|\btap\b"
+    r"|wintun|wireguard|openvpn|nordlynx|tailscale|zerotier|mullvad"
+    r"|cloudflare\s*warp|anyconnect|pangp|globalprotect|fortinet|fortissl"
+    r"|pulse\s*secure|juniper|softether|hamachi|radmin|\bvpn\b"
+    r"|hyper-v|vmware|virtualbox|virtual\s+ethernet"
+    r")",
+    re.IGNORECASE,
+)
+
+_PPP_VPN_RE = re.compile(
+    r"(?:\bl2tp\b|\bpptp\b|\bsstp\b|\bikev2\b|\bvpn\b|ras\s+async)",
+    re.IGNORECASE,
+)
 
 
 class _SOCKADDR(ctypes.Structure):
@@ -92,8 +114,14 @@ def _adapters():
             a = node.contents
             ips = [ip for ip in _ipv4s(a.FirstUnicastAddress) if not ip.startswith("169.254.")]
             gws = [g for g in _ipv4s(a.FirstGatewayAddress) if g != "0.0.0.0"]
-            out.append({"name": a.FriendlyName or "", "up": a.OperStatus == _IF_OPER_UP,
-                        "ipv4": ips[0] if ips else "", "gateway": gws[0] if gws else ""})
+            out.append({
+                "name": a.FriendlyName or "",
+                "up": a.OperStatus == _IF_OPER_UP,
+                "ipv4": ips[0] if ips else "",
+                "gateway": gws[0] if gws else "",
+                "if_type": int(a.IfType),
+                "description": a.Description or "",
+            })
             node = a.Next
         return out
     except (OSError, AttributeError, ValueError) as e:
@@ -101,10 +129,25 @@ def _adapters():
         return []
 
 
+def is_vpn_or_virtual(adapter):
+    """True when `adapter` (a dict from `_adapters()`) is a VPN, tunnel, or
+    virtual interface rather than a real internet connection (B9)."""
+    if_type = adapter.get("if_type", 0) or 0
+    if if_type in (_IF_TYPE_PROP_VIRTUAL, _IF_TYPE_TUNNEL, _IF_TYPE_LOOPBACK):
+        return True
+    desc = adapter.get("description") or ""
+    if if_type == _IF_TYPE_PPP:
+        return bool(_PPP_VPN_RE.search(desc) or _VPN_DESC_RE.search(desc))
+    if desc and _VPN_DESC_RE.search(desc):
+        return True
+    return False
+
+
 def available():
     """(name, IPv4, gateway) of each adapter that is a line, in Windows' order."""
     return [(a["name"], a["ipv4"], a["gateway"]) for a in _adapters()
-            if a["up"] and a["ipv4"] and a["gateway"] and a["name"]]
+            if a["up"] and a["ipv4"] and a["gateway"] and a["name"]
+            and not is_vpn_or_virtual(a)]
 
 
 def addresses(names):

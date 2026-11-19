@@ -318,3 +318,31 @@ def test_a_server_on_this_pc_keeps_one_line_without_blaming_a_vpn(two_lines, mon
     t.total_size, t.supports_range = 64 * MiB, True
     assert Downloader(t, segments=8)._pick_lines() == []
     assert not _said(t, "another adapter")
+
+
+def test_a_vpn_adapter_with_a_gateway_is_not_a_line_and_blocks_multi_line(monkeypatch, tmp_path):
+    """B9: a TAP VPN adapter reporting IfType 6 and a default gateway must not
+    appear in lines.available(), so when it holds the route to the server,
+    _pick_lines refuses to send parts around the VPN over Wi-Fi/Phone."""
+    import socket
+    adapters = [
+        {"name": "Wi-Fi", "up": True, "ipv4": "192.168.1.5", "gateway": "192.168.1.1",
+         "if_type": 71, "description": "Intel(R) Wi-Fi 6 AX201 160MHz"},
+        {"name": "Phone", "up": True, "ipv4": "172.20.10.2", "gateway": "172.20.10.1",
+         "if_type": 6, "description": "Apple Mobile Device Ethernet"},
+        {"name": "OpenVPN", "up": True, "ipv4": "10.8.0.6", "gateway": "10.8.0.5",
+         "if_type": 6, "description": "TAP-Windows Adapter V9"},
+    ]
+    monkeypatch.setattr(lines, "_adapters", lambda: [dict(a) for a in adapters])
+    monkeypatch.setattr(utils, "LINES", ["Wi-Fi", "Phone"])
+    monkeypatch.setattr(socket, "getaddrinfo",
+                        lambda *a, **k: [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 80))])
+    monkeypatch.setattr(lines, "route_address", lambda dest="": "10.8.0.6")
+
+    avail_names = [name for name, _, _ in lines.available()]
+    assert avail_names == ["Wi-Fi", "Phone"], avail_names
+
+    t = T.DownloadTask("http://files.example/f.bin", str(tmp_path / "f.bin"))
+    t.total_size, t.supports_range = 64 * MiB, True
+    assert Downloader(t, segments=8)._pick_lines() == []
+    assert _said(t, "another adapter")

@@ -66,3 +66,29 @@ def test_route_address_is_an_address_of_this_pc():
 def test_route_address_asks_about_the_address_given():
     # loopback goes out by loopback, whatever the default route
     assert lines.route_address("127.0.0.1") == "127.0.0.1"
+
+
+def test_vpn_and_virtual_adapters_are_excluded_but_pppoe_is_kept(monkeypatch):
+    """B9: virtual (53), tunnel (131), TAP/Wintun/WireGuard/OpenVPN Ethernet
+    adapters, and PPP L2TP/PPTP VPNs are never lines; a PPPoE broadband line
+    (23) and physical Wi-Fi/Ethernet still are."""
+    adapters = [
+        {"name": "Wi-Fi", "up": True, "ipv4": "192.168.1.5", "gateway": "192.168.1.1",
+         "if_type": 71, "description": "Intel(R) Wi-Fi 6 AX201"},
+        {"name": "Fiber", "up": True, "ipv4": "203.0.113.10", "gateway": "203.0.113.1",
+         "if_type": 23, "description": "WAN Miniport (PPPOE)"},
+        {"name": "Corp L2TP", "up": True, "ipv4": "10.0.0.2", "gateway": "10.0.0.1",
+         "if_type": 23, "description": "WAN Miniport (L2TP)"},
+        {"name": "Old PPTP", "up": True, "ipv4": "10.0.1.2", "gateway": "10.0.1.1",
+         "if_type": 23, "description": "WAN Miniport (PPTP)"},
+        {"name": "TAP", "up": True, "ipv4": "10.8.0.6", "gateway": "10.8.0.5",
+         "if_type": 6, "description": "TAP-Windows Adapter V9"},
+        {"name": "WG", "up": True, "ipv4": "10.9.0.2", "gateway": "10.9.0.1",
+         "if_type": 53, "description": "WireGuard Tunnel"},
+        {"name": "Wintun", "up": True, "ipv4": "10.10.0.2", "gateway": "10.10.0.1",
+         "if_type": 6, "description": "Wintun Userspace Tunnel"},
+        {"name": "DCO", "up": True, "ipv4": "10.11.0.2", "gateway": "10.11.0.1",
+         "if_type": 131, "description": "OpenVPN Data Channel Offload"},
+    ]
+    monkeypatch.setattr(lines, "_adapters", lambda: [dict(a) for a in adapters])
+    assert [n for n, _, _ in lines.available()] == ["Wi-Fi", "Fiber"]
