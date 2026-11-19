@@ -161,3 +161,112 @@ def test_the_quick_path_falls_back_to_a_real_queue():
     queue that does not exist."""
     stub, cls = _stub_app({"default_queue": "Deleted"})
     assert cls._quick_values(stub, "https://x/a.zip", "", {})["queue"] == "Main"
+
+
+# ------------------------------------------------ server filename probe (B7)
+def _head_server(disposition="", gate=None):
+    import http.server
+    import threading
+    seen = []
+
+    class H(http.server.BaseHTTPRequestHandler):
+        def log_message(self, *a):
+            pass
+
+        def do_HEAD(self):
+            seen.append(("HEAD", self.path, dict(self.headers)))
+            if gate is not None:
+                gate.wait(5)
+            self.send_response(200)
+            if disposition:
+                self.send_header("Content-Disposition", disposition)
+            self.send_header("Content-Type", "application/pdf")
+            self.send_header("Content-Length", "1024")
+            self.end_headers()
+
+        def do_GET(self):
+            seen.append(("GET", self.path, dict(self.headers)))
+            self.send_response(405)
+            self.end_headers()
+
+    httpd = http.server.ThreadingHTTPServer(("127.0.0.1", 0), H)
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    return httpd, seen
+
+
+def test_new_download_fills_in_the_servers_name_as_suggested(tmp_path):
+    """B7: a link like /download.php asks the server with HEAD on a thread,
+    fills in the name and category folder, and counts it as suggested (not
+    typed) so task.name_chosen stays empty."""
+    import time
+    import types
+    import utils
+    from gui2.app import DownloadAppV2
+
+    httpd, seen = _head_server('attachment; filename="report.pdf"')
+    try:
+        url = f"http://127.0.0.1:{httpd.server_address[1]}/download.php?id=7"
+        app = _app()
+        host = QWidget()
+        d = NewDownloadDialog(host, str(tmp_path), ["Main"], 8,
+                              url=url, suggested="", headers={"Cookie": "sid=1"},
+                              categorize=True)
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline and d.name_edit.text() != "report.pdf":
+            app.processEvents()
+            time.sleep(0.02)
+
+        assert d.name_edit.text() == "report.pdf"
+        assert not d.dest_hint.isHidden()
+        assert utils.category_for("report.pdf") in d.dest_hint.text()
+        assert [m for m, _, _ in seen] == ["HEAD"], f"expected only HEAD, got {seen}"
+        assert seen[0][2].get("Cookie") == "sid=1"
+
+        v = d.values()
+        added = []
+        queue = types.SimpleNamespace(queues={"Main": None}, tasks=[], segments=8,
+                                      add_task=lambda t, start=True: added.append(t))
+        win = types.SimpleNamespace(
+            save_dir=str(tmp_path), segments=8, queue=queue,
+            _extras={"categorize": True},
+            _toasts=types.SimpleNamespace(show=lambda *a, **k: None),
+            _save_state=lambda: None, refresh=lambda: None)
+        DownloadAppV2._continue_add_download(win, v, url, "", ask=True)
+        assert len(added) == 1
+        assert added[0].filename == "report.pdf"
+        assert added[0].name_chosen == ""
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+
+
+def test_new_download_does_not_overwrite_a_name_typed_before_the_probe_answers(tmp_path):
+    """B7: if the user types a filename before the HEAD answer arrives, the
+    server's name must not overwrite it."""
+    import threading
+    import time
+
+    gate = threading.Event()
+    httpd, seen = _head_server('attachment; filename="report.pdf"', gate=gate)
+    try:
+        url = f"http://127.0.0.1:{httpd.server_address[1]}/download.php?id=7"
+        app = _app()
+        host = QWidget()
+        d = NewDownloadDialog(host, str(tmp_path), ["Main"], 8,
+                              url=url, suggested="", categorize=True)
+        d.name_edit.setText("My Notes.pdf")
+        gate.set()
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline and not seen:
+            app.processEvents()
+            time.sleep(0.02)
+        for _ in range(10):
+            app.processEvents()
+            time.sleep(0.02)
+
+        assert d.name_edit.text() == "My Notes.pdf"
+        assert d.values().get("suggested", "") != "My Notes.pdf"
+    finally:
+        gate.set()
+        httpd.shutdown()
+        httpd.server_close()

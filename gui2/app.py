@@ -1501,9 +1501,10 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, Up
         # A name the user typed is a file's name, kept as typed. Not the one
         # the dialog filled in: that is a guess from the link or the
         # browser's, read as a link's name is - and a video's title says more.
-        typed = ("" if v["filename"].strip() == (suggested or "").strip()
+        base_suggested = v.get("suggested", suggested)
+        typed = ("" if v["filename"].strip() == (base_suggested or "").strip()
                  else utils.typed_filename(v["filename"]))
-        filename = typed or utils.filename_from_url(v["url"], v["filename"] or suggested)
+        filename = typed or utils.filename_from_url(v["url"], v["filename"] or base_suggested)
         # Category "Auto" with sorting on: the app files it by type under base,
         # a torrent by what its metadata says it holds - at once for a
         # .torrent, when the metadata arrives for a magnet. A category picked

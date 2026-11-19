@@ -9,13 +9,16 @@ by concurrency, not by rank), and the Filename/Category fields on the torrent
 tabs, where a torrent names itself and nothing is categorised.
 """
 import os
+import threading
+import weakref
 
 from PySide6.QtWidgets import (
     QDialog, QTabWidget, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel,
     QLineEdit, QPushButton, QComboBox, QSpinBox, QCheckBox, QFileDialog, QFrame,
     QApplication
 )
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer, Signal
+from shiboken6 import isValid
 
 import utils
 from gui2.palette import COLORS
@@ -37,6 +40,8 @@ _YT_QUALITY = [
 
 
 class NewDownloadDialog(QDialog):
+    _probed = Signal(int, str)
+
     def __init__(self, parent, save_dir, queues, segments,
                  url="", suggested="", headers=None, categorize=True):
         super().__init__(parent)
@@ -52,6 +57,16 @@ class NewDownloadDialog(QDialog):
         low = (url or "").lower()
         if low.startswith("magnet:") or low.endswith(".torrent"):
             suggested = ""
+        self._suggested = suggested or ""
+        self._name_touched = False
+        self._filling_name = False
+        self._probed_fill = False
+        self._closed = False
+        self._probe_gen = 0
+        self._probe_timer = QTimer(self)
+        self._probe_timer.setSingleShot(True)
+        self._probe_timer.timeout.connect(self._start_name_probe)
+        self._probed.connect(self._on_probed)
 
         lay = QVBoxLayout(self)
         lay.setContentsMargins(18, 16, 18, 14)
@@ -99,6 +114,7 @@ class NewDownloadDialog(QDialog):
         # ---- Filename (URL downloads only) ----
         self.name_lbl = self._label("Filename (optional)")
         self.name_edit = QLineEdit(suggested); self.name_edit.setPlaceholderText("auto-detected")
+        self.name_edit.textChanged.connect(self._on_name_changed)
         lay.addWidget(self.name_lbl)
         lay.addWidget(self.name_edit)
 
@@ -183,6 +199,101 @@ class NewDownloadDialog(QDialog):
             self.tor_edit.setText(url)
             self.tabs.setCurrentIndex(TORRENT_TAB)
         self._sync_tab_fields()
+        self.url_edit.textChanged.connect(self._on_url_changed)
+        if self.tabs.currentIndex() == URL_TAB and url and not self._suggested:
+            self._start_name_probe()
+
+    # ---- server filename probe (B7) ----
+    def _on_name_changed(self, *_):
+        if not self._filling_name:
+            self._name_touched = True
+
+    def _on_url_changed(self, *_):
+        self._probe_gen += 1
+        self._probe_timer.stop()
+        if self._name_touched or self._closed:
+            return
+        if self._probed_fill:
+            self._suggested = ""
+            self._probed_fill = False
+            self._filling_name = True
+            try:
+                self.name_edit.clear()
+            finally:
+                self._filling_name = False
+        if not self._suggested:
+            self._probe_timer.start(250)
+
+    def _start_name_probe(self):
+        if self._closed or self._name_touched or self._suggested:
+            return
+        if self.tabs.currentIndex() != URL_TAB:
+            return
+        url = self.url_edit.text().strip()
+        low = url.lower()
+        if not (low.startswith("http://") or low.startswith("https://")):
+            return
+        import torrent
+        import yt_dl
+        if torrent.is_torrent_task(url, "") or yt_dl.is_ytdlp_url(url):
+            return
+        if utils.proxy_unusable():
+            return
+        self._probe_gen += 1
+        gen = self._probe_gen
+        headers = dict(self._headers)
+        if self.referer.text().strip():
+            headers["Referer"] = self.referer.text().strip()
+        if self.ua.text().strip():
+            headers["User-Agent"] = self.ua.text().strip()
+        ref = weakref.ref(self)
+
+        def probe():
+            import downloader
+            sess = downloader.Session()
+            try:
+                r = sess.head(
+                    url, headers={**downloader.HEADERS, **headers},
+                    allow_redirects=True, timeout=5,
+                    verify=utils.VERIFY_TLS, proxies=utils.PROXIES,
+                )
+                if not (200 <= r.status_code < 400):
+                    return
+                name = downloader.server_filename(url, r)
+            except Exception:
+                return
+            finally:
+                try:
+                    sess.close()
+                except Exception:
+                    pass
+            if not name:
+                return
+            dlg = ref()
+            if dlg is not None and isValid(dlg) and not dlg._closed:
+                try:
+                    dlg._probed.emit(gen, name)
+                except RuntimeError:
+                    pass
+
+        threading.Thread(target=probe, name="name-probe", daemon=True).start()
+
+    def _on_probed(self, gen, name):
+        if (self._closed or gen != self._probe_gen or self._name_touched
+                or self.tabs.currentIndex() != URL_TAB or not name):
+            return
+        self._suggested = name
+        self._probed_fill = True
+        self._filling_name = True
+        try:
+            self.name_edit.setText(name)
+        finally:
+            self._filling_name = False
+
+    def done(self, r):
+        self._closed = True
+        self._probe_timer.stop()
+        super().done(r)
 
     # ---- helpers ----
     def _label(self, text):
@@ -280,6 +391,7 @@ class NewDownloadDialog(QDialog):
             # a torrent names itself from its metadata, so whatever is sitting in
             # the box (often a useless "magnet:") must not be forced onto it
             "filename": "" if torrent_tab else self.name_edit.text().strip(),
+            "suggested": "" if torrent_tab else self._suggested,
             "category": "Auto" if torrent_tab else self.cat.currentText(),
             "queue": self.q.currentText(),
             # Priority is gone from the UI: the queue runs by concurrency, and a

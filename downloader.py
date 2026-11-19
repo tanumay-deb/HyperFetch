@@ -102,6 +102,21 @@ def _is_attachment(r):
     return (r.headers.get("Content-Disposition") or "").strip().lower().startswith("attachment")
 
 
+def server_filename(url, resp):
+    """Filename advertised by a server response: Content-Disposition first,
+    else where a redirect led when it names a file and is not HTML (B7)."""
+    ctype = (resp.headers.get("Content-Type") or "").split(";")[0].strip().lower()
+    disp = disposition_name(resp.headers.get("Content-Disposition"))
+    name = utils.typed_filename(os.path.basename(disp.replace("\\", "/"))) if disp else ""
+    final = resp.url or ""
+    led = urllib.parse.unquote(os.path.basename(urllib.parse.urlsplit(final).path))
+    if (not name and final and final != url
+            and "." in led.strip(".")
+            and not ctype.startswith("text/html")):
+        name = utils.filename_from_url(final)
+    return name
+
+
 def _make_session(pool, source=None):
     """A keep-alive session whose connection pool is sized to the segment count.
     Reusing one session across a download's segments and retries avoids a fresh
