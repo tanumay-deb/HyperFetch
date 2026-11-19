@@ -458,6 +458,123 @@ def test_a_link_with_a_fetch_limit_is_not_wasted_on_a_probe_get(server, make_pay
     assert gets[0] <= 4
 
 
+def test_resume_fails_when_the_file_changed_at_the_same_size_on_the_server(server, tmp_path):
+    """B8: a paused download whose file is replaced by another of the same size
+    must fail with 'changed on the server' via If-Range, never complete with a
+    mix of the two versions. An unchanged file resumes normally."""
+    size = 4 * 1024 * 1024
+    v1 = b"A" * size
+    v2 = b"B" * size
+    state = {"data": v1, "etag": '"v1"', "lm": "Wed, 01 Jan 2025 00:00:00 GMT", "slow": True}
+    srv = server(v1)
+
+    def answer(h, head):
+        d = state["data"]
+        extra = [("ETag", state["etag"]), ("Last-Modified", state["lm"])]
+        rng = h.headers.get("Range")
+        ifr = h.headers.get("If-Range")
+        if rng and ifr and ifr not in (state["etag"], state["lm"]):
+            # RFC 9110: If-Range mismatch -> 200 with the full new representation
+            h.send_response(200)
+            for k, v in extra:
+                h.send_header(k, v)
+            h.send_header("Accept-Ranges", "bytes")
+            h.send_header("Content-Length", str(len(d)))
+            h.end_headers()
+            if not head:
+                try:
+                    h.wfile.write(d)
+                except OSError:
+                    pass
+            return True
+        if not head and state["slow"]:
+            import time
+            a, _, b = (rng.split("=", 1)[1].partition("-") if rng else ("0", "-", str(len(d) - 1)))
+            s, e = int(a), min(int(b) if b else len(d) - 1, len(d) - 1)
+            h.send_response(206 if rng else 200)
+            if rng:
+                h.send_header("Content-Range", f"bytes {s}-{e}/{len(d)}")
+            for k, v in extra:
+                h.send_header(k, v)
+            h.send_header("Accept-Ranges", "bytes")
+            h.send_header("Content-Length", str(e - s + 1))
+            h.end_headers()
+            pos = s
+            try:
+                while pos <= e:
+                    chunk = d[pos:min(pos + 65536, e + 1)]
+                    h.wfile.write(chunk)
+                    pos += len(chunk)
+                    time.sleep(0.01)
+            except OSError:
+                pass
+            return True
+        srv.send(h, d, head, extra)
+        return True
+
+    srv.answer = answer
+
+    def run_and_pause(path):
+        import time
+        t = T.DownloadTask(srv.url("/nightly.bin"), str(path), filename=path.name)
+        th = threading.Thread(target=lambda: Downloader(t, segments=4).run(), daemon=True)
+        th.start()
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline and t.downloaded < 128 * 1024:
+            time.sleep(0.02)
+        t.request_pause()
+        th.join(timeout=10)
+        assert t.status == T.PAUSED and 0 < t.downloaded < size
+        return t
+
+    # 1) Unchanged file resumes cleanly to completion
+    t_same = run_and_pause(tmp_path / "same.bin")
+    state["slow"] = False
+    t_same.clear_pause()
+    Downloader(t_same, segments=4).run()
+    assert t_same.status == T.COMPLETED, t_same.error
+    assert open(t_same.save_path, "rb").read() == v1
+
+    # 2) Same-size replacement on the server fails instead of mixing versions
+    state["slow"] = True
+    t_changed = run_and_pause(tmp_path / "changed.bin")
+    # Also check persistence across restart
+    t_changed = T.DownloadTask.from_dict(t_changed.to_dict())
+    state["data"] = v2
+    state["etag"] = '"v2"'
+    state["lm"] = "Thu, 02 Jan 2025 00:00:00 GMT"
+    state["slow"] = False
+    t_changed.clear_pause()
+    Downloader(t_changed, segments=4).run()
+    assert t_changed.status == T.ERROR, f"resumed into a mix: status={t_changed.status}"
+    assert "changed on the server" in t_changed.error.lower(), t_changed.error
+    assert not os.path.exists(t_changed.save_path)
+
+
+def test_weak_etag_uses_last_modified_for_if_range(server, tmp_path):
+    """B8: a weak ETag (W/...) cannot be sent in If-Range; fall back to
+    Last-Modified."""
+    size = 2 * 1024 * 1024
+    v1 = b"X" * size
+    lm = "Wed, 01 Jan 2025 00:00:00 GMT"
+    srv = server(v1)
+    seen_if_range = []
+
+    def answer(h, head):
+        if not head and h.headers.get("If-Range"):
+            seen_if_range.append(h.headers.get("If-Range"))
+        srv.send(h, v1, head, [("ETag", 'W/"weak-1"'), ("Last-Modified", lm)])
+        return True
+
+    srv.answer = answer
+    t = T.DownloadTask(srv.url("/weak.bin"), str(tmp_path / "weak.bin"), filename="weak.bin")
+    Downloader(t, segments=4).run()
+    assert t.status == T.COMPLETED, t.error
+    assert t.etag == 'W/"weak-1"'
+    assert t.last_modified == lm
+    assert seen_if_range and all(v == lm for v in seen_if_range), seen_if_range
+
+
 @pytest.mark.parametrize("url, video", [
     ("https://app.box.com/s/x.zip", False),                     # "x.com" inside box.com
     ("https://www.dropbox.com/s/k/setup.exe?dl=1", False),

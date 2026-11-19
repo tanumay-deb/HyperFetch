@@ -680,6 +680,7 @@ class Downloader:
         """(size, accept-ranges, refused) of one link: refused is the 403 or
         410 its ranged look was answered with, else 0."""
         refused = 0
+        etag, last_mod = "", ""
         try:
             r = self._session.head(url, headers=headers,
                               allow_redirects=True,
@@ -690,6 +691,9 @@ class Downloader:
             self._probe_name = disposition_name(r.headers.get("Content-Disposition"))
             self._probe_final = r.url or ""
             self._attachment = _is_attachment(r)
+            if 200 <= r.status_code < 300:
+                etag = (r.headers.get("ETag") or "").strip()
+                last_mod = (r.headers.get("Last-Modified") or "").strip()
         except requests.RequestException:
             size, accept = 0, "none"
 
@@ -721,6 +725,9 @@ class Downloader:
                 # a 206's length is not necessarily the file's: "bytes 0-N/*"
                 # (total unknown) must not complete early on a partial slice
                 size = _content_length(r)
+            if r.status_code in (200, 206):
+                etag = (r.headers.get("ETag") or "").strip() or etag
+                last_mod = (r.headers.get("Last-Modified") or "").strip() or last_mod
             ctype = r.headers.get("Content-Type", "").split(";")[0].strip().lower()
             if ctype:
                 self._probe_ctype = ctype
@@ -734,6 +741,11 @@ class Downloader:
                 r.close()
         except requests.RequestException:
             pass
+        if url == self.url and not refused:
+            if etag:
+                self.t.etag = etag
+            if last_mod:
+                self.t.last_modified = last_mod
         return size, accept, refused
 
     def _take_server_name(self):
@@ -875,6 +887,14 @@ class Downloader:
         return (r.status_code == 206 and cr.startswith(f"bytes {start}-")
                 and cr.rpartition("/")[2] in (str(self.t.total_size), "*"))
 
+    def _if_range(self):
+        """RFC 9110 If-Range validator for the first link: strong ETag first,
+        else Last-Modified when ETag is missing or weak (W/...) (B8)."""
+        etag = (getattr(self.t, "etag", "") or "").strip()
+        if etag and not etag.startswith(("W/", "w/")):
+            return etag
+        return (getattr(self.t, "last_modified", "") or "").strip()
+
     def _drop_mirror(self, url, why):
         if url not in self._dead:
             self._dead.add(url)
@@ -910,9 +930,14 @@ class Downloader:
             if seg.index == 0 and self._probe_resp is not None:
                 reused, self._probe_resp = self._probe_resp, None
             src = reused[1] if reused is not None else self._source_for(seg)
+            if_range = ""
             if reused is None and src != self.url:
                 # the browser's cookies and referer are for the first link's site
                 headers = {**HEADERS, "Range": headers["Range"]}
+            elif reused is None and self.t.supports_range and src == self.url and not self._media:
+                if_range = self._if_range()
+                if if_range:
+                    headers["If-Range"] = if_range
             if not self._acquire_conn():
                 if reused is not None:
                     try:
@@ -936,6 +961,15 @@ class Downloader:
                     verify=utils.VERIFY_TLS, proxies=utils.PROXIES))
                 with ctx as r:
                     r.raise_for_status()
+                    if self.t.supports_range and r.status_code == 200 and if_range:
+                        if not self.t.cancel_requested:
+                            self.t.status = T.ERROR
+                            self.t.error = ("The file changed on the server "
+                                            "— Restart to download it again")
+                            log.warning("seg %d of %s: file changed on server "
+                                        "(HTTP 200 to If-Range %r)",
+                                        seg.index, self.t.filename, if_range)
+                        return
                     if self.t.supports_range and not self._the_range(r, start, seg):
                         # not the bytes asked for: written at this part's place,
                         # a whole file (or an expired link's page) sent in reply
@@ -969,7 +1003,8 @@ class Downloader:
                             if mode == "r+b":
                                 f.seek(seg.start + seg.downloaded)
                             for chunk in r.iter_content(CHUNK):
-                                if self.t.pause_requested or self.t.cancel_requested:
+                                if (self.t.pause_requested or self.t.cancel_requested
+                                        or self.t.status == T.ERROR):
                                     return
                                 if chunk:
                                     if self.t.supports_range:

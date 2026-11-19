@@ -172,9 +172,11 @@ class DownloadTask:
         # Connections chosen for this download in New Download; 0 = the
         # setting's, read as it starts. Persisted.
         self.connections = 0
-        # The ETag of the file a video page's link served, so a resume - which
-        # gets a fresh link - continues only the same file. Persisted.
+        # The ETag and Last-Modified of the file on the server, so a resume
+        # continues only the same file (If-Range on plain downloads, B8;
+        # compared on fresh links for video pages). Persisted.
         self.etag = ""
+        self.last_modified = ""
         # The master playlist a stream's quality was picked from in the
         # browser: what tells the HLS engine that the stream's sound is a
         # playlist of its own (hls.py). Persisted.
@@ -361,6 +363,8 @@ class DownloadTask:
         self.error = ""
         self.hash_status = ""
         self.sha256 = ""
+        self.etag = ""
+        self.last_modified = ""
         # stamped again when it finishes again: a Restart of one finished days
         # ago read "3 days ago" the moment it was done (2026-11-11)
         self.completed_at = 0.0
@@ -440,6 +444,7 @@ class DownloadTask:
             "name_chosen": self.name_chosen,
             "connections": self.connections,
             "etag": self.etag,
+            "last_modified": self.last_modified,
             "hls_master": self.hls_master,
             "events": self.events[-self.EVENTS_MAX:],
             "sha256": self.sha256,
@@ -504,6 +509,7 @@ class DownloadTask:
         t.name_chosen = d.get("name_chosen", "") or ""
         t.connections = int(d.get("connections", 0) or 0)
         t.etag = d.get("etag", "") or ""
+        t.last_modified = d.get("last_modified", "") or ""
         t.hls_master = str(d.get("hls_master") or "")
         # Missing on every task written before accounts existed, which is why
         # it defaults to "" rather than raising — those belong to admin.
