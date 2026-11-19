@@ -552,8 +552,10 @@ def test_resume_fails_when_the_file_changed_at_the_same_size_on_the_server(serve
 
 
 def test_weak_etag_uses_last_modified_for_if_range(server, tmp_path):
-    """B8: a weak ETag (W/...) cannot be sent in If-Range; fall back to
-    Last-Modified."""
+    """B8: fresh runs send no If-Range; resumes prefer Last-Modified (never a
+    weak ETag W/...), falling back to a strong ETag only when Last-Modified is
+    absent."""
+    import utils
     size = 2 * 1024 * 1024
     v1 = b"X" * size
     lm = "Wed, 01 Jan 2025 00:00:00 GMT"
@@ -567,12 +569,132 @@ def test_weak_etag_uses_last_modified_for_if_range(server, tmp_path):
         return True
 
     srv.answer = answer
+    # Fresh run records both validators and sends no If-Range
     t = T.DownloadTask(srv.url("/weak.bin"), str(tmp_path / "weak.bin"), filename="weak.bin")
     Downloader(t, segments=4).run()
     assert t.status == T.COMPLETED, t.error
     assert t.etag == 'W/"weak-1"'
     assert t.last_modified == lm
+    assert seen_if_range == [], f"fresh run must not send If-Range: {seen_if_range}"
+
+    # Resumed run sends Last-Modified (never the weak ETag)
+    t2 = T.DownloadTask(srv.url("/weak.bin"), str(tmp_path / "weak2.bin"), filename="weak2.bin")
+    t2.total_size, t2.supports_range = size, True
+    t2.etag, t2.last_modified = 'W/"weak-1"', lm
+    t2.segments = [T.Segment(0, 0, size // 2 - 1), T.Segment(1, size // 2, size - 1)]
+    open(utils.temp_download_path(t2), "wb").write(b"\0" * size)
+    Downloader(t2, segments=2).run()
+    assert t2.status == T.COMPLETED, t2.error
     assert seen_if_range and all(v == lm for v in seen_if_range), seen_if_range
+
+    # Without Last-Modified: strong ETag is used, weak ETag is never sent
+    t3 = T.DownloadTask(srv.url("/weak.bin"), str(tmp_path / "weak3.bin"), filename="weak3.bin")
+    t3.etag, t3.last_modified = 'W/"weak-1"', ""
+    assert Downloader(t3)._if_range() == ""
+    t3.etag = '"strong-1"'
+    assert Downloader(t3)._if_range() == '"strong-1"'
+
+
+def test_mirror_redirector_with_different_etags_completes_and_resumes(server, make_payload, tmp_path):
+    """B8: a redirector (like Fedora MirrorManager) sends each request to one
+    of two mirrors with the same bytes and Last-Modified but different ETag
+    formats (nginx vs Apache). Fresh download and paused resume must both
+    complete whole."""
+    import time
+    size = 4 * 1024 * 1024
+    data = make_payload(size)
+    lm = "Wed, 01 Jan 2025 00:00:00 GMT"
+    slow = {"on": False}
+
+    def make_mirror(etag):
+        m = server(data)
+
+        def answer(h, head):
+            extra = [("ETag", etag), ("Last-Modified", lm)]
+            rng = h.headers.get("Range")
+            ifr = h.headers.get("If-Range")
+            if rng and ifr and ifr not in (etag, lm):
+                h.send_response(200)
+                for k, v in extra:
+                    h.send_header(k, v)
+                h.send_header("Accept-Ranges", "bytes")
+                h.send_header("Content-Length", str(len(data)))
+                h.end_headers()
+                if not head:
+                    try:
+                        h.wfile.write(data)
+                    except OSError:
+                        pass
+                return True
+            if not head and slow["on"]:
+                a, _, b = (rng.split("=", 1)[1].partition("-") if rng else ("0", "-", str(len(data) - 1)))
+                s, e = int(a), min(int(b) if b else len(data) - 1, len(data) - 1)
+                h.send_response(206 if rng else 200)
+                if rng:
+                    h.send_header("Content-Range", f"bytes {s}-{e}/{len(data)}")
+                for k, v in extra:
+                    h.send_header(k, v)
+                h.send_header("Accept-Ranges", "bytes")
+                h.send_header("Content-Length", str(e - s + 1))
+                h.end_headers()
+                pos = s
+                try:
+                    while pos <= e:
+                        chunk = data[pos:min(pos + 65536, e + 1)]
+                        h.wfile.write(chunk)
+                        pos += len(chunk)
+                        time.sleep(0.01)
+                except OSError:
+                    pass
+                return True
+            m.send(h, data, head, extra)
+            return True
+
+        m.answer = answer
+        return m
+
+    m1 = make_mirror('"6720fe49-400000"')           # nginx form
+    m2 = make_mirror('"400000-6259f30189361"')      # Apache form
+    redir = server(b"")
+    lock = threading.Lock()
+    pick = [0]
+
+    def redirect(h, head):
+        with lock:
+            target = (m1 if pick[0] % 2 == 0 else m2).url("/iso/fedora.iso")
+            pick[0] += 1
+        h.send_response(302)
+        h.send_header("Location", target)
+        h.send_header("Content-Length", "0")
+        h.end_headers()
+        return True
+
+    redir.answer = redirect
+
+    # 1) Fresh download completes across both mirrors
+    t1 = T.DownloadTask(redir.url("/fedora.iso"), str(tmp_path / "fresh.iso"), filename="fresh.iso")
+    Downloader(t1, segments=4).run()
+    assert t1.status == T.COMPLETED, t1.error
+    assert open(t1.save_path, "rb").read() == data
+    assert m1.requests and m2.requests
+
+    # 2) Paused download resumes cleanly across both mirrors
+    slow["on"] = True
+    t2 = T.DownloadTask(redir.url("/fedora.iso"), str(tmp_path / "resumed.iso"), filename="resumed.iso")
+    th = threading.Thread(target=lambda: Downloader(t2, segments=4).run(), daemon=True)
+    th.start()
+    deadline = time.monotonic() + 10
+    while time.monotonic() < deadline and t2.downloaded < 128 * 1024:
+        time.sleep(0.02)
+    t2.request_pause()
+    th.join(timeout=10)
+    assert t2.status == T.PAUSED and 0 < t2.downloaded < size
+
+    slow["on"] = False
+    t2.clear_pause()
+    Downloader(t2, segments=4).run()
+    assert t2.status == T.COMPLETED, t2.error
+    assert open(t2.save_path, "rb").read() == data
 
 
 @pytest.mark.parametrize("url, video", [

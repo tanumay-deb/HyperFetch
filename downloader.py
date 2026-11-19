@@ -388,6 +388,7 @@ class Downloader:
         self._attachment = False        # Content-Disposition: attachment - a file, whatever its type
         self._ended_whole = False       # a file sent whole (no ranges) was read to its end
         self._media = False             # set by run_media
+        self._resumed = False           # set when resuming existing segments on disk (B8)
         # run_media's file is on disk whole. The task is not Completed on that:
         # yt-dlp still has the file (its post-processors), and the window acts
         # on Completed the moment it reads it - see run_media.
@@ -888,12 +889,16 @@ class Downloader:
                 and cr.rpartition("/")[2] in (str(self.t.total_size), "*"))
 
     def _if_range(self):
-        """RFC 9110 If-Range validator for the first link: strong ETag first,
-        else Last-Modified when ETag is missing or weak (W/...) (B8)."""
+        """RFC 9110 If-Range validator for the first link: Last-Modified first
+        (mirrors keep the file's time while different servers format ETags
+        differently), else a strong ETag; never a weak ETag (W/...) (B8)."""
+        lm = (getattr(self.t, "last_modified", "") or "").strip()
+        if lm:
+            return lm
         etag = (getattr(self.t, "etag", "") or "").strip()
         if etag and not etag.startswith(("W/", "w/")):
             return etag
-        return (getattr(self.t, "last_modified", "") or "").strip()
+        return ""
 
     def _drop_mirror(self, url, why):
         if url not in self._dead:
@@ -934,7 +939,8 @@ class Downloader:
             if reused is None and src != self.url:
                 # the browser's cookies and referer are for the first link's site
                 headers = {**HEADERS, "Range": headers["Range"]}
-            elif reused is None and self.t.supports_range and src == self.url and not self._media:
+            elif (reused is None and self._resumed and self.t.supports_range
+                  and src == self.url and not self._media):
                 if_range = self._if_range()
                 if if_range:
                     headers["If-Range"] = if_range
@@ -1245,6 +1251,8 @@ class Downloader:
                     for seg in self.t.segments:
                         seg.downloaded = 0
                     self._build_segments()
+                else:
+                    self._resumed = True
         except OSError as e:
             self.t.status = T.ERROR
             self.t.error = str(e)
