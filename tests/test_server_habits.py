@@ -428,6 +428,36 @@ def test_ranges_promised_but_not_kept_fetch_the_file_whole(server, make_payload,
     assert open(t.save_path, "rb").read() == srv.data
 
 
+def test_a_link_with_a_fetch_limit_is_not_wasted_on_a_probe_get(server, make_payload, tmp_path):
+    """B6: a server allowing at most 4 GETs (HEAD not counted) for a 4-part
+    download must succeed: the probe's GET continues as part 0 instead of
+    throwing away a 1-byte GET before the 4 parts start."""
+    srv = server(make_payload(4 * 1024 * 1024))
+    lock = threading.Lock()
+    gets = [0]
+
+    def answer(h, head):
+        if head:
+            return False
+        with lock:
+            gets[0] += 1
+            n = gets[0]
+        if n > 4:
+            h.send_response(403)
+            h.send_header("Content-Length", "0")
+            h.end_headers()
+            return True
+        return False
+
+    srv.answer = answer
+    t = T.DownloadTask(srv.url("/limited.bin"), str(tmp_path / "limited.bin"),
+                       filename="limited.bin")
+    Downloader(t, segments=4).run()
+    assert t.status == T.COMPLETED, (t.status, t.error, gets[0])
+    assert open(t.save_path, "rb").read() == srv.data
+    assert gets[0] <= 4
+
+
 @pytest.mark.parametrize("url, video", [
     ("https://app.box.com/s/x.zip", False),                     # "x.com" inside box.com
     ("https://www.dropbox.com/s/k/setup.exe?dl=1", False),

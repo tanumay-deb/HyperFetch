@@ -369,6 +369,7 @@ class Downloader:
         self._probe_ctype = ""
         self._probe_name = ""           # the server's name for the file (Content-Disposition)
         self._probe_final = ""          # where the link led, after redirects
+        self._probe_resp = None         # (response, url) kept from _probe_at for part 0 (B6)
         self._attachment = False        # Content-Disposition: attachment - a file, whatever its type
         self._ended_whole = False       # a file sent whole (no ranges) was read to its end
         self._media = False             # set by run_media
@@ -602,7 +603,17 @@ class Downloader:
             log.warning("line %s dropped for %s: %s", name, self.t.filename, why)
         return others
 
+    def _close_probe_resp(self):
+        if self._probe_resp is not None:
+            r, _ = self._probe_resp
+            self._probe_resp = None
+            try:
+                r.close()
+            except Exception:
+                pass
+
     def _close_sessions(self):
+        self._close_probe_resp()
         for s in [self._session, *self._line_sessions.values()]:
             try:
                 s.close()
@@ -667,13 +678,16 @@ class Downloader:
         except requests.RequestException:
             size, accept = 0, "none"
 
-        # Some servers lie on HEAD; confirm with a tiny ranged GET - always:
+        # Some servers lie on HEAD; confirm with a ranged GET - always:
         # one that promised ranges there and sent the whole file to a range
         # failed "no longer sends this file in parts", Restart the same
-        # (2026-11-17). A whole answer means one piece.
+        # (2026-11-17). Asking bytes=0- lets part 0 stream straight from this
+        # response (206 with known size, or 200 whole) so a link that counts
+        # fetches does not lose one to a throwaway probe GET (B6).
+        self._close_probe_resp()
         try:
             r = self._session.get(url,
-                             headers={**headers, "Range": "bytes=0-0"},
+                             headers={**headers, "Range": "bytes=0-"},
                              stream=True, allow_redirects=True,
                              timeout=CONNECT_TIMEOUT, verify=utils.VERIFY_TLS, proxies=utils.PROXIES)
             if r.status_code in (403, 410):
@@ -689,8 +703,8 @@ class Downloader:
                     except ValueError:
                         pass
             if size == 0 and r.status_code == 200:
-                # a 206's length is the one byte asked for, never the
-                # file's: "bytes 0-0/*" (total unknown) "completed" at 1 B
+                # a 206's length is not necessarily the file's: "bytes 0-N/*"
+                # (total unknown) must not complete early on a partial slice
                 size = _content_length(r)
             ctype = r.headers.get("Content-Type", "").split(";")[0].strip().lower()
             if ctype:
@@ -699,7 +713,10 @@ class Downloader:
                                 or self._probe_name)
             self._probe_final = r.url or self._probe_final
             self._attachment = self._attachment or _is_attachment(r)
-            r.close()
+            if r.status_code == 200 or (r.status_code == 206 and size > 0):
+                self._probe_resp = (r, url)
+            else:
+                r.close()
         except requests.RequestException:
             pass
         return size, accept, refused
@@ -874,13 +891,21 @@ class Downloader:
                     mode = "wb"
                     seg.downloaded = 0
 
-            src = self._source_for(seg)
-            if src != self.url:
+            reused = None
+            if seg.index == 0 and self._probe_resp is not None:
+                reused, self._probe_resp = self._probe_resp, None
+            src = reused[1] if reused is not None else self._source_for(seg)
+            if reused is None and src != self.url:
                 # the browser's cookies and referer are for the first link's site
                 headers = {**HEADERS, "Range": headers["Range"]}
             if not self._acquire_conn():
+                if reused is not None:
+                    try:
+                        reused[0].close()
+                    except Exception:
+                        pass
                 return  # paused while waiting for a connection slot
-            line = self._take_line() if self._lines else None
+            line = None if reused is not None else (self._take_line() if self._lines else None)
             session = self._line_sessions.get(line, self._session)
             retry_exc = None
             wait_attempt = attempts
@@ -890,9 +915,11 @@ class Downloader:
             try:
                 # with-block guarantees the response/socket closes on every
                 # path — incl. raise_for_status() failures and mid-stream errors
-                with session.get(src, headers=headers, stream=True,
-                                  allow_redirects=True, timeout=CONNECT_TIMEOUT,
-                                  verify=utils.VERIFY_TLS, proxies=utils.PROXIES) as r:
+                ctx = (reused[0] if reused is not None else session.get(
+                    src, headers=headers, stream=True,
+                    allow_redirects=True, timeout=CONNECT_TIMEOUT,
+                    verify=utils.VERIFY_TLS, proxies=utils.PROXIES))
+                with ctx as r:
                     r.raise_for_status()
                     if self.t.supports_range and not self._the_range(r, start, seg):
                         # not the bytes asked for: written at this part's place,
@@ -927,9 +954,15 @@ class Downloader:
                             if mode == "r+b":
                                 f.seek(seg.start + seg.downloaded)
                             for chunk in r.iter_content(CHUNK):
-                                if self.t.pause_requested:
+                                if self.t.pause_requested or self.t.cancel_requested:
                                     return
                                 if chunk:
+                                    if self.t.supports_range:
+                                        need = seg.end - (seg.start + seg.downloaded) + 1
+                                        if need <= 0:
+                                            break
+                                        if len(chunk) > need:
+                                            chunk = chunk[:need]
                                     stop = lambda: self.t.pause_requested or self.t.cancel_requested
                                     utils.global_limiter.wait(len(chunk), stop)
                                     self.t._limiter.wait(len(chunk), stop)
@@ -940,6 +973,8 @@ class Downloader:
                                     # resume would wrongly treat as already-downloaded.
                                     f.flush()
                                     seg.downloaded += len(chunk)
+                                    if self.t.supports_range and seg.complete:
+                                        break
                     finally:
                         self._streams(-1, src, line)
                 if self.t.supports_range and not seg.complete:
@@ -1149,6 +1184,7 @@ class Downloader:
                 ext = os.path.splitext(self.t.save_path)[1].lower()
                 if (self._probe_ctype.startswith("text/html") and not self._attachment
                         and ext not in ("", ".html", ".htm")):
+                    self._close_probe_resp()
                     self._web_page()
                     return
                 self._lines = self._pick_lines()
