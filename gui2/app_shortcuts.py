@@ -47,12 +47,15 @@ def _entry_for(path):
     return {"path": path}
 
 
-def _note_pending(add=(), done=()):
+def _note_pending(add=(), done=(), stamp=True):
     """The paths "Delete from disk" was asked for and has not dealt with
     yet, kept in app data with their size and modification time (B4). A
     delete waits for the download's engine to let go of its files; the app
     closed meanwhile left them on disk and said nothing (2026-11-11). The
-    next start deals with what is listed (ShortcutsMixin._resume_deletes)."""
+    next start deals with what is listed (ShortcutsMixin._resume_deletes).
+    `stamp=False` skips walking/statting on the caller's thread so the window
+    does not freeze on large folders; `_delete_files` stamps them on its own
+    thread first thing."""
     import utils
     done_set = set(done)
     add_list = list(add)
@@ -67,7 +70,7 @@ def _note_pending(add=(), done=()):
             left.append(e if isinstance(e, dict) else {"path": p})
         for p in add_list:
             if isinstance(p, str) and not any(x.get("path") == p for x in left):
-                left.append(_entry_for(p))
+                left.append(_entry_for(p) if stamp else {"path": p})
         if left:
             utils.save_json(_pending_path(), left)
         else:
@@ -157,8 +160,9 @@ class ShortcutsMixin:
         self.refresh()
         if jobs:
             # A running download's files are still open: deleted once its
-            # engine lets go, off this thread (it froze the window, 2026-11-04)
-            _note_pending(add=[p for _, paths in jobs for p in paths])
+            # engine lets go, off this thread (it froze the window, 2026-11-04).
+            # Record paths only here; _delete_files measures them on its thread.
+            _note_pending(add=[p for _, paths in jobs for p in paths], stamp=False)
             threading.Thread(target=self._delete_files, args=(jobs,),
                              name="delete", daemon=True).start()
 
@@ -184,7 +188,7 @@ class ShortcutsMixin:
                 for p in [getattr(t, "save_path", "") or ""] + self._payload_paths(t):
                     if p:
                         owned.add(os.path.normcase(os.path.abspath(p)))
-            keep, drop = [], []
+            keep, drop, skipped = [], [], []
             log = logging.getLogger("hyperfetch.gui")
             for e in entries:
                 p = e["path"]
@@ -193,14 +197,23 @@ class ShortcutsMixin:
                     continue
                 if "size" in e and "mtime" in e:
                     now = _path_stamp(p)
-                    if now is None or now != (e["size"], e["mtime"]):
+                    if now is None:
+                        drop.append(p)
+                        continue
+                    if now != (e["size"], e["mtime"]):
                         log.info("skipping pending delete of %s: file on disk "
                                  "changed since the delete was asked", p)
+                        skipped.append((
+                            os.path.basename(p) or p,
+                            "it changed after you asked to delete it, so it was kept",
+                        ))
                         drop.append(p)
                         continue
                 keep.append(p)
             if drop:
                 _note_pending(done=drop)
+            if skipped:
+                self._deletes.append(skipped)
             if keep:
                 self._delete_files([(None, keep)])
 
@@ -214,6 +227,9 @@ class ShortcutsMixin:
         the last time the app ran (_resume_deletes), nothing to wait for."""
         import time
         import torrent as _tor
+        to_stamp = [p for t, paths in jobs if t is not None for p in paths]
+        if to_stamp:
+            _note_pending(add=to_stamp)
         failed = []
         for t, targets in jobs:
             end = time.monotonic() + 60

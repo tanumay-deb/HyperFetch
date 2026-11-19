@@ -391,6 +391,43 @@ def test_a_file_replaced_while_the_app_was_closed_is_kept_at_the_next_start(tmp_
     assert (folder / "ep2.mkv").read_bytes() == b"new episode"
     assert not unchanged.exists()
     assert any("report.pdf" in r.getMessage() for r in caplog.records)
+    reported = [item for batch in win._deletes for item in batch]
+    assert any(name == "report.pdf" and "changed" in reason and "kept" in reason
+               for name, reason in reported), reported
+    assert any(name == "Show.S01" and "changed" in reason and "kept" in reason
+               for name, reason in reported), reported
+    S._finish_deletes(win)
+    assert any("report.pdf" in body and "changed" in body
+               for _, _, body in win._toasts.said), win._toasts.said
+
+
+def test_delete_tasks_does_not_measure_files_on_the_main_thread(tmp_path, monkeypatch):
+    """B4: _path_stamp walks folders and stats files; doing it on the window's
+    thread freezes the UI for large torrents on slow/network drives."""
+    import threading
+    from gui2 import app_shortcuts
+    import gui2.dialogs.delete as D
+    payload = tmp_path / "Pack"
+    payload.mkdir()
+    (payload / "e1.mkv").write_bytes(b"x" * 10)
+    (tmp_path / "Pack.aria2").write_bytes(b"ctl")
+    t = _task(str(tmp_path / "magnet_.bin"), "Pack")
+    t.status = T.PAUSED
+
+    seen = []
+    real_stamp = app_shortcuts._path_stamp
+
+    def spy(path):
+        seen.append(threading.current_thread())
+        return real_stamp(path)
+
+    monkeypatch.setattr(app_shortcuts, "_path_stamp", spy)
+    monkeypatch.setattr(D, "DeleteDialog", _Asked)
+    win = _window()
+    S._delete_tasks(win, [t])
+    _join_deletes()
+    assert seen, "_path_stamp was never called"
+    assert threading.main_thread() not in seen, "measured files on the main thread"
 
 
 def test_the_window_finishes_them_as_it_starts():
