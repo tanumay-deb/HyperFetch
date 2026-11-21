@@ -120,6 +120,8 @@ def hls_server(aes_tools):
     # a part one byte on from the one asked for
     routes.update({"single.mp4": (single, "video/mp4"), "plain.mp4": (single, "video/mp4"),
                    "capped.mp4": (single, "video/mp4"), "shifted.mp4": (single, "video/mp4"),
+                   "drip.mp4": (single, "video/mp4"),
+                   "dripranges.m3u8": (ranged("drip.mp4"), "application/vnd.apple.mpegurl"),
                    "ranges.m3u8": (ranged("single.mp4"), "application/vnd.apple.mpegurl"),
                    "plainranges.m3u8": (ranged("plain.mp4"), "application/vnd.apple.mpegurl"),
                    "cappedranges.m3u8": (ranged("capped.mp4"), "application/vnd.apple.mpegurl"),
@@ -147,6 +149,8 @@ def hls_server(aes_tools):
                 a, b = int(a), min(int(b), len(body) - 1)
                 if p == "capped.mp4":
                     b = min(b, a + 999)
+                elif p == "drip.mp4":           # one byte an answer
+                    b = a
                 elif p == "shifted.mp4":
                     a += 1
                 self.send_response(206)
@@ -349,6 +353,16 @@ def test_a_part_answered_short_is_asked_for_again(hls_server, tmp_path):
     Downloader(t).run()
     assert t.status == T.COMPLETED, t.error
     assert open(t.save_path, "rb").read() == hls_server.single
+
+
+def test_a_server_that_sends_a_part_a_byte_at_a_time_is_given_up(hls_server, tmp_path):
+    """Each short answer was asked again with no limit: a server sending one
+    byte an answer took a request per byte - 20,000 for this small stream
+    (item 11, 2026-11-12)."""
+    t = T.DownloadTask(f"{hls_server.base}/dripranges.m3u8", str(tmp_path / "d.m3u8"))
+    Downloader(t).run()
+    assert t.status == T.ERROR, t.status
+    assert hls_server.asked.count("drip.mp4") < 1000
 
 
 def test_a_part_from_elsewhere_in_the_file_is_refused(hls_server, tmp_path):

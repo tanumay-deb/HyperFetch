@@ -702,7 +702,14 @@ class HlsDownloader:
             return self._decrypt(raw_seg, key, seq)
         start, length = part
         data, empty = b"", 0
+        # a short answer is asked again, but not a byte at a time: one
+        # answer for each 64 KB of the part, and 64 more (item 11, 2026-11-12)
+        answers = 64 + length // (64 * 1024)
         while len(data) < length:
+            answers -= 1
+            if answers < 0:
+                raise RuntimeError("the server sent a segment in too many small "
+                                   "pieces (%d of %d bytes)" % (len(data), length))
             at = start + len(data)
             r = _get(self._seg_session(), url,
                      dict(self.headers, Range="bytes=%d-%d" % (at, start + length - 1)),
