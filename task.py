@@ -183,7 +183,8 @@ class DownloadTask:
         self.hls_master = ""
         # The quality a stream was picked with, kept when hls._to_ytdlp makes
         # its link the master: another quality of that master is another
-        # download (item 7, 2026-11-12). Persisted.
+        # download (item 7), and yt-dlp joins the sound to it (item 30;
+        # yt_dl._choosing_opts). Persisted.
         self.hls_variant = ""
 
         # connections streaming now, set by the HTTP engine (transient): a big

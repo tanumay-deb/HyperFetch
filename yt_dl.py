@@ -327,6 +327,26 @@ def _named(t, info):
     return info
 
 
+class _SoundApart(str):
+    """The format string of a stream whose sound is a playlist of its own
+    (hls._to_ytdlp), and yt-dlp's selector for it: callable, so yt-dlp picks
+    with it, still the string to anyone who reads the options.
+
+    A master that names no CODECS leaves its picture's acodec unknown, and
+    yt-dlp counts unknown as sound: "bv*+ba" dropped the sound's playlist as a
+    second sound and the video was saved silent (item 30, 2026-11-12; with
+    multiple sounds allowed, its merge mapped the picture's sound that is
+    not there and ffmpeg failed). Here a format with a picture and an
+    unknown sound is a picture alone - the master said its sound is apart."""
+
+    def __call__(self, ctx):
+        import yt_dlp
+        sel = yt_dlp.YoutubeDL({"quiet": True, "no_warnings": True}).build_format_selector(str(self))
+        formats = [dict(f, acodec="none") if f.get("acodec") is None and f.get("vcodec") != "none"
+                   else f for f in ctx["formats"]]
+        yield from sel(dict(ctx, formats=formats))
+
+
 def _choosing_opts(t, out_dir, cached_deno=False):
     """The yt-dlp options that decide which format is picked and what the file
     is called, and where ffmpeg is: ``(opts, ffdir)``.
@@ -380,6 +400,9 @@ def _choosing_opts(t, out_dir, cached_deno=False):
             f"{v}+ba/b[height<={h}]/b" if h else "bv*+ba/b")
     else:
         opts["format"] = (f"b[height<={h}]/b" if h else "b")
+
+    if getattr(t, "hls_variant", "") and isinstance(opts.get("format"), str):
+        opts["format"] = _SoundApart(opts["format"])
 
     # respect the global TLS + proxy settings
     opts.update(_net_opts())

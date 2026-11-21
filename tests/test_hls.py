@@ -643,3 +643,26 @@ def test_cookies_never_go_from_https_down_to_http():
     assert hls._scoped(h, "https://s.test/v.m3u8", "http://s.test/0.ts") == {"User-Agent": "x"}
     assert hls._scoped(h, "http://s.test/v.m3u8", "https://s.test/0.ts") == h
     assert hls._scoped(h, "https://s.test/v.m3u8", "https://cdn.test/0.ts") == {"User-Agent": "x"}
+
+
+def test_a_master_that_names_no_codecs_still_gets_its_sound_joined(hls_server, tmp_path,
+                                                                   monkeypatch):
+    """This suite's own master names no CODECS: yt-dlp read its picture's sound
+    as unknown, counted it as sound, dropped the sound's playlist from
+    "bv*+ba", and the video was saved silent (item 30, 2026-11-12). The real
+    yt-dlp picks here; nothing is downloaded."""
+    import yt_dlp
+    import yt_dl
+    monkeypatch.setattr(yt_dl, "_ffmpeg_dir", lambda: str(tmp_path))
+    t = T.DownloadTask(f"{hls_server.base}/sep.m3u8", str(tmp_path / "Clip.mp4"),
+                       filename="Clip.mp4")
+    t.use_ytdlp = True                          # as hls._to_ytdlp leaves it
+    t.hls_variant = f"{hls_server.base}/high.m3u8"
+    t.yt_format = ('bv*[height<=720]+ba[format_note~="^English(?:, (?:low|high))?$"]'
+                   "/bv*[height<=720]+ba/b[height<=720]")
+    opts = yt_dl._choosing_opts(t, str(tmp_path))[0]
+    assert isinstance(opts["format"], str) and "height<=720" in opts["format"]  # still a string
+    with yt_dlp.YoutubeDL(dict(opts, logger=None, quiet=True)) as ydl:
+        info = ydl.extract_info(t.url, download=False)
+    picked = [f["format_id"] for f in info.get("requested_formats") or [info]]
+    assert len(picked) == 2, picked
