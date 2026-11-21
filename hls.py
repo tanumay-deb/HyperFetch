@@ -714,8 +714,8 @@ class HlsDownloader:
         start, length = part
         data, empty = b"", 0
         # a short answer is asked again, but not a byte at a time: one
-        # answer for each 64 KB of the part, and 64 more (item 11, 2026-11-12)
-        answers = 64 + length // (64 * 1024)
+        # answer for each 8 KB of the part, and 64 more (item 11, 2026-11-12)
+        answers = 64 + length // 8192
         while len(data) < length:
             answers -= 1
             if answers < 0:
