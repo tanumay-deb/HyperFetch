@@ -579,3 +579,52 @@ def test_a_stream_that_fills_the_disk_names_the_drive_and_move_to(hls_server, tm
     assert "MiB free" in t.error
     assert "free space there, or Move to… another drive and Resume" in t.error
 
+
+
+def test_the_sites_cookies_go_only_to_the_playlists_own_host(tmp_path):
+    """The browser hands over the cookies of the playlist's link. They went
+    with every request the stream made - segments, keys and playlists on a
+    CDN the playlist names included (item 36, 2026-11-12)."""
+    seen = []
+
+    class H(http.server.BaseHTTPRequestHandler):
+        def log_message(self, *a):
+            pass
+
+        def do_GET(self):
+            host = self.headers.get("Host", "").split(":")[0]
+            seen.append((host, self.path, self.headers.get("Cookie")))
+            port = self.server.server_address[1]
+            if self.path == "/v.m3u8":
+                body = ("#EXTM3U\n#EXT-X-TARGETDURATION:4\n#EXTINF:4.0,\n"
+                        f"http://127.0.0.2:{port}/seg0.ts\n#EXTINF:4.0,\nseg1.ts\n"
+                        "#EXT-X-ENDLIST\n").encode()
+            else:
+                body = b"\x01" * 1024
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+    httpd = http.server.ThreadingHTTPServer(("0.0.0.0", 0), H)
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    try:
+        port = httpd.server_address[1]
+        t = T.DownloadTask(f"http://127.0.0.1:{port}/v.m3u8", str(tmp_path / "v.m3u8"),
+                           headers={"Cookie": "sid=secret"}, filename="v.m3u8")
+        hls.HlsDownloader(t).run()
+        assert t.status == T.COMPLETED, t.error
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+    by_path = {p: (h, c) for h, p, c in seen}
+    assert by_path["/v.m3u8"] == ("127.0.0.1", "sid=secret")
+    assert by_path["/seg1.ts"] == ("127.0.0.1", "sid=secret")
+    assert by_path["/seg0.ts"] == ("127.0.0.2", None)
+
+
+def test_cookies_never_go_from_https_down_to_http():
+    h = {"Cookie": "a=1", "User-Agent": "x"}
+    assert hls._scoped(h, "https://s.test/v.m3u8", "http://s.test/0.ts") == {"User-Agent": "x"}
+    assert hls._scoped(h, "http://s.test/v.m3u8", "https://s.test/0.ts") == h
+    assert hls._scoped(h, "https://s.test/v.m3u8", "https://cdn.test/0.ts") == {"User-Agent": "x"}

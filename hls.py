@@ -114,9 +114,10 @@ def probe(url, headers=None):
     works on the referer/auth-gated CDNs the browser extension's own fetch
     can't read."""
     base = {**HEADERS, **(headers or {})}
+    asked = url
     sess = Session()
     try:
-        r = _get(sess, url, base)
+        r = _get(sess, url, base, origin=url)
         # its links are relative to where it came from (HlsDownloader._fetch)
         text, url = _playlist_text(r), r.url
     except requests.RequestException:
@@ -154,7 +155,7 @@ def probe(url, headers=None):
     duration, live, best = 0.0, False, ""
     if variants:
         try:
-            best = _playlist_text(_get(sess, variants[0]["url"], base))
+            best = _playlist_text(_get(sess, variants[0]["url"], base, origin=asked))
             duration, live = _playlist_facts(best)
         except requests.RequestException:
             duration, live = 0.0, False
@@ -192,9 +193,25 @@ def _playlist_text(r):
     return r.text
 
 
-def _get(session, url, headers, stats=None, **kw):
+def _scoped(headers, origin, url):
+    """`headers` for a request to `url`: the browser's Cookie only when `url` is
+    on the host of `origin` - the link the browser took the cookies for - and
+    never from https down to http, as a browser sends them. A CDN a playlist
+    names got the site's cookies (item 36, 2026-11-12)."""
+    if origin is None or not any(k.lower() == "cookie" for k in headers):
+        return headers
+    a, b = urllib.parse.urlsplit(origin), urllib.parse.urlsplit(url)
+    if a.hostname == b.hostname and (a.scheme, b.scheme) != ("https", "http"):
+        return headers
+    return {k: v for k, v in headers.items() if k.lower() != "cookie"}
+
+
+def _get(session, url, headers, stats=None, origin=None, **kw):
     """GET with retries. When a `stats` dict is passed, tally retry attempts and
-    the 403 / timeout breakdown for the end-of-download HLS log summary."""
+    the 403 / timeout breakdown for the end-of-download HLS log summary.
+    `origin` is the link the browser's cookies came with: they go to its host
+    only (`_scoped`)."""
+    headers = _scoped(headers, origin, url)
     last = None
     for _ in range(SEG_RETRIES):
         try:
@@ -335,6 +352,7 @@ class HlsDownloader:
     def __init__(self, dtask: "T.DownloadTask"):
         self.t = dtask
         self.headers = {**HEADERS, **(getattr(dtask, "headers", None) or {})}
+        self._origin = dtask.url        # the link the browser's cookies are for
         self.session = Session()       # used for playlist/key fetches
         self._tls = threading.local()            # per-thread session for segments
         # retry / failure tally for the end-of-download log summary
@@ -356,7 +374,7 @@ class HlsDownloader:
         its links are relative to that one, as a player reads them. Joined
         against the address asked, a moved playlist's segments were 404s and
         a moved master named no quality the browser picked (2026-11-12)."""
-        r = _get(self.session, url, self.headers)
+        r = _get(self.session, url, self.headers, origin=self._origin)
         return _playlist_text(r), r.url
 
     def _fetch_text(self, url):
@@ -663,7 +681,7 @@ class HlsDownloader:
         answers 200 with a web page, and AES raised ValueError on it - which
         nothing caught: "Download ended unexpectedly"."""
         if key.get("keybytes") is None:
-            data = _get(self.session, key["uri"], self.headers).content
+            data = _get(self.session, key["uri"], self.headers, origin=self._origin).content
             if len(data) != 16:
                 raise RuntimeError(f"the stream's key link sent no key ({len(data)} bytes)"
                                    " - its link may have expired")
@@ -677,7 +695,7 @@ class HlsDownloader:
         and the video finished "Completed" broken (2026-11-04)."""
         stop = lambda: self.t.pause_requested or self.t.cancel_requested
         if not part:
-            r = _get(self._seg_session(), url, self.headers, self._stats)
+            r = _get(self._seg_session(), url, self.headers, self._stats, origin=self._origin)
             raw_seg = r.content
             utils.global_limiter.wait(len(raw_seg), stop)
             self.t._limiter.wait(len(raw_seg), stop)
@@ -688,7 +706,7 @@ class HlsDownloader:
             at = start + len(data)
             r = _get(self._seg_session(), url,
                      dict(self.headers, Range="bytes=%d-%d" % (at, start + length - 1)),
-                     self._stats)
+                     self._stats, origin=self._origin)
             if r.status_code != 206:
                 # the whole file, again for every segment: refused, not saved
                 raise RuntimeError("the server sent the whole file, not the part of "
