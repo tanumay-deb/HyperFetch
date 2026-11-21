@@ -136,3 +136,23 @@ def test_cancel_in_settings_undoes_an_edit_to_a_rule():
         assert saved["host_rules"]["a.com"]["segments"] == 4, "changed before Save"
     finally:
         dlg.deleteLater()
+
+
+def test_a_rule_that_only_asks_for_ytdlp_leaves_the_connections_alone(monkeypatch):
+    """Item 35 of 2026-11-12: every rule the dialog made forced a connection
+    count (4 unless changed), so a rule meant only to use yt-dlp also made
+    every other download from that host run on 4 connections."""
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication
+    from gui2.dialogs.host_rules import HostRulesDialog
+    import downloader
+    QApplication.instance() or QApplication([])
+    rules = {}
+    dlg = HostRulesDialog(None, rules)
+    dlg.host_edit.setText("videos.example.com")
+    dlg.ytdlp_chk.setChecked(True)
+    dlg._add()
+    assert rules["videos.example.com"]["ytdlp"] is True
+    monkeypatch.setattr(utils, "HOST_RULES", rules)
+    monkeypatch.setattr(utils, "MAX_CONNECTIONS", 0)
+    assert downloader.connections_for("https://videos.example.com/f.zip", 16) == 16

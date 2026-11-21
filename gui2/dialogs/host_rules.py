@@ -38,7 +38,7 @@ class HostRulesDialog(QDialog):
         add = QFrame(); add.setObjectName("panel")
         ah = QHBoxLayout(add); ah.setContentsMargins(12, 10, 12, 10); ah.setSpacing(8)
         self.host_edit = QLineEdit(); self.host_edit.setPlaceholderText("host (e.g. example.com)")
-        self.seg_edit = QSpinBox(); self.seg_edit.setRange(1, 32); self.seg_edit.setValue(4); self.seg_edit.setFixedWidth(56)
+        self.seg_edit = self._segs(0)
         self.ytdlp_chk = QCheckBox("yt-dlp")
         add_btn = QPushButton("  Add"); add_btn.setIcon(themed_icon("plus", "white")); add_btn.setObjectName("primary"); add_btn.clicked.connect(self._add)
         self.host_edit.returnPressed.connect(self._add)
@@ -65,6 +65,15 @@ class HostRulesDialog(QDialog):
             self._rows.addWidget(self._row(host, self.rules[host]))
 
     @staticmethod
+    def _segs(n):
+        """The connections box; 0 reads "Default" and forces nothing - a rule
+        made only for yt-dlp forced 4 connections (item 35, 2026-11-12)."""
+        spin = QSpinBox(); spin.setRange(0, 32); spin.setSpecialValueText("Default")
+        spin.setValue(n); spin.setFixedWidth(84)
+        spin.setToolTip("Default: the number of connections set in Settings")
+        return spin
+
+    @staticmethod
     def _shown(host):
         try:
             return host.encode("ascii").decode("idna")
@@ -75,7 +84,7 @@ class HostRulesDialog(QDialog):
         f = QFrame(); f.setObjectName("panel")
         h = QHBoxLayout(f); h.setContentsMargins(12, 8, 12, 8); h.setSpacing(10)
         name = QLabel(self._shown(host)); name.setStyleSheet("font-weight:700;background:transparent;")
-        spin = QSpinBox(); spin.setRange(1, 32); spin.setValue(int(rule.get("segments", 4) or 4)); spin.setFixedWidth(56)
+        spin = self._segs(int(rule.get("segments", 0) or 0))
         spin.valueChanged.connect(lambda n, hh=host: self.rules[hh].__setitem__("segments", n))
         yt = QCheckBox("yt-dlp"); yt.setChecked(bool(rule.get("ytdlp")))
         yt.toggled.connect(lambda on, hh=host: self.rules[hh].__setitem__("ytdlp", on))
