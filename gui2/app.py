@@ -1446,8 +1446,11 @@ class DownloadAppV2(SettingsMixin, ActionsMixin, ShortcutsMixin, SystemMixin, Up
             # A stream whose sound is a playlist of its own went to yt-dlp from
             # its master (hls._to_ytdlp): its link is the master now, and the
             # page's button sends one quality of it again (2026-11-04)
+            # - that quality only, when the task kept which it was (item 7)
             return bool(hls_master and v["url"] == url and getattr(x, "use_ytdlp", False)
-                        and utils.same_link(x.url, hls_master))
+                        and utils.same_link(x.url, hls_master)
+                        and (not getattr(x, "hls_variant", "")
+                             or utils.same_link(x.hls_variant, v["url"])))
 
         existing = next((x for x in self.queue.tasks
                          if same(x) and x.status != T.CANCELLED), None)

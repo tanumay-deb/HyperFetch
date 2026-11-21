@@ -286,3 +286,23 @@ def test_drain_pending_does_not_reenter_during_torrent_fetch(window, tmp_path):
     assert max_in_flight[0] == 1, "a second add started inside the first while _drain_pending waited"
     assert len(window.added) == 1, "double-clicked .torrent link was added twice"
 
+
+
+def test_another_quality_of_a_stream_handed_to_ytdlp_is_a_download_of_its_own(window, tmp_path):
+    """Every quality of that master read as the one in the list: picking
+    1080p after 720p asked "Already added" (item 7, 2026-11-12). The quality
+    it was picked with is kept (hls._to_ytdlp) and only that one is it."""
+    window.save_dir = str(tmp_path)
+    master = "https://cdn.example.test/v/master.m3u8"
+    t = T.DownloadTask(master, str(tmp_path / "Film.mp4"), filename="Film.mp4")
+    t.use_ytdlp = True
+    t.hls_variant = "https://cdn.example.test/v/720p.m3u8"
+    t = T.DownloadTask.from_dict(t.to_dict())           # kept with the task
+    window.queue.tasks.append(t)
+    from gui2.app import DownloadAppV2
+    DownloadAppV2._add_download(window, "https://cdn.example.test/v/720p.m3u8", "Film.mp4",
+                                None, ask=False, hls_master=master)
+    assert window.added == [], "the same quality added twice"
+    DownloadAppV2._add_download(window, "https://cdn.example.test/v/1080p.m3u8", "Film.mp4",
+                                None, ask=False, hls_master=master)
+    assert len(window.added) == 1, "another quality read as the one in the list"

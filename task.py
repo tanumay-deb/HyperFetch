@@ -181,6 +181,10 @@ class DownloadTask:
         # browser: what tells the HLS engine that the stream's sound is a
         # playlist of its own (hls.py). Persisted.
         self.hls_master = ""
+        # The quality a stream was picked with, kept when hls._to_ytdlp makes
+        # its link the master: another quality of that master is another
+        # download (item 7, 2026-11-12). Persisted.
+        self.hls_variant = ""
 
         # connections streaming now, set by the HTTP engine (transient): a big
         # file has 32 unfinished parts and starts on one connection
@@ -446,6 +450,7 @@ class DownloadTask:
             "etag": self.etag,
             "last_modified": self.last_modified,
             "hls_master": self.hls_master,
+            "hls_variant": self.hls_variant,
             "events": self.events[-self.EVENTS_MAX:],
             "sha256": self.sha256,
             "infohash": self.infohash,
@@ -511,6 +516,7 @@ class DownloadTask:
         t.etag = d.get("etag", "") or ""
         t.last_modified = d.get("last_modified", "") or ""
         t.hls_master = str(d.get("hls_master") or "")
+        t.hls_variant = str(d.get("hls_variant") or "")
         # Missing on every task written before accounts existed, which is why
         # it defaults to "" rather than raising — those belong to admin.
         t.owner = d.get("owner", "") or ""

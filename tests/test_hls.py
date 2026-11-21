@@ -412,6 +412,7 @@ def test_picked_from_a_master_whose_sound_is_apart_it_goes_to_ytdlp(hls_server, 
                                       "/bv*[height<=720]+ba/b[height<=720]",
                          "name_chosen": "Clip", "seg_total": 0}]
     assert not any(p.startswith("seg") for p in hls_server.asked), "the picture was fetched alone"
+    assert t.hls_variant == f"{hls_server.base}/high.m3u8"      # the quality picked (item 7)
 
 
 @pytest.mark.parametrize("master", ["langs.m3u8", "langs-text.m3u8"])

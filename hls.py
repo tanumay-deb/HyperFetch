@@ -454,6 +454,8 @@ class HlsDownloader:
         log.info("HLS %s: its sound is a stream of its own; handing it to yt-dlp",
                  self.t.filename)
         self.t.log_event("Its sound is a stream of its own: yt-dlp fetches both and joins them")
+        if self.t.url != master_url:
+            self.t.hls_variant = self.t.url
         self.t.url = master_url
         self.t.use_ytdlp = True                 # a resume goes straight to yt-dlp
         # That sound by its NAME in any group - yt-dlp adds a group's rank,
