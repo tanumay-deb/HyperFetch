@@ -643,6 +643,11 @@ def test_cookies_never_go_from_https_down_to_http():
     assert hls._scoped(h, "https://s.test/v.m3u8", "http://s.test/0.ts") == {"User-Agent": "x"}
     assert hls._scoped(h, "http://s.test/v.m3u8", "https://s.test/0.ts") == h
     assert hls._scoped(h, "https://s.test/v.m3u8", "https://cdn.test/0.ts") == {"User-Agent": "x"}
+    # a cookie of the site goes to its other hosts, as a browser sends it
+    assert hls._scoped(h, "https://www.s.test/v.m3u8", "https://cdn.s.test/0.ts") == h
+    assert hls._scoped(h, "https://s.test/v.m3u8", "https://cdn.s.test/0.ts") == h
+    assert hls._scoped(h, "https://s.test/v.m3u8", "https://other.test/0.ts") == {"User-Agent": "x"}
+    assert hls._scoped(h, "http://10.0.0.1/v.m3u8", "http://11.0.0.1/0.ts") == {"User-Agent": "x"}
 
 
 def test_a_master_that_names_no_codecs_still_gets_its_sound_joined(hls_server, tmp_path,

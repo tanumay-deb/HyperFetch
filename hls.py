@@ -194,14 +194,24 @@ def _playlist_text(r):
 
 
 def _scoped(headers, origin, url):
-    """`headers` for a request to `url`: the browser's Cookie only when `url` is
-    on the host of `origin` - the link the browser took the cookies for - and
-    never from https down to http, as a browser sends them. A CDN a playlist
-    names got the site's cookies (item 36, 2026-11-12)."""
+    """`headers` for a request to `url`: the browser's Cookie only on the site
+    of `origin` - the link the browser took the cookies for - and never from
+    https down to http. A CDN a playlist names got the site's cookies (item
+    36, 2026-11-12). The site: the host, the hosts under it, and those under
+    the domain above it when that has two labels or more - the browser hands
+    over a cookie of .example.com for www.example.com and sends it to
+    cdn.example.com too (CloudFront's signed cookies work that way). An
+    address is its own site only. Not the public suffix list: a stream on
+    a.co.uk still sends them to b.co.uk."""
     if origin is None or not any(k.lower() == "cookie" for k in headers):
         return headers
     a, b = urllib.parse.urlsplit(origin), urllib.parse.urlsplit(url)
-    if a.hostname == b.hostname and (a.scheme, b.scheme) != ("https", "http"):
+    ah, bh = a.hostname or "", b.hostname or ""
+    parent = ah.partition(".")[2]
+    named = not re.fullmatch(r"[\d.]+|.*:.*", ah)          # not an IP address
+    same_site = bh == ah or (named and (bh.endswith("." + ah) or (
+        parent.count(".") >= 1 and bh.endswith("." + parent))))
+    if same_site and (a.scheme, b.scheme) != ("https", "http"):
         return headers
     return {k: v for k, v in headers.items() if k.lower() != "cookie"}
 
