@@ -458,15 +458,11 @@ def test_a_link_with_a_fetch_limit_is_not_wasted_on_a_probe_get(server, make_pay
     assert gets[0] <= 4
 
 
-def test_resume_fails_when_the_file_changed_at_the_same_size_on_the_server(server, tmp_path):
-    """B8: a paused download whose file is replaced by another of the same size
-    must fail with 'changed on the server' via If-Range, never complete with a
-    mix of the two versions. An unchanged file resumes normally."""
-    size = 4 * 1024 * 1024
-    v1 = b"A" * size
-    v2 = b"B" * size
-    state = {"data": v1, "etag": '"v1"', "lm": "Wed, 01 Jan 2025 00:00:00 GMT", "slow": True}
-    srv = server(v1)
+def _changing_file(server, state):
+    """A server whose file is state["data"], with state["etag"] and
+    state["lm"] as its validators: it honours If-Range against them (a
+    mismatch is 200 and the whole file), and state["slow"] streams slowly."""
+    srv = server(state["data"])
 
     def answer(h, head):
         d = state["data"]
@@ -513,6 +509,18 @@ def test_resume_fails_when_the_file_changed_at_the_same_size_on_the_server(serve
         return True
 
     srv.answer = answer
+    return srv
+
+
+def test_resume_fails_when_the_file_changed_at_the_same_size_on_the_server(server, tmp_path):
+    """B8: a paused download whose file is replaced by another of the same size
+    must fail with 'changed on the server' via If-Range, never complete with a
+    mix of the two versions. An unchanged file resumes normally."""
+    size = 4 * 1024 * 1024
+    v1 = b"A" * size
+    v2 = b"B" * size
+    state = {"data": v1, "etag": '"v1"', "lm": "Wed, 01 Jan 2025 00:00:00 GMT", "slow": True}
+    srv = _changing_file(server, state)
 
     def run_and_pause(path):
         import time
@@ -549,6 +557,42 @@ def test_resume_fails_when_the_file_changed_at_the_same_size_on_the_server(serve
     assert t_changed.status == T.ERROR, f"resumed into a mix: status={t_changed.status}"
     assert "changed on the server" in t_changed.error.lower(), t_changed.error
     assert not os.path.exists(t_changed.save_path)
+
+
+def test_a_download_started_over_after_its_partial_was_lost_resumes_the_new_file(server, tmp_path):
+    """The partial gone, a paused download starts over. It must look at the
+    server again: kept, the old file's Last-Modified went out as If-Range on
+    the next resume, and a download whose every byte was the new file's
+    failed "changed on the server"."""
+    import time
+    import utils
+    size = 4 * 1024 * 1024
+    v1, v2 = b"A" * size, b"B" * size
+    state = {"data": v1, "etag": '"v1"', "lm": "Wed, 01 Jan 2025 00:00:00 GMT", "slow": True}
+    srv = _changing_file(server, state)
+
+    def run_and_pause(t):
+        th = threading.Thread(target=lambda: Downloader(t, segments=4).run(), daemon=True)
+        th.start()
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline and t.downloaded < 128 * 1024:
+            time.sleep(0.02)
+        t.request_pause()
+        th.join(timeout=10)
+        assert t.status == T.PAUSED and 0 < t.downloaded < size, (t.status, t.error)
+        t.clear_pause()
+
+    t = T.DownloadTask(srv.url("/nightly.bin"), str(tmp_path / "nightly.bin"),
+                       filename="nightly.bin")
+    run_and_pause(t)
+    os.remove(utils.temp_download_path(t))          # the partial is lost
+    t.downloaded = 0
+    state.update(data=v2, etag='"v2"', lm="Thu, 02 Jan 2025 00:00:00 GMT")
+    run_and_pause(t)                                # starts over: all of it v2
+    state["slow"] = False
+    Downloader(t, segments=4).run()
+    assert t.status == T.COMPLETED, t.error
+    assert open(t.save_path, "rb").read() == v2
 
 
 def test_weak_etag_uses_last_modified_for_if_range(server, tmp_path):

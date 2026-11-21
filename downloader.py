@@ -1230,6 +1230,12 @@ class Downloader:
         temp_path = utils.temp_download_path(self.t)
 
         try:
+            if self.t.segments and self.t.total_size > 0 and not os.path.exists(temp_path):
+                # the partial is gone: start over as a new download does, with
+                # a look at the server - the validators kept were the old
+                # file's, and a later resume's If-Range read "changed" (B8)
+                self.t.segments = []
+                self.t.downloaded = 0
             if not self.t.segments:
                 self._probe()
                 self._take_server_name()
@@ -1247,12 +1253,7 @@ class Downloader:
                 self._build_segments()
             else:
                 self._lines = self._pick_lines()        # read afresh at each start
-                if self.t.total_size > 0 and not os.path.exists(temp_path):
-                    for seg in self.t.segments:
-                        seg.downloaded = 0
-                    self._build_segments()
-                else:
-                    self._resumed = True
+                self._resumed = True
         except OSError as e:
             self.t.status = T.ERROR
             self.t.error = str(e)
