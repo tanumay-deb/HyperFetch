@@ -516,11 +516,17 @@ class Aria2Daemon:
     def peer_port(self):
         """The port the running daemon listens on for peers, 0 when none
         answers. It is the one it started with: changeGlobalOption of
-        listen-port is answered OK and changes nothing (1.37.0)."""
-        if not (self.port and self.secret):
+        listen-port is answered OK and changes nothing (1.37.0).
+        Not attached yet, it is the recorded daemon's: the one an earlier run
+        left (a crash) is what torrents will attach to, and UPnP opened the
+        setting's port while it listened on its own (item 15, 2026-11-12)."""
+        port, secret = self.port, self.secret
+        if not (port and secret):
+            _, port, secret = self._load_state()
+        if not (port and secret):
             return 0
         try:
-            got = self._post(self.port, self.secret, "aria2.getGlobalOption", [],
+            got = self._post(port, secret, "aria2.getGlobalOption", [],
                              timeout=3) or {}
             return int(got.get("listen-port") or 0)
         except Exception:

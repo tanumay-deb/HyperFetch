@@ -162,6 +162,30 @@ def test_rpc_error_becomes_aria2error(tmp_path, monkeypatch):
         d._post(1, "s", "aria2.tellStatus", [])
 
 
+def test_the_port_upnp_maps_is_the_one_a_daemon_left_running_listens_on(tmp_path,
+                                                                       monkeypatch):
+    """After a crash the daemon of the run before is still up, on the port it
+    was started with. Asked at start, before any torrent attached to it, the
+    port read as the setting's: UPnP opened that one while aria2 listened on
+    the old one, until Settings were saved again (item 15, 2026-11-12)."""
+    monkeypatch.setattr(utils, "app_data_dir", lambda: str(tmp_path))
+    monkeypatch.setattr(utils, "LISTEN_PORT", 51413)
+    (tmp_path / "aria2d.json").write_text(json.dumps(
+        {"pid": 4321, "port": 6800, "secret": "s"}), encoding="utf-8")
+    d = aria2d.Aria2Daemon()                         # not attached yet
+    asked = []
+
+    def post(port, secret, method, params, timeout=None):
+        asked.append((port, method))
+        return {"listen-port": "56001"}
+
+    monkeypatch.setattr(d, "_post", post)
+    monkeypatch.setattr(aria2d, "DAEMON", d)
+    assert torrent.listen_port() == 56001
+    assert asked == [(6800, "aria2.getGlobalOption")]
+    assert not d.port, "asking is not attaching"
+
+
 # --------------------------------------------------------------- RPC engine
 class _FakeDaemon:
     """Replays a scripted sequence of tellStatus replies."""
