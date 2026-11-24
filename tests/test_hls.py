@@ -671,3 +671,104 @@ def test_a_master_that_names_no_codecs_still_gets_its_sound_joined(hls_server, t
         info = ydl.extract_info(t.url, download=False)
     picked = [f["format_id"] for f in info.get("requested_formats") or [info]]
     assert len(picked) == 2, picked
+
+
+@pytest.fixture
+def ladder():
+    """A stream in three qualities (h 1080p, m 720p, l 360p), and the same in
+    fMP4 (fh, fl). A segment named in `refused` is answered as the site's
+    storage answered a blocked file on 2026-11-24: 403 BucketPunish."""
+    def media(q, ext="ts", init=False):
+        return ("#EXTM3U\n#EXT-X-TARGETDURATION:4\n#EXT-X-MEDIA-SEQUENCE:0\n"
+                + (f'#EXT-X-MAP:URI="{q}init.mp4"\n' if init else "")
+                + "".join(f"#EXTINF:4.0,\n{q}{i}.{ext}\n" for i in range(5))
+                + "#EXT-X-ENDLIST\n").encode()
+
+    def master(*qs):
+        return ("#EXTM3U\n" + "".join(
+            f"#EXT-X-STREAM-INF:BANDWIDTH={bw},RESOLUTION={w}x{h}\n{q}.m3u8\n"
+            for q, bw, w, h in qs)).encode()
+
+    routes = {"master.m3u8": master(("h", 3000000, 1920, 1080), ("m", 1500000, 1280, 720),
+                                    ("l", 500000, 640, 360)),
+              "fmaster.m3u8": master(("fh", 3000000, 1920, 1080), ("fl", 500000, 640, 360))}
+    for q in "hml":
+        routes[f"{q}.m3u8"] = media(q)
+        for i in range(5):
+            routes[f"{q}{i}.ts"] = (q + str(i)).encode() * 512
+    for q in ("fh", "fl"):
+        routes[f"{q}.m3u8"] = media(q, "m4s", init=True)
+        routes[f"{q}init.mp4"] = q.encode() * 50
+        for i in range(5):
+            routes[f"{q}{i}.m4s"] = (q + str(i)).encode() * 512
+    refused = set()
+
+    class H(http.server.BaseHTTPRequestHandler):
+        def log_message(self, *a):
+            pass
+
+        def do_GET(self):
+            p = self.path.lstrip("/")
+            if p in refused:
+                body = b"<Error><Code>BucketPunish</Code></Error>"
+                self.send_response(403)
+            elif p in routes:
+                body = routes[p]
+                self.send_response(200)
+            else:
+                body = b""
+                self.send_response(404)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+    httpd = http.server.ThreadingHTTPServer(("127.0.0.1", 0), H)
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    srv = type("S", (), {})()
+    srv.base = "http://127.0.0.1:%d" % httpd.server_address[1]
+    srv.refused = refused
+    srv.seg = lambda q, i: routes[f"{q}{i}.ts"]
+    yield srv
+    httpd.shutdown()
+
+
+def _picked(ladder, tmp_path, q, master="master.m3u8"):
+    t = T.DownloadTask(f"{ladder.base}/{q}.m3u8", str(tmp_path / "v.m3u8"), filename="v.m3u8")
+    t.hls_master = f"{ladder.base}/{master}"     # the browser picked q from it
+    hls.HlsDownloader(t).run()
+    return t
+
+
+def test_a_segment_refused_at_the_quality_picked_comes_from_the_next_one_down(ladder, tmp_path):
+    """The site's storage blocks single files (403 BucketPunish), 1-2 in 100
+    at each quality and not the same ones: 9 of 10 videos failed at their
+    first blocked one (2026-11-24). Its player takes that piece from another
+    quality; so does this engine - the nearest one below that has it."""
+    ladder.refused.update({"h2.ts", "m2.ts"})
+    t = _picked(ladder, tmp_path, "h")
+    assert t.status == T.COMPLETED, t.error
+    want = [ladder.seg("h", 0), ladder.seg("h", 1), ladder.seg("l", 2),
+            ladder.seg("h", 3), ladder.seg("h", 4)]
+    assert open(t.save_path, "rb").read() == b"".join(want)
+    assert any("another quality" in e["message"] for e in t.events)
+
+
+def test_with_no_quality_below_that_has_it_the_next_one_up_gives_it(ladder, tmp_path):
+    ladder.refused.update({"m2.ts", "l2.ts"})
+    t = _picked(ladder, tmp_path, "m")
+    assert t.status == T.COMPLETED, t.error
+    assert open(t.save_path, "rb").read()[2 * 1024:3 * 1024] == ladder.seg("h", 2)
+
+
+def test_a_segment_no_quality_has_still_stops_the_download(ladder, tmp_path):
+    ladder.refused.update({"h2.ts", "m2.ts", "l2.ts"})
+    t = _picked(ladder, tmp_path, "h")
+    assert t.status == T.ERROR and "403" in t.error
+
+
+def test_an_fmp4_stream_takes_no_segment_of_another_quality(ladder, tmp_path):
+    """Its fragments go with their quality's init section: one of another
+    quality would be joined to an init it does not fit."""
+    ladder.refused.add("fh2.m4s")
+    t = _picked(ladder, tmp_path, "fh", "fmaster.m3u8")
+    assert t.status == T.ERROR and "403" in t.error

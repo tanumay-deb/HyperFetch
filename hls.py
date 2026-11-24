@@ -127,29 +127,7 @@ def probe(url, headers=None):
         seconds, live = _playlist_facts(text)
         return _locked({"variants": [], "duration": seconds, "live": live}, text)
 
-    lines = text.splitlines()
-    variants = []
-    for i, line in enumerate(lines):
-        if not line.startswith("#EXT-X-STREAM-INF"):
-            continue
-        attrs = line.split(":", 1)[-1]
-        # anchor to a delimiter so AVERAGE-BANDWIDTH= can't shadow BANDWIDTH=
-        bw = re.search(r"(?:^|,)\s*BANDWIDTH=(\d+)", attrs, re.I)
-        res = re.search(r"(?:^|,)\s*RESOLUTION=\d+x(\d+)", attrs, re.I)
-        uri = ""
-        for j in range(i + 1, len(lines)):
-            cand = lines[j].strip()
-            if cand and not cand.startswith("#"):
-                uri = cand
-                break
-        if not uri:
-            continue
-        variants.append({
-            "height": int(res.group(1)) if res else 0,
-            "bandwidth": int(bw.group(1)) if bw else 0,
-            "url": urllib.parse.urljoin(url, uri),
-        })
-    variants.sort(key=lambda v: (v["height"], v["bandwidth"]), reverse=True)
+    variants = _variants(text, url)
 
     # estimate sizes from the top variant's total duration (one extra fetch)
     duration, live, best = 0.0, False, ""
@@ -173,6 +151,35 @@ def probe(url, headers=None):
                     "bandwidth": v["bandwidth"], "url": v["url"], "size": size})
     # a master is judged by its best rendition (and its own session keys)
     return _locked({"variants": out, "duration": duration, "live": live}, text + best)
+
+
+def _variants(text, url):
+    """A master playlist's qualities, best first: [{height, bandwidth, url}],
+    its links joined against `url`, where it came from."""
+    lines = text.splitlines()
+    variants = []
+    for i, line in enumerate(lines):
+        if not line.startswith("#EXT-X-STREAM-INF"):
+            continue
+        attrs = line.split(":", 1)[-1]
+        # anchor to a delimiter so AVERAGE-BANDWIDTH= can't shadow BANDWIDTH=
+        bw = re.search(r"(?:^|,)\s*BANDWIDTH=(\d+)", attrs, re.I)
+        res = re.search(r"(?:^|,)\s*RESOLUTION=\d+x(\d+)", attrs, re.I)
+        uri = ""
+        for j in range(i + 1, len(lines)):
+            cand = lines[j].strip()
+            if cand and not cand.startswith("#"):
+                uri = cand
+                break
+        if not uri:
+            continue
+        variants.append({
+            "height": int(res.group(1)) if res else 0,
+            "bandwidth": int(bw.group(1)) if bw else 0,
+            "url": urllib.parse.urljoin(url, uri),
+        })
+    variants.sort(key=lambda v: (v["height"], v["bandwidth"]), reverse=True)
+    return variants
 
 
 def _locked(found, text):
@@ -370,6 +377,12 @@ class HlsDownloader:
         # fMP4 (CMAF) playlists name an init segment with #EXT-X-MAP; set by
         # _parse_media, None for a classic MPEG-TS playlist.
         self._init_map = self._init_range = None
+        # the master the quality was picked from (text, its address, the
+        # quality), its other qualities once asked for, and how many
+        # segments came from them (_from_other_quality)
+        self._ladder = None
+        self._others = None
+        self._swapped = 0
 
     def _seg_session(self):
         s = getattr(self._tls, "s", None)
@@ -745,6 +758,58 @@ class HlsDownloader:
             data += got
         return self._decrypt(data, key, seq)
 
+    def _from_other_quality(self, index, total, seq):
+        """(label, bytes) of segment `index` from another quality of the
+        master it was picked from, or None; it must carry the same number
+        (`seq`, #EXT-X-MEDIA-SEQUENCE on). A site's storage may refuse
+        single files - 1-2 in 100 at each quality, not the same ones (403
+        BucketPunish, 2026-11-24) - and its player takes the piece from
+        another quality: the nearest one below the picked one, else the
+        nearest above. Only a quality cut into the same number of segments,
+        and transport streams only: an fMP4 fragment needs its own quality's
+        init section."""
+        if not self._ladder or self._init_map:
+            return None
+        if self._others is None:
+            master, base, picked = self._ladder
+            same = lambda u: urllib.parse.unquote(u) == urllib.parse.unquote(picked)  # noqa: E731
+            found = _variants(master, base)
+            mine = next((i for i, v in enumerate(found) if same(v["url"])), -1)
+            # best first: below = after it, nearest first; above = before it, reversed
+            order = found[mine + 1:] + found[:mine][::-1] if mine >= 0 else found
+            self._others = [[v, None] for v in order
+                            if self._sound_apart(master, base, v["url"]) is None]
+        for other in self._others:
+            v, segs = other
+            if segs is None:
+                segs = other[1] = self._segments_of(v["url"], total)
+            if not segs or segs[index][1] != seq:
+                continue
+            try:
+                data = self._fetch_segment(*segs[index])
+            except (requests.RequestException, RuntimeError):
+                continue
+            label = "%dp" % v["height"] if v["height"] else "%d kbps" % round(v["bandwidth"] / 1000)
+            return label, data
+        return None
+
+    def _segments_of(self, url, total):
+        """Another quality's segments, or [] when they cannot stand in for
+        this one's: it will not come, it is fMP4, or it is cut otherwise."""
+        try:
+            text, base = self._fetch(url)
+        except requests.RequestException:
+            return []
+        mine = self._init_map, self._init_range
+        try:
+            segs, _ = self._parse_media(text, base)
+            fmp4 = self._init_map is not None
+        except RuntimeError:
+            return []
+        finally:
+            self._init_map, self._init_range = mine
+        return segs if len(segs) == total and not fmp4 else []
+
     def _stopped(self, temp_path):
         """A cancel or a pause asked for: the status says so - and a cancel
         takes the temp file with it. True then."""
@@ -860,6 +925,8 @@ class HlsDownloader:
         if apart is not None:
             self._to_ytdlp(master_url, *apart)
             return
+        if master:
+            self._ladder = (master, master_base, picked)
 
         total = len(segments)
         seconds = self._seconds(text)
@@ -946,10 +1013,26 @@ class HlsDownloader:
                     batch = segments[start:start + workers]
                     futures = [ex.submit(self._fetch_segment, *seg) for seg in batch]
                     for i, fut in enumerate(futures):
+                        err = other = None
                         try:
                             data = fut.result()
                         except (requests.RequestException, RuntimeError) as e:
-                            resp = getattr(e, "response", None)
+                            err = e
+                        resp = getattr(err, "response", None)
+                        if resp is not None and resp.status_code in (403, 404, 410):
+                            # done = this segment's place in the whole playlist
+                            other = self._from_other_quality(done, total, batch[i][1])
+                        if other:
+                            label, data = other
+                            self._swapped += 1
+                            log.info("HLS segment %d/%d refused (HTTP %d); taken from %s",
+                                     done + 1, total, resp.status_code, label)
+                            if self._swapped == 1:
+                                self.t.log_event("The server refused a piece at this quality; "
+                                                 "it was taken from another quality, as the "
+                                                 "site's own player does")
+                        elif err is not None:
+                            e = err
                             if resp is not None and resp.status_code == 403:
                                 self.t.status = T.ERROR
                                 self.t.error = "HTTP 403 Forbidden - URL expired"
@@ -1009,9 +1092,11 @@ class HlsDownloader:
         self.t.status = T.COMPLETED
         el = max(0.001, time.time() - seg_t0)
         log.info("HLS done host=%s segments=%d %.1fMB in %.1fs (%.2f MB/s) "
-                 "retries=%d 403=%d timeouts=%d", host, total, downloaded / 1048576,
-                 el, (downloaded / el) / 1048576, self._stats["retries"],
-                 self._stats["http403"], self._stats["timeouts"])
+                 "retries=%d 403=%d timeouts=%d other-quality=%d", host, total,
+                 downloaded / 1048576, el, (downloaded / el) / 1048576, self._stats["retries"],
+                 self._stats["http403"], self._stats["timeouts"], self._swapped)
+        if self._swapped:
+            self.t.log_event("%d of %d pieces came from another quality" % (self._swapped, total))
 
     @staticmethod
     def _rm(path):
