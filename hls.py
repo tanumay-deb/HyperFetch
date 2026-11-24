@@ -782,8 +782,8 @@ class HlsDownloader:
         master it was picked from, or None; it must carry the same number
         (`seq`, #EXT-X-MEDIA-SEQUENCE on). A site's storage may refuse
         single files - 1-2 in 100 at each quality, not the same ones (403
-        BucketPunish, 2026-11-24) - and its player takes the piece from
-        another quality: the nearest one below the picked one, else the
+        BucketPunish, 2026-11-24) - and every other quality had the piece:
+        it is taken from the nearest one below the picked one, else the
         nearest above. Only a quality cut into the same number of segments,
         and transport streams only: an fMP4 fragment needs its own quality's
         init section."""
@@ -1058,8 +1058,7 @@ class HlsDownloader:
                                      done + 1, total, resp.status_code, label)
                             if self._swapped == 1:
                                 self.t.log_event("The server refused a piece at this quality; "
-                                                 "it was taken from another quality, as the "
-                                                 "site's own player does")
+                                                 "it was taken from another quality")
                         elif err is not None:
                             e = err
                             if resp is not None and resp.status_code == 403:

@@ -752,6 +752,8 @@ def test_a_segment_refused_at_the_quality_picked_comes_from_the_next_one_down(la
             ladder.seg("h", 3), ladder.seg("h", 4)]
     assert open(t.save_path, "rb").read() == b"".join(want)
     assert any("another quality" in e["message"] for e in t.events)
+    # what the site's own player does was never looked at: not said (audit 3)
+    assert not any("player" in e["message"] for e in t.events)
 
 
 def test_with_no_quality_below_that_has_it_the_next_one_up_gives_it(ladder, tmp_path):
