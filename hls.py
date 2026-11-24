@@ -20,6 +20,7 @@ import struct
 import threading
 import subprocess
 import urllib.parse
+from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 
 import requests
@@ -1018,19 +1019,26 @@ class HlsDownloader:
                     f.flush()
                     downloaded += len(init)
                     self.t.downloaded = downloaded
-                # download in ordered batches: fetch `workers` segments at once,
-                # then write them to disk in playlist order. Bounds memory to one
-                # batch and keeps pause/cancel latency to a single batch.
-                remaining = len(segments)
-                for start in range(0, remaining, workers):
-                    if self.t.cancel_requested:
-                        break
-                    if self.t.pause_requested:
-                        self.t.status = T.PAUSED
-                        return
-                    batch = segments[start:start + workers]
-                    futures = [ex.submit(self._fetch_segment, *seg) for seg in batch]
-                    for i, fut in enumerate(futures):
+                # fetch ahead, write in playlist order: up to two pieces a
+                # connection in flight, the oldest written as soon as it is
+                # whole and the next asked for at once. Batches waited for
+                # their slowest piece with every other connection idle (audit,
+                # 2026-11-24); memory stays bounded by `ahead` pieces.
+                ahead = 2 * workers
+                flight = deque()                # (segment, future), in order
+                nxt = 0
+                try:
+                    while nxt < len(segments) or flight:
+                        if self.t.cancel_requested:
+                            break
+                        if self.t.pause_requested:
+                            self.t.status = T.PAUSED
+                            return
+                        while nxt < len(segments) and len(flight) < ahead:
+                            flight.append((segments[nxt],
+                                           ex.submit(self._fetch_segment, *segments[nxt])))
+                            nxt += 1
+                        seg, fut = flight.popleft()
                         err = other = None
                         try:
                             data = fut.result()
@@ -1038,11 +1046,11 @@ class HlsDownloader:
                             err = e
                         if err is not None and (self.t.pause_requested
                                                 or self.t.cancel_requested):
-                            break               # the loop's top says which
+                            continue            # the loop's top says which
                         resp = getattr(err, "response", None)
                         if resp is not None and resp.status_code in (403, 404, 410):
                             # done = this segment's place in the whole playlist
-                            other = self._from_other_quality(done, total, batch[i][1])
+                            other = self._from_other_quality(done, total, seg[1])
                         if other:
                             label, data = other
                             self._swapped += 1
@@ -1063,7 +1071,6 @@ class HlsDownloader:
                                             self._stats["http403"], self._stats["timeouts"])
                                 return
                             self.t.status = T.ERROR
-                            # done already counts this batch's earlier ones
                             self.t.error = f"segment {done + 1}/{total} failed: {e}"
                             log.warning("HLS fail host=%s segment %d/%d: %s "
                                         "(retries=%d 403=%d timeouts=%d)",
@@ -1086,6 +1093,9 @@ class HlsDownloader:
                         self.t.seg_done = done
                         # estimate total size from average segment so far -> live %
                         self.t.total_size = int(downloaded / done * total)
+                finally:
+                    for _, waiting in flight:   # not started: not fetched at all
+                        waiting.cancel()
         except OSError as e:
             self.t.status = T.ERROR
             self.t.error = utils.format_disk_error(e, temp_path)

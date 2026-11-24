@@ -836,3 +836,16 @@ def test_a_pause_does_not_wait_for_the_pieces_being_fetched(paced, tmp_path):
     th.join(10)
     assert t.status == T.PAUSED
     assert time.monotonic() - asked < 1.5, time.monotonic() - asked
+
+
+def test_a_slow_piece_does_not_hold_back_the_pieces_after_it(paced, tmp_path, monkeypatch):
+    """Pieces came in batches, each waiting for its slowest: the connections
+    that were done sat idle (audit, 2026-11-24)."""
+    import utils
+    monkeypatch.setattr(utils, "MAX_CONNECTIONS", 3)
+    paced.slow.add(0)                           # 3.2 s; the others at once
+    t = T.DownloadTask(paced.url, str(tmp_path / "v.m3u8"))
+    hls.HlsDownloader(t).run()
+    assert t.status == T.COMPLETED, t.error
+    assert paced.seen[3][0] < paced.seen[0][1]  # asked for while 0 still came
+    assert open(t.save_path, "rb").read() == b"".join(bytes([i]) * 65536 for i in range(9))
