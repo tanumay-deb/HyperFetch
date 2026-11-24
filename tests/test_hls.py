@@ -687,11 +687,16 @@ def ladder():
 
     def master(*qs):
         return ("#EXTM3U\n" + "".join(
-            f"#EXT-X-STREAM-INF:BANDWIDTH={bw},RESOLUTION={w}x{h}\n{q}.m3u8\n"
+            f"#EXT-X-STREAM-INF:BANDWIDTH={bw},RESOLUTION={w}x{h}\n"
+            + (q if ".m3u8" in q else q + ".m3u8") + "\n"
             for q, bw, w, h in qs)).encode()
 
     routes = {"master.m3u8": master(("h", 3000000, 1920, 1080), ("m", 1500000, 1280, 720),
                                     ("l", 500000, 640, 360)),
+              # signed links: a fresh signature in each quality's address
+              "smaster.m3u8": master(("h.m3u8?sig=new", 3000000, 1920, 1080),
+                                     ("m.m3u8?sig=new", 1500000, 1280, 720),
+                                     ("l.m3u8?sig=new", 500000, 640, 360)),
               "fmaster.m3u8": master(("fh", 3000000, 1920, 1080), ("fl", 500000, 640, 360))}
     for q in "hml":
         routes[f"{q}.m3u8"] = media(q)
@@ -709,7 +714,7 @@ def ladder():
             pass
 
         def do_GET(self):
-            p = self.path.lstrip("/")
+            p = self.path.split("?")[0].lstrip("/")
             if p in refused:
                 body = b"<Error><Code>BucketPunish</Code></Error>"
                 self.send_response(403)
@@ -851,3 +856,15 @@ def test_a_slow_piece_does_not_hold_back_the_pieces_after_it(paced, tmp_path, mo
     assert t.status == T.COMPLETED, t.error
     assert paced.seen[3][0] < paced.seen[0][1]  # asked for while 0 still came
     assert open(t.save_path, "rb").read() == b"".join(bytes([i]) * 65536 for i in range(9))
+
+
+def test_a_master_that_signs_each_quality_afresh_still_goes_down_first(ladder, tmp_path):
+    """Its qualities' addresses carry a new signature each time it is read,
+    so the one picked matched none of them, and a piece for a 720p download
+    came from 1080p (audit, 2026-11-24)."""
+    ladder.refused.add("m2.ts")
+    t = T.DownloadTask(f"{ladder.base}/m.m3u8?sig=old", str(tmp_path / "v.m3u8"), filename="v.m3u8")
+    t.hls_master = f"{ladder.base}/smaster.m3u8"
+    hls.HlsDownloader(t).run()
+    assert t.status == T.COMPLETED, t.error
+    assert open(t.save_path, "rb").read()[2 * 1024:3 * 1024] == ladder.seg("l", 2)

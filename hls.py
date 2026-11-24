@@ -794,6 +794,13 @@ class HlsDownloader:
             same = lambda u: urllib.parse.unquote(u) == urllib.parse.unquote(picked)  # noqa: E731
             found = _variants(master, base)
             mine = next((i for i, v in enumerate(found) if same(v["url"])), -1)
+            if mine < 0:
+                # signed links: a fresh signature in each quality's address
+                # every time the master is read - by address without it, when
+                # that names one quality only (audit, 2026-11-24)
+                bare = lambda u: urllib.parse.unquote(u.split("?")[0])  # noqa: E731
+                alike = [i for i, v in enumerate(found) if bare(v["url"]) == bare(picked)]
+                mine = alike[0] if len(alike) == 1 else -1
             # best first: below = after it, nearest first; above = before it, reversed
             order = found[mine + 1:] + found[:mine][::-1] if mine >= 0 else found
             self._others = [[v, None] for v in order
