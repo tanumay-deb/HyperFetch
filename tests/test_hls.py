@@ -3,6 +3,7 @@ Local playlist server, no external network."""
 import os
 import http.server
 import threading
+import time
 
 import pytest
 
@@ -772,3 +773,66 @@ def test_an_fmp4_stream_takes_no_segment_of_another_quality(ladder, tmp_path):
     ladder.refused.add("fh2.m4s")
     t = _picked(ladder, tmp_path, "fh", "fmaster.m3u8")
     assert t.status == T.ERROR and "403" in t.error
+
+
+@pytest.fixture
+def paced():
+    """A stream of 9 pieces of 64 KB. `slow` pieces take 3 s, the
+    others at once; `seen` keeps when each was asked for and when it was
+    all sent."""
+    seen = {}
+    slow = set()
+
+    class H(http.server.BaseHTTPRequestHandler):
+        def log_message(self, *a):
+            pass
+
+        def do_GET(self):
+            p = self.path.lstrip("/")
+            if p == "v.m3u8":
+                body = ("#EXTM3U\n#EXT-X-TARGETDURATION:4\n" + "".join(
+                    f"#EXTINF:4.0,\n{i}.ts\n" for i in range(9)) + "#EXT-X-ENDLIST\n").encode()
+                self.send_response(200)
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+                return
+            i = int(p.split(".")[0])
+            seen[i] = [time.monotonic(), None]
+            self.send_response(200)
+            self.send_header("Content-Length", str(64 * 1024))
+            self.end_headers()
+            try:
+                for k in range(16):
+                    if i in slow and k:
+                        time.sleep(0.2)
+                    if k == 15:
+                        seen[i][1] = time.monotonic()   # as its last bytes go
+                    self.wfile.write(bytes([i]) * 4096)
+                    self.wfile.flush()
+            except OSError:
+                return                          # the client went away
+
+    httpd = http.server.ThreadingHTTPServer(("127.0.0.1", 0), H)
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    srv = type("S", (), {})()
+    srv.url = "http://127.0.0.1:%d/v.m3u8" % httpd.server_address[1]
+    srv.seen, srv.slow = seen, slow
+    yield srv
+    httpd.shutdown()
+
+
+def test_a_pause_does_not_wait_for_the_pieces_being_fetched(paced, tmp_path):
+    """Pause was looked at between batches only, and a piece was read in one
+    go: on a slow server it waited for every piece in flight - up to a
+    minute for one that stalls (audit, 2026-11-24)."""
+    paced.slow.update(range(9))                 # 3.2 s a piece
+    t = T.DownloadTask(paced.url, str(tmp_path / "v.m3u8"))
+    th = threading.Thread(target=hls.HlsDownloader(t).run)
+    th.start()
+    time.sleep(0.5)
+    t.request_pause()
+    asked = time.monotonic()
+    th.join(10)
+    assert t.status == T.PAUSED
+    assert time.monotonic() - asked < 1.5, time.monotonic() - asked

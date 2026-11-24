@@ -223,18 +223,35 @@ def _scoped(headers, origin, url):
     return {k: v for k, v in headers.items() if k.lower() != "cookie"}
 
 
-def _get(session, url, headers, stats=None, origin=None, **kw):
+class Stopped(RuntimeError):
+    """A pause or a cancel ended a fetch (`_get`'s `stop`)."""
+
+
+def _get(session, url, headers, stats=None, origin=None, stop=None, **kw):
     """GET with retries. When a `stats` dict is passed, tally retry attempts and
     the 403 / timeout breakdown for the end-of-download HLS log summary.
     `origin` is the link the browser's cookies came with: they go to its host
-    only (`_scoped`)."""
+    only (`_scoped`). With `stop`, the body is read here 8 KB at a time and a
+    stop() that turns true ends the fetch (Stopped): a pause waited for every
+    piece in flight to come whole - up to a minute for one that stalled
+    (audit, 2026-11-24)."""
     headers = _scoped(headers, origin, url)
     last = None
     for _ in range(SEG_RETRIES):
+        if stop is not None and stop():
+            raise Stopped("stopped")
         try:
-            r = session.get(url, headers=headers, timeout=TIMEOUT,
+            r = session.get(url, headers=headers, timeout=TIMEOUT, stream=stop is not None,
                             verify=utils.VERIFY_TLS, proxies=utils.PROXIES, allow_redirects=True, **kw)
             r.raise_for_status()
+            if stop is not None:
+                body = bytearray()
+                for chunk in r.iter_content(8192):
+                    if stop():
+                        r.close()
+                        raise Stopped("stopped")
+                    body += chunk
+                r._content = bytes(body)        # what r.content gives, as requests keeps it
             return r
         except requests.RequestException as e:
             last = e
@@ -719,7 +736,8 @@ class HlsDownloader:
         and the video finished "Completed" broken (2026-11-04)."""
         stop = lambda: self.t.pause_requested or self.t.cancel_requested
         if not part:
-            r = _get(self._seg_session(), url, self.headers, self._stats, origin=self._origin)
+            r = _get(self._seg_session(), url, self.headers, self._stats,
+                     origin=self._origin, stop=stop)
             raw_seg = r.content
             utils.global_limiter.wait(len(raw_seg), stop)
             self.t._limiter.wait(len(raw_seg), stop)
@@ -737,7 +755,7 @@ class HlsDownloader:
             at = start + len(data)
             r = _get(self._seg_session(), url,
                      dict(self.headers, Range="bytes=%d-%d" % (at, start + length - 1)),
-                     self._stats, origin=self._origin)
+                     self._stats, origin=self._origin, stop=stop)
             if r.status_code != 206:
                 # the whole file, again for every segment: refused, not saved
                 raise RuntimeError("the server sent the whole file, not the part of "
@@ -1018,6 +1036,9 @@ class HlsDownloader:
                             data = fut.result()
                         except (requests.RequestException, RuntimeError) as e:
                             err = e
+                        if err is not None and (self.t.pause_requested
+                                                or self.t.cancel_requested):
+                            break               # the loop's top says which
                         resp = getattr(err, "response", None)
                         if resp is not None and resp.status_code in (403, 404, 410):
                             # done = this segment's place in the whole playlist
