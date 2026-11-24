@@ -63,6 +63,21 @@ def collect_garbage():
 
 
 @pytest.fixture(autouse=True)
+def only_a_widgets_app():
+    """A test that makes a bare QGuiApplication / QCoreApplication leaves it
+    for the next ones: `QApplication.instance() or QApplication([])` returns
+    it, and the first widget built on it ended the whole run with no message
+    and exit code 127 (test_brand_logo, then the delete dialog; 2026-11-24).
+    The full run hid it - an earlier test had made a QApplication first."""
+    yield
+    core = sys.modules.get("PySide6.QtCore")
+    if core is not None and core.QCoreApplication.instance() is not None:
+        from PySide6.QtWidgets import QApplication
+        assert isinstance(core.QCoreApplication.instance(), QApplication), \
+            "make a QApplication, not a QGuiApplication / QCoreApplication"
+
+
+@pytest.fixture(autouse=True)
 def no_stray_workers():
     """No download worker (_execute / _worker) started by a test may outlive
     it (B5)."""

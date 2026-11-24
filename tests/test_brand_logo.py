@@ -34,8 +34,9 @@ def _read(*parts, mode="r"):
 @pytest.fixture(scope="module")
 def qt():
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-    from PySide6.QtGui import QGuiApplication
-    return QGuiApplication.instance() or QGuiApplication([])
+    # QApplication, not QGuiApplication: a later test would build widgets on it
+    from PySide6.QtWidgets import QApplication
+    return QApplication.instance() or QApplication([])
 
 
 def _drawn(size):
