@@ -1,5 +1,5 @@
 """Settings -> Network picks the internet connections a download is spread
-over; the window puts them in utils.LINES; the drawer shows connections per
+over; the window puts the unticked ones in utils.LINES_OFF; the drawer shows connections per
 line (specs/2026-11-13-multi-line-downloads-design.md)."""
 import os
 import types
@@ -34,7 +34,7 @@ def test_switch_and_ticks_reach_values(monkeypatch):
         dlg.multi_line.setChecked(True)
         dlg._line_ticks["Phone"].setChecked(False)
         v = dlg.values()
-        assert v["multi_line"] is True and v["lines"] == ["Wi-Fi"]
+        assert v["multi_line"] is True and v["lines_off"] == ["Phone"]
     finally:
         dlg.deleteLater()
 
@@ -43,16 +43,29 @@ def test_first_switch_on_ticks_every_line(monkeypatch):
     dlg = _dialog(monkeypatch, [WIFI, PHONE], {})
     try:
         assert dlg.values()["multi_line"] is False          # off by default
-        assert dlg.values()["lines"] == ["Wi-Fi", "Phone"]
+        assert dlg.values()["lines_off"] == []
+        assert all(cb.isChecked() for cb in dlg._line_ticks.values())
     finally:
         dlg.deleteLater()
 
 
-def test_a_saved_line_not_found_now_is_kept(monkeypatch):
-    dlg = _dialog(monkeypatch, [WIFI], {"multi_line": True, "lines": ["Phone"]})
+def test_a_line_unticked_and_not_found_now_stays_unticked(monkeypatch):
+    dlg = _dialog(monkeypatch, [WIFI], {"multi_line": True, "lines_off": ["Phone"]})
     try:
-        v = dlg.values()
-        assert "Phone" in v["lines"] and "Wi-Fi" not in v["lines"]
+        assert dlg.values()["lines_off"] == ["Phone"]
+        assert dlg._line_ticks["Wi-Fi"].isChecked()
+    finally:
+        dlg.deleteLater()
+
+
+def test_a_line_plugged_in_after_settings_were_saved_is_ticked(monkeypatch):
+    """2.8.10 kept the TICKED lines and saved them on every Settings save,
+    switch on or off: saved once before the phone was plugged in, the phone
+    stayed unticked and every download used Wi-Fi alone (2026-11-24)."""
+    dlg = _dialog(monkeypatch, [WIFI, PHONE], {"multi_line": True, "lines": ["Wi-Fi"]})
+    try:
+        assert dlg._line_ticks["Phone"].isChecked()
+        assert dlg.values()["lines_off"] == []
     finally:
         dlg.deleteLater()
 
@@ -66,13 +79,13 @@ def test_same_router_is_said(monkeypatch):
         dlg.deleteLater()
 
 
-@pytest.mark.parametrize("on, want", [(True, ["Wi-Fi"]), (False, [])])
-def test_apply_sets_utils_lines(monkeypatch, on, want):
+@pytest.mark.parametrize("on, want", [(True, ["Phone"]), (False, None)])
+def test_apply_sets_utils_lines_off(monkeypatch, on, want):
     from gui2.app_settings import SettingsMixin
-    monkeypatch.setattr(utils, "LINES", ["stale"])
-    win = types.SimpleNamespace(_extras={"multi_line": on, "lines": ["Wi-Fi"]})
+    monkeypatch.setattr(utils, "LINES_OFF", ["stale"])
+    win = types.SimpleNamespace(_extras={"multi_line": on, "lines_off": ["Phone"]})
     SettingsMixin._apply_network_settings(win)
-    assert utils.LINES == want
+    assert utils.LINES_OFF == want
 
 
 def test_drawer_shows_connections_per_line():

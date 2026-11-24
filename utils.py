@@ -513,7 +513,8 @@ def proxy_unusable():
         "around the proxy. Set an http:// proxy under Settings → Network → Proxy "
         "Settings, or clear it." % scheme)
 MAX_CONNECTIONS = 0       # global ceiling on per-download segments (0 = unlimited)
-LINES = []                # internet connections a download is spread over (lines.py): names; [] = one
+LINES_OFF = None          # one download over several internet connections (lines.py): None = off;
+                          # else the lines the user unticked - every other line there is used
 LISTEN_PORT = 0           # torrent listen port (0 = aria2 default)
 DISK_CACHE = True         # aria2 --disk-cache on/off
 PREALLOCATE = False       # aria2 file pre-allocation

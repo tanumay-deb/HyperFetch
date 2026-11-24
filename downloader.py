@@ -537,7 +537,7 @@ class Downloader:
         ("Get past provider blocks") is one place to connect to; videos,
         streams and torrents keep one line (specs/2026-11-13-multi-line-
         downloads-design.md)."""
-        if (not utils.LINES or self._media or not self.t.supports_range
+        if (utils.LINES_OFF is None or self._media or not self.t.supports_range
                 or self.t.total_size < 2 * MiB):
             return []
         if utils.PROXIES or (utils.PROXIES is None
@@ -560,7 +560,7 @@ class Downloader:
             if any(ipaddress.ip_address(f[4][0]).is_loopback for f in found):
                 return []
             dest = next((f[4][0] for f in found if f[0] == socket.AF_INET), "")
-        found = lines.addresses(utils.LINES)
+        found = lines.addresses(utils.LINES_OFF)
         if len(found) < 2:
             return []
         via = lines.route_address(dest)

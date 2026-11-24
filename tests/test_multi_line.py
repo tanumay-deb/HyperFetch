@@ -122,15 +122,12 @@ def line_server(make_payload):
 
 @pytest.fixture
 def two_lines(monkeypatch):
-    """Lines "A" and "B" at the addresses given, and "C" (not ticked)."""
+    """Lines "A" and "B" at the addresses given, and "C" (unticked)."""
     def use(a="127.0.0.1", b="127.0.0.2"):
-        found = [("A", a), ("B", b)]
-        monkeypatch.setattr(lines, "addresses",
-                            lambda names: [x for x in found if x[0] in names])
         monkeypatch.setattr(lines, "available", lambda: [
             ("A", a, "192.168.1.1"), ("B", b, "192.168.42.129"), ("C", "10.9.9.9", "192.168.1.1")])
         monkeypatch.setattr(lines, "route_address", lambda dest="": a)    # traffic leaves by A
-        monkeypatch.setattr(utils, "LINES", ["A", "B"])
+        monkeypatch.setattr(utils, "LINES_OFF", ["C"])
     return use
 
 
@@ -203,11 +200,11 @@ def test_every_line_dropped_goes_on_unbound(line_server, two_lines, tmp_path):
     assert open(t.save_path, "rb").read() == srv.data
 
 
-@pytest.mark.parametrize("names", [[], ["A"]])
-def test_one_line_or_off_changes_nothing(line_server, two_lines, monkeypatch, tmp_path, names):
+@pytest.mark.parametrize("off", [None, ["B", "C"]])
+def test_one_line_or_off_changes_nothing(line_server, two_lines, monkeypatch, tmp_path, off):
     srv = line_server(32 * MiB)
     two_lines()
-    monkeypatch.setattr(utils, "LINES", names)
+    monkeypatch.setattr(utils, "LINES_OFF", off)
     t, d = _run(srv, tmp_path)
     assert t.status == T.COMPLETED, t.error
     assert len(t.segments) == parts_for(32 * MiB, 8)
@@ -233,7 +230,7 @@ def test_parts_cut_for_two_lines_resume_on_one_line_count(line_server, monkeypat
     """Lines off on the resume of a download cut into 64 parts for two lines:
     it runs on the connections the setting gives, not one per part."""
     srv = line_server(64 * MiB)
-    monkeypatch.setattr(utils, "LINES", [])
+    monkeypatch.setattr(utils, "LINES_OFF", None)
     t = T.DownloadTask(srv.url(), str(tmp_path / "f.bin"))
     t.total_size, t.supports_range = 64 * MiB, True
     part = MiB
@@ -334,7 +331,7 @@ def test_a_vpn_adapter_with_a_gateway_is_not_a_line_and_blocks_multi_line(monkey
          "if_type": 6, "description": "TAP-Windows Adapter V9"},
     ]
     monkeypatch.setattr(lines, "_adapters", lambda: [dict(a) for a in adapters])
-    monkeypatch.setattr(utils, "LINES", ["Wi-Fi", "Phone"])
+    monkeypatch.setattr(utils, "LINES_OFF", [])
     monkeypatch.setattr(socket, "getaddrinfo",
                         lambda *a, **k: [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 80))])
     monkeypatch.setattr(lines, "route_address", lambda dest="": "10.8.0.6")

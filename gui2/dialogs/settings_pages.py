@@ -294,16 +294,17 @@ class PageBuilderMixin:
     def _lines_row(self, g, ex):
         """Several internet connections for one download (lines.py; specs/
         2026-11-13-multi-line-downloads-design.md): the switch, and a tick for
-        each line found. A saved line not plugged in now keeps its tick
-        (chosen_lines); none saved yet ticks every one."""
+        each line found. What is kept is the lines UNTICKED (unticked_lines):
+        every other line is ticked, one plugged in later too - the saved
+        ticked list of 2.8.10 is not read (it kept a phone plugged in after
+        any Settings save unticked for good, 2026-11-24)."""
         import lines
         label = "Use more than one internet connection"
         desc = ("Adds speed only when each is its own internet line - a phone, "
                 "another router. A phone's data counts against its plan.")
         self.multi_line = self._toggle(ex.get("multi_line", False))
         self._row(g, label, desc, self.multi_line)
-        saved = ex.get("lines")
-        self._lines_saved = list(saved or [])
+        self._lines_off = list(ex.get("lines_off") or [])
         self._line_ticks = {}
         box = QVBoxLayout(); box.setSpacing(4)
         by_router = {}
@@ -314,7 +315,7 @@ class PageBuilderMixin:
             else:
                 by_router[gw] = name
             cb = QCheckBox(text)
-            cb.setChecked(saved is None or name in self._lines_saved)
+            cb.setChecked(name not in self._lines_off)
             self._line_ticks[name] = cb
             box.addWidget(cb)
         if len(self._line_ticks) < 2:
@@ -329,10 +330,11 @@ class PageBuilderMixin:
         for cb in self._line_ticks.values():
             cb.setEnabled(bool(on))
 
-    def chosen_lines(self):
-        """The ticked lines, then the saved ones not found now."""
-        return ([n for n, cb in self._line_ticks.items() if cb.isChecked()]
-                + [n for n in self._lines_saved if n not in self._line_ticks])
+    def unticked_lines(self):
+        """The lines unticked here, then those unticked before and not
+        found now."""
+        return ([n for n, cb in self._line_ticks.items() if not cb.isChecked()]
+                + [n for n in self._lines_off if n not in self._line_ticks])
 
     def _open_host_rules(self):
         from gui2.dialogs.host_rules import HostRulesDialog

@@ -149,11 +149,12 @@ def available():
             and not is_vpn_or_virtual(a)]
 
 
-def addresses(names):
-    """(name, IPv4) of the named lines there are now, in the order of `names`
-    (DHCP moves addresses, so this is read as each download starts)."""
-    now = {n: ip for n, ip, _ in available()}
-    return [(n, now[n]) for n in names if n in now]
+def addresses(off):
+    """(name, IPv4) of the lines there are now, but those named in `off` -
+    unticked in Settings. Read as each download starts: DHCP moves addresses,
+    and a line plugged in after Settings was saved is used too (a list of
+    the ticked ones never took a phone plugged in later, 2026-11-24)."""
+    return [(n, ip) for n, ip, _ in available() if n not in off]
 
 
 def route_address(dest=""):

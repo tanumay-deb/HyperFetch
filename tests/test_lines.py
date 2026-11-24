@@ -26,9 +26,9 @@ def test_available_keeps_up_adapters_with_ipv4_and_gateway(table):
                                  ("Phone", "192.168.42.7", "192.168.42.129")]
 
 
-def test_addresses_in_the_order_given_and_only_present(table):
-    assert lines.addresses(["Phone", "Gone", "Wi-Fi"]) == [
-        ("Phone", "192.168.42.7"), ("Wi-Fi", "192.168.1.5")]
+def test_addresses_are_every_line_there_but_those_unticked(table):
+    assert lines.addresses(["Gone"]) == [("Wi-Fi", "192.168.1.5"), ("Phone", "192.168.42.7")]
+    assert lines.addresses(["Wi-Fi"]) == [("Phone", "192.168.42.7")]
 
 
 def test_describe():

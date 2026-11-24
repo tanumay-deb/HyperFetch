@@ -245,7 +245,7 @@ class SettingsDialogV2(PageBuilderMixin, QDialog):
             "connection_type": self.conn_type.currentText(),
             "max_connections": self.max_conn._slider.value(),
             "multi_line": self.multi_line.isChecked(),
-            "lines": self.chosen_lines(),
+            "lines_off": self.unticked_lines(),
             "listen_port": self.listen_port.value(),
             "upnp": self.upnp.isChecked(),
             "dns_https": self.dns_https.isChecked(),
