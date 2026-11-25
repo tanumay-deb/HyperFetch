@@ -90,6 +90,25 @@ def test_a_folder_is_marked_file_by_file(tmp_path):
 
 
 @windows
+def test_a_file_that_takes_no_mark_does_not_stop_the_rest(tmp_path):
+    """A read-only file refuses the stream (PermissionError, measured), and
+    marking stopped there: every file after it in the folder went unmarked
+    (sweep 4, 2026-11-25)."""
+    import stat
+    pack = tmp_path / "Pack"
+    pack.mkdir()
+    for n in ("a.exe", "b.exe", "c.exe"):
+        (pack / n).write_bytes(b"x")
+    os.chmod(pack / "b.exe", stat.S_IREAD)
+    try:
+        utils.mark_from_internet(str(pack))
+    finally:
+        os.chmod(pack / "b.exe", stat.S_IWRITE | stat.S_IREAD)
+    for n in ("a.exe", "c.exe"):
+        assert open(str(pack / n) + ":Zone.Identifier", "rb").read() == MARK, n
+
+
+@windows
 def test_the_apps_own_update_is_not_marked(tmp_path):
     t = _done(tmp_path, "HyperFetch-9.9.9-setup.exe")
     _finish(_app([t], when="Do nothing", update=t), t)

@@ -1038,9 +1038,11 @@ def mark_from_internet(path, cap=2000):
             with open(f + ":Zone.Identifier", "wb") as z:
                 z.write(b"[ZoneTransfer]\r\nZoneId=3\r\n")
         except OSError as e:
+            # the next file may take it: one read-only file in a torrent's
+            # folder left every file after it unmarked (sweep 4, 2026-11-25).
+            # A drive that takes none fails each at once.
             logging.getLogger("hyperfetch.utils").debug(
                 "no internet mark on %s: %s", f, e)
-            return              # the drive takes none, or the file is gone
 
 
 def _copy_mark(src, dst):
