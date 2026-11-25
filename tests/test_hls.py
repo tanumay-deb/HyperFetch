@@ -95,6 +95,9 @@ def hls_server(aes_tools):
         "badkey.m3u8": (media("enc", True).replace("key.bin", "expired").encode(),
                         "application/vnd.apple.mpegurl"),
         "expired": (b"<html><body>Session expired</body></html>", "text/html"),
+        # an encrypted stream whose 3rd piece is a web page answered 200
+        "badpiece.m3u8": (media("enc", True).replace("enc2.ts", "expired").encode(),
+                          "application/vnd.apple.mpegurl"),
         # the 4th segment is gone (404)
         "gap.m3u8": (("#EXTM3U\n#EXT-X-TARGETDURATION:4\n#EXT-X-MEDIA-SEQUENCE:0\n"
                       + "".join(f"#EXTINF:4.0,\n{n}\n" for n in
@@ -335,6 +338,16 @@ def test_a_web_page_where_the_key_was_says_so(hls_server, tmp_path):
     t = T.DownloadTask(f"{hls_server.base}/badkey.m3u8", str(tmp_path / "v.m3u8"))
     hls.HlsDownloader(t).run()
     assert t.status == T.ERROR and "key link sent no key" in t.error, t.error
+
+
+def test_a_piece_that_will_not_decrypt_is_a_failed_piece(hls_server, tmp_path):
+    """A web page answered 200 where an encrypted piece was: AES raised
+    ValueError, run() let it out, and the queue's net said "Download ended
+    unexpectedly" (sweep 4, 2026-11-25)."""
+    t = T.DownloadTask(f"{hls_server.base}/badpiece.m3u8", str(tmp_path / "v.m3u8"))
+    hls.HlsDownloader(t).run()
+    assert t.status == T.ERROR, t.status
+    assert t.error.startswith("segment 3/5 failed") and "decrypt" in t.error, t.error
 
 
 def test_a_playlist_of_byte_ranges_saves_each_part_once(hls_server, tmp_path):

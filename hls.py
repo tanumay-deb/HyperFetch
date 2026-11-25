@@ -702,13 +702,20 @@ class HlsDownloader:
             return data
         from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
         self._load_key(key)
-        if key.get("iv"):
-            iv_hex = key["iv"][2:] if key["iv"].lower().startswith("0x") else key["iv"]
-            iv = bytes.fromhex(iv_hex.rjust(32, "0"))
-        else:
-            iv = struct.pack(">QQ", 0, seq)  # default IV = media sequence number
-        dec = Cipher(algorithms.AES(key["keybytes"]), modes.CBC(iv)).decryptor()
-        out = dec.update(data) + dec.finalize()
+        # A piece that is not one - a server's web page answered 200 where it
+        # was - or an IV that is not hex: AES raises ValueError, which nothing
+        # caught, and the download ended "unexpectedly" (sweep 4, 2026-11-25).
+        # As a RuntimeError it is a failed piece, named by its place.
+        try:
+            if key.get("iv"):
+                iv_hex = key["iv"][2:] if key["iv"].lower().startswith("0x") else key["iv"]
+                iv = bytes.fromhex(iv_hex.rjust(32, "0"))
+            else:
+                iv = struct.pack(">QQ", 0, seq)  # default IV = media sequence number
+            dec = Cipher(algorithms.AES(key["keybytes"]), modes.CBC(iv)).decryptor()
+            out = dec.update(data) + dec.finalize()
+        except ValueError as e:
+            raise RuntimeError("the piece would not decrypt (%s)" % e) from None
         # strip PKCS7 padding
         if out:
             pad = out[-1]
