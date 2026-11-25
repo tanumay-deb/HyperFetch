@@ -1,5 +1,5 @@
 """Shared theme helpers: palette, the size/speed/age formatters, the SVG icon
-colours, and ``apply_theme`` (used by the GUI and the PropertiesDialog).
+colours, and ``apply_theme`` (used by the GUI and AnimatedToggle).
 """
 import os
 import sys
@@ -20,7 +20,6 @@ from PySide6.QtCore import (
 )
 from PySide6.QtGui import QColor, QFont, QIcon, QPainter, QPainterPath, QBrush, QPen, QLinearGradient
 
-import task as T
 import utils
 import crash_reporter
 import updater
@@ -56,15 +55,6 @@ THEME = "dark"
 ACCENT = ACCENT_2 = BG = SURFACE = SURFACE_2 = ""
 BORDER = HOVER = PRESSED = ALT = SEL = TEXT = MUTED = ""
 
-# status pill colours read well on both palettes, so they stay theme-independent
-STATUS_COLORS = {
-    T.DOWNLOADING: "#34d399",
-    T.COMPLETED:   "#38bdf8",
-    T.PAUSED:      "#fbbf24",
-    T.QUEUED:      "#94a3b8",
-    T.ERROR:       "#f87171",
-    T.CANCELLED:   "#64748b",
-}
 
 
 def palette_for(name):
@@ -344,12 +334,3 @@ def fmt_eta(secs):
     if secs >= 99 * 3600:
         return "—"
     return f"{secs // 3600}h {(secs % 3600) // 60}m"
-
-
-def _muted_label(text):
-    lbl = QLabel(text)
-    lbl.setStyleSheet(f"color: {MUTED}; font-size: 12px; font-weight: 600;"
-                      "background: transparent;")
-    return lbl
-
-

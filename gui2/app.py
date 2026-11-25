@@ -38,7 +38,6 @@ from api_server import run_server, PORT
 
 from gui.theme import APP_VERSION, apply_theme, resource_path, human_speed
 from gui.icons import themed_icon
-from gui.dialogs import PropertiesDialog
 from gui2.dialogs.settings import SettingsDialogV2
 from gui2.dialogs.complete import CompleteDialog
 from gui2.dialogs.pair import show_next as show_pair_question
