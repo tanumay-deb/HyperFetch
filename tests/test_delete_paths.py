@@ -345,11 +345,32 @@ def test_a_delete_the_close_cut_short_is_done_at_the_next_start(tmp_path):
     f.write_bytes(b"x")
     (d / "sub").mkdir(parents=True)
     (d / "sub" / "e1.mkv").write_bytes(b"x")
-    utils.save_json(app_shortcuts._pending_path(), [str(f), str(d)])
+    app_shortcuts._note_pending(add=[str(f), str(d)])     # sizes and times kept
     win = _window()
     _resume(win)
     assert _gone(f) and _gone(d)
     assert _wait_for(lambda: win._deletes) and win._deletes[-1] == []
+
+
+def test_one_with_no_size_and_time_kept_is_not_deleted_at_the_next_start(tmp_path):
+    """A delete notes its paths at once and their size and time a moment
+    later, on its thread; closed in between, the next start deleted the
+    path unchecked - a file saved there meanwhile by another program with
+    it (sweep 3, 2026-11-25). Kept now, and said; an old list of bare
+    paths too."""
+    import utils
+    from gui2 import app_shortcuts
+    f = tmp_path / "a.zip"
+    f.write_bytes(b"saved here by another program")
+    utils.save_json(app_shortcuts._pending_path(), [{"path": str(f)}, str(tmp_path / "b.zip")])
+    (tmp_path / "b.zip").write_bytes(b"b")
+    win = _window()
+    _resume(win)
+    assert f.read_bytes() == b"saved here by another program"
+    assert (tmp_path / "b.zip").exists()
+    said = [item for batch in win._deletes for item in batch]
+    assert {name for name, _ in said} == {"a.zip", "b.zip"}, said
+    assert all("kept" in reason for _, reason in said), said
 
 
 def test_one_a_download_in_the_list_points_at_again_is_kept(tmp_path):

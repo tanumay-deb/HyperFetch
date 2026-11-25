@@ -209,6 +209,21 @@ class ShortcutsMixin:
                         ))
                         drop.append(p)
                         continue
+                elif os.path.lexists(p):
+                    # noted, then closed before its size and time were: the
+                    # file there may be another's now, and nothing can say
+                    # (sweep 3, 2026-11-25)
+                    log.info("skipping pending delete of %s: closed before it "
+                             "could be checked", p)
+                    skipped.append((
+                        os.path.basename(p) or p,
+                        "HyperFetch closed before it could check it, so it was kept",
+                    ))
+                    drop.append(p)
+                    continue
+                else:
+                    drop.append(p)              # gone already
+                    continue
                 keep.append(p)
             if drop:
                 _note_pending(done=drop)
