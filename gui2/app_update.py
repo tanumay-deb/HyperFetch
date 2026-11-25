@@ -14,6 +14,7 @@ import logging
 import os
 import threading
 import time
+from collections import deque
 
 import task as T
 import updater
@@ -38,6 +39,10 @@ class UpdateMixin:
         self._update_url = ""           # the installer, once it is in the list
         self._update_ready = ""         # ...and where it is, once down and checked
         self._install_box = None        # "Update ready", while it is open
+        # installers being checked off this thread: path -> what to do with
+        # the answer, and the answers in, taken up by the next tick
+        self._update_checks = {}
+        self._update_answers = deque()
 
     # ---- finding out -----------------------------------------------------------
     def _update_due(self, now):
@@ -60,6 +65,11 @@ class UpdateMixin:
         """From the window's tick: start a look when one is due, and announce
         a new version the first time it is known."""
         now = time.time() if now is None else now
+        while self._update_answers:                 # installers checked meanwhile
+            path, ok = self._update_answers.popleft()
+            then = self._update_checks.pop(path, None)
+            if then:
+                then(ok)
         if self._update_due(now):
             self._update_looked_at = now
             threading.Thread(target=self._look_for_update, daemon=True,
@@ -104,13 +114,24 @@ class UpdateMixin:
                     if t.url == url and t.status != T.CANCELLED), None)
         if old is not None and old.status == T.COMPLETED:
             if os.path.isfile(old.save_path or ""):
-                if self._update_finished(old):
-                    self._update_url = url    # offered; Install is in the sidebar
-                    return
-                if not info.get("sha256"):
-                    return                    # nothing to check it against: said so
-            self.queue.remove_task(old)       # gone, or not the release's file
+                if info.get("sha256"):
+                    # checked, then offered; not the release's file: fetched again
+                    self._update_url = url
+                    self._update_finished(old, again=self._fetch_update_again)
+                else:
+                    self._update_finished(old)    # nothing to check it against: says so
+                return
+            self.queue.remove_task(old)       # gone
             old = None
+        self._fetch_update(url, old)
+
+    def _fetch_update_again(self, old):
+        """The installer an earlier session fetched is not the release's file:
+        it goes, and the release's is fetched."""
+        self.queue.remove_task(old)
+        self._fetch_update(self._update_url, None)
+
+    def _fetch_update(self, url, old):
         self._update_url = url
         if old is not None:
             self.queue.resume_task(old)
@@ -124,32 +145,66 @@ class UpdateMixin:
         return bool(self._update_url) and getattr(task, "url", "") == self._update_url
 
     # ---- installing it ---------------------------------------------------------
-    def _update_finished(self, task):
+    def _update_finished(self, task, again=None):
         """The installer is down. Check it is the file the release lists, then
-        offer to run it. False when it is not offered: it does not match, or
-        the release lists nothing to check it against."""
+        offer to run it. The check reads the whole installer, so it is made
+        on a thread (_check_file) and its answer taken up by the next tick:
+        on this one, inside the window's refresh, the window froze for it
+        (sweep 4, 2026-11-25). `again`: what to do with a file that is not
+        the release's, instead of saying so - fetch it again (the button)."""
         info = self._update_info or {}
         version = _plain(info.get("version"))
         sha = info.get("sha256")
-        # no checksum listed is not a pass: what cannot be checked is not run
-        if not sha or not updater.file_matches(task.save_path, sha):
-            # Not the release's file: cut short, or changed on the way. It is
-            # not run, and the button asks for it again.
-            if sha:
-                log.warning("the downloaded update does not match the release's checksum")
-                why = "What came down is not the file the release lists. Try again."
-            else:
-                log.warning("the release lists no checksum for the update; not run")
-                why = ("The release lists no checksum to check it against. Install it "
-                       "from the HyperFetch website instead.")
-            self._update_url = ""
-            self._toasts.show("error", "Update not installed", why, secs=12)
-            self.sidebar.set_update("Update to %s" % version)
-            return False
-        self._update_ready = task.save_path
-        self.sidebar.set_update("Install %s" % version)
-        self._ask_install(version)
-        return True
+        if not sha:
+            # no checksum listed is not a pass: what cannot be checked is not run
+            log.warning("the release lists no checksum for the update; not run")
+            self._not_installed(version, "The release lists no checksum to check it "
+                                         "against. Install it from the HyperFetch "
+                                         "website instead.")
+            return
+        path = task.save_path
+        if path in self._update_checks:
+            return                          # being checked already
+        self.sidebar.set_update("Checking the update…", enabled=False)
+        self._check_file(path, sha, lambda ok: self._update_checked(
+            task, version, ok, again))
+
+    def _check_file(self, path, sha, then):
+        """Hash `path` on a thread; `then(ok)` runs on this one, from the
+        next tick (_update_tick). The thread gets the path and the answers'
+        queue, never the window."""
+        self._update_checks[path] = then
+        answers = self._update_answers
+
+        def work():
+            try:
+                ok = updater.file_matches(path, sha)
+            except Exception:
+                log.exception("could not check the update")
+                ok = False
+            answers.append((path, ok))
+
+        threading.Thread(target=work, daemon=True, name="update-check-file").start()
+
+    def _update_checked(self, task, version, ok, again):
+        if ok:
+            self._update_ready = task.save_path
+            self.sidebar.set_update("Install %s" % version)
+            self._ask_install(version)
+            return
+        if again is not None:
+            again(task)
+            return
+        # Not the release's file: cut short, or changed on the way. It is not
+        # run, and the button asks for it again.
+        log.warning("the downloaded update does not match the release's checksum")
+        self._not_installed(version, "What came down is not the file the release "
+                                     "lists. Try again.")
+
+    def _not_installed(self, version, why):
+        self._update_url = ""
+        self._toasts.show("error", "Update not installed", why, secs=12)
+        self.sidebar.set_update("Update to %s" % version)
 
     def _ask_install(self, version):
         """Put "Install now / Later", without waiting for the answer

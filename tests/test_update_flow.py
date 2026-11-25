@@ -121,6 +121,9 @@ class _Window(UpdateMixin):
     def _run_installer(self, path):
         self.ran.append(path)
 
+    def _check_file(self, path, sha, then):    # at once here; the real one: below
+        then(updater.file_matches(path, sha))
+
 
 INFO = {"available": True, "version": "v2.8.1", "url": PAGE, "installer": URL, "sha256": SHA}
 
@@ -199,6 +202,33 @@ def test_a_finished_update_is_checked_and_offered(tmp_path):
     assert w.asked == ["2.8.1"]
     assert w.ran == [t.save_path], "Install now did not run the installer"
     assert w.quits == 1, "the app has to close, or the installer waits for it"
+
+
+def test_the_installer_is_checked_off_the_windows_thread(tmp_path, monkeypatch):
+    """The check reads the whole installer, 60-100 MB, and it ran inside the
+    window's 500 ms refresh: the window froze for it (sweep 4, 2026-11-25).
+    The answer is taken up by a later tick."""
+    import threading
+    import time
+    seen = []
+    real = updater.file_matches
+    monkeypatch.setattr(updater, "file_matches",
+                        lambda p, s: seen.append(threading.current_thread()) or real(p, s))
+
+    class Threaded(_Window):
+        _check_file = UpdateMixin._check_file
+
+    w = Threaded(info=INFO)
+    monkeypatch.setattr(w, "_update_due", lambda now: False)
+    w._on_update_clicked()
+    t = _done(tmp_path)
+    w._update_finished(t)
+    end = time.monotonic() + 5
+    while not w.asked and time.monotonic() < end:
+        time.sleep(0.02)
+        w._update_tick()
+    assert seen and seen[0] is not threading.main_thread(), "hashed on the window's thread"
+    assert w.asked == ["2.8.1"] and w.ran == [t.save_path]
 
 
 def test_the_question_does_not_hold_the_window_up(tmp_path):
