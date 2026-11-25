@@ -61,7 +61,8 @@ def number_key(task):
 
 
 class Segment:
-    """One byte-range of a multi-segment download. Writes to ``{path}.part{index}``."""
+    """One byte-range of a multi-segment download, written at its own offset
+    in the download's pre-allocated ``.hfdownload`` temp file."""
 
     def __init__(self, index, start, end):
         self.index = index
@@ -254,8 +255,8 @@ class DownloadTask:
         # accounts did. Empty is the safe default: a task whose owner cannot be
         # determined belongs to admin, never to whoever asked for it.
         self.owner = ""
-        # When this finished, for the site's 30-day retention. 0 until it does.
-        self.started_at = time.time() if status == DOWNLOADING else 0.0
+        # When it first ran, and when it finished (the site's 30-day
+        # retention reads that); stamped by the status setter, 0 until then.
         self.started_at = 0.0
         self.completed_at = 0.0
         # hash-check in progress (transient). A recheck reads the whole payload
