@@ -202,6 +202,26 @@ async function nextTick() { await new Promise((r) => setImmediate(r)); }
     passed++; console.log('  ok  probeViaApp used (no SW fetch) when the app is reachable');
   })().catch((e) => { console.error('FAIL  probeViaApp path: ' + e.message); process.exitCode = 1; });
 
+  await (async function test_memosStayBoundedWhileBrowsing() {
+    // The worker remembered every master, quality and locked playlist it saw
+    // for as long as it lived - all session for Firefox's background page -
+    // and never let one go (item 24). The oldest go past MEMO_MAX.
+    const sent = [];
+    const fetchImpl = (u) => Promise.resolve(okText(/master\d+\.m3u8$/.test(u) ? MASTER_BODY : VARIANT_BODY));
+    const sb = loadBackgroundWithFakes({ fetchImpl, sent });
+    const max = vm.runInContext('MEMO_MAX', sb);
+    for (let i = 0; i < max + 50; i++) {
+      await sb.handleHls(`https://cdn.x/v${i}/master${i}.m3u8`, 1, 'master.m3u8');
+    }
+    assert.ok(vm.runInContext('parsedHls.size', sb) <= max, 'parsedHls bounded');
+    assert.ok(vm.runInContext('variantMaster.size', sb) <= max, 'variantMaster bounded');
+    // the newest is still remembered: delivered again with no new fetch
+    const last = `https://cdn.x/v${max + 49}/master${max + 49}.m3u8`;
+    assert.ok(vm.runInContext(`parsedHls.has(${JSON.stringify(last)})`, sb), 'newest kept');
+    assert.ok(!vm.runInContext('parsedHls.has("https://cdn.x/v0/master0.m3u8")', sb), 'oldest gone');
+    passed++; console.log('  ok  the playlist memos stay bounded while browsing');
+  })().catch((e) => { console.error('FAIL  memos bounded: ' + e.message); process.exitCode = 1; });
+
   console.log(`\n${passed} passed` + (process.exitCode ? ' (with failures)' : ''));
   process.exit(process.exitCode || 0);
 })();

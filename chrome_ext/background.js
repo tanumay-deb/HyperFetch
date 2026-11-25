@@ -707,6 +707,17 @@ const variantMaster = new Map();
 const hlsReading = new Set();
 const HLS_WAIT_MS = 3000;
 
+// These memos live as long as the worker - all session for Firefox's
+// background page - so each is bounded: past MEMO_MAX the oldest entry goes
+// (a Map or Set keeps the order things went in). They grew with every stream
+// seen while browsing (item 24, 2026-11-25).
+const MEMO_MAX = 500;
+function remember(memo, key, value) {
+  memo.delete(key);                        // seen again: it goes to the end
+  if (memo instanceof Map) memo.set(key, value); else memo.add(key);
+  while (memo.size > MEMO_MAX) memo.delete(memo.keys().next().value);
+}
+
 function resolveUrl(u, base) {
   try { return new URL(u, base).href; } catch (e) { return u; }
 }
@@ -875,7 +886,7 @@ async function handleHls(url, tabId, fallbackName, referer, storeId, frameId, da
     if (!appAnswered) probed = await probeViaFetch(url);    // SW fallback
     const definite = appAnswered || probed !== null;        // got a real answer?
     const variants = probed ? probed.variants : null;
-    if (probed && probed.locked) { lockedHls.add(url); return; }
+    if (probed && probed.locked) { remember(lockedHls, url); return; }
     const facts = { duration: (probed && probed.duration) || 0, live: !!(probed && probed.live) };
 
     if (!variants || !variants.length) {
@@ -884,16 +895,16 @@ async function handleHls(url, tabId, fallbackName, referer, storeId, frameId, da
       deliver(payload);
       // cache only on a definite answer + a real tab; a transient failure or a
       // tabId<0 background request must stay retryable for the next real tab.
-      if (definite && tabId >= 0) parsedHls.set(url, payload);
+      if (definite && tabId >= 0) remember(parsedHls, url, payload);
       return;
     }
 
-    variants.forEach((v) => variantMaster.set(v.url, url));
+    variants.forEach((v) => remember(variantMaster, v.url, url));
     const payload = Object.assign({ type: "SNIFFED_HLS_MASTER", url,
                                     filename: fallbackName, variants }, facts);
     if (tabId >= 0) {
       deliver(payload);
-      parsedHls.set(url, payload);
+      remember(parsedHls, url, payload);
     }
   } finally {
     inFlightHls.delete(url);
