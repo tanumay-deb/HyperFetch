@@ -14,6 +14,7 @@ from PySide6.QtCore import Qt, Signal, QTimer, QPropertyAnimation, QEasingCurve,
 from PySide6.QtGui import QPainter, QColor, QPainterPath, QPen
 
 import torrent as _torrent
+import utils
 from gui.theme import human_size, human_speed, fmt_eta
 from gui.icons import themed_icon
 from gui2.palette import COLORS
@@ -188,6 +189,16 @@ class CompleteDialog(QDialog):
         close.setStyleSheet(f"QPushButton {{ padding: 7px 16px; font-weight: 700; background: {COLORS['accent']}; color: white; border: none; border-radius: 8px; }}"
                             f"QPushButton:hover {{ background: {COLORS['accent']}dd; }}")
 
+        # It appears unasked, over whatever the user is typing: Enter closes it.
+        # "Open" had the focus as it came up, and Enter opened the file - a
+        # setup.exe too (sweep 4, 2026-11-25). A program is never started from
+        # here at all, as "Open file when done" never starts one
+        # (utils.runs_code): Folder shows it.
+        for b in (of, ofd):
+            b.setAutoDefault(False)
+        close.setDefault(True)
+        of.setVisible(not utils.runs_code(t.save_path))
+        self.btn_open, self.btn_close = of, close
         row.addWidget(of)
         row.addWidget(ofd)
         row.addStretch()
@@ -208,6 +219,7 @@ class CompleteDialog(QDialog):
         
     def showEvent(self, event):
         super().showEvent(event)
+        self.btn_close.setFocus()          # Space, as Enter, closes it (see the buttons)
         self.confetti.resize(self.size())
         self.confetti.burst()
 
@@ -222,6 +234,9 @@ class CompleteDialog(QDialog):
 
     def _open_file(self):
         tgt = self._target()
+        if tgt and utils.runs_code(tgt):
+            self._open_folder()                 # never run from here (see the buttons)
+            return
         if tgt:
             try:
                 os.startfile(tgt)

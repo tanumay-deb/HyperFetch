@@ -126,3 +126,51 @@ def test_time_and_average_speed_do_not_include_queue_wait():
     assert "10s" in texts, texts
     assert human_speed(10 * 1024 * 1024) in texts, texts
 
+
+
+def _finished(tmp_path, name):
+    f = tmp_path / name
+    f.write_bytes(b"MZ")
+    _app()
+    host = QWidget()
+    host.show()
+    t = T.DownloadTask("https://x/" + name, str(f), filename=name)
+    t.status = T.COMPLETED
+    d = CompleteDialog(host, t)
+    d._host_ref = host
+    return d
+
+
+def test_enter_closes_it_and_opens_nothing(tmp_path, monkeypatch):
+    """It comes up unasked, over whatever the user is typing. "Open" had the
+    focus, and Enter opened the file - a setup.exe too (sweep 4, 2026-11-25)."""
+    from PySide6.QtCore import Qt
+    from PySide6.QtTest import QTest
+    started = []
+    monkeypatch.setattr(os, "startfile", started.append, raising=False)
+    for name in ("setup.exe", "film.mp4"):
+        d = _finished(tmp_path, name)
+        d.show()
+        d.activateWindow()
+        _app().processEvents()
+        QTest.keyClick(d, Qt.Key_Return)
+        _app().processEvents()
+        assert not d.isVisible(), name
+        assert started == [], (name, started)
+
+
+def test_a_program_is_shown_in_its_folder_never_run(tmp_path, monkeypatch):
+    """As "Open file when done" never starts one (utils.runs_code)."""
+    started = []
+    monkeypatch.setattr(os, "startfile", started.append, raising=False)
+    d = _finished(tmp_path, "setup.exe")
+    d.show()
+    _app().processEvents()
+    assert not d.btn_open.isVisible()
+    d._open_file()
+    assert started == [str(tmp_path)]
+
+    other = _finished(tmp_path, "film.mp4")
+    other.show()
+    _app().processEvents()
+    assert other.btn_open.isVisible()
