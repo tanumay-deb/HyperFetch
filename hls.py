@@ -36,7 +36,12 @@ log = logging.getLogger("hyperfetch.hls")
 
 HEADERS = utils.DEFAULT_HEADERS
 TIMEOUT = 20
-SEG_RETRIES = 3
+SEG_RETRIES = 3       # empty answers to a byte range before it is given up
+# Waits between the tries of a fetch that failed for a reason that may pass -
+# a timeout, a dropped connection, a 5xx, a 408/429 - as the HTTP engine's
+# 2, 4, 8, 16 s: a piece was tried 3 times 1 s apart and the whole stream
+# stopped ("Read timed out", user's log 2026-11-25).
+RETRY_WAITS = (2, 4, 8, 16)
 PARALLEL = 6          # default concurrent segment downloads (overridden by the
                       # app's Max-connections setting when one is configured)
 # Hard ceiling on segment threads, whatever Max-connections says.
@@ -235,10 +240,11 @@ def _get(session, url, headers, stats=None, origin=None, stop=None, **kw):
     only (`_scoped`). With `stop`, the body is read here 8 KB at a time and a
     stop() that turns true ends the fetch (Stopped): a pause waited for every
     piece in flight to come whole - up to a minute for one that stalled
-    (audit, 2026-11-24)."""
+    (audit, 2026-11-24). A failure that may pass is tried again after
+    RETRY_WAITS, which a stop ends too."""
     headers = _scoped(headers, origin, url)
     last = None
-    for _ in range(SEG_RETRIES):
+    for n in range(len(RETRY_WAITS) + 1):
         if stop is not None and stop():
             raise Stopped("stopped")
         try:
@@ -266,7 +272,13 @@ def _get(session, url, headers, stats=None, origin=None, stop=None, **kw):
             # client errors (404/403/410…) won't succeed on retry — fail fast
             if resp is not None and 400 <= resp.status_code < 500 and resp.status_code not in (408, 429):
                 raise
-            time.sleep(1)
+            if n == len(RETRY_WAITS):
+                break
+            end = time.monotonic() + RETRY_WAITS[n]
+            while time.monotonic() < end:
+                if stop is not None and stop():
+                    raise Stopped("stopped")
+                time.sleep(min(0.2, max(0.0, end - time.monotonic())))
     raise last
 
 

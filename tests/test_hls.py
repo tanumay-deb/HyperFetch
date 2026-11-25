@@ -868,3 +868,44 @@ def test_a_master_that_signs_each_quality_afresh_still_goes_down_first(ladder, t
     hls.HlsDownloader(t).run()
     assert t.status == T.COMPLETED, t.error
     assert open(t.save_path, "rb").read()[2 * 1024:3 * 1024] == ladder.seg("l", 2)
+
+
+def test_a_piece_that_fails_three_times_is_waited_for(tmp_path, monkeypatch):
+    """A piece was tried 3 times, 1 s apart, then the whole stream stopped:
+    "segment 881/1752 failed: Read timed out" (user's log, 2026-11-25). The
+    plain-file engine waits 2, 4, 8, 16 s between 5 tries; so do pieces."""
+    monkeypatch.setattr(hls, "RETRY_WAITS", (0.05, 0.05, 0.05, 0.05), raising=False)
+    fails = {"n": 0}
+
+    class H(http.server.BaseHTTPRequestHandler):
+        def log_message(self, *a):
+            pass
+
+        def do_GET(self):
+            p = self.path.lstrip("/")
+            if p == "v.m3u8":
+                body = ("#EXTM3U\n#EXT-X-TARGETDURATION:4\n" + "".join(
+                    f"#EXTINF:4.0,\n{i}.ts\n" for i in range(3)) + "#EXT-X-ENDLIST\n").encode()
+            elif p == "1.ts" and fails["n"] < 4:
+                fails["n"] += 1
+                self.send_response(503)
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+                return
+            else:
+                body = p.encode() * 100
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+    httpd = http.server.ThreadingHTTPServer(("127.0.0.1", 0), H)
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    try:
+        t = T.DownloadTask("http://127.0.0.1:%d/v.m3u8" % httpd.server_address[1],
+                           str(tmp_path / "v.m3u8"))
+        hls.HlsDownloader(t).run()
+        assert t.status == T.COMPLETED, t.error
+        assert fails["n"] == 4
+    finally:
+        httpd.shutdown()
