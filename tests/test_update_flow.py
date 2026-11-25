@@ -74,6 +74,40 @@ def test_the_installer_and_its_checksum_reach_whoever_asks(tmp_path, monkeypatch
         assert info["available"] and info["installer"] == URL and info["sha256"] == SHA
 
 
+def test_github_is_asked_through_the_proxy_settings_has(monkeypatch):
+    """Only Windows' proxy settings were used: behind a proxy set in HyperFetch
+    alone, the look for an update failed without a word (sweep 4,
+    2026-11-25). A stand-in proxy here hears the request and turns it away."""
+    import socket
+    import threading
+    heard = []
+    srv = socket.socket()
+    srv.bind(("127.0.0.1", 0))
+    srv.listen(1)
+    srv.settimeout(10)
+
+    def proxy():
+        try:
+            conn, _ = srv.accept()
+        except OSError:
+            return
+        with conn:
+            conn.settimeout(5)
+            heard.append(conn.recv(4096).split(b"\r\n", 1)[0])
+            conn.sendall(b"HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\n\r\n")
+
+    th = threading.Thread(target=proxy, daemon=True)
+    th.start()
+    at = "http://127.0.0.1:%d" % srv.getsockname()[1]
+    monkeypatch.setattr(updater.utils, "PROXIES", {"http": at, "https": at})
+    try:
+        assert updater._fetch_latest("tanumay-deb/HyperFetch") is None
+        th.join(5)
+    finally:
+        srv.close()
+    assert len(heard) == 1 and heard[0].startswith(b"CONNECT api.github.com:443 "), heard
+
+
 def test_a_file_is_checked_against_the_releases_checksum(tmp_path):
     good = tmp_path / "setup.exe"
     good.write_bytes(BODY)

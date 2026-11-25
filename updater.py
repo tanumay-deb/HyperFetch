@@ -45,6 +45,18 @@ def _newer(latest, current):
     return a > b
 
 
+def _opener():
+    """How to reach GitHub: through the proxy Settings has (utils.PROXIES -
+    {} is "Direct"), as the update's own download goes; with none set, the
+    system's, as before. Only Windows' settings were used, so behind a proxy
+    set in HyperFetch alone the look failed without a word (sweep 4,
+    2026-11-25). The certificate is checked whatever Settings says: the
+    answer names the installer and the checksum it is run on."""
+    if utils.PROXIES is None:
+        return urllib.request.urlopen
+    return urllib.request.build_opener(urllib.request.ProxyHandler(dict(utils.PROXIES))).open
+
+
 def _fetch_latest(repo):
     """Hit the GitHub Releases API. Returns {tag, url} or None on any failure."""
     if not repo:
@@ -55,7 +67,7 @@ def _fetch_latest(repo):
         "User-Agent": "HyperFetch-Updater"
     })
     try:
-        with urllib.request.urlopen(req, timeout=HTTP_TIMEOUT) as r:
+        with _opener()(req, timeout=HTTP_TIMEOUT) as r:
             data = json.loads(r.read().decode("utf-8"))
     except (urllib.error.URLError, json.JSONDecodeError, OSError):
         return None
