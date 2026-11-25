@@ -82,3 +82,22 @@ def test_a_magnet_whose_file_list_is_lost_is_fetched_again(tmp_path):
     assert t in scout._candidates()
     t.files = [["Sintel/Sintel.mp4", 129241752]]
     assert t not in scout._candidates(), "fetched again though its list is kept"
+
+
+def test_waiting_magnets_are_not_read_again_every_round(tmp_path, monkeypatch):
+    """The metadata scout looks for torrents to fetch every 3 s, and it read
+    and parsed every waiting magnet's .torrent each time to learn that its
+    list was there: 5 ms for 50 files, 66 ms for 20,000 (sweep 4,
+    2026-11-25). Whether the file or a kept list is there is enough."""
+    reads = []
+    real = torrent.parse_torrent_files
+    monkeypatch.setattr(torrent, "parse_torrent_files",
+                        lambda p: reads.append(p) or real(p))
+    kept_list = _magnet_task(tmp_path)
+    kept_list.files = [["Sintel/Sintel.mp4", 129241752]]
+    on_disk = _magnet_task(tmp_path / "two")
+    shutil.copy(SINTEL, tmp_path / "two" / "dl" / (IH + ".torrent"))
+    scout = torrent.MetadataPrefetcher(lambda: [kept_list, on_disk])
+    for _ in range(3):
+        assert scout._candidates() == []
+    assert reads == [], "read %d time(s)" % len(reads)

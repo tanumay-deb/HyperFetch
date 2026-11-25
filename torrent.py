@@ -1357,14 +1357,7 @@ def list_files(task):
     magnet's metadata has been fetched."""
     if not is_torrent_task(task.url, task.filename):
         return []
-    save = getattr(task, "save_path", "") or ""
-    # aria2 saves the metadata in its --dir: the payload's folder or the one
-    # above it - or, for a torrent the app filed into a category, the folder
-    # it was filed from (sort_base). Only <infohash>.torrent is looked for.
-    parent = os.path.dirname(save) or "."
-    dirs = [parent, os.path.dirname(parent), getattr(task, "sort_base", None) or "",
-            getattr(task, "unfinished_in", "") or ""]
-    path = metadata_torrent_path(task, *dirs)
+    path = _metadata_file(task)
     rows = parse_torrent_files(path) if path else []
     if rows:
         remember_files(task, rows)
@@ -1373,6 +1366,18 @@ def list_files(task):
     # never kept by an older version: the list as it was last read.
     return [tuple(r) for r in (getattr(task, "files", None) or [])]
 
+
+
+def _metadata_file(task):
+    """The .torrent on disk that describes a torrent task, or "". aria2 saves
+    a magnet's metadata in its --dir: the payload's folder or the one above
+    it - or, for a torrent the app filed into a category, the folder it was
+    filed from (sort_base). Only <infohash>.torrent is looked for."""
+    save = getattr(task, "save_path", "") or ""
+    parent = os.path.dirname(save) or "."
+    dirs = [parent, os.path.dirname(parent), getattr(task, "sort_base", None) or "",
+            getattr(task, "unfinished_in", "") or ""]
+    return metadata_torrent_path(task, *dirs)
 
 # A torrent's file list is kept with the task (task.files) up to this many
 # files; past it downloads.json would grow by megabytes for one task, and the
@@ -1493,8 +1498,11 @@ class MetadataPrefetcher:
                 continue
             # known - unless it is a magnet whose file list is lost (no metadata
             # file, none kept with the task): fetched again, or its Files tab
-            # stays empty until it runs
-            if t.total_size and not (is_magnet(t.url) and not list_files(t)):
+            # stays empty until it runs. Asked of the disk, not by reading the
+            # file: list_files parsed every waiting magnet's every 3 s (5 ms
+            # for 50 files, 66 ms for 20,000; sweep 4, 2026-11-25).
+            if t.total_size and not (is_magnet(t.url) and not getattr(t, "files", None)
+                                     and not _metadata_file(t)):
                 continue
             if now < float(getattr(t, "meta_retry_after", 0) or 0):
                 continue
