@@ -712,8 +712,19 @@ def _skip(data, i):
         while data[i:i + 1] != b"e":
             i = _skip(data, i)
         return i + 1
+    return _string_end(data, i)
+
+
+def _string_end(data, i):
+    """Index just past the bencoded string at data[i] ("<length>:<bytes>").
+    The length is digits only: int() takes "-3" and " 3" as well, and a
+    negative length stepped back, so a reader of a .torrent - or of a
+    tracker's scrape reply - went round for ever (sweep 4, 2026-11-25)."""
     j = data.index(b":", i)
-    return j + 1 + int(data[i:j])
+    n = data[i:j]
+    if not n.isdigit():
+        raise ValueError("a bencoded string's length is not a number: %r" % n[:20])
+    return j + 1 + int(n)
 
 
 def _top_spans(data):
@@ -974,9 +985,8 @@ def _bdecode(data):
                 v, i = parse(i)
                 out[k] = v
             return out, i + 1
-        j = data.index(b":", i)                          # <len>:<bytes>
-        n = int(data[i:j])
-        return data[j + 1:j + 1 + n], j + 1 + n
+        end = _string_end(data, i)                       # <len>:<bytes>
+        return data[data.index(b":", i) + 1:end], end
     try:
         return parse(0)[0]
     except _BAD_BENCODE as e:           # RecursionError too: lists nested deep
