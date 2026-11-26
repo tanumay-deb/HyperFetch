@@ -94,6 +94,29 @@ def test_vpn_and_virtual_adapters_are_excluded_but_pppoe_is_kept(monkeypatch):
     assert [n for n, _, _ in lines.available()] == ["Wi-Fi", "Fiber"]
 
 
+def test_vpn_adapters_named_outside_the_old_list_are_not_lines(monkeypatch):
+    """A VPN adapter that reports IfType 6 and a gateway, named by its app:
+    "vpn" inside a word (ProtonVPN), names without "vpn" (Cisco's renamed
+    client, Zscaler, PIA), and one known only by its friendly name."""
+    vpns = [
+        ("ProtonVPN", "ProtonVPN TUN"),
+        ("Ethernet 3", "Cisco Secure Client Virtual Miniport Adapter for Windows x64"),
+        ("Ethernet 4", "Zscaler Network Adapter 1.0.2.0"),
+        ("Ethernet 5", "Private Internet Access Network Adapter"),
+        ("ExpressVPN", "Generic Virtual Adapter"),
+    ]
+    adapters = [{"name": "Wi-Fi", "up": True, "ipv4": "192.168.1.5", "gateway": "192.168.1.1",
+                 "if_type": 71, "description": "Intel(R) Wi-Fi 6 AX201"},
+                {"name": "Ethernet 2", "up": True, "ipv4": "172.20.10.2",
+                 "gateway": "172.20.10.1", "if_type": 6,
+                 "description": "Apple Mobile Device Ethernet"}]
+    for i, (name, desc) in enumerate(vpns):
+        adapters.append({"name": name, "up": True, "ipv4": "10.20.%d.2" % i,
+                         "gateway": "10.20.%d.1" % i, "if_type": 6, "description": desc})
+    monkeypatch.setattr(lines, "_adapters", lambda: [dict(a) for a in adapters])
+    assert [n for n, _, _ in lines.available()] == ["Wi-Fi", "Ethernet 2"]
+
+
 def test_a_hyperv_external_switch_with_a_gateway_is_kept_as_a_line(monkeypatch):
     """B9: on a PC with a Hyper-V external virtual switch, 'vEthernet'
     ('Hyper-V Virtual Ethernet Adapter', IfType 6, with default gateway) IS the

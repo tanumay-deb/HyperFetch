@@ -30,7 +30,10 @@ _VPN_DESC_RE = re.compile(
     r"\btap[- ]?windows\b|\btap[- ]?nord|\btap[- ]?proton|\btap\b"
     r"|wintun|wireguard|openvpn|nordlynx|tailscale|zerotier|mullvad"
     r"|cloudflare\s*warp|anyconnect|pangp|globalprotect|fortinet|fortissl"
-    r"|pulse\s*secure|juniper|softether|hamachi|radmin|\bvpn\b"
+    r"|pulse\s*secure|juniper|softether|hamachi|radmin"
+    # "vpn" inside a word too: ProtonVPN, ExpressVPN; then names without it
+    r"|vpn|cisco\s*secure\s*client|ivanti|sonicwall|netextender|zscaler"
+    r"|surfshark|private\s*internet\s*access|cyberghost|windscribe|hotspot\s*shield"
     r")",
     re.IGNORECASE,
 )
@@ -134,12 +137,11 @@ def is_vpn_or_virtual(adapter):
     if_type = adapter.get("if_type", 0) or 0
     if if_type in (_IF_TYPE_PROP_VIRTUAL, _IF_TYPE_TUNNEL, _IF_TYPE_LOOPBACK):
         return True
-    desc = adapter.get("description") or ""
+    # the name too: a VPN app names its adapter ("NordLynx", "ProtonVPN")
+    desc = "%s %s" % (adapter.get("description") or "", adapter.get("name") or "")
     if if_type == _IF_TYPE_PPP:
         return bool(_PPP_VPN_RE.search(desc) or _VPN_DESC_RE.search(desc))
-    if desc and _VPN_DESC_RE.search(desc):
-        return True
-    return False
+    return bool(_VPN_DESC_RE.search(desc))
 
 
 def available():
