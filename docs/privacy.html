@@ -77,22 +77,22 @@
 
   <div class="box">
     <ul>
-      <li><strong>The download URL</strong> — the address of the file you
+      <li><strong>The download URL</strong>: the address of the file you
       chose to download, and the address of the page you were on, so the
       application can send a correct <code>Referer</code> to servers that
       require one.</li>
 
-      <li><strong>Cookies for that specific address</strong> — read with
+      <li><strong>Cookies for that specific address</strong>: read with
       the browser's <code>cookies</code> permission, scoped to the URL being
       downloaded and nothing else. This is what lets a file behind a login
       download successfully. Cookies for sites you are not downloading from
       are never read.</li>
 
-      <li><strong>Your browser's user-agent string</strong> — so the
+      <li><strong>Your browser's user-agent string</strong>: so the
       application identifies itself to the server the same way your browser
       did.</li>
 
-      <li><strong>Page content, only to spot media</strong> — a content
+      <li><strong>Page content, only to spot media</strong>: a content
       script runs on pages to detect video streams and show the
       "Download with HyperFetch" badge. It reads the page to find media
       links, and when you choose "Show all downloadable links", "Download all
@@ -100,15 +100,14 @@
       It does not read, store, or transmit anything else, and it sends
       nothing anywhere until you click.</li>
 
-      <li><strong>Media responses, to offer a quality</strong> — the
-      extension notes the address, type and size of video and audio responses
+      <li><strong>Media responses, to offer a quality</strong>: the extension notes the address, type and size of video and audio responses
       on the page. To list a stream's qualities it may fetch that playlist
       from the same site, or ask the application to.</li>
     </ul>
   </div>
 
   <p>All of it is sent to <code>http://127.0.0.1:21456</code> (port
-  <code>5000</code> for older versions of the application) — a loopback
+  <code>5000</code> for older versions of the application), a loopback
   address, meaning your own machine. Loopback traffic never reaches your
   network, your router, or the internet.</p>
 
@@ -125,15 +124,14 @@
 
   <div class="box">
     <ul>
-      <li>A <strong>pairing token</strong> — a random value shared with your
+      <li>A <strong>pairing token</strong>: a random value shared with your
       local application so that website JavaScript cannot send downloads to
       it. On Firefox, until the application has allowed it, the four-digit
       <strong>pairing code</strong> the application's question shows.</li>
       <li>The <strong>local address</strong> the application was found on.</li>
       <li>Your <strong>toggle settings</strong> from the popup, and the corner
       you moved the download button to.</li>
-      <li>A short <strong>queue of pending downloads</strong> — address, file
-      name and page — held only while the application is closed, for at most
+      <li>A short <strong>queue of pending downloads</strong> (address, file name and page), held only while the application is closed, for at most
       an hour, and cleared once they are delivered. Cookies are never part of
       it.</li>
     </ul>
@@ -165,20 +163,20 @@
 
   <div class="box">
     <ul>
-      <li><code>cookies</code> — to download files that require you to be
+      <li><code>cookies</code>: to download files that require you to be
       signed in.</li>
-      <li><code>downloads</code> — to hand downloads the browser starts to the
+      <li><code>downloads</code>: to hand downloads the browser starts to the
       application, for the file types it lists (Settings → Browser → Auto
       Capture Links), and to cancel the browser's copy once the application
       has accepted it, so the file is not fetched twice. It is on unless you
       switch it off in the popup.</li>
-      <li><code>webRequest</code> — to notice video stream manifests
+      <li><code>webRequest</code>: to notice video stream manifests
       (<code>.m3u8</code>) and media files that a browser cannot save on its
       own.</li>
-      <li><code>contextMenus</code> — the right-click "Download with
+      <li><code>contextMenus</code>: the right-click "Download with
       HyperFetch" item.</li>
-      <li><code>storage</code> — the local settings described above.</li>
-      <li><code>&lt;all_urls&gt;</code> — because a download can start from any
+      <li><code>storage</code>: the local settings described above.</li>
+      <li><code>&lt;all_urls&gt;</code>: because a download can start from any
       site. The permission is broad; what is done with it is not.</li>
     </ul>
   </div>
@@ -190,18 +188,16 @@
 
   <div class="box">
     <ul>
-      <li>Your <strong>settings</strong>, the <strong>download list</strong> —
-      with cookies and sign-in headers removed before it is saved — and a
+      <li>Your <strong>settings</strong>, the <strong>download list</strong> (with cookies and sign-in headers removed before it is saved) and a
       <strong>history</strong> of finished downloads: name, address, size and
       where each was saved.</li>
       <li>The <strong>pairing token</strong>, the addresses of the
       <strong>Firefox installs you allowed</strong> to pair (Settings → Browser
-      can forget them), and — only if you set up the web client — its
+      can forget them), and, only if you set up the web client, its
       <strong>username and a scrypt hash of its password</strong>.</li>
       <li>A <strong>log</strong> of warnings and errors (with Debug logging
       switched on, more detail, download addresses included), and
-      <strong>crash reports</strong> — an error trace, version and platform,
-      no download addresses — which stay on your computer unless you choose
+      <strong>crash reports</strong> (an error trace, version and platform, no download addresses), which stay on your computer unless you choose
       to share them.</li>
     </ul>
   </div>
@@ -210,18 +206,17 @@
 
   <div class="box">
     <ul>
-      <li><strong>The sites you download from</strong> — the file's own
+      <li><strong>The sites you download from</strong>: the file's own
       server, a video site and its streams, and, with checksum verification
       switched on, a <code>.sha256</code> file beside the download. While a
       video waits in the queue, the application reads its page once to learn
       what it is called (Settings → Downloads → "Name videos while they
       wait", on by default): the site sees your IP address and which video it
       is, as it would once the download starts.</li>
-      <li>For <strong>torrents and magnet links</strong>, trackers —
-      including a list of public trackers the application adds to every
-      torrent that is not marked private (a magnet link is only known to be
-      private once its details have arrived) — and other peers. As with any
-      torrent client, they see your IP address. While a
+      <li>For <strong>torrents and magnet links</strong>, trackers and other peers. As with any torrent client, they see your IP address. The trackers
+      include a list of public trackers the application adds to every torrent
+      that is not marked private (a magnet link is only known to be private
+      once its details have arrived). While a
       torrent waits in the queue, the application also asks its trackers now
       and then how many seeders it has (Settings → Torrents → "Check seeders
       of queued torrents", on by default): they see your IP address and which
@@ -232,8 +227,8 @@
       <code>newtrackon.com</code> (Settings → Torrents → "Keep the public
       tracker list up to date", on by default); those requests say nothing
       about you or your downloads.</li>
-      <li><strong>Cloudflare's DNS</strong> (<code>cloudflare-dns.com</code>)
-      — when your internet provider's DNS answers a site with a block page,
+      <li><strong>Cloudflare's DNS</strong> (<code>cloudflare-dns.com</code>):
+      when your internet provider's DNS answers a site with a block page,
       the application looks that one site's name up there ("Get past provider
       blocks", on by default). With "DNS over HTTPS" switched on, every lookup
       goes there.</li>
