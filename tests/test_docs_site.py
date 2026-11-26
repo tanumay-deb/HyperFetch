@@ -25,3 +25,15 @@ def test_the_sitemap_lists_pages_that_exist():
         assert loc.startswith(base), loc
         page = loc[len(base):] or "index.html"
         assert os.path.isfile(os.path.join(DOCS, page)), "the sitemap lists a page that is not there: " + loc
+
+
+def test_the_site_names_the_version_that_is_out():
+    """The site said nothing of which version was out, and a release left it
+    as it was (2026-11-26). Bumping utils.APP_VERSION fails this until the
+    page's version line - and its link to that release - say the same."""
+    import utils
+    with open(os.path.join(DOCS, "index.html"), encoding="utf-8") as f:
+        page = f.read()
+    v = utils.APP_VERSION
+    assert ('href="https://github.com/tanumay-deb/HyperFetch/releases/tag/v%s">Version %s</a>'
+            % (v, v)) in page

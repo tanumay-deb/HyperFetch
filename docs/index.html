@@ -23,7 +23,7 @@
     --line:     #2a2f3b;
     --text:     #f1f5f9;
     --muted:    #8b97ad;
-    --faint:    #5b6678;
+    --faint:    #7d889c;   /* 4.8:1 on --panel, 5.1:1 on --ink (WCAG AA) */
     --iris:     #6366f1;
     --violet:   #8b5cf6;
     --grad:     linear-gradient(135deg, #6366f1, #8b5cf6);
@@ -93,7 +93,7 @@
            border-radius: 3px; }
   .ticks {
     display: flex; gap: 3px; margin-top: 7px;
-    font-family: var(--mono); font-size: 10px; color: var(--faint);
+    font-family: var(--mono); font-size: 12px; color: var(--faint);
   }
   .ticks span { flex: 1; text-align: center; }
   .readout {
@@ -103,7 +103,7 @@
   }
   .readout b { color: var(--text); font-weight: 600; }
   .readout span { color: var(--faint); }
-  .demo-note { margin: 10px 2px 0; font-size: 11.5px; color: var(--faint); font-family: var(--mono); }
+  .demo-note { margin: 10px 2px 0; font-size: 12px; color: var(--faint); font-family: var(--mono); }
 
   /* ------------------------------------------------------------- cta */
   .cta { display: flex; flex-wrap: wrap; gap: 12px; margin: 30px 0 8px; }
@@ -218,7 +218,7 @@
         Get the Chrome extension
       </a>
     </div>
-    <p class="sub">Windows 10/11 64-bit · installer or portable · free and open source</p>
+    <p class="sub"><a href="https://github.com/tanumay-deb/HyperFetch/releases/tag/v2.8.11">Version 2.8.11</a> · Windows 10/11 64-bit · installer or portable · free and open source</p>
   </header>
 
   <section id="what">
@@ -235,19 +235,22 @@
         <h3>Split into segments</h3>
         <p>Many connections per file, resumed from disk if you pause or the
            connection drops. Sends the browser's cookies, so downloads behind a
-           login work.</p>
+           login work. It can also spread one download over two internet
+           connections, such as Wi-Fi and a phone.</p>
       </div>
       <div class="tile">
         <span class="kind">Torrents</span>
         <h3>Magnets and .torrent files</h3>
         <p>A full BitTorrent engine is built in — no separate client to install,
-           no second app to keep running. Seeds when it's done.</p>
+           no second app to keep running. Turn on seeding to share back when
+           it's done.</p>
       </div>
       <div class="tile">
         <span class="kind">HLS streams</span>
         <h3>.m3u8 into one file</h3>
         <p>Fetches every segment of a stream and joins them. Pick the quality
-           you want when a page offers several.</p>
+           you want when a page offers several; a piece the site refuses is
+           taken from another quality, so one bad piece does not stop the video.</p>
       </div>
       <div class="tile">
         <span class="kind">Video pages</span>
@@ -297,7 +300,9 @@
         <span class="kind">Step one</span>
         <h3>The desktop app</h3>
         <p>Installer or a portable zip — both on the releases page. aria2c and
-           ffmpeg come bundled, so there is nothing else to install.</p>
+           ffmpeg come bundled, so there is nothing else to install. It tells
+           you when a new version is out, downloads it and checks it before it
+           installs.</p>
         <p style="margin-top:14px">
           <a href="https://github.com/tanumay-deb/HyperFetch/releases/latest">Latest release →</a>
         </p>
