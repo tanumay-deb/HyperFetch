@@ -317,7 +317,14 @@ def move_with_progress(src, dst, progress=lambda n: None, chunk=4 * 1024 * 1024)
     import errno
     import shutil
     try:
-        os.rename(src, dst)
+        with _finish_lock:
+            # Windows' rename refuses a name that is taken; POSIX's replaces
+            # it, so "Move to…" on Linux overwrote a file of the same name
+            # (sweep 4, 2026-11-25). Asked under the lock finishes take it in.
+            if os.path.lexists(dst):
+                raise FileExistsError("%s is already in %s"
+                                      % (os.path.basename(dst), os.path.dirname(dst) or "."))
+            os.rename(src, dst)
         progress(tree_size(dst))
         return
     except OSError as e:

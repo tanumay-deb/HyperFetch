@@ -45,6 +45,20 @@ def test_on_one_drive_it_is_a_rename(tmp_path):
     assert seen == [len(DATA)]
 
 
+def test_on_one_drive_a_name_that_is_taken_is_not_written_over(tmp_path, monkeypatch):
+    """Windows' rename refuses a name that is taken; POSIX's replaces the file
+    there, and "Move to…" on Linux overwrote it (sweep 4, 2026-11-25). The
+    POSIX rename is played here with os.replace, so this holds everywhere."""
+    src, there = tmp_path / "a.bin", tmp_path / "b.bin"
+    src.write_bytes(DATA)
+    there.write_bytes(b"somebody else's")
+    monkeypatch.setattr(utils.os, "rename", os.replace)
+    with pytest.raises(FileExistsError):
+        utils.move_with_progress(str(src), str(there))
+    assert there.read_bytes() == b"somebody else's"
+    assert src.read_bytes() == DATA
+
+
 def test_to_another_drive_a_file_is_copied_counting(tmp_path, monkeypatch):
     _other_drive(monkeypatch)
     src, dst = tmp_path / "a.bin", tmp_path / "out" / "a.bin"
