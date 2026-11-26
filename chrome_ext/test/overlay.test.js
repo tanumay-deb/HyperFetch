@@ -88,6 +88,28 @@ async function test(name, fn) {
     assert.ok(hidden, 'tiny video badge hidden');
   });
 
+  // 2026-11-26: the full "Download" button covered most of a thumbnail. A box
+  // under 360x200 gets a round arrow of 24-30 px, closer to its corner.
+  await test('a thumbnail gets the arrow alone, a player the full button', async () => {
+    const { win } = makeEnv({ openShadow: true });
+    const thumb = mkVideo(win, { src: 'https://cdn.x/t.mp4', w: 200, h: 112, top: 100, left: 100 });
+    const player = mkVideo(win, { src: 'https://cdn.x/p.mp4', w: 640, h: 360, top: 300, left: 100 });
+    win.document.body.append(thumb, player);
+    await wait(300);
+    const [bt, bp] = badges(win);
+    const box = (b) => b.shadowRoot.querySelector('.badge-container');
+    assert.ok(box(bt).classList.contains('small'), 'the thumbnail has the full button');
+    assert.strictEqual(box(bt).style.getPropertyValue('--side'), '24px');
+    assert.strictEqual(parseInt(bt.style.left, 10), 300 - 24 - 6, 'not in the corner');
+    assert.strictEqual(parseInt(bt.style.top, 10), 106);
+    assert.ok(!box(bp).classList.contains('small'), 'the player lost its full button');
+    // the same element made bigger (a preview opening up) gets the full one
+    thumb.getBoundingClientRect = () => ({ top: 100, left: 100, right: 740, bottom: 460, width: 640, height: 360 });
+    win.dispatchEvent(new win.Event('scroll'));
+    await wait(50);
+    assert.ok(!box(bt).classList.contains('small'), 'it kept the small one');
+  });
+
   await test('blob video: badge appears only after a stream is sniffed', async () => {
     const { win, state } = makeEnv();
     win.document.body.appendChild(mkVideo(win, { src: 'blob:https://example.com/x', w: 800, h: 450 }));

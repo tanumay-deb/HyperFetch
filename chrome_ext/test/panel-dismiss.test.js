@@ -27,7 +27,7 @@ function makeEnv() {
   const real = win.Element.prototype.attachShadow;
   win.Element.prototype.attachShadow = function () { return real.call(this, { mode: 'open' }); };
 
-  const state = { msgListener: null, stored: {} };
+  const state = { msgListener: null, stored: {}, told: [] };
   win.chrome = {
     storage: {
       local: {
@@ -39,7 +39,7 @@ function makeEnv() {
     runtime: {
       id: 'hyperfetch-test',
       onMessage: { addListener: (cb) => { state.msgListener = cb; } },
-      sendMessage: (m, cb) => cb && cb({ ok: true }),
+      sendMessage: (m, cb) => { state.told.push(m); cb && cb({ ok: true }); },
       lastError: null,
     },
   };
@@ -160,22 +160,34 @@ async function test(name, fn) {
     assert.strictEqual(state.stored.badgeCorner, 'top-left', 'snapped + persisted');
   });
 
-  await test('per-video badges are untouched by a panel dismissal', async () => {
+  // 2026-11-26, asked: "when i drag the top right download media button to
+  // the hide it all the download button should go". The worker passes it on
+  // to the tab's frames (an embedded player's button).
+  await test('a panel dismissal hides the video buttons too', async () => {
     const { win, state } = makeEnv();
-    const v = win.document.createElement('video');
-    Object.defineProperty(v, 'currentSrc', { value: 'https://cdn.x/movie.mp4', configurable: true });
-    Object.defineProperty(v, 'src', { value: 'https://cdn.x/movie.mp4', configurable: true });
-    Object.defineProperty(v, 'isConnected', { get: () => !!v.parentNode, configurable: true });
-    v.getBoundingClientRect = () => ({ top: 100, left: 100, right: 740, bottom: 460, width: 640, height: 360 });
-    win.document.body.appendChild(v);
+    const mk = (src) => {
+      const v = win.document.createElement('video');
+      Object.defineProperty(v, 'currentSrc', { value: src, configurable: true });
+      Object.defineProperty(v, 'src', { value: src, configurable: true });
+      Object.defineProperty(v, 'isConnected', { get: () => !!v.parentNode, configurable: true });
+      v.getBoundingClientRect = () => ({ top: 100, left: 100, right: 740, bottom: 460, width: 640, height: 360 });
+      return v;
+    };
+    win.document.body.appendChild(mk('https://cdn.x/movie.mp4'));
     await buildPanel(win, state);
     await wait(300);
+    assert.strictEqual(win.document.querySelectorAll('.hyperfetch-video-badge').length, 1);
     stubDropZoneRect(win);
 
     drag(win, shadow(win).getElementById('toggle'), [[1200, 30], [900, 400], [640, 730]]);
     assert.strictEqual(panelHost(win), null, 'panel dismissed');
-    assert.strictEqual(win.document.querySelectorAll('.hyperfetch-video-badge').length, 1,
-      'video badge survives');
+    assert.strictEqual(win.document.querySelectorAll('.hyperfetch-video-badge').length, 0,
+      'a video button stayed');
+    assert.ok(state.told.some((m) => m.type === 'HYPERFETCH_HIDE_BADGES'), 'the frames were not told');
+    win.document.body.appendChild(mk('https://cdn.x/next.mp4'));
+    await wait(600);
+    assert.strictEqual(win.document.querySelectorAll('.hyperfetch-video-badge').length, 0,
+      'a new video got a button');
   });
 
   console.log(`\n${passed} passed` + (process.exitCode ? ' (with failures)' : ''));

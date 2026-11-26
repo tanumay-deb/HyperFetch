@@ -509,6 +509,21 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     requestPairing().then((r) => sendResponse({ status: r.status, code: r.code }));
     return true;
   }
+  // The page's hide drop hides the video buttons of every frame in its tab
+  // (no frameId: all of them), and a frame that loads later asks the page.
+  // Kept by the page, not here: a reload brings them back, and the worker may
+  // have been restarted since.
+  if (msg && msg.type === "HYPERFETCH_HIDE_BADGES" && sender && sender.tab) {
+    chrome.tabs.sendMessage(sender.tab.id, { type: "HYPERFETCH_HIDE_BADGES" }, {}, ignoreErr);
+    return false;
+  }
+  if (msg && msg.type === "HYPERFETCH_BADGES_HIDDEN" && sender && sender.tab) {
+    chrome.tabs.sendMessage(sender.tab.id, { type: "HYPERFETCH_BADGES_HIDDEN" }, { frameId: 0 }, (res) => {
+      ignoreErr();
+      sendResponse({ hidden: !!(res && res.hidden) });
+    });
+    return true;
+  }
   if (msg && msg.type === "PENDING_COUNT") {
     chrome.storage.local.get({ [PENDING_KEY]: [] },
       (v) => sendResponse({ count: (v[PENDING_KEY] || []).filter(fresh).length }));

@@ -11,9 +11,10 @@ let panelContainer = null;
 // which corner the floating download panel sits in — draggable (snaps to the
 // nearest corner on drop) and settable from the popup; both persist here
 let badgeCorner = "top-right";
-// page-session dismissal: dragging the panel onto the drop zone hides it until
-// the next reload. Deliberately NOT persisted — a hidden gesture shouldn't make
-// a lasting change the user can't find their way back from; reload restores it.
+// page-session dismissal: dragging the panel onto the drop zone hides it, and
+// every video's download button in the tab, until the next reload.
+// Deliberately NOT persisted — a hidden gesture shouldn't make a lasting
+// change the user can't find their way back from; reload restores it.
 let badgeHidden = false;
 chrome.storage.local.get({ enabled: true, badgeCorner: "top-right" }, (v) => {
   captureEnabled = v.enabled;
@@ -161,6 +162,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     showToast(msg.text);
   } else if (msg.type === "HYPERFETCH_GRAB") {
     showGrabPanel(collectLinks(msg.scope));
+  } else if (msg.type === "HYPERFETCH_HIDE_BADGES") {
+    hideBadges();
+  } else if (msg.type === "HYPERFETCH_BADGES_HIDDEN") {
+    sendResponse({ hidden: badgeHidden });     // a frame asks the page
   }
 });
 
@@ -532,10 +537,12 @@ function updatePanel() {
           // dropped on the target: hide for this page view only. Corner is NOT
           // re-persisted — otherwise dismissing would also move the panel to a
           // bottom corner on the next page.
-          badgeHidden = true;
+          hideBadges();
+          try { chrome.runtime.sendMessage({ type: "HYPERFETCH_HIDE_BADGES" }, () => void chrome.runtime.lastError); }
+          catch (e) { /* the extension was reloaded: this page's own are gone */ }
           panelContainer.remove();
           panelContainer = null; panelRoot = null;
-          showToast("Download button hidden — reload the page to bring it back");
+          showToast("Download buttons hidden — reload the page to bring them back");
           return;
         }
         // snap to the nearest corner and persist it
@@ -779,6 +786,34 @@ const videoOverlays = new Map();   // HTMLVideoElement -> { host, btn }
 // advert frames (300x250, 336x280) hold videos too.
 const IN_FRAME = window.self !== window.top;
 const MIN_W = IN_FRAME ? 400 : 120, MIN_H = IN_FRAME ? 225 : 68;
+// Under this a box (a thumbnail) gets a round arrow, not "Download": the full
+// button covered most of one, and a preview stopped when the pointer met it.
+const FULL_W = 360, FULL_H = 200;
+
+// The panel's hide drop hides every button in the tab: the worker passes it
+// on to the frames. A frame that loads later (another player) asks the page
+// before its first; no answer (worker restarting) is "not hidden".
+let hiddenKnown = !IN_FRAME, hiddenAsked = false;
+function hideBadges() {
+  badgeHidden = true;
+  videoOverlays.forEach((ov) => ov.host.remove());
+  videoOverlays.clear();
+}
+function askHidden() {
+  if (hiddenAsked) return;
+  hiddenAsked = true;
+  const known = (res) => {
+    hiddenKnown = true;
+    if (res && res.hidden) hideBadges();
+    else { syncOverlays(); scheduleReposition(); }
+  };
+  try {
+    chrome.runtime.sendMessage({ type: "HYPERFETCH_BADGES_HIDDEN" }, (res) => {
+      void chrome.runtime.lastError;
+      known(res);
+    });
+  } catch (e) { known(null); }
+}
 
 // A stream is the player's own video when its length is the player's: within
 // SAME_*, the difference a playlist's rounded segment lengths make. Past
@@ -991,6 +1026,11 @@ function createOverlay(video) {
     .menu-item:hover { background: #1a2540; }
     .menu-item .meta { font-size: 10px; color: #8b97b8; }
     .ico { font-size: 13px; line-height: 1; }
+    .small .btn {
+      width: var(--side); height: var(--side); padding: 0; justify-content: center;
+    }
+    .small .ico { font-size: calc(var(--side) * 0.6); }
+    .small .lbl, .small .btn-arrow { display: none !important; }
   `;
 
   const container = document.createElement('div');
@@ -1089,7 +1129,21 @@ function createOverlay(video) {
     }
   };
 
-  return { host, updateState };
+  // the size for a box w x h: the full button, or an arrow 15% of its shorter
+  // side (24-30 px). Told only when it changes - this runs on every placement.
+  let side = 0;
+  const fit = (w, h) => {
+    const small = w < FULL_W || h < FULL_H;
+    const s = small ? Math.round(Math.max(24, Math.min(30, Math.min(w, h) * 0.15))) : 0;
+    if (s !== side) {
+      side = s;
+      container.classList.toggle('small', small);
+      if (small) container.style.setProperty('--side', s + 'px');
+    }
+    return side;
+  };
+
+  return { host, updateState, fit };
 }
 
 function positionOverlay(video, ov) {
@@ -1101,20 +1155,23 @@ function positionOverlay(video, ov) {
     r.bottom > 0 && r.right > 0 && r.top < vh && r.left < vw;
   if (!visible) { ov.host.style.display = 'none'; return; }
   ov.host.style.display = 'block';
-  const hw = ov.host.offsetWidth || 118, hh = ov.host.offsetHeight || 32;
-  const top = Math.max(2, Math.min(vh - hh - 2, r.top + 10));
-  const left = Math.max(2, Math.min(vw - hw - 2, r.right - hw - 10));
+  const side = ov.fit(r.width, r.height), gap = side ? 6 : 10;
+  const hw = ov.host.offsetWidth || side || 118, hh = ov.host.offsetHeight || side || 32;
+  const top = Math.max(2, Math.min(vh - hh - 2, r.top + gap));
+  const left = Math.max(2, Math.min(vw - hw - 2, r.right - hw - gap));
   ov.host.style.top = top + 'px';
   ov.host.style.left = left + 'px';
 }
 
 // add badges for downloadable videos, drop them when video/stream goes away
 function syncOverlays() {
+  if (badgeHidden) return;
   document.querySelectorAll('video').forEach((v) => {
     const dl = getVideoDownload(v);
     if (!dl) return;
     let ov = videoOverlays.get(v);
     if (!ov) {
+      if (!hiddenKnown) { askHidden(); return; }
       ov = createOverlay(v);
       videoOverlays.set(v, ov);
     }

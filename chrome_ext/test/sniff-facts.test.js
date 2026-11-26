@@ -400,6 +400,24 @@ async function test(name, fn) {
     assert.strictEqual(grab.opts.frameId, 6, 'one panel, in the frame that was clicked');
   });
 
+  // 2026-11-26: the page's hide drop hides its frames' buttons too, and a frame
+  // loaded later asks the page. The worker keeps nothing: it passes them on.
+  await test('the hide drop reaches every frame; a frame asks the page', async () => {
+    const { state } = load({ answer: (t, m, o) => (o && o.frameId === 0 ? { hidden: true } : undefined) });
+    state.onMessage({ type: 'HYPERFETCH_HIDE_BADGES' }, { tab: { id: 4 }, frameId: 0 }, () => {});
+    const told = state.sent.find((x) => x.msg.type === 'HYPERFETCH_HIDE_BADGES');
+    assert.ok(told && told.tabId === 4, 'the tab was not told');
+    assert.ok(!told.opts || told.opts.frameId === undefined, 'only one frame was told');
+    let res;
+    const open = state.onMessage({ type: 'HYPERFETCH_BADGES_HIDDEN' }, { tab: { id: 4 }, frameId: 7 },
+                                 (r) => { res = r; });
+    assert.strictEqual(open, true, 'the answer comes later: the channel must stay open');
+    await settle();
+    const asked = state.sent.find((x) => x.msg.type === 'HYPERFETCH_BADGES_HIDDEN');
+    assert.strictEqual(asked.opts.frameId, 0, 'asked another frame than the page');
+    assert.strictEqual(res && res.hidden, true, 'the answer was not passed back');
+  });
+
   console.log(`\n${passed} passed` + (process.exitCode ? ' (with failures)' : ''));
   process.exit(process.exitCode || 0);
 })();

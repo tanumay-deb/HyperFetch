@@ -25,8 +25,10 @@ const assert = require('assert');
 const CONTENT = fs.readFileSync(path.join(__dirname, '..', 'content.js'), 'utf8');
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
+// hidden: what the page answers a frame that asks whether its buttons are
+// hidden (undefined = no answer: the worker or the page is not there)
 function makeEnv({ url = 'https://www.tube.example/video-8xGJx1/a-film/', inFrame = false,
-                   loading = false } = {}) {
+                   loading = false, hidden } = {}) {
   const dom = new JSDOM('<!DOCTYPE html><html><body></body></html>',
     { url, pretendToBeVisual: true, runScripts: 'outside-only' });
   const win = dom.window;
@@ -42,7 +44,7 @@ function makeEnv({ url = 'https://www.tube.example/video-8xGJx1/a-film/', inFram
   win.innerHeight = 800;
   const real = win.Element.prototype.attachShadow;
   win.Element.prototype.attachShadow = function () { return real.call(this, { mode: 'open' }); };
-  const state = { msgListener: null, sent: [] };
+  const state = { msgListener: null, sent: [], asked: 0 };
   win.chrome = {
     storage: {
       local: { get: (d, cb) => cb({ enabled: true, token: '' }), set: (o, cb) => cb && cb() },
@@ -51,7 +53,15 @@ function makeEnv({ url = 'https://www.tube.example/video-8xGJx1/a-film/', inFram
     runtime: {
       id: 'hyperfetch-test',
       onMessage: { addListener: (cb) => { state.msgListener = cb; } },
-      sendMessage: (m, cb) => { if (m && m.type === 'DOWNLOAD_URL') state.sent.push(m); cb && cb({ ok: true }); },
+      sendMessage: (m, cb) => {
+        if (m && m.type === 'HYPERFETCH_BADGES_HIDDEN') {
+          state.asked++;
+          cb && cb(hidden === undefined ? undefined : { hidden });
+          return;
+        }
+        if (m && m.type === 'DOWNLOAD_URL') state.sent.push(m);
+        cb && cb({ ok: true });
+      },
       lastError: null,
     },
   };
@@ -235,6 +245,39 @@ async function test(name, fn) {
     win.dispatchEvent(new win.Event('resize'));
     await wait(300);
     assert.strictEqual(badgeOf(win)[0].style.display, 'block', 'a player-sized one did not');
+  });
+
+  // 2026-11-26: the page's hide drop hides a frame's button too. The worker
+  // passes it on; a frame that loads later asks the page first.
+  await test("a frame's button goes when the page hides them, and stays gone", async () => {
+    const { win, state } = makeEnv({ inFrame: true });
+    mkVideo(win, {});
+    state.msgListener(film({ frameId: 7 }));
+    await wait(300);
+    assert.strictEqual(badgeOf(win).length, 1);
+    assert.strictEqual(state.asked, 1, 'a frame did not ask, or asked again');
+    state.msgListener({ type: 'HYPERFETCH_HIDE_BADGES' });
+    assert.strictEqual(badgeOf(win).length, 0, 'the frame kept its button');
+    mkVideo(win, { top: 600 });
+    await wait(600);
+    assert.strictEqual(badgeOf(win).length, 0, 'a new player in the frame got one');
+  });
+
+  await test('a frame loaded after the hide shows no button; the page answers, never asks', async () => {
+    const late = makeEnv({ inFrame: true, hidden: true });
+    mkVideo(late.win, {});
+    late.state.msgListener(film({ frameId: 7 }));
+    await wait(300);
+    assert.strictEqual(badgeOf(late.win).length, 0, 'the page said hidden');
+    const page = makeEnv({ hidden: true });       // the page knows; it never asks
+    mkVideo(page.win, {});
+    page.state.msgListener(film());
+    await wait(300);
+    assert.strictEqual(page.state.asked, 0, 'the page asked about itself');
+    assert.strictEqual(badgeOf(page.win).length, 1);
+    let answer;                                   // the page answers its frame
+    page.state.msgListener({ type: 'HYPERFETCH_BADGES_HIDDEN' }, {}, (r) => { answer = r; });
+    assert.strictEqual(answer && answer.hidden, false, 'the page did not answer');
   });
 
   // the page is sent its frames' streams too - for its list, not for its button
